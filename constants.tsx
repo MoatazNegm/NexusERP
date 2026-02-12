@@ -107,13 +107,13 @@ const COMP_POOL = [
 const createOrder = (id: string, index: number, status: OrderStatus, hAgo: number, marginOverride?: number): CustomerOrder => {
   const custName = CUST_POOL[index % CUST_POOL.length];
   const internalID = `INT-2024-${2024 + Math.floor(index / 50)}-${String(index + 100).padStart(4, '0')}`;
-  
+
   // Logic for generating items
   const items: CustomerOrderItem[] = Array.from({ length: 1 + (index % 3) }).map((_, iIdx) => {
     const revenue = 5000 + (index * 100);
     // If marginOverride is provided, make cost higher than revenue
-    const cost = marginOverride ? revenue * (1 + marginOverride/100) : revenue * 0.7;
-    
+    const cost = marginOverride ? revenue * (1 + marginOverride / 100) : revenue * 0.7;
+
     return {
       id: `it_${id}_${iIdx}`,
       orderNumber: `${internalID}-${String(iIdx + 1).padStart(2, '0')}`,
@@ -186,55 +186,55 @@ export const MOCK_INVENTORY: InventoryItem[] = [
 const generatedOrders: CustomerOrder[] = [];
 
 // 1. LOGGED (15) - 5 are overdue (>1hr)
-for(let i=0; i<15; i++) {
+for (let i = 0; i < 15; i++) {
   generatedOrders.push(createOrder(`logged_${i}`, i, OrderStatus.LOGGED, i < 5 ? 5 : 0.5));
 }
 
 // 2. TECHNICAL_REVIEW (15) - 5 are overdue (>2hrs)
-for(let i=0; i<15; i++) {
-  generatedOrders.push(createOrder(`tech_${i}`, i+15, OrderStatus.TECHNICAL_REVIEW, i < 5 ? 10 : 1));
+for (let i = 0; i < 15; i++) {
+  generatedOrders.push(createOrder(`tech_${i}`, i + 15, OrderStatus.TECHNICAL_REVIEW, i < 5 ? 10 : 1));
 }
 
 // 3. NEGATIVE_MARGIN (10) - Severe Alerts
 const marginReasons = ['Raw material surcharge peak', 'Calculation error in logistics markup', 'Vendor price list out-of-sync', 'Scope creep in engineering'];
-for(let i=0; i<10; i++) {
-  const o = createOrder(`neg_${i}`, i+30, OrderStatus.NEGATIVE_MARGIN, 24, 25); // 25% negative
+for (let i = 0; i < 10; i++) {
+  const o = createOrder(`neg_${i}`, i + 30, OrderStatus.NEGATIVE_MARGIN, 24, 25); // 25% negative
   o.logs.push({ timestamp: hoursAgo(1), message: `CRITICAL ALERT: Negative Margin identified. Reason: ${marginReasons[i % marginReasons.length]}`, user: 'System' });
   generatedOrders.push(o);
 }
 
 // 4. IN_HOLD (5) - Risk Alerts
-for(let i=0; i<5; i++) {
-  const o = createOrder(`hold_${i}`, i+40, OrderStatus.IN_HOLD, 12);
+for (let i = 0; i < 5; i++) {
+  const o = createOrder(`hold_${i}`, i + 40, OrderStatus.IN_HOLD, 12);
   o.holdReason = "Finance review: Account credit limit reached";
   generatedOrders.push(o);
 }
 
 // 5. WAITING_SUPPLIERS (15)
-for(let i=0; i<15; i++) {
-  generatedOrders.push(createOrder(`wait_supp_${i}`, i+45, OrderStatus.WAITING_SUPPLIERS, 48));
+for (let i = 0; i < 15; i++) {
+  generatedOrders.push(createOrder(`wait_supp_${i}`, i + 45, OrderStatus.WAITING_SUPPLIERS, 48));
 }
 
 // 6. MANUFACTURING (15)
-for(let i=0; i<15; i++) {
-  generatedOrders.push(createOrder(`mfg_${i}`, i+60, OrderStatus.MANUFACTURING, 72));
+for (let i = 0; i < 15; i++) {
+  generatedOrders.push(createOrder(`mfg_${i}`, i + 60, OrderStatus.MANUFACTURING, 72));
 }
 
 // 7. IN_PRODUCT_HUB (10)
-for(let i=0; i<10; i++) {
-  generatedOrders.push(createOrder(`hub_${i}`, i+75, OrderStatus.IN_PRODUCT_HUB, 120));
+for (let i = 0; i < 10; i++) {
+  generatedOrders.push(createOrder(`hub_${i}`, i + 75, OrderStatus.IN_PRODUCT_HUB, 120));
 }
 
 // 8. INVOICED / AR (10)
-for(let i=0; i<10; i++) {
-  const o = createOrder(`inv_${i}`, i+85, OrderStatus.INVOICED, 150);
-  o.invoiceNumber = `INV-2024-DATA-${i+1000}`;
+for (let i = 0; i < 10; i++) {
+  const o = createOrder(`inv_${i}`, i + 85, OrderStatus.INVOICED, 150);
+  o.invoiceNumber = `INV-2024-DATA-${i + 1000}`;
   generatedOrders.push(o);
 }
 
 // 9. FULFILLED (5)
-for(let i=0; i<5; i++) {
-  generatedOrders.push(createOrder(`done_${i}`, i+95, OrderStatus.FULFILLED, 500));
+for (let i = 0; i < 5; i++) {
+  generatedOrders.push(createOrder(`done_${i}`, i + 95, OrderStatus.FULFILLED, 500));
 }
 
 export const MOCK_ORDERS: CustomerOrder[] = generatedOrders;

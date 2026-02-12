@@ -1,21 +1,21 @@
 
 export enum OrderStatus {
   LOGGED = 'LOGGED',
-  TECHNICAL_REVIEW = 'TECHNICAL_REVIEW', 
+  TECHNICAL_REVIEW = 'TECHNICAL_REVIEW',
   IN_HOLD = 'IN_HOLD',
   REJECTED = 'REJECTED',
   NEGATIVE_MARGIN = 'NEGATIVE_MARGIN',
   WAITING_SUPPLIERS = 'WAITING_SUPPLIERS',
-  WAITING_FACTORY = 'WAITING_FACTORY', 
+  WAITING_FACTORY = 'WAITING_FACTORY',
   DELIVERY = 'DELIVERY',
   MANUFACTURING = 'MANUFACTURING',
-  MANUFACTURING_COMPLETED = 'MANUFACTURING_COMPLETED', 
+  MANUFACTURING_COMPLETED = 'MANUFACTURING_COMPLETED',
   UNDER_TEST = 'UNDER_TEST',
   TRANSITION_TO_STOCK = 'TRANSITION_TO_STOCK',
   IN_PRODUCT_HUB = 'IN_PRODUCT_HUB',
   ISSUE_INVOICE = 'ISSUE_INVOICE',
   INVOICED = 'INVOICED',
-  HUB_RELEASED = 'HUB_RELEASED', 
+  HUB_RELEASED = 'HUB_RELEASED',
   DELIVERED = 'DELIVERED',
   PARTIAL_PAYMENT = 'PARTIAL_PAYMENT',
   FULFILLED = 'FULFILLED'
@@ -102,34 +102,34 @@ export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' 
 
 export interface ManufacturingComponent {
   id: string;
-  componentNumber: string; 
+  componentNumber: string;
   poNumber?: string;
   description: string;
   quantity: number;
   unit: string;
   unitCost: number;
-  taxPercent: number; 
+  taxPercent: number;
   source: 'STOCK' | 'PROCUREMENT';
   inventoryItemId?: string;
-  supplierId?: string; 
+  supplierId?: string;
   supplierPartId?: string;
-  rfpSupplierIds?: string[]; 
+  rfpSupplierIds?: string[];
   status: CompStatus;
-  statusUpdatedAt: string; 
+  statusUpdatedAt: string;
   procurementStartedAt?: string;
 }
 
 export interface CustomerOrderItem {
   id: string;
-  orderNumber: string; 
+  orderNumber: string;
   description: string;
   quantity: number;
   unit: string;
   pricePerUnit: number;
-  taxPercent: number; 
+  taxPercent: number;
   logs: LogEntry[];
   isAccepted?: boolean;
-  components?: ManufacturingComponent[]; 
+  components?: ManufacturingComponent[];
 }
 
 export interface InventoryItem {
@@ -137,7 +137,7 @@ export interface InventoryItem {
   sku: string;
   description: string;
   quantityInStock: number;
-  quantityReserved: number; 
+  quantityReserved: number;
   unit: string;
   lastCost: number;
   category: string;
@@ -146,7 +146,7 @@ export interface InventoryItem {
 export interface ProcurementLine {
   id: string;
   customerOrderItemId: string;
-  componentId?: string; 
+  componentId?: string;
   itemDescription: string;
   quantity: number;
   status: 'ORDERED' | 'RECEIVED' | 'PENDING';
@@ -158,8 +158,8 @@ export interface CustomerOrder {
   internalOrderNumber: string;
   customerReferenceNumber: string;
   customerName: string;
-  orderDate: string; 
-  dataEntryTimestamp: string; 
+  orderDate: string;
+  dataEntryTimestamp: string;
   status: OrderStatus;
   previousStatus?: OrderStatus;
   invoiceNumber?: string;
@@ -220,17 +220,17 @@ export interface AppConfig {
     awardedLimitHrs: number;
     issuePoLimitHrs: number;
     orderedLimitHrs: number;
-    waitingFactoryLimitHrs: number; 
-    mfgFinishLimitHrs: number; 
-    transitToHubLimitHrs: number; 
-    productHubLimitHrs: number; 
-    invoicedLimitHrs: number; 
-    hubReleasedLimitHrs: number; 
-    deliveryLimitHrs: number; 
+    waitingFactoryLimitHrs: number;
+    mfgFinishLimitHrs: number;
+    transitToHubLimitHrs: number;
+    productHubLimitHrs: number;
+    invoicedLimitHrs: number;
+    hubReleasedLimitHrs: number;
+    deliveryLimitHrs: number;
     deliveredLimitHrs: number;
     defaultPaymentSlaDays: number;
     minimumMarginPct: number;
     loggingDelayThresholdHrs: number;
-    thresholdNotifications: Record<string, boolean>;
+    thresholdNotifications: Record<string, string[]>;
   };
 }

@@ -181,17 +181,60 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     setEditingGroup({ ...editingGroup, roles: newRoles });
   };
 
+  const toggleGroupNotification = (configKey: string, groupId: string) => {
+    const current = (config.settings.thresholdNotifications?.[configKey] || []);
+    // Handle migration from boolean if it exists (safety check)
+    const currentArray = Array.isArray(current) ? current : [];
+
+    const updated = currentArray.includes(groupId)
+      ? currentArray.filter(id => id !== groupId)
+      : [...currentArray, groupId];
+
+    const newConfig = {
+      ...config,
+      settings: {
+        ...config.settings,
+        thresholdNotifications: {
+          ...config.settings.thresholdNotifications,
+          [configKey]: updated
+        }
+      }
+    };
+    onConfigUpdate(newConfig);
+  };
+
   const ThresholdInput = ({ label, configKey }: { label: string, configKey: keyof AppConfig['settings'] }) => {
-    const isNotifyEnabled = config.settings.thresholdNotifications?.[configKey] || false;
+    const activeGroupIds = config.settings.thresholdNotifications?.[configKey] || [];
+    const activeGroupsArray = Array.isArray(activeGroupIds) ? activeGroupIds : [];
+
     return (
-      <div className="space-y-2.5 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+      <div className="space-y-2.5 p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col">
         <div className="flex justify-between items-start">
           <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">{label}</label>
-          <button onClick={() => toggleNotification(configKey as string)} className={`w-8 h-4 rounded-full transition-all relative ${isNotifyEnabled ? 'bg-blue-600' : 'bg-slate-300'}`}>
-            <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isNotifyEnabled ? 'right-0.5' : 'left-0.5'}`}></div>
-          </button>
         </div>
         <input type="number" className="w-full p-3 border-2 border-white rounded-xl font-black bg-white focus:border-blue-500 outline-none text-sm" value={config.settings[configKey] as number} onChange={e => updateSetting('settings', configKey, parseFloat(e.target.value) || 0)} />
+
+        <div className="mt-2 space-y-2">
+          <div className="flex items-center gap-2 border-t border-slate-200/50 pt-2">
+            <i className="fa-solid fa-bell text-[8px] text-blue-500"></i>
+            <span className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Recipient Groups</span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {groups.map(g => (
+              <button
+                key={g.id}
+                onClick={() => toggleGroupNotification(configKey as string, g.id)}
+                className={`px-2 py-1 rounded-md text-[7px] font-black uppercase transition-all border ${activeGroupsArray.includes(g.id)
+                    ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                    : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'
+                  }`}
+              >
+                {g.name}
+              </button>
+            ))}
+            {groups.length === 0 && <span className="text-[7px] italic text-slate-400">No groups defined</span>}
+          </div>
+        </div>
       </div>
     );
   };
