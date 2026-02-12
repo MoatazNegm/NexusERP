@@ -681,13 +681,17 @@ class DataService {
     const u = await db.users.where('username').equals(username).first();
     const passHash = await this.hashPassword(pass);
 
-    // Factory Password Bypass for 'admin' (1 minute window)
+    // Dual-Mode Admin Access (1 minute emergency window)
     const isFactoryWindow = (Date.now() - this.appStartTime) < 60000;
-    if (username === 'admin' && pass === this.FACTORY_PASS && isFactoryWindow) {
-      if (u) {
-        const { password, ...safeUser } = u;
-        return safeUser as User;
+    if (username === 'admin' && isFactoryWindow) {
+      // 1. Factory Bypass
+      if (pass === this.FACTORY_PASS) {
+        if (u) {
+          const { password, ...safeUser } = u;
+          return safeUser as User;
+        }
       }
+      // 2. Fall-through to normal check allows standard password too
     }
 
     if (u && u.password === passHash) {
