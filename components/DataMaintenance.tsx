@@ -17,11 +17,11 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [activeTab, setActiveTab] = useState<SettingsTab>('modules');
   const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
-  
+
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
   const [showPasscodeModal, setShowPasscodeModal] = useState<{ type: 'export' | 'import', file?: File } | null>(null);
   const [passcode, setPasscode] = useState('');
-  
+
   const [groups, setGroups] = useState<UserGroup[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [editingGroup, setEditingGroup] = useState<Partial<UserGroup> | null>(null);
@@ -42,7 +42,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   useEffect(() => {
     if (logEndRef.current) {
-        logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [smtpLogs]);
 
@@ -82,26 +82,26 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   const handleTestEmail = async () => {
     if (!testEmailRecipient) {
-        setMessage({ type: 'error', text: 'Target email is required.' });
-        return;
+      setMessage({ type: 'error', text: 'Target email is required.' });
+      return;
     }
     setIsTestingEmail(true);
     setSmtpLogs([]);
     setMessage({ type: 'info', text: 'Initiating backend dispatch request...' });
-    
+
     try {
-        await dataService.sendTestEmail(
-            testEmailRecipient, 
-            config.settings.emailConfig,
-            (text, type) => {
-                setSmtpLogs(prev => [...prev, { text, type, timestamp: new Date().toLocaleTimeString() }]);
-            }
-        );
-        setMessage({ type: 'success', text: `Backend accepted dispatch. REAL email sent via QuickStor server.` });
+      await dataService.sendTestEmail(
+        testEmailRecipient,
+        config.settings.emailConfig,
+        (text, type) => {
+          setSmtpLogs(prev => [...prev, { text, type, timestamp: new Date().toLocaleTimeString() }]);
+        }
+      );
+      setMessage({ type: 'success', text: `Backend accepted dispatch. REAL email sent via QuickStor server.` });
     } catch (e: any) {
-        setMessage({ type: 'error', text: e.message || 'API Communication Fault.' });
+      setMessage({ type: 'error', text: e.message || 'API Communication Fault.' });
     } finally {
-        setIsTestingEmail(false);
+      setIsTestingEmail(false);
     }
   };
 
@@ -122,7 +122,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `nexus-archive-${new Date().toISOString().slice(0,10)}.nxback`;
+      link.download = `nexus-archive-${new Date().toISOString().slice(0, 10)}.nxback`;
       link.click();
       setMessage({ type: 'success', text: 'Encrypted backup generated.' });
       setPasscode('');
@@ -189,10 +189,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       </div>
 
       {message && (
-        <div className={`p-4 rounded-2xl text-sm font-bold flex items-center gap-3 animate-in fade-in slide-in-from-top-2 ${
-          message.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 
-          message.type === 'error' ? 'bg-rose-50 text-rose-700 border border-rose-100' : 'bg-blue-50 text-blue-700 border border-blue-100'
-        }`}>
+        <div className={`p-4 rounded-2xl text-sm font-bold flex items-center gap-3 animate-in fade-in slide-in-from-top-2 ${message.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
+            message.type === 'error' ? 'bg-rose-50 text-rose-700 border border-rose-100' : 'bg-blue-50 text-blue-700 border border-blue-100'
+          }`}>
           <i className={`fa-solid ${message.type === 'success' ? 'fa-circle-check' : message.type === 'error' ? 'fa-triangle-exclamation' : 'fa-circle-notch fa-spin'}`}></i>
           {message.text}
         </div>
@@ -217,35 +216,35 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Company Profile</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                   <div className="space-y-6">
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Name</label>
-                        <input className="w-full p-4 border rounded-2xl font-bold bg-white focus:border-blue-500 outline-none text-sm" value={config.settings.companyName} onChange={e => updateSetting('settings', 'companyName', e.target.value)} />
+                  <div className="space-y-6">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Name</label>
+                      <input className="w-full p-4 border rounded-2xl font-bold bg-white focus:border-blue-500 outline-none text-sm" value={config.settings.companyName} onChange={e => updateSetting('settings', 'companyName', e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Address</label>
+                      <textarea className="w-full p-4 border rounded-2xl font-bold bg-white focus:border-blue-500 outline-none text-sm h-24" value={config.settings.companyAddress} onChange={e => updateSetting('settings', 'companyAddress', e.target.value)} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Logo</label>
+                    <div className="flex items-center gap-6 mt-2">
+                      <div className="w-32 h-32 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden">
+                        {config.settings.companyLogo ? <img src={config.settings.companyLogo} className="w-full h-full object-contain" /> : <i className="fa-solid fa-image text-slate-300"></i>}
                       </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Address</label>
-                        <textarea className="w-full p-4 border rounded-2xl font-bold bg-white focus:border-blue-500 outline-none text-sm h-24" value={config.settings.companyAddress} onChange={e => updateSetting('settings', 'companyAddress', e.target.value)} />
-                      </div>
-                   </div>
-                   <div>
-                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Logo</label>
-                      <div className="flex items-center gap-6 mt-2">
-                        <div className="w-32 h-32 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden">
-                           {config.settings.companyLogo ? <img src={config.settings.companyLogo} className="w-full h-full object-contain" /> : <i className="fa-solid fa-image text-slate-300"></i>}
-                        </div>
-                        <input type="file" ref={logoInputRef} className="hidden" accept="image/*" onChange={handleLogoUpload} />
-                        <button onClick={() => logoInputRef.current?.click()} className="py-3 px-6 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl">Upload</button>
-                      </div>
-                   </div>
+                      <input type="file" ref={logoInputRef} className="hidden" accept="image/*" onChange={handleLogoUpload} />
+                      <button onClick={() => logoInputRef.current?.click()} className="py-3 px-6 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl">Upload</button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {Object.keys(config.modules).map(mod => (
-                    <label key={mod} className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer">
-                      <span className="text-xs font-black text-slate-700 capitalize">{mod.replace(/([A-Z])/g, ' $1')}</span>
-                      <input type="checkbox" className="w-6 h-6 rounded border-slate-200 text-blue-600 focus:ring-blue-50" checked={(config.modules as any)[mod]} onChange={e => updateSetting('modules', mod, e.target.checked)} />
-                    </label>
-                  ))}
+                {Object.keys(config.modules).map(mod => (
+                  <label key={mod} className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer">
+                    <span className="text-xs font-black text-slate-700 capitalize">{mod.replace(/([A-Z])/g, ' $1')}</span>
+                    <input type="checkbox" className="w-6 h-6 rounded border-slate-200 text-blue-600 focus:ring-blue-50" checked={(config.modules as any)[mod]} onChange={e => updateSetting('modules', mod, e.target.checked)} />
+                  </label>
+                ))}
               </div>
             </div>
           )}
@@ -253,140 +252,189 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
           {activeTab === 'email' && (
             <div className="space-y-10 animate-in fade-in">
               <div className="p-6 bg-slate-900 rounded-3xl text-white flex items-center justify-between gap-4">
-                 <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center text-2xl shadow-xl shadow-blue-900/40">
-                        <i className="fa-solid fa-server"></i>
-                    </div>
-                    <div>
-                        <h4 className="text-sm font-black uppercase tracking-widest">Enterprise API Dispatcher</h4>
-                        <p className="text-[10px] text-slate-400 font-medium leading-relaxed">This module issues POST requests to your secure backend relay.</p>
-                    </div>
-                 </div>
-                 <div className="px-4 py-2 bg-emerald-900/30 text-emerald-400 border border-emerald-500/30 rounded-xl flex items-center gap-2 font-black text-[9px] uppercase tracking-widest">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
-                    Backend Link: Active
-                 </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center text-2xl shadow-xl shadow-blue-900/40">
+                    <i className="fa-solid fa-server"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black uppercase tracking-widest">Enterprise API Dispatcher</h4>
+                    <p className="text-[10px] text-slate-400 font-medium leading-relaxed">This module issues POST requests to your secure backend relay.</p>
+                  </div>
+                </div>
+                <div className="px-4 py-2 bg-emerald-900/30 text-emerald-400 border border-emerald-500/30 rounded-xl flex items-center gap-2 font-black text-[9px] uppercase tracking-widest">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
+                  Backend Link: Active
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-                 <div className="space-y-6">
-                    <div className="p-6 bg-slate-50 rounded-3xl border border-slate-200 space-y-4">
-                       <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dispatch Credentials (Server-Side Only)</h5>
-                       <div className="space-y-4">
-                          <div className="grid grid-cols-3 gap-4">
-                             <div className="col-span-2 space-y-1.5">
-                                <label className="text-[9px] font-black text-slate-500 uppercase">Target Host</label>
-                                <input className="w-full p-3 border rounded-xl bg-white font-bold text-sm" value={config.settings.emailConfig.smtpServer} onChange={e => updateEmailConfig('smtpServer', e.target.value)} />
-                             </div>
-                             <div className="space-y-1.5">
-                                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Port</label>
-                                <input type="number" className="w-full p-3 border rounded-xl bg-white font-black text-sm" value={config.settings.emailConfig.smtpPort} onChange={e => updateEmailConfig('smtpPort', parseInt(e.target.value) || 0)} />
-                             </div>
-                          </div>
-                          <div className="space-y-1.5">
-                             <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Auth User</label>
-                             <input className="w-full p-3 border rounded-xl bg-white font-bold text-sm" value={config.settings.emailConfig.username} onChange={e => updateEmailConfig('username', e.target.value)} />
-                          </div>
-                          <div className="space-y-1.5">
-                             <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Auth Password</label>
-                             <div className="relative">
-                                <input type={showSmtpPassword ? "text" : "password"} className="w-full p-3 border rounded-xl bg-white font-bold text-sm outline-none" value={config.settings.emailConfig.password} onChange={e => updateEmailConfig('password', e.target.value)} />
-                                <button type="button" onClick={() => setShowSmtpPassword(!showSmtpPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-blue-600 transition-colors">
-                                  <i className={`fa-solid ${showSmtpPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
-                                </button>
-                             </div>
-                          </div>
-                       </div>
-                    </div>
-
-                    <div className="p-8 bg-blue-50 rounded-3xl border border-blue-100">
-                       <h4 className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-4">API Execution Test</h4>
-                       <div className="flex gap-2">
-                          <input type="email" className="flex-1 p-4 border rounded-2xl bg-white text-sm font-bold shadow-inner" placeholder="Recipient..." value={testEmailRecipient} onChange={e => setTestEmailRecipient(e.target.value)} />
-                          <button disabled={isTestingEmail} onClick={handleTestEmail} className="px-8 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-black transition-all">
-                             {isTestingEmail ? <i className="fa-solid fa-circle-notch fa-spin"></i> : 'Dispatch'}
+                <div className="space-y-6">
+                  <div className="p-6 bg-slate-50 rounded-3xl border border-slate-200 space-y-4">
+                    <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dispatch Credentials (Server-Side Only)</h5>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="col-span-2 space-y-1.5">
+                          <label className="text-[9px] font-black text-slate-500 uppercase">Target Host</label>
+                          <input className="w-full p-3 border rounded-xl bg-white font-bold text-sm" value={config.settings.emailConfig.smtpServer} onChange={e => updateEmailConfig('smtpServer', e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Port</label>
+                          <input type="number" className="w-full p-3 border rounded-xl bg-white font-black text-sm" value={config.settings.emailConfig.smtpPort} onChange={e => updateEmailConfig('smtpPort', parseInt(e.target.value) || 0)} />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Auth User</label>
+                        <input className="w-full p-3 border rounded-xl bg-white font-bold text-sm" value={config.settings.emailConfig.username} onChange={e => updateEmailConfig('username', e.target.value)} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Auth Password</label>
+                        <div className="relative">
+                          <input type={showSmtpPassword ? "text" : "password"} className="w-full p-3 border rounded-xl bg-white font-bold text-sm outline-none" value={config.settings.emailConfig.password} onChange={e => updateEmailConfig('password', e.target.value)} />
+                          <button type="button" onClick={() => setShowSmtpPassword(!showSmtpPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-blue-600 transition-colors">
+                            <i className={`fa-solid ${showSmtpPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
                           </button>
-                       </div>
-                       <p className="text-[8px] text-blue-400 font-bold uppercase mt-4 text-center">Requests are routed via HTTPS/TLS to the Nexus API Gateway</p>
+                        </div>
+                      </div>
                     </div>
-                 </div>
+                  </div>
 
-                 <div className="flex flex-col h-[500px]">
-                    <div className="flex justify-between items-center mb-4 px-2">
-                       <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                          <i className="fa-solid fa-terminal"></i> Nexus API Gateway Monitor
-                       </h4>
-                       <button onClick={() => setSmtpLogs([])} className="text-[8px] font-black text-slate-300 hover:text-slate-600 uppercase">Clear Buffer</button>
+                  <div className="p-8 bg-blue-50 rounded-3xl border border-blue-100">
+                    <h4 className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-4">API Execution Test</h4>
+                    <div className="flex gap-2">
+                      <input type="email" className="flex-1 p-4 border rounded-2xl bg-white text-sm font-bold shadow-inner" placeholder="Recipient..." value={testEmailRecipient} onChange={e => setTestEmailRecipient(e.target.value)} />
+                      <button disabled={isTestingEmail} onClick={handleTestEmail} className="px-8 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-black transition-all">
+                        {isTestingEmail ? <i className="fa-solid fa-circle-notch fa-spin"></i> : 'Dispatch'}
+                      </button>
                     </div>
-                    <div className="flex-1 bg-slate-950 rounded-[2rem] border border-slate-800 p-6 font-mono text-[10px] overflow-y-auto shadow-2xl custom-scrollbar">
-                       {smtpLogs.length === 0 ? (
-                          <div className="h-full flex flex-col items-center justify-center text-slate-700 italic opacity-50 space-y-4">
-                             <i className="fa-solid fa-network-wired text-4xl"></i>
-                             <span>Awaiting Backend Request...</span>
+                    <p className="text-[8px] text-blue-400 font-bold uppercase mt-4 text-center">Requests are routed via HTTPS/TLS to the Nexus API Gateway</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col h-[500px]">
+                  <div className="flex justify-between items-center mb-4 px-2">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                      <i className="fa-solid fa-terminal"></i> Nexus API Gateway Monitor
+                    </h4>
+                    <button onClick={() => setSmtpLogs([])} className="text-[8px] font-black text-slate-300 hover:text-slate-600 uppercase">Clear Buffer</button>
+                  </div>
+                  <div className="flex-1 bg-slate-950 rounded-[2rem] border border-slate-800 p-6 font-mono text-[10px] overflow-y-auto shadow-2xl custom-scrollbar">
+                    {smtpLogs.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-700 italic opacity-50 space-y-4">
+                        <i className="fa-solid fa-network-wired text-4xl"></i>
+                        <span>Awaiting Backend Request...</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {smtpLogs.map((l, i) => (
+                          <div key={i} className="flex gap-4 group py-0.5">
+                            <span className="text-slate-700 select-none opacity-40">[{l.timestamp}]</span>
+                            <span className={`font-black shrink-0 ${l.type === 'tx' ? 'text-blue-500' : l.type === 'err' ? 'text-rose-500 animate-pulse' : 'text-emerald-500'}`}>
+                              {l.type === 'tx' ? '>>' : '<<'}
+                            </span>
+                            <span className={`${l.type === 'err' ? 'text-rose-400 font-bold' : l.type === 'tx' ? 'text-blue-200' : 'text-slate-300'} break-all`}>
+                              {l.text}
+                            </span>
                           </div>
-                       ) : (
-                          <div className="space-y-1">
-                             {smtpLogs.map((l, i) => (
-                                <div key={i} className="flex gap-4 group py-0.5">
-                                   <span className="text-slate-700 select-none opacity-40">[{l.timestamp}]</span>
-                                   <span className={`font-black shrink-0 ${l.type === 'tx' ? 'text-blue-500' : l.type === 'err' ? 'text-rose-500 animate-pulse' : 'text-emerald-500'}`}>
-                                      {l.type === 'tx' ? '>>' : '<<'}
-                                   </span>
-                                   <span className={`${l.type === 'err' ? 'text-rose-400 font-bold' : l.type === 'tx' ? 'text-blue-200' : 'text-slate-300'} break-all`}>
-                                      {l.text}
-                                   </span>
-                                </div>
-                             ))}
-                             <div ref={logEndRef} />
-                          </div>
-                       )}
-                    </div>
-                    <div className="mt-4 p-4 bg-blue-900/10 border border-blue-500/20 rounded-2xl">
-                       <p className="text-[9px] font-bold text-blue-400 leading-relaxed uppercase tracking-tight">
-                         <i className="fa-solid fa-shield-check mr-1"></i> Architecture Vetted: Dispatching emails via Backend Proxy ensures the client browser never initiates raw SMTP traffic, preventing CORS/TLS blocks and securing credentials.
-                       </p>
-                    </div>
-                 </div>
+                        ))}
+                        <div ref={logEndRef} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-4 p-4 bg-blue-900/10 border border-blue-500/20 rounded-2xl">
+                    <p className="text-[9px] font-bold text-blue-400 leading-relaxed uppercase tracking-tight">
+                      <i className="fa-solid fa-shield-check mr-1"></i> Architecture Vetted: Dispatching emails via Backend Proxy ensures the client browser never initiates raw SMTP traffic, preventing CORS/TLS blocks and securing credentials.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
           {activeTab === 'thresholds' && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <ThresholdInput label="Min Margin %" configKey="minimumMarginPct" />
-              <ThresholdInput label="Order Draft Window (h)" configKey="orderEditTimeLimitHrs" />
-              <ThresholdInput label="Payment SLA (d)" configKey="defaultPaymentSlaDays" />
-              <ThresholdInput label="Audit Delay (h)" configKey="loggingDelayThresholdHrs" />
+            <div className="space-y-10 animate-in fade-in">
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                  <i className="fa-solid fa-shield-halved text-blue-500"></i>
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Global Compliance & Audit</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <ThresholdInput label="Min Margin %" configKey="minimumMarginPct" />
+                  <ThresholdInput label="Audit Delay (h)" configKey="loggingDelayThresholdHrs" />
+                  <ThresholdInput label="Default Payment SLA (d)" configKey="defaultPaymentSlaDays" />
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                  <i className="fa-solid fa-clipboard-check text-blue-500"></i>
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Pre-Production Thresholds</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <ThresholdInput label="Order Draft Window (h)" configKey="orderEditTimeLimitHrs" />
+                  <ThresholdInput label="Tech Review Limit (h)" configKey="technicalReviewLimitHrs" />
+                  <ThresholdInput label="Pending Offer Limit (h)" configKey="pendingOfferLimitHrs" />
+                  <ThresholdInput label="RFP Response Window (h)" configKey="rfpSentLimitHrs" />
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                  <i className="fa-solid fa-industry text-blue-500"></i>
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Manufacturing & Procurement</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <ThresholdInput label="Award Review (h)" configKey="awardedLimitHrs" />
+                  <ThresholdInput label="Issue PO Window (h)" configKey="issuePoLimitHrs" />
+                  <ThresholdInput label="Supplier Fulfillment (h)" configKey="orderedLimitHrs" />
+                  <ThresholdInput label="Waiting Factory (h)" configKey="waitingFactoryLimitHrs" />
+                  <ThresholdInput label="Manufacturing Run (h)" configKey="mfgFinishLimitHrs" />
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                  <i className="fa-solid fa-truck-fast text-blue-500"></i>
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Logistics & Post-Ops</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <ThresholdInput label="Transit to Hub (h)" configKey="transitToHubLimitHrs" />
+                  <ThresholdInput label="Hub Processing (h)" configKey="productHubLimitHrs" />
+                  <ThresholdInput label="Invoice Generation (h)" configKey="invoicedLimitHrs" />
+                  <ThresholdInput label="Hub Release Sync (h)" configKey="hubReleasedLimitHrs" />
+                  <ThresholdInput label="Delivery Transit (h)" configKey="deliveryLimitHrs" />
+                  <ThresholdInput label="Post-Delivery Archiving (h)" configKey="deliveredLimitHrs" />
+                </div>
+              </div>
             </div>
           )}
 
           {activeTab === 'users' && (
             <div className="space-y-6">
-               <div className="flex justify-between items-center">
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Active System Identities</h3>
-                  {!editingUser && <button onClick={() => setEditingUser({ name: '', username: '', roles: [], groupIds: [] })} className="px-4 py-2 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl">Add User</button>}
-               </div>
-               {editingUser && (
-                 <div className="p-6 bg-slate-50 rounded-3xl border border-slate-200 space-y-4">
-                    <input className="w-full p-4 border rounded-2xl bg-white font-bold" value={editingUser.name} onChange={e => setEditingUser({...editingUser, name: e.target.value})} placeholder="Full Name" />
-                    <input className="w-full p-4 border rounded-2xl bg-white font-bold" value={editingUser.username} onChange={e => setEditingUser({...editingUser, username: e.target.value})} placeholder="Username" />
-                    <button onClick={saveUser} className="px-8 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl">Save</button>
-                 </div>
-               )}
-               <table className="w-full text-left">
-                  <tbody className="divide-y divide-slate-100">
-                     {users.map(u => (
-                       <tr key={u.id} className="hover:bg-slate-50">
-                          <td className="py-4 font-black text-slate-800">{u.name}</td>
-                          <td className="py-4 font-mono text-xs text-blue-600">@{u.username}</td>
-                          <td className="py-4 text-right">
-                             <button onClick={() => setEditingUser(u)} className="p-2 text-slate-400 hover:text-blue-600"><i className="fa-solid fa-pen"></i></button>
-                             {u.username !== 'admin' && <button onClick={() => dataService.deleteUser(u.id).then(loadMetadata)} className="p-2 text-slate-400 hover:text-rose-600"><i className="fa-solid fa-trash"></i></button>}
-                          </td>
-                       </tr>
-                     ))}
-                  </tbody>
-               </table>
+              <div className="flex justify-between items-center">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Active System Identities</h3>
+                {!editingUser && <button onClick={() => setEditingUser({ name: '', username: '', roles: [], groupIds: [] })} className="px-4 py-2 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl">Add User</button>}
+              </div>
+              {editingUser && (
+                <div className="p-6 bg-slate-50 rounded-3xl border border-slate-200 space-y-4">
+                  <input className="w-full p-4 border rounded-2xl bg-white font-bold" value={editingUser.name} onChange={e => setEditingUser({ ...editingUser, name: e.target.value })} placeholder="Full Name" />
+                  <input className="w-full p-4 border rounded-2xl bg-white font-bold" value={editingUser.username} onChange={e => setEditingUser({ ...editingUser, username: e.target.value })} placeholder="Username" />
+                  <button onClick={saveUser} className="px-8 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl">Save</button>
+                </div>
+              )}
+              <table className="w-full text-left">
+                <tbody className="divide-y divide-slate-100">
+                  {users.map(u => (
+                    <tr key={u.id} className="hover:bg-slate-50">
+                      <td className="py-4 font-black text-slate-800">{u.name}</td>
+                      <td className="py-4 font-mono text-xs text-blue-600">@{u.username}</td>
+                      <td className="py-4 text-right">
+                        <button onClick={() => setEditingUser(u)} className="p-2 text-slate-400 hover:text-blue-600"><i className="fa-solid fa-pen"></i></button>
+                        {u.username !== 'admin' && <button onClick={() => dataService.deleteUser(u.id).then(loadMetadata)} className="p-2 text-slate-400 hover:text-rose-600"><i className="fa-solid fa-trash"></i></button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 
