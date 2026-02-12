@@ -148,8 +148,9 @@ class DataService {
       data: {}
     };
 
-    for (const tableName of DB_TABLE_NAMES) {
-      backupData.data[tableName] = await (db as any)[tableName].toArray();
+    const tables = db.tables;
+    for (const table of tables) {
+      backupData.data[table.name] = await table.toArray();
     }
 
     const json = JSON.stringify(backupData);
@@ -198,26 +199,29 @@ class DataService {
       const config = backup.config;
       const tablesData = backup.data || backup;
 
-      await (db as any).transaction('rw', DB_TABLE_NAMES.map(name => (db as any)[name]), async () => {
-        // Step 1: Purge existing state
-        await Promise.all(DB_TABLE_NAMES.map(name => (db as any)[name].clear()));
+      await db.transaction('rw', db.tables, async () => {
+        // Step 1: Purge existing state for all registered tables
+        await Promise.all(db.tables.map(table => table.clear()));
 
-        // Step 2: Inject backup state
-        await Promise.all(DB_TABLE_NAMES.map(name => {
-          const tableData = tablesData[name];
-          if (tableData && Array.isArray(tableData)) {
-            return (db as any)[name].bulkPut(tableData);
+        // Step 2: Inject backup state for tables present in the archive
+        await Promise.all(Object.entries(tablesData).map(([name, data]) => {
+          const table = db.table(name);
+          if (table && Array.isArray(data)) {
+            return table.bulkPut(data as any[]);
           }
           return Promise.resolve();
         }));
       });
 
-      // Integrity Check: Verify that the restoration succeeded
-      const checkTasks = DB_TABLE_NAMES.map(async (name) => {
-        const count = await (db as any)[name].count();
-        const expected = (tablesData[name] || []).length;
-        if (count !== expected) {
-          console.warn(`[Integrity] Table ${name} count mismatch: got ${count}, expected ${expected}`);
+      // Integrity Check: Verify that the restoration succeeded for tables in the archive
+      const checkTasks = Object.keys(tablesData).map(async (name) => {
+        const table = db.table(name);
+        if (table) {
+          const count = await table.count();
+          const expected = (tablesData[name] || []).length;
+          if (count !== expected) {
+            console.warn(`[Integrity] Table ${name} count mismatch: got ${count}, expected ${expected}`);
+          }
         }
       });
       await Promise.all(checkTasks);
