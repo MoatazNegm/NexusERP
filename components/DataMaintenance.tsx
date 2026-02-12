@@ -7,13 +7,15 @@ interface DataMaintenanceProps {
   config: AppConfig;
   onConfigUpdate: (newConfig: AppConfig) => void;
   onRefresh: () => void;
+  currentUser: User;
+  isAdmin: boolean;
 }
 
 type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'email' | 'data';
 
 const AVAILABLE_ROLES: UserRole[] = ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm'];
 
-export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConfigUpdate, onRefresh }) => {
+export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConfigUpdate, onRefresh, currentUser, isAdmin }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('modules');
   const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
@@ -31,6 +33,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [isTestingEmail, setIsTestingEmail] = useState(false);
   const [showSmtpPassword, setShowSmtpPassword] = useState(false);
   const [smtpLogs, setSmtpLogs] = useState<{ text: string, type: 'tx' | 'rx' | 'err', timestamp: string }[]>([]);
+  const [isAuditing, setIsAuditing] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -102,6 +105,24 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       setMessage({ type: 'error', text: e.message || 'API Communication Fault.' });
     } finally {
       setIsTestingEmail(false);
+    }
+  };
+
+  const handleForceSweep = async () => {
+    if (!isAdmin) return;
+    setIsAuditing(true);
+    setMessage({ type: 'info', text: 'Executing global threshold audit across all records...' });
+
+    try {
+      const results = await dataService.performThresholdAudit(config, (msg) => {
+        setSmtpLogs(prev => [...prev, { text: msg, type: 'tx', timestamp: new Date().toLocaleTimeString() }]);
+      });
+      setMessage({ type: 'success', text: `Audit Complete. ${results.notificationsSent} alerts processed via Relay.` });
+      onRefresh();
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e.message || 'Audit interupted.' });
+    } finally {
+      setIsAuditing(false);
     }
   };
 
@@ -225,8 +246,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 key={g.id}
                 onClick={() => toggleGroupNotification(configKey as string, g.id)}
                 className={`px-2 py-1 rounded-md text-[7px] font-black uppercase transition-all border ${activeGroupsArray.includes(g.id)
-                    ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
-                    : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'
+                  ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                  : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'
                   }`}
               >
                 {g.name}
@@ -412,6 +433,27 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
           {activeTab === 'thresholds' && (
             <div className="space-y-10 animate-in fade-in">
+              <div className="p-8 bg-blue-900 rounded-[2.5rem] text-white flex items-center justify-between gap-6 shadow-2xl shadow-blue-900/30">
+                <div className="flex items-center gap-6">
+                  <div className="w-16 h-16 rounded-3xl bg-white/10 flex items-center justify-center text-3xl">
+                    <i className="fa-solid fa-radar"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-black uppercase tracking-tight">Manual Threshold Sweep</h4>
+                    <p className="text-xs text-blue-200 font-medium opacity-80">Force a system-wide audit of all orders and components against defined compliance rules.</p>
+                  </div>
+                </div>
+                <button
+                  disabled={!isAdmin || isAuditing}
+                  onClick={handleForceSweep}
+                  className={`px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${!isAdmin ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/5' :
+                      isAuditing ? 'bg-amber-500 text-white animate-pulse' : 'bg-white text-blue-900 hover:scale-105 active:scale-95 shadow-xl'
+                    }`}
+                >
+                  {isAuditing ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Scanning...</> : 'Execute Global Audit'}
+                </button>
+              </div>
+
               <div className="space-y-6">
                 <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
                   <i className="fa-solid fa-shield-halved text-blue-500"></i>

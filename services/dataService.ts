@@ -601,6 +601,97 @@ class DataService {
     return null;
   }
 
+  async performThresholdAudit(config: AppConfig, log: (msg: string) => void) {
+    const orders = await db.orders.toArray();
+    const groups = await db.userGroups.toArray();
+    let notificationsSent = 0;
+
+    log(`[AUDIT] Starting global threshold sweep...`);
+    log(`[AUDIT] Scanning ${orders.length} active records.`);
+
+    for (const order of orders) {
+      if ([OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(order.status)) continue;
+
+      // 1. Check Order-Level Status Threshold
+      const statusKeyMap: Partial<Record<OrderStatus, keyof AppConfig['settings']>> = {
+        [OrderStatus.LOGGED]: 'orderEditTimeLimitHrs',
+        [OrderStatus.TECHNICAL_REVIEW]: 'technicalReviewLimitHrs',
+        [OrderStatus.WAITING_FACTORY]: 'waitingFactoryLimitHrs',
+        [OrderStatus.MANUFACTURING]: 'mfgFinishLimitHrs',
+        [OrderStatus.MANUFACTURING_COMPLETED]: 'transitToHubLimitHrs',
+        [OrderStatus.TRANSITION_TO_STOCK]: 'transitToHubLimitHrs',
+        [OrderStatus.IN_PRODUCT_HUB]: 'productHubLimitHrs',
+        [OrderStatus.ISSUE_INVOICE]: 'invoicedLimitHrs',
+        [OrderStatus.INVOICED]: 'hubReleasedLimitHrs',
+        [OrderStatus.HUB_RELEASED]: 'deliveryLimitHrs',
+        [OrderStatus.DELIVERY]: 'deliveredLimitHrs',
+      };
+
+      const configKey = statusKeyMap[order.status];
+      if (configKey) {
+        const limitHrs = config.settings[configKey] as number;
+        const lastLog = [...order.logs].reverse().find(l => l.status === order.status);
+        const startTime = lastLog ? new Date(lastLog.timestamp).getTime() : new Date(order.dataEntryTimestamp).getTime();
+        const elapsedHrs = (Date.now() - startTime) / 3600000;
+
+        if (elapsedHrs > limitHrs) {
+          const recipientGroupIds = config.settings.thresholdNotifications[configKey as string] || [];
+          if (recipientGroupIds.length > 0) {
+            const groupNames = groups.filter(g => recipientGroupIds.includes(g.id)).map(g => g.name).join(', ');
+            log(`[ALERT] Order ${order.internalOrderNumber} exceeded ${configKey} (${elapsedHrs.toFixed(1)}h > ${limitHrs}h). Notifying: ${groupNames}`);
+
+            // Dispatch Relay Email for each group (Simulated context)
+            await this.sendEmailRelay(
+              ['ops-alerts@nexus-erp.com'], // In a real app, you'd fetch group emails
+              `Threshold Violation: Order ${order.internalOrderNumber}`,
+              `Order ${order.internalOrderNumber} has been in status ${order.status} for ${elapsedHrs.toFixed(1)} hours, exceeding the ${limitHrs}h threshold set in policy. Assigned Groups: ${groupNames}`,
+              config.settings.emailConfig
+            );
+            notificationsSent++;
+          }
+        }
+      }
+
+      // 2. Check Item-Level / Component Sourcing Thresholds
+      for (const item of order.items) {
+        if (!item.components) continue;
+        for (const comp of item.components) {
+          const compKeyMap: Partial<Record<CompStatus, keyof AppConfig['settings']>> = {
+            'PENDING_OFFER': 'pendingOfferLimitHrs',
+            'RFP_SENT': 'rfpSentLimitHrs',
+            'AWARDED': 'awardedLimitHrs',
+            'ORDERED': 'orderedLimitHrs',
+          };
+
+          const cKey = compKeyMap[comp.status];
+          if (cKey) {
+            const cLimit = config.settings[cKey] as number;
+            const cElapsed = (Date.now() - new Date(comp.statusUpdatedAt).getTime()) / 3600000;
+
+            if (cElapsed > cLimit) {
+              const cGroups = config.settings.thresholdNotifications[cKey as string] || [];
+              if (cGroups.length > 0) {
+                const cGroupNames = groups.filter(g => cGroups.includes(g.id)).map(g => g.name).join(', ');
+                log(`[ALERT] Part ${comp.componentNumber} in Order ${order.internalOrderNumber} exceeded ${cKey} (${cElapsed.toFixed(1)}h > ${cLimit}h). Notifying: ${cGroupNames}`);
+
+                await this.sendEmailRelay(
+                  ['procurement-alerts@nexus-erp.com'],
+                  `Sourcing Delay: Part ${comp.componentNumber}`,
+                  `Component ${comp.componentNumber} (Order ${order.internalOrderNumber}) is stalled in ${comp.status} for ${cElapsed.toFixed(1)}h. Threshold: ${cLimit}h. Notifying: ${cGroupNames}`,
+                  config.settings.emailConfig
+                );
+                notificationsSent++;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    log(`[AUDIT] Sweep finished. ${notificationsSent} violations identified and relayed.`);
+    return { notificationsSent };
+  }
+
   // Dummy initialization to satisfy earlier requirements
   async init() {
     const userCount = await db.users.count();
