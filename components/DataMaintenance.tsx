@@ -33,7 +33,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [isTestingEmail, setIsTestingEmail] = useState(false);
   const [showSmtpPassword, setShowSmtpPassword] = useState(false);
   const [smtpLogs, setSmtpLogs] = useState<{ text: string, type: 'tx' | 'rx' | 'err', timestamp: string }[]>([]);
+  const [auditLogs, setAuditLogs] = useState<{ text: string, type: 'info' | 'alert' | 'error' | 'success', timestamp: string }[]>([]);
   const [isAuditing, setIsAuditing] = useState(false);
+  const [auditProgress, setAuditProgress] = useState({ current: 0, total: 0 });
+  const auditLogRef = useRef<HTMLDivElement>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -108,21 +111,43 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     }
   };
 
+  useEffect(() => {
+    if (auditLogRef.current) {
+      auditLogRef.current.scrollTop = auditLogRef.current.scrollHeight;
+    }
+  }, [auditLogs]);
+
   const handleForceSweep = async () => {
     if (!isAdmin) return;
     setIsAuditing(true);
-    setMessage({ type: 'info', text: 'Executing global threshold audit across all records...' });
+    setAuditLogs([{ text: 'Initializing global audit sequence...', type: 'info', timestamp: new Date().toLocaleTimeString() }]);
+    setMessage({ type: 'info', text: 'Audit in progress. See Live Monitor below for details.' });
 
     try {
       const results = await dataService.performThresholdAudit(config, (msg) => {
-        setSmtpLogs(prev => [...prev, { text: msg, type: 'tx', timestamp: new Date().toLocaleTimeString() }]);
+        let type: 'info' | 'alert' | 'error' | 'success' = 'info';
+        if (msg.includes('[ALERT]')) type = 'alert';
+        if (msg.includes('[ERROR]')) type = 'error';
+        if (msg.includes('[FINISH]') || msg.includes('[SUMMARY]')) type = 'success';
+
+        // Extract numeric progress if available
+        const progressMatch = msg.match(/\((\d+)\/(\d+)\)/);
+        if (progressMatch) {
+          setAuditProgress({ current: parseInt(progressMatch[1]), total: parseInt(progressMatch[2]) });
+        }
+
+        setAuditLogs(prev => [...prev, { text: msg, type, timestamp: new Date().toLocaleTimeString() }]);
       });
-      setMessage({ type: 'success', text: `Audit Complete. ${results.notificationsSent} alerts processed via Relay.` });
+
+      const errorPart = results.errorsHandled > 0 ? ` (${results.errorsHandled} errors bypassed)` : '';
+      setMessage({ type: 'success', text: `Audit Complete. ${results.notificationsSent} alerts processed via Relay${errorPart}.` });
       onRefresh();
     } catch (e: any) {
+      setAuditLogs(prev => [...prev, { text: `[FATAL] Audit Halted: ${e.message}`, type: 'error', timestamp: new Date().toLocaleTimeString() }]);
       setMessage({ type: 'error', text: e.message || 'Audit interupted.' });
     } finally {
       setIsAuditing(false);
+      setAuditProgress({ current: 0, total: 0 });
     }
   };
 
@@ -222,6 +247,14 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       }
     };
     onConfigUpdate(newConfig);
+  };
+
+  const toggleNewOrderGroup = (groupId: string) => {
+    const current = config.settings.newOrderAlertGroupIds || [];
+    const updated = current.includes(groupId)
+      ? current.filter(id => id !== groupId)
+      : [...current, groupId];
+    updateSetting('settings', 'newOrderAlertGroupIds', updated);
   };
 
   const ThresholdInput = ({ label, configKey }: { label: string, configKey: keyof AppConfig['settings'] }) => {
@@ -447,11 +480,90 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   disabled={!isAdmin || isAuditing}
                   onClick={handleForceSweep}
                   className={`px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${!isAdmin ? 'bg-white/5 text-white/20 cursor-not-allowed border border-white/5' :
-                      isAuditing ? 'bg-amber-500 text-white animate-pulse' : 'bg-white text-blue-900 hover:scale-105 active:scale-95 shadow-xl'
+                    isAuditing ? 'bg-amber-500 text-white animate-pulse' : 'bg-white text-blue-900 hover:scale-105 active:scale-95 shadow-xl'
                     }`}
                 >
-                  {isAuditing ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Scanning...</> : 'Execute Global Audit'}
+                  {isAuditing ? (
+                    <>
+                      <i className="fa-solid fa-circle-notch fa-spin mr-2"></i>
+                      {auditProgress.total > 0 ? `Scanning ${auditProgress.current}/${auditProgress.total}` : 'Scanning...'}
+                    </>
+                  ) : 'Execute Global Audit'}
                 </button>
+              </div>
+
+              {(isAuditing || auditLogs.length > 0) && (
+                <div className="space-y-3 animate-in fade-in slide-in-from-top-4 duration-500">
+                  <div className="flex items-center justify-between px-2">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${isAuditing ? 'bg-amber-500 animate-ping' : 'bg-slate-300'}`}></div>
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Live Audit Monitor</span>
+                    </div>
+                    {isAuditing && <span className="text-[9px] font-medium text-slate-400">DO NOT CLOSE TAB - Network relay in progress</span>}
+                  </div>
+                  <div
+                    ref={auditLogRef}
+                    className="bg-slate-900 rounded-3xl p-6 h-64 overflow-y-auto font-mono text-[10px] border border-slate-800 shadow-inner scroll-smooth"
+                  >
+                    <div className="space-y-1.5">
+                      {auditLogs.map((log, idx) => {
+                        const colors = {
+                          info: 'text-slate-400',
+                          alert: 'text-amber-400 font-bold',
+                          error: 'text-rose-400 font-bold',
+                          success: 'text-emerald-400 font-bold'
+                        };
+                        return (
+                          <div key={idx} className="flex gap-4 border-b border-white/5 pb-1">
+                            <span className="text-white/20 shrink-0">[{log.timestamp}]</span>
+                            <span className={colors[log.type]}>{log.text}</span>
+                          </div>
+                        );
+                      })}
+                      {isAuditing && (
+                        <div className="flex gap-2 items-center text-blue-400 mt-2">
+                          <i className="fa-solid fa-ellipsis fa-fade"></i>
+                          <span className="italic">Awaiting backend delegate response...</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-6">
+                <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                  <i className="fa-solid fa-bell text-blue-500"></i>
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Order Acquisition Alerts</h3>
+                </div>
+                <div className="p-6 bg-blue-50/50 rounded-3xl border border-blue-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-black text-blue-900 uppercase">New Order Notifications</h4>
+                    <p className="text-[10px] text-blue-700 font-medium">Notify specific groups immediately when a new PO is logged.</p>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="flex flex-wrap gap-1 max-w-xs">
+                      {groups.map(g => (
+                        <button
+                          key={g.id}
+                          onClick={() => toggleNewOrderGroup(g.id)}
+                          className={`px-3 py-1.5 rounded-xl text-[8px] font-black uppercase transition-all border ${config.settings.newOrderAlertGroupIds?.includes(g.id)
+                            ? 'bg-blue-600 border-blue-600 text-white shadow-md'
+                            : 'bg-white border-blue-200 text-blue-400 hover:border-blue-300'
+                            }`}
+                        >
+                          {g.name}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => updateSetting('settings', 'enableNewOrderAlerts', !config.settings.enableNewOrderAlerts)}
+                      className={`relative w-14 h-8 rounded-full transition-colors duration-300 ${config.settings.enableNewOrderAlerts ? 'bg-blue-600' : 'bg-slate-300'}`}
+                    >
+                      <div className={`absolute top-1.5 w-5 h-5 bg-white rounded-full transition-all duration-300 ${config.settings.enableNewOrderAlerts ? 'left-8 shadow-sm' : 'left-1'}`}></div>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-6">

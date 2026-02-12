@@ -30,7 +30,9 @@ export const INITIAL_CONFIG: AppConfig = {
     companyAddress: 'شارع المصانع أوسيم',
     companyLogo: '',
     orderEditTimeLimitHrs: 1, technicalReviewLimitHrs: 2, pendingOfferLimitHrs: 2, rfpSentLimitHrs: 24, awardedLimitHrs: 8, issuePoLimitHrs: 1, orderedLimitHrs: 72, waitingFactoryLimitHrs: 5, mfgFinishLimitHrs: 1, transitToHubLimitHrs: 2, productHubLimitHrs: 24, invoicedLimitHrs: 1, hubReleasedLimitHrs: 1, deliveryLimitHrs: 3, deliveredLimitHrs: 1080, defaultPaymentSlaDays: 30, minimumMarginPct: 15, loggingDelayThresholdHrs: 1,
-    thresholdNotifications: {}
+    thresholdNotifications: {},
+    enableNewOrderAlerts: false,
+    newOrderAlertGroupIds: ['grp_super']
   }
 };
 
@@ -40,6 +42,12 @@ export const INITIAL_USER_GROUPS: UserGroup[] = [
     name: 'Superusers',
     description: 'Full administrative control with access to all system modules and financial data.',
     roles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm']
+  },
+  {
+    id: 'grp_mgmt',
+    name: 'Management',
+    description: 'Executive oversight and financial reporting access.',
+    roles: ['management', 'finance']
   },
   {
     id: 'grp_ops',

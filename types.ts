@@ -232,5 +232,7 @@ export interface AppConfig {
     minimumMarginPct: number;
     loggingDelayThresholdHrs: number;
     thresholdNotifications: Record<string, string[]>;
+    enableNewOrderAlerts: boolean;
+    newOrderAlertGroupIds: string[];
   };
 }

@@ -1,4 +1,4 @@
-
+/// <reference types="vite/client" />
 import { Dexie, type Table } from 'dexie';
 import {
   CustomerOrder,
@@ -93,6 +93,9 @@ class NexusDatabase extends Dexie {
 
 const db = new NexusDatabase();
 
+const DB_TABLE_NAMES = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users'] as const;
+type DBTableTitle = typeof DB_TABLE_NAMES[number];
+
 class DataService {
   private async deriveKey(passcode: string, salt: Uint8Array): Promise<CryptoKey> {
     const encoder = new TextEncoder();
@@ -104,7 +107,7 @@ class DataService {
       ["deriveKey"]
     );
     return crypto.subtle.deriveKey(
-      { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
+      { name: "PBKDF2", salt: salt.buffer as ArrayBuffer, iterations: 100000, hash: "SHA-256" },
       baseKey,
       { name: "AES-GCM", length: 256 },
       false,
@@ -124,17 +127,19 @@ class DataService {
 
   // Implementation of secure backup export
   async exportSecureBackup(config: AppConfig, passcode: string): Promise<Blob> {
-    const backupData = {
+    const backupData: any = {
       config,
-      customers: await db.customers.toArray(),
-      orders: await db.orders.toArray(),
-      inventory: await db.inventory.toArray(),
-      suppliers: await db.suppliers.toArray(),
-      procurement: await db.procurement.toArray(),
-      userGroups: await db.userGroups.toArray(),
-      users: await db.users.toArray(),
-      timestamp: new Date().toISOString()
+      metadata: {
+        version: "2.1",
+        timestamp: new Date().toISOString(),
+        source: "NexusERP Core"
+      },
+      data: {}
     };
+
+    for (const tableName of DB_TABLE_NAMES) {
+      backupData.data[tableName] = await (db as any)[tableName].toArray();
+    }
 
     const json = JSON.stringify(backupData);
     const compressed = await this.compress(json);
@@ -144,9 +149,9 @@ class DataService {
     const key = await this.deriveKey(passcode, salt);
 
     const encrypted = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
+      { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
       key,
-      compressed
+      compressed.buffer as ArrayBuffer
     );
 
     const result = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
@@ -170,32 +175,43 @@ class DataService {
 
     try {
       const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
+        { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
         key,
-        encrypted
+        encrypted.buffer as ArrayBuffer
       );
 
       const json = await this.decompress(new Uint8Array(decrypted));
       const backup = JSON.parse(json);
 
-      await (db as any).transaction('rw', [db.customers, db.orders, db.inventory, db.suppliers, db.procurement, db.userGroups, db.users], async () => {
-        await Promise.all([
-          db.customers.clear(), db.orders.clear(), db.inventory.clear(),
-          db.suppliers.clear(), db.procurement.clear(), db.userGroups.clear(), db.users.clear()
-        ]);
+      // Support for both old (direct) and new (metadata + data) formats
+      const config = backup.config;
+      const tablesData = backup.data || backup;
 
-        await Promise.all([
-          db.customers.bulkPut(backup.customers),
-          db.orders.bulkPut(backup.orders),
-          db.inventory.bulkPut(backup.inventory),
-          db.suppliers.bulkPut(backup.suppliers),
-          db.procurement.bulkPut(backup.procurement),
-          db.userGroups.bulkPut(backup.userGroups),
-          db.users.bulkPut(backup.users)
-        ]);
+      await (db as any).transaction('rw', DB_TABLE_NAMES.map(name => (db as any)[name]), async () => {
+        // Step 1: Purge existing state
+        await Promise.all(DB_TABLE_NAMES.map(name => (db as any)[name].clear()));
+
+        // Step 2: Inject backup state
+        await Promise.all(DB_TABLE_NAMES.map(name => {
+          const tableData = tablesData[name];
+          if (tableData && Array.isArray(tableData)) {
+            return (db as any)[name].bulkPut(tableData);
+          }
+          return Promise.resolve();
+        }));
       });
 
-      return backup.config;
+      // Integrity Check: Verify that the restoration succeeded
+      const checkTasks = DB_TABLE_NAMES.map(async (name) => {
+        const count = await (db as any)[name].count();
+        const expected = (tablesData[name] || []).length;
+        if (count !== expected) {
+          console.warn(`[Integrity] Table ${name} count mismatch: got ${count}, expected ${expected}`);
+        }
+      });
+      await Promise.all(checkTasks);
+
+      return config;
     } catch (e) {
       throw new Error("Invalid passcode or corrupted backup file.");
     }
@@ -233,6 +249,10 @@ class DataService {
 
       // Real Backend Relay Call
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
       const response = await fetch(`${backendUrl}/api/v1/relay/dispatch`, {
         method: 'POST',
         headers: {
@@ -248,8 +268,10 @@ class DataService {
           From: config.senderEmail,
           Subject: subject,
           Body: body
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       const backendResult = await response.json();
 
@@ -359,7 +381,7 @@ class DataService {
   }
 
   async getOrders() { return db.orders.toArray(); }
-  async addOrder(order: Omit<CustomerOrder, 'id' | 'internalOrderNumber' | 'logs'>, user: string) {
+  async addOrder(order: Omit<CustomerOrder, 'id' | 'internalOrderNumber' | 'logs'>, user: string, config: AppConfig) {
     const id = `ord_${Date.now()}`;
     const count = await db.orders.count();
     const internalOrderNumber = `INT-2024-${String(count + 1).padStart(4, '0')}`;
@@ -370,6 +392,38 @@ class DataService {
       logs: [await this.createLog('Order acquisition recorded', OrderStatus.LOGGED, user)]
     };
     await db.orders.put(newOrder);
+
+    // New Order Notification Logic
+    if (config.settings.enableNewOrderAlerts) {
+      const recipientGroupIds = config.settings.newOrderAlertGroupIds || [];
+      if (recipientGroupIds.length > 0) {
+        const users = await db.users.toArray();
+        const groups = await db.userGroups.toArray();
+        const eligibleGroups = groups.filter(g => recipientGroupIds.includes(g.id));
+        const groupNames = eligibleGroups.map(g => g.name).join(', ');
+
+        const targetEmails = users
+          .filter(u => u.groupIds?.some(gid => recipientGroupIds.includes(gid)))
+          .map(u => u.email)
+          .filter(em => !!em);
+
+        const uniqueEmails = [...new Set(targetEmails)];
+
+        if (uniqueEmails.length > 0) {
+          try {
+            await this.sendEmailRelay(
+              uniqueEmails,
+              `New Order Notification: ${newOrder.internalOrderNumber}`,
+              `A new purchase order has been logged in the system.\n\nOrder Details:\n- Internal ID: ${newOrder.internalOrderNumber}\n- PO Reference: ${newOrder.customerReferenceNumber}\n- Customer: ${newOrder.customerName}\n- Date: ${newOrder.orderDate}\n- Logged By: ${user}\n\nAssigned Groups: ${groupNames}`,
+              config.settings.emailConfig
+            );
+          } catch (e) {
+            console.error('Failed to send new order notification:', e);
+          }
+        }
+      }
+    }
+
     return newOrder;
   }
   async updateOrder(id: string, updates: Partial<CustomerOrder>, minMarginPct: number, user: string) {
@@ -604,92 +658,142 @@ class DataService {
   async performThresholdAudit(config: AppConfig, log: (msg: string) => void) {
     const orders = await db.orders.toArray();
     const groups = await db.userGroups.toArray();
+    const users = await db.users.toArray();
     let notificationsSent = 0;
+    let errorsHandled = 0;
+    let processed = 0;
 
-    log(`[AUDIT] Starting global threshold sweep...`);
-    log(`[AUDIT] Scanning ${orders.length} active records.`);
+    log(`[INIT] Audit initialized. Database contains ${orders.length} orders and ${users.length} users.`);
+    log(`[INIT] Scanning for violations against ${Object.keys(config.settings.thresholdNotifications).length} configured compliance rules.`);
 
     for (const order of orders) {
-      if ([OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(order.status)) continue;
+      processed++;
+      try {
+        if ([OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(order.status)) {
+          continue;
+        }
 
-      // 1. Check Order-Level Status Threshold
-      const statusKeyMap: Partial<Record<OrderStatus, keyof AppConfig['settings']>> = {
-        [OrderStatus.LOGGED]: 'orderEditTimeLimitHrs',
-        [OrderStatus.TECHNICAL_REVIEW]: 'technicalReviewLimitHrs',
-        [OrderStatus.WAITING_FACTORY]: 'waitingFactoryLimitHrs',
-        [OrderStatus.MANUFACTURING]: 'mfgFinishLimitHrs',
-        [OrderStatus.MANUFACTURING_COMPLETED]: 'transitToHubLimitHrs',
-        [OrderStatus.TRANSITION_TO_STOCK]: 'transitToHubLimitHrs',
-        [OrderStatus.IN_PRODUCT_HUB]: 'productHubLimitHrs',
-        [OrderStatus.ISSUE_INVOICE]: 'invoicedLimitHrs',
-        [OrderStatus.INVOICED]: 'hubReleasedLimitHrs',
-        [OrderStatus.HUB_RELEASED]: 'deliveryLimitHrs',
-        [OrderStatus.DELIVERY]: 'deliveredLimitHrs',
-      };
+        log(`[SCAN] Order ${order.internalOrderNumber} | Status: ${order.status} (${processed}/${orders.length})`);
 
-      const configKey = statusKeyMap[order.status];
-      if (configKey) {
-        const limitHrs = config.settings[configKey] as number;
-        const lastLog = [...order.logs].reverse().find(l => l.status === order.status);
-        const startTime = lastLog ? new Date(lastLog.timestamp).getTime() : new Date(order.dataEntryTimestamp).getTime();
-        const elapsedHrs = (Date.now() - startTime) / 3600000;
+        // 1. Check Order-Level Status Threshold
+        const statusKeyMap: Partial<Record<OrderStatus, keyof AppConfig['settings']>> = {
+          [OrderStatus.LOGGED]: 'orderEditTimeLimitHrs',
+          [OrderStatus.TECHNICAL_REVIEW]: 'technicalReviewLimitHrs',
+          [OrderStatus.WAITING_FACTORY]: 'waitingFactoryLimitHrs',
+          [OrderStatus.MANUFACTURING]: 'mfgFinishLimitHrs',
+          [OrderStatus.MANUFACTURING_COMPLETED]: 'transitToHubLimitHrs',
+          [OrderStatus.TRANSITION_TO_STOCK]: 'transitToHubLimitHrs',
+          [OrderStatus.IN_PRODUCT_HUB]: 'productHubLimitHrs',
+          [OrderStatus.ISSUE_INVOICE]: 'invoicedLimitHrs',
+          [OrderStatus.INVOICED]: 'hubReleasedLimitHrs',
+          [OrderStatus.HUB_RELEASED]: 'deliveryLimitHrs',
+          [OrderStatus.DELIVERY]: 'deliveredLimitHrs',
+        };
 
-        if (elapsedHrs > limitHrs) {
-          const recipientGroupIds = config.settings.thresholdNotifications[configKey as string] || [];
-          if (recipientGroupIds.length > 0) {
-            const groupNames = groups.filter(g => recipientGroupIds.includes(g.id)).map(g => g.name).join(', ');
-            log(`[ALERT] Order ${order.internalOrderNumber} exceeded ${configKey} (${elapsedHrs.toFixed(1)}h > ${limitHrs}h). Notifying: ${groupNames}`);
+        const configKey = statusKeyMap[order.status];
+        if (configKey) {
+          const limitHrs = config.settings[configKey] as number;
+          const lastLog = [...order.logs].reverse().find(l => l.status === order.status);
+          const startTime = lastLog ? new Date(lastLog.timestamp).getTime() : new Date(order.dataEntryTimestamp).getTime();
+          const elapsedHrs = (Date.now() - startTime) / 3600000;
 
-            // Dispatch Relay Email for each group (Simulated context)
-            await this.sendEmailRelay(
-              ['ops-alerts@nexus-erp.com'], // In a real app, you'd fetch group emails
-              `Threshold Violation: Order ${order.internalOrderNumber}`,
-              `Order ${order.internalOrderNumber} has been in status ${order.status} for ${elapsedHrs.toFixed(1)} hours, exceeding the ${limitHrs}h threshold set in policy. Assigned Groups: ${groupNames}`,
-              config.settings.emailConfig
-            );
-            notificationsSent++;
+          if (elapsedHrs > limitHrs) {
+            const recipientGroupIds = config.settings.thresholdNotifications[configKey as string] || [];
+            if (recipientGroupIds.length > 0) {
+              const eligibleGroups = groups.filter(g => recipientGroupIds.includes(g.id));
+              const groupNames = eligibleGroups.map(g => g.name).join(', ');
+
+              // Resolve User Emails
+              const targetEmails = users
+                .filter(u => u.groupIds?.some(gid => recipientGroupIds.includes(gid)))
+                .map(u => u.email)
+                .filter(em => !!em);
+
+              const uniqueEmails = [...new Set(targetEmails)];
+
+              if (uniqueEmails.length === 0) {
+                log(`[ALERT] PO ${order.internalOrderNumber} violation, but NO USERS found in groups: ${groupNames}`);
+                continue;
+              }
+
+              log(`[RELAY] Invoking network delegate for recipients: ${uniqueEmails.join(', ')}`);
+
+              await this.sendEmailRelay(
+                uniqueEmails,
+                `Threshold Violation: Order ${order.internalOrderNumber}`,
+                `Order ${order.internalOrderNumber} has been in status ${order.status} for ${elapsedHrs.toFixed(1)} hours, exceeding the ${limitHrs}h threshold set in policy.\n\nAssigned Groups: ${groupNames}`,
+                config.settings.emailConfig,
+                (m, t) => log(`[RELAY-${t.toUpperCase()}] ${m}`)
+              );
+              log(`[RELAY] Transmission Successful.`);
+              notificationsSent++;
+            }
           }
         }
-      }
 
-      // 2. Check Item-Level / Component Sourcing Thresholds
-      for (const item of order.items) {
-        if (!item.components) continue;
-        for (const comp of item.components) {
-          const compKeyMap: Partial<Record<CompStatus, keyof AppConfig['settings']>> = {
-            'PENDING_OFFER': 'pendingOfferLimitHrs',
-            'RFP_SENT': 'rfpSentLimitHrs',
-            'AWARDED': 'awardedLimitHrs',
-            'ORDERED': 'orderedLimitHrs',
-          };
+        // 2. Check Item-Level / Component Sourcing Thresholds
+        if (order.items) {
+          for (const item of order.items) {
+            if (!item.components) continue;
+            for (const comp of item.components) {
+              const compKeyMap: Partial<Record<CompStatus, keyof AppConfig['settings']>> = {
+                'PENDING_OFFER': 'pendingOfferLimitHrs',
+                'RFP_SENT': 'rfpSentLimitHrs',
+                'AWARDED': 'awardedLimitHrs',
+                'ORDERED': 'orderedLimitHrs',
+              };
 
-          const cKey = compKeyMap[comp.status];
-          if (cKey) {
-            const cLimit = config.settings[cKey] as number;
-            const cElapsed = (Date.now() - new Date(comp.statusUpdatedAt).getTime()) / 3600000;
+              const cKey = compKeyMap[comp.status];
+              if (cKey) {
+                const cLimit = config.settings[cKey] as number;
+                const cElapsed = (Date.now() - new Date(comp.statusUpdatedAt).getTime()) / 3600000;
 
-            if (cElapsed > cLimit) {
-              const cGroups = config.settings.thresholdNotifications[cKey as string] || [];
-              if (cGroups.length > 0) {
-                const cGroupNames = groups.filter(g => cGroups.includes(g.id)).map(g => g.name).join(', ');
-                log(`[ALERT] Part ${comp.componentNumber} in Order ${order.internalOrderNumber} exceeded ${cKey} (${cElapsed.toFixed(1)}h > ${cLimit}h). Notifying: ${cGroupNames}`);
+                if (cElapsed > cLimit) {
+                  const cGroupsIds = config.settings.thresholdNotifications[cKey as string] || [];
+                  if (cGroupsIds.length > 0) {
+                    const cEligibleGroups = groups.filter(g => cGroupsIds.includes(g.id));
+                    const cGroupNames = cEligibleGroups.map(g => g.name).join(', ');
 
-                await this.sendEmailRelay(
-                  ['procurement-alerts@nexus-erp.com'],
-                  `Sourcing Delay: Part ${comp.componentNumber}`,
-                  `Component ${comp.componentNumber} (Order ${order.internalOrderNumber}) is stalled in ${comp.status} for ${cElapsed.toFixed(1)}h. Threshold: ${cLimit}h. Notifying: ${cGroupNames}`,
-                  config.settings.emailConfig
-                );
-                notificationsSent++;
+                    // Resolve User Emails
+                    const cTargetEmails = users
+                      .filter(u => u.groupIds?.some(gid => cGroupsIds.includes(gid)))
+                      .map(u => u.email)
+                      .filter(em => !!em);
+
+                    const cUniqueEmails = [...new Set(cTargetEmails)];
+
+                    if (cUniqueEmails.length === 0) {
+                      log(`[ALERT] Part ${comp.componentNumber} violation, but NO USERS found in groups: ${cGroupNames}`);
+                      continue;
+                    }
+
+                    log(`[ALERT] Part ${comp.componentNumber} stalling in ${comp.status} (${cElapsed.toFixed(1)}h > ${cLimit}h).`);
+                    log(`[RELAY] Invoking network delegate for recipients: ${cUniqueEmails.join(', ')}`);
+
+                    await this.sendEmailRelay(
+                      cUniqueEmails,
+                      `Sourcing Delay: Part ${comp.componentNumber}`,
+                      `Component ${comp.componentNumber} (Order ${order.internalOrderNumber}) is stalled in ${comp.status} for ${cElapsed.toFixed(1)}h. Threshold: ${cLimit}h.\n\nAssigned Groups: ${cGroupNames}`,
+                      config.settings.emailConfig,
+                      (m, t) => log(`[RELAY-${t.toUpperCase()}] ${m}`)
+                    );
+                    log(`[RELAY] Transmission Successful.`);
+                    notificationsSent++;
+                  }
+                }
               }
             }
           }
         }
+      } catch (err: any) {
+        errorsHandled++;
+        log(`[ERROR] Critical failure scanning PO ${order.internalOrderNumber}: ${err.message}`);
       }
     }
 
-    log(`[AUDIT] Sweep finished. ${notificationsSent} violations identified and relayed.`);
-    return { notificationsSent };
+    log(`[FINISH] Audit Sweep Completed.`);
+    log(`[SUMMARY] Analyzed: ${processed} | Alerts Triggered: ${notificationsSent} | Failures: ${errorsHandled}`);
+    return { notificationsSent, errorsHandled };
   }
 
   // Dummy initialization to satisfy earlier requirements
@@ -706,11 +810,8 @@ class DataService {
   }
 
   async loadMockData() {
-    return await (db as any).transaction('rw', [db.customers, db.orders, db.inventory, db.suppliers, db.procurement, db.userGroups, db.users], async () => {
-      await Promise.all([
-        db.customers.clear(), db.orders.clear(), db.inventory.clear(),
-        db.suppliers.clear(), db.procurement.clear(), db.userGroups.clear(), db.users.clear()
-      ]);
+    return await (db as any).transaction('rw', DB_TABLE_NAMES.map(name => (db as any)[name]), async () => {
+      await Promise.all(DB_TABLE_NAMES.map(name => (db as any)[name].clear()));
       await Promise.all([
         db.customers.bulkPut(MOCK_CUSTOMERS),
         db.suppliers.bulkPut(MOCK_SUPPLIERS),
@@ -724,11 +825,8 @@ class DataService {
   }
 
   async clearAllData() {
-    return await (db as any).transaction('rw', [db.customers, db.orders, db.inventory, db.suppliers, db.procurement, db.userGroups, db.users], async () => {
-      await Promise.all([
-        db.customers.clear(), db.orders.clear(), db.inventory.clear(),
-        db.suppliers.clear(), db.procurement.clear(), db.userGroups.clear(), db.users.clear()
-      ]);
+    return await (db as any).transaction('rw', DB_TABLE_NAMES.map(name => (db as any)[name]), async () => {
+      await Promise.all(DB_TABLE_NAMES.map(name => (db as any)[name].clear()));
       await Promise.all([
         db.users.bulkPut(DEFAULT_USERS),
         db.userGroups.bulkPut(INITIAL_USER_GROUPS)
