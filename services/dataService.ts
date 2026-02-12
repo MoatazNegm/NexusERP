@@ -630,10 +630,39 @@ class DataService {
     if (params.startDate) collection = collection.filter(o => o.orderDate >= params.startDate);
     if (params.endDate) collection = collection.filter(o => o.orderDate <= params.endDate);
     if (params.statuses?.length) collection = collection.filter(o => params.statuses.includes(o.status));
+
     let orders = await collection.toArray();
+
     if (params.query) {
       const q = params.query.toLowerCase();
-      orders = orders.filter(o => o.internalOrderNumber.toLowerCase().includes(q) || o.customerName.toLowerCase().includes(q));
+      orders = orders.filter(o => {
+        // Core Fields
+        const matchCore =
+          o.internalOrderNumber.toLowerCase().includes(q) ||
+          o.customerName.toLowerCase().includes(q) ||
+          o.customerReferenceNumber.toLowerCase().includes(q);
+
+        if (matchCore) return true;
+
+        // Item Level (Descriptions & SKU/Part Numbers)
+        const matchItems = o.items.some(item =>
+          item.description.toLowerCase().includes(q) ||
+          item.orderNumber.toLowerCase().includes(q)
+        );
+
+        if (matchItems) return true;
+
+        // Component Level (Specific identifiers)
+        const matchComponents = o.items.some(item =>
+          item.components?.some(comp =>
+            comp.componentNumber.toLowerCase().includes(q) ||
+            comp.description.toLowerCase().includes(q) ||
+            comp.poNumber?.toLowerCase().includes(q)
+          )
+        );
+
+        return matchComponents;
+      });
     }
     return orders;
   }
