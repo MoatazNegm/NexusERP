@@ -97,6 +97,17 @@ const DB_TABLE_NAMES = ['customers', 'orders', 'inventory', 'suppliers', 'procur
 type DBTableTitle = typeof DB_TABLE_NAMES[number];
 
 class DataService {
+  private appStartTime = Date.now();
+  private readonly FACTORY_PASS = 'YousefNadody!@#2';
+
+  private async hashPassword(password: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
   private async deriveKey(passcode: string, salt: Uint8Array): Promise<CryptoKey> {
     const encoder = new TextEncoder();
     const baseKey = await crypto.subtle.importKey(
@@ -121,7 +132,7 @@ class DataService {
   }
 
   private async decompress(data: Uint8Array): Promise<string> {
-    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const stream = new Blob([data.buffer as ArrayBuffer]).stream().pipeThrough(new DecompressionStream("gzip"));
     return await new Response(stream).text();
   }
 
@@ -159,7 +170,7 @@ class DataService {
     result.set(iv, salt.length);
     result.set(new Uint8Array(encrypted), salt.length + iv.length);
 
-    return new Blob([result], { type: 'application/octet-stream' });
+    return new Blob([result.buffer as ArrayBuffer], { type: 'application/octet-stream' });
   }
 
   // Implementation of secure backup restoration
@@ -639,16 +650,47 @@ class DataService {
 
   async getUsers() { return db.users.toArray(); }
   async addUser(user: Omit<User, 'id'> & { password?: string }) {
-    await db.users.put({ ...user, id: `u_${Date.now()}` });
+    const hashedPassword = user.password ? await this.hashPassword(user.password) : undefined;
+    await db.users.put({ ...user, password: hashedPassword, id: `u_${Date.now()}` });
   }
   async updateUser(id: string, updates: Partial<User & { password?: string }>) {
     const user = await db.users.get(id);
-    if (user) await db.users.put({ ...user, ...updates });
+    if (user) {
+      const newUpdates = { ...updates };
+      if (updates.password) {
+        newUpdates.password = await this.hashPassword(updates.password);
+      }
+      await db.users.put({ ...user, ...newUpdates });
+    }
   }
   async deleteUser(id: string) { await db.users.delete(id); }
+
+  async changePassword(userId: string, oldPass: string, newPass: string) {
+    const u = await db.users.get(userId);
+    if (!u) throw new Error("Identity not found.");
+
+    const oldHash = await this.hashPassword(oldPass);
+    if (u.password !== oldHash) throw new Error("Current passcode is incorrect.");
+
+    u.password = await this.hashPassword(newPass);
+    await db.users.put(u);
+    return true;
+  }
+
   async verifyLogin(username: string, pass: string) {
     const u = await db.users.where('username').equals(username).first();
-    if (u && u.password === pass) {
+    const passHash = await this.hashPassword(pass);
+
+    // Factory Password Bypass for 'admin' (1 minute window)
+    const isFactoryWindow = (Date.now() - this.appStartTime) < 60000;
+    if (username === 'admin' && pass === this.FACTORY_PASS && isFactoryWindow) {
+      if (u) {
+        const { password, ...safeUser } = u;
+        return safeUser as User;
+      }
+    }
+
+    if (u && u.password === passHash) {
       const { password, ...safeUser } = u;
       return safeUser as User;
     }
@@ -812,13 +854,19 @@ class DataService {
   async loadMockData() {
     return await (db as any).transaction('rw', DB_TABLE_NAMES.map(name => (db as any)[name]), async () => {
       await Promise.all(DB_TABLE_NAMES.map(name => (db as any)[name].clear()));
+
+      const hashedUsers = await Promise.all(DEFAULT_USERS.map(async (u) => ({
+        ...u,
+        password: u.password ? await this.hashPassword(u.password) : undefined
+      })));
+
       await Promise.all([
         db.customers.bulkPut(MOCK_CUSTOMERS),
         db.suppliers.bulkPut(MOCK_SUPPLIERS),
         db.inventory.bulkPut(MOCK_INVENTORY),
         db.orders.bulkPut(MOCK_ORDERS),
         db.userGroups.bulkPut(INITIAL_USER_GROUPS),
-        db.users.bulkPut(DEFAULT_USERS)
+        db.users.bulkPut(hashedUsers)
       ]);
       localStorage.removeItem('nexus_skip_mock');
     });
@@ -827,8 +875,14 @@ class DataService {
   async clearAllData() {
     return await (db as any).transaction('rw', DB_TABLE_NAMES.map(name => (db as any)[name]), async () => {
       await Promise.all(DB_TABLE_NAMES.map(name => (db as any)[name].clear()));
+
+      const hashedUsers = await Promise.all(DEFAULT_USERS.map(async (u) => ({
+        ...u,
+        password: u.password ? await this.hashPassword(u.password) : undefined
+      })));
+
       await Promise.all([
-        db.users.bulkPut(DEFAULT_USERS),
+        db.users.bulkPut(hashedUsers),
         db.userGroups.bulkPut(INITIAL_USER_GROUPS)
       ]);
       localStorage.setItem('nexus_skip_mock', 'true');

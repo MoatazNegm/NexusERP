@@ -64,6 +64,11 @@ const App: React.FC = () => {
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<CustomerOrder | null>(null);
   const [dashboardStatusFilter, setDashboardStatusFilter] = useState<OrderStatus | null>(null);
+  const [isChangePassOpen, setIsChangePassOpen] = useState(false);
+  const [oldPass, setOldPass] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [passError, setPassError] = useState('');
+  const [passSuccess, setPassSuccess] = useState(false);
 
   const effectivelyCollapsed = isSidebarCollapsed && !isSidebarHovered;
 
@@ -235,7 +240,7 @@ const App: React.FC = () => {
                         document.getElementById('ledger-view')?.scrollIntoView({ behavior: 'smooth' });
                       }}
                       className={`p-4 rounded-2xl border-2 transition-all text-left flex flex-col justify-between group relative overflow-hidden ${stats.hasOverdue ? 'border-rose-500 bg-rose-50/50' :
-                          isActive ? 'border-blue-600 bg-blue-50/30' : 'border-slate-100 bg-white hover:border-slate-300'
+                        isActive ? 'border-blue-600 bg-blue-50/30' : 'border-slate-100 bg-white hover:border-slate-300'
                         }`}
                     >
                       {stats.hasOverdue && (
@@ -244,7 +249,7 @@ const App: React.FC = () => {
                         </div>
                       )}
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs mb-3 ${stats.hasOverdue ? 'bg-rose-600 text-white' :
-                          isActive ? 'bg-blue-600 text-white' : 'bg-slate-50 text-slate-400 group-hover:bg-slate-100'
+                        isActive ? 'bg-blue-600 text-white' : 'bg-slate-50 text-slate-400 group-hover:bg-slate-100'
                         }`}>
                         <i className={`fa-solid ${cfg.icon}`}></i>
                       </div>
@@ -326,6 +331,9 @@ const App: React.FC = () => {
                 <p className="text-[10px] font-black text-white truncate uppercase tracking-tighter leading-none">{currentUser.name}</p>
                 <p className="text-[9px] text-slate-500 mt-1 font-bold uppercase tracking-tight leading-none">{effectiveRoles[0]}</p>
               </div>
+              <button onClick={() => setIsChangePassOpen(true)} className="text-slate-500 hover:text-blue-400 transition-colors">
+                <i className="fa-solid fa-key text-xs"></i>
+              </button>
               <button onClick={() => setCurrentUser(null)} className="text-slate-500 hover:text-rose-500 transition-colors">
                 <i className="fa-solid fa-power-off text-xs"></i>
               </button>
@@ -338,6 +346,66 @@ const App: React.FC = () => {
           {renderContent()}
         </div>
       </main>
+      {isChangePassOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-8 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-indigo-600"></div>
+            <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight mb-2">Update Credentials</h3>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6 border-b border-slate-100 pb-4">Authorized Identity Preservation</p>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Active Passcode</label>
+                <input
+                  type="password"
+                  className="w-full p-4 border-2 border-slate-50 rounded-2xl bg-slate-50 font-bold text-sm outline-none focus:border-blue-500 focus:bg-white transition-all"
+                  value={oldPass}
+                  onChange={e => setOldPass(e.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Experimental Passcode (New)</label>
+                <input
+                  type="password"
+                  className="w-full p-4 border-2 border-slate-50 rounded-2xl bg-slate-50 font-bold text-sm outline-none focus:border-blue-500 focus:bg-white transition-all"
+                  value={newPass}
+                  onChange={e => setNewPass(e.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
+
+              {passError && <div className="text-[9px] font-black text-rose-500 uppercase flex items-center gap-2"><i className="fa-solid fa-triangle-exclamation"></i> {passError}</div>}
+              {passSuccess && <div className="text-[9px] font-black text-emerald-500 uppercase flex items-center gap-2"><i className="fa-solid fa-circle-check"></i> Credential successfully rotated.</div>}
+
+              <div className="flex gap-2 pt-4">
+                <button
+                  onClick={() => { setIsChangePassOpen(false); setOldPass(''); setNewPass(''); setPassError(''); setPassSuccess(false); }}
+                  className="flex-1 py-3 bg-slate-100 text-slate-500 font-black text-[10px] uppercase rounded-xl hover:bg-slate-200 transition-colors"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!currentUser) return;
+                    try {
+                      await dataService.changePassword(currentUser.id, oldPass, newPass);
+                      setPassSuccess(true);
+                      setPassError('');
+                      setTimeout(() => { setIsChangePassOpen(false); setOldPass(''); setNewPass(''); setPassError(''); setPassSuccess(false); }, 2000);
+                    } catch (err: any) {
+                      setPassError(err.message);
+                    }
+                  }}
+                  className="flex-1 py-3 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all"
+                >
+                  Commit Rotation
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <AIAssistant orders={orders} config={config} />
     </div>
   );

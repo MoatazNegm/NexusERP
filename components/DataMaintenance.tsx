@@ -732,7 +732,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Access Password</label>
-                      <input type="text" className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all" value={editingUser.password} onChange={e => setEditingUser({ ...editingUser, password: e.target.value })} placeholder="••••••••" />
+                      <input type="password" className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all" value={editingUser.password} onChange={e => setEditingUser({ ...editingUser, password: e.target.value })} placeholder="••••••••" />
                     </div>
                   </div>
 
