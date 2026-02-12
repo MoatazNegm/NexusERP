@@ -792,16 +792,38 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
           )}
 
           {activeTab === 'data' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 space-y-4">
-                <h4 className="text-sm font-black text-slate-700 uppercase">System Archive</h4>
-                <p className="text-xs text-slate-500 leading-relaxed">Generates an AES-256 encrypted snapshot of all records and settings.</p>
-                <button onClick={() => setShowPasscodeModal({ type: 'export' })} className="w-full py-4 bg-white border border-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm">Generate Backup</button>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 space-y-4">
+                  <h4 className="text-sm font-black text-slate-700 uppercase">System Archive</h4>
+                  <p className="text-xs text-slate-500 leading-relaxed">Generates an AES-256 encrypted snapshot of all records and settings.</p>
+                  <button onClick={() => setShowPasscodeModal({ type: 'export' })} className="w-full py-4 bg-white border border-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-slate-50 transition-colors">Generate Backup</button>
+                </div>
+                <div className="p-8 bg-blue-50/30 rounded-[2.5rem] border border-blue-100 space-y-4">
+                  <h4 className="text-sm font-black text-slate-700 uppercase">Recover from Archive</h4>
+                  <p className="text-xs text-slate-500 leading-relaxed">Restore all data and settings from a valid .nxback archive file.</p>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    accept=".nxback"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) setShowPasscodeModal({ type: 'import', file });
+                    }}
+                  />
+                  <button onClick={() => fileInputRef.current?.click()} className="w-full py-4 bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:bg-blue-700 transition-all">Import Backup</button>
+                </div>
               </div>
+
               <div className="p-8 bg-rose-50/30 rounded-[2.5rem] border border-rose-100 space-y-4">
-                <h4 className="text-sm font-black text-slate-700 uppercase">Production Wipe</h4>
-                <p className="text-xs text-slate-500 leading-relaxed">Permanently deletes all orders, CRM, and inventory. Preserves configs.</p>
-                <button onClick={() => setConfirmReset(true)} className="w-full py-4 bg-rose-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg">Execute Purge</button>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-black text-rose-900 uppercase">Production Wipe</h4>
+                    <p className="text-xs text-rose-700 font-medium">Permanently deletes all orders, CRM, and inventory. User accounts and configurations are preserved.</p>
+                  </div>
+                  <button onClick={() => setConfirmReset(true)} className="px-10 py-4 bg-rose-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-xl hover:bg-rose-700 transition-all shrink-0">Execute Full Purge</button>
+                </div>
               </div>
             </div>
           )}
