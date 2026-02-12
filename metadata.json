@@ -1,0 +1,7 @@
+{
+  "name": "Nexus ERP -",
+  "description": "A modular enterprise resource planning tool focused on order management and procurement mapping. Tracks customer orders from manual entry through internal procurement line-item fulfillment.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
