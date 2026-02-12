@@ -199,22 +199,33 @@ class DataService {
       const config = backup.config;
       const tablesData = backup.data || backup;
 
+      console.log(`[Restore] Purging physical tables...`);
       await db.transaction('rw', db.tables, async () => {
-        // Step 1: Purge existing state for all registered tables
-        await Promise.all(db.tables.map(table => table.clear()));
+        // Step 1: Purge EVERY physical table registered in the Dexie schema
+        // This is more robust than using a hardcoded list
+        await Promise.all(db.tables.map(async (table) => {
+          console.log(`[Restore] Clearing table: ${table.name}`);
+          return table.clear();
+        }));
 
         // Step 2: Inject backup state for tables present in the archive
         await Promise.all(Object.entries(tablesData).map(([name, data]) => {
           const table = db.table(name);
           if (table && Array.isArray(data)) {
+            console.log(`[Restore] Injecting ${data.length} records into ${name}`);
             return table.bulkPut(data as any[]);
           }
           return Promise.resolve();
         }));
+
+        // Step 3: Suppress mock data or auto-initialization after this clean restore
+        localStorage.setItem('nexus_skip_mock', 'true');
+        // We set a flag specifically to tell init() that we want this EXACT state preserved
+        localStorage.setItem('nexus_restored', 'true');
       });
 
-      // Integrity Check: Verify that the restoration succeeded for tables in the archive
-      const checkTasks = Object.keys(tablesData).map(async (name) => {
+      // Integrity Check: Verify that the restoration succeeded
+      for (const name of Object.keys(tablesData)) {
         const table = db.table(name);
         if (table) {
           const count = await table.count();
@@ -223,8 +234,7 @@ class DataService {
             console.warn(`[Integrity] Table ${name} count mismatch: got ${count}, expected ${expected}`);
           }
         }
-      });
-      await Promise.all(checkTasks);
+      }
 
       return config;
     } catch (e) {
@@ -879,7 +889,11 @@ class DataService {
   async init() {
     const userCount = await db.users.count();
     const orderCount = await db.orders.count();
-    if (userCount === 0) {
+    const isRestored = localStorage.getItem('nexus_restored') === 'true';
+
+    // Auto-inject default users ONLY if the system is completely empty AND NOT just restored.
+    // If it was just restored and is empty, we respect the backup's empty state.
+    if (userCount === 0 && !isRestored) {
       const hashedUsers = await Promise.all(DEFAULT_USERS.map(async (u) => ({
         ...u,
         password: u.password ? await this.hashPassword(u.password) : undefined
@@ -887,7 +901,8 @@ class DataService {
       await db.users.bulkPut(hashedUsers);
       await db.userGroups.bulkPut(INITIAL_USER_GROUPS);
     }
-    if (orderCount === 0 && !localStorage.getItem('nexus_skip_mock')) {
+
+    if (orderCount === 0 && !localStorage.getItem('nexus_skip_mock') && !isRestored) {
       await this.loadMockData();
     }
   }
@@ -914,8 +929,9 @@ class DataService {
   }
 
   async clearAllData() {
-    return await (db as any).transaction('rw', DB_TABLE_NAMES.map(name => (db as any)[name]), async () => {
-      await Promise.all(DB_TABLE_NAMES.map(name => (db as any)[name].clear()));
+    return await db.transaction('rw', db.tables, async () => {
+      // Physical purge of all tables
+      await Promise.all(db.tables.map(table => table.clear()));
 
       const hashedUsers = await Promise.all(DEFAULT_USERS.map(async (u) => ({
         ...u,
@@ -927,6 +943,7 @@ class DataService {
         db.userGroups.bulkPut(INITIAL_USER_GROUPS)
       ]);
       localStorage.setItem('nexus_skip_mock', 'true');
+      localStorage.removeItem('nexus_restored'); // Reset restoration flag on wipe
     });
   }
 }
