@@ -164,6 +164,23 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     updateSetting('settings', 'thresholdNotifications', updated);
   };
 
+  const saveGroup = async () => {
+    if (!editingGroup?.name) return;
+    if (editingGroup.id) await dataService.updateUserGroup(editingGroup.id, editingGroup as any);
+    else await dataService.addUserGroup(editingGroup as any);
+    setEditingGroup(null);
+    loadMetadata();
+  };
+
+  const toggleGroupRole = (role: UserRole) => {
+    if (!editingGroup) return;
+    const currentRoles = editingGroup.roles || [];
+    const newRoles = currentRoles.includes(role)
+      ? currentRoles.filter(r => r !== role)
+      : [...currentRoles, role];
+    setEditingGroup({ ...editingGroup, roles: newRoles });
+  };
+
   const ThresholdInput = ({ label, configKey }: { label: string, configKey: keyof AppConfig['settings'] }) => {
     const isNotifyEnabled = config.settings.thresholdNotifications?.[configKey] || false;
     return (
@@ -190,7 +207,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
       {message && (
         <div className={`p-4 rounded-2xl text-sm font-bold flex items-center gap-3 animate-in fade-in slide-in-from-top-2 ${message.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
-            message.type === 'error' ? 'bg-rose-50 text-rose-700 border border-rose-100' : 'bg-blue-50 text-blue-700 border border-blue-100'
+          message.type === 'error' ? 'bg-rose-50 text-rose-700 border border-rose-100' : 'bg-blue-50 text-blue-700 border border-blue-100'
           }`}>
           <i className={`fa-solid ${message.type === 'success' ? 'fa-circle-check' : message.type === 'error' ? 'fa-triangle-exclamation' : 'fa-circle-notch fa-spin'}`}></i>
           {message.text}
@@ -408,6 +425,93 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
             </div>
           )}
 
+          {activeTab === 'groups' && (
+            <div className="space-y-6 animate-in fade-in">
+              <div className="flex justify-between items-center">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Organizational Units</h3>
+                {!editingGroup && <button onClick={() => setEditingGroup({ name: '', description: '', roles: [] })} className="px-4 py-2 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl">Create Group</button>}
+              </div>
+
+              {editingGroup && (
+                <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-200 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Group Name</label>
+                      <input className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all" value={editingGroup.name} onChange={e => setEditingGroup({ ...editingGroup, name: e.target.value })} placeholder="e.g. Finance Team" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Description</label>
+                      <input className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all" value={editingGroup.description} onChange={e => setEditingGroup({ ...editingGroup, description: e.target.value })} placeholder="Brief mission statement..." />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Functional Authorities (Roles)</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {AVAILABLE_ROLES.map(role => {
+                        const isActive = editingGroup.roles?.includes(role);
+                        return (
+                          <button
+                            key={role}
+                            onClick={() => toggleGroupRole(role)}
+                            className={`px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all border-2 ${isActive ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200'
+                              }`}
+                          >
+                            {role.replace('_', ' ')}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-4 border-t border-slate-200/50">
+                    <button onClick={() => setEditingGroup(null)} className="px-8 py-3 bg-slate-200 text-slate-600 font-black text-[10px] uppercase rounded-xl hover:bg-slate-300 transition-colors">Abort</button>
+                    <button onClick={saveGroup} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl shadow-xl hover:shadow-2xl transition-all">Save Changes</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-slate-50/50 border-b border-slate-100">
+                      <th className="px-8 py-5 text-[9px] font-black text-slate-400 uppercase tracking-widest">Group Profile</th>
+                      <th className="px-8 py-5 text-[9px] font-black text-slate-400 uppercase tracking-widest">Permissions</th>
+                      <th className="px-8 py-5 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {groups.map(g => (
+                      <tr key={g.id} className="hover:bg-slate-50/50 transition-colors group">
+                        <td className="px-8 py-6">
+                          <div className="font-black text-slate-800 text-sm tracking-tight">{g.name}</div>
+                          <div className="text-[10px] text-slate-400 font-medium truncate max-w-xs">{g.description}</div>
+                        </td>
+                        <td className="px-8 py-6">
+                          <div className="flex flex-wrap gap-1">
+                            {g.roles.map(r => (
+                              <span key={r} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[8px] font-black uppercase rounded border border-blue-100">{r.replace('_', ' ')}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-8 py-6 text-right">
+                          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => setEditingGroup(g)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50">
+                              <i className="fa-solid fa-pen-to-square text-xs"></i>
+                            </button>
+                            <button onClick={() => dataService.deleteUserGroup(g.id).then(loadMetadata)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50">
+                              <i className="fa-solid fa-trash-can text-xs"></i>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'users' && (
             <div className="space-y-6">
               <div className="flex justify-between items-center">
@@ -415,10 +519,62 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 {!editingUser && <button onClick={() => setEditingUser({ name: '', username: '', roles: [], groupIds: [] })} className="px-4 py-2 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl">Add User</button>}
               </div>
               {editingUser && (
-                <div className="p-6 bg-slate-50 rounded-3xl border border-slate-200 space-y-4">
-                  <input className="w-full p-4 border rounded-2xl bg-white font-bold" value={editingUser.name} onChange={e => setEditingUser({ ...editingUser, name: e.target.value })} placeholder="Full Name" />
-                  <input className="w-full p-4 border rounded-2xl bg-white font-bold" value={editingUser.username} onChange={e => setEditingUser({ ...editingUser, username: e.target.value })} placeholder="Username" />
-                  <button onClick={saveUser} className="px-8 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl">Save</button>
+                <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-200 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Full Identity Name</label>
+                      <input className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all" value={editingUser.name} onChange={e => setEditingUser({ ...editingUser, name: e.target.value })} placeholder="e.g. John Doe" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">System Username</label>
+                      <input className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all" value={editingUser.username} onChange={e => setEditingUser({ ...editingUser, username: e.target.value })} placeholder="jdoe" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Email Address</label>
+                      <input type="email" className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all" value={editingUser.email} onChange={e => setEditingUser({ ...editingUser, email: e.target.value })} placeholder="jdoe@nexus.com" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Access Password</label>
+                      <input type="text" className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all" value={editingUser.password} onChange={e => setEditingUser({ ...editingUser, password: e.target.value })} placeholder="••••••••" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Direct Roles & Group Membership</label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                        <span className="text-[8px] font-black text-slate-400 uppercase">Assigned Roles</span>
+                        <div className="flex flex-wrap gap-1">
+                          {AVAILABLE_ROLES.map(role => {
+                            const active = editingUser.roles?.includes(role);
+                            return (
+                              <button key={role} onClick={() => setEditingUser({ ...editingUser, roles: active ? editingUser.roles?.filter(r => r !== role) : [...(editingUser.roles || []), role] })} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase border-2 transition-all ${active ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-100 text-slate-400'}`}>
+                                {role}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <span className="text-[8px] font-black text-slate-400 uppercase">Assigned Groups</span>
+                        <div className="flex flex-wrap gap-1">
+                          {groups.map(grp => {
+                            const active = editingUser.groupIds?.includes(grp.id);
+                            return (
+                              <button key={grp.id} onClick={() => setEditingUser({ ...editingUser, groupIds: active ? editingUser.groupIds?.filter(id => id !== grp.id) : [...(editingUser.groupIds || []), grp.id] })} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase border-2 transition-all ${active ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-100 text-slate-400'}`}>
+                                {grp.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-4 border-t border-slate-200/50">
+                    <button onClick={() => setEditingUser(null)} className="px-8 py-3 bg-slate-200 text-slate-600 font-black text-[10px] uppercase rounded-xl">Abort</button>
+                    <button onClick={saveUser} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl shadow-xl">Commit Identity</button>
+                  </div>
                 </div>
               )}
               <table className="w-full text-left">
