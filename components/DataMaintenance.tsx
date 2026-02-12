@@ -313,9 +313,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex border-b border-slate-100 bg-slate-50/50 overflow-x-auto custom-scrollbar">
-          {(['modules', 'thresholds', 'groups', 'users', 'email', 'data'] as const).map(tab => (
+          {(['modules', 'thresholds', 'groups', 'users', 'intelligence', 'email', 'data'] as const).map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`px-10 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative whitespace-nowrap ${activeTab === tab ? 'text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}>
-              {tab === 'email' ? 'Relay Node' : tab}
+              {tab === 'email' ? 'Relay Node' : tab === 'intelligence' ? 'AI Engine' : tab}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600"></div>}
             </button>
           ))}
@@ -788,6 +788,91 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {activeTab === 'intelligence' && (
+            <div className="space-y-10 animate-in fade-in">
+              <div className="p-8 bg-slate-900 rounded-[3rem] text-white flex items-center justify-between gap-6 shadow-2xl shadow-blue-900/20">
+                <div className="flex items-center gap-6">
+                  <div className="w-16 h-16 rounded-3xl bg-blue-600 flex items-center justify-center text-3xl shadow-xl shadow-blue-500/20">
+                    <i className="fa-solid fa-brain-circuit"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-black uppercase tracking-tight">Active Intelligence Provider</h4>
+                    <p className="text-xs text-slate-400 font-medium">Select the core engine for scanning POs and Strategic Analysis.</p>
+                  </div>
+                </div>
+                <div className="flex bg-slate-800 p-1.5 rounded-2xl border border-slate-700">
+                  {(['gemini', 'openai'] as const).map(provider => (
+                    <button
+                      key={provider}
+                      onClick={() => updateSetting('settings', 'aiProvider', provider)}
+                      className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${config.settings.aiProvider === provider
+                        ? 'bg-blue-600 text-white shadow-lg'
+                        : 'text-slate-500 hover:text-slate-300'
+                        }`}
+                    >
+                      {provider === 'openai' ? 'OpenAI / Compatible' : 'Google Gemini'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {config.settings.aiProvider === 'openai' && (
+                <div className="p-10 bg-slate-50 rounded-[3rem] border border-slate-200 space-y-8 animate-in slide-in-from-bottom-4">
+                  <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+                    <i className="fa-solid fa-key text-blue-600"></i>
+                    <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">External Provider Credentials</h5>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Base API URL</label>
+                      <input
+                        className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all shadow-sm"
+                        value={config.settings.openaiConfig.baseUrl}
+                        onChange={e => updateSetting('settings', 'openaiConfig', { ...config.settings.openaiConfig, baseUrl: e.target.value })}
+                        placeholder="https://api.openai.com/v1"
+                      />
+                      <p className="text-[8px] text-slate-400 font-medium ml-1">Supports local models (Ollama/LM Studio) or DeepSeek proxies.</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Deployment Model Name</label>
+                      <input
+                        className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all shadow-sm"
+                        value={config.settings.openaiConfig.modelName}
+                        onChange={e => updateSetting('settings', 'openaiConfig', { ...config.settings.openaiConfig, modelName: e.target.value })}
+                        placeholder="gpt-4o or deepseek-chat"
+                      />
+                    </div>
+                    <div className="md:col-span-2 space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Authorization Bearer Token (API Key)</label>
+                      <div className="relative">
+                        <input
+                          type="password"
+                          className="w-full p-4 pl-12 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all shadow-sm"
+                          value={config.settings.openaiConfig.apiKey}
+                          onChange={e => updateSetting('settings', 'openaiConfig', { ...config.settings.openaiConfig, apiKey: e.target.value })}
+                          placeholder="sk-..."
+                        />
+                        <i className="fa-solid fa-lock absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {config.settings.aiProvider === 'gemini' && (
+                <div className="p-10 bg-blue-50/50 rounded-[3rem] border border-blue-100 flex flex-col items-center text-center space-y-4 animate-in slide-in-from-bottom-4">
+                  <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-2xl">
+                    <i className="fa-brands fa-google"></i>
+                  </div>
+                  <h5 className="text-sm font-black text-blue-900 uppercase">Native Gemini Integration</h5>
+                  <p className="text-xs text-blue-700 font-medium max-w-lg">
+                    Gemini is currently configured via system environment variables. No additional keys are required in the UI for this provider.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
