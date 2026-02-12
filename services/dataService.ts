@@ -232,7 +232,8 @@ class DataService {
       }
 
       // Real Backend Relay Call
-      const response = await fetch('http://localhost:3000/api/v1/relay/dispatch', {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+      const response = await fetch(`${backendUrl}/api/v1/relay/dispatch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
