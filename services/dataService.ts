@@ -843,7 +843,11 @@ class DataService {
     const userCount = await db.users.count();
     const orderCount = await db.orders.count();
     if (userCount === 0) {
-      await db.users.bulkPut(DEFAULT_USERS);
+      const hashedUsers = await Promise.all(DEFAULT_USERS.map(async (u) => ({
+        ...u,
+        password: u.password ? await this.hashPassword(u.password) : undefined
+      })));
+      await db.users.bulkPut(hashedUsers);
       await db.userGroups.bulkPut(INITIAL_USER_GROUPS);
     }
     if (orderCount === 0 && !localStorage.getItem('nexus_skip_mock')) {
