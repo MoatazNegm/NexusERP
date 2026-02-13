@@ -258,7 +258,7 @@ const runThresholdAudit = async () => {
 
 // --- APP SETUP ---
 const app = express();
-const PORT = 3005;
+const PORT = process.env.PORT || 3005;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
@@ -318,6 +318,12 @@ COLLECTIONS.forEach(col => {
     app.post(`/api/v1/${col}`, addToCollection(col));
     app.put(`/api/v1/${col}/:id`, updateInCollection(col));
     app.delete(`/api/v1/${col}/:id`, deleteFromCollection(col));
+});
+
+// SPA Catch-all: Redirect all non-API requests to index.html
+app.get('*', (req, res) => {
+    if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 app.post('/api/v1/wipe', (req, res) => {
