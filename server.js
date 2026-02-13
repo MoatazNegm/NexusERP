@@ -321,7 +321,7 @@ COLLECTIONS.forEach(col => {
 });
 
 // SPA Catch-all: Redirect all non-API requests to index.html
-app.get('*', (req, res) => {
+app.get('{*path}', (req, res) => {
     if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
