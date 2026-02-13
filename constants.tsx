@@ -29,10 +29,10 @@ export const INITIAL_CONFIG: AppConfig = {
     companyName: 'شراكه خدمات التعبئه',
     companyAddress: 'شارع المصانع أوسيم',
     companyLogo: '',
-    orderEditTimeLimitHrs: 1, technicalReviewLimitHrs: 2, pendingOfferLimitHrs: 2, rfpSentLimitHrs: 24, awardedLimitHrs: 8, issuePoLimitHrs: 1, orderedLimitHrs: 72, waitingFactoryLimitHrs: 5, mfgFinishLimitHrs: 1, transitToHubLimitHrs: 2, productHubLimitHrs: 24, invoicedLimitHrs: 1, hubReleasedLimitHrs: 1, deliveryLimitHrs: 3, deliveredLimitHrs: 1080, defaultPaymentSlaDays: 30, minimumMarginPct: 15, loggingDelayThresholdHrs: 1,
+    orderEditTimeLimitHrs: 1, technicalReviewLimitHrs: 2, pendingOfferLimitHrs: 2, rfpSentLimitHrs: 24, awardedLimitHrs: 8, issuePoLimitHrs: 1, orderedLimitHrs: 72, waitingFactoryLimitHrs: 5, mfgFinishLimitHrs: 1, transitToHubLimitHrs: 2, productHubLimitHrs: 24, invoicedLimitHrs: 1, hubReleasedLimitHrs: 1, deliveryLimitHrs: 3, deliveredLimitHrs: 1080, defaultPaymentSlaDays: 30, minimumMarginPct: 15, loggingDelayThresholdDays: 1,
     thresholdNotifications: {},
     enableNewOrderAlerts: true,
-    newOrderAlertGroupIds: ['grp_super']
+    newOrderAlertGroupIds: []
   }
 };
 

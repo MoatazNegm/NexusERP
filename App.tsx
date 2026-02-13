@@ -51,22 +51,7 @@ const isOrderOverThreshold = (order: CustomerOrder, settings: any) => {
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeView, setActiveView] = useState<View>('dashboard');
-  const [config, setConfig] = useState<AppConfig>(() => {
-    const saved = localStorage.getItem('nexus_config');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Migration: Ensure new critical alerts are enabled even if legacy config had them off
-      return {
-        ...parsed,
-        settings: {
-          ...INITIAL_CONFIG.settings, // Ensure new keys exist
-          ...parsed.settings,
-          enableNewOrderAlerts: true // Force enable for this update to fix missing notifications
-        }
-      };
-    }
-    return INITIAL_CONFIG;
-  });
+  const [config, setConfig] = useState<AppConfig>(INITIAL_CONFIG);
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => window.innerWidth < 1024);
   const [isSidebarHovered, setIsSidebarHovered] = useState(false);
@@ -81,12 +66,9 @@ const App: React.FC = () => {
   const [newPass, setNewPass] = useState('');
   const [passError, setPassError] = useState('');
   const [passSuccess, setPassSuccess] = useState(false);
+  const [connectionError, setConnectionError] = useState(false);
 
   const effectivelyCollapsed = isSidebarCollapsed && !isSidebarHovered;
-
-  useEffect(() => {
-    localStorage.setItem('nexus_config', JSON.stringify(config));
-  }, [config]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -98,25 +80,47 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const initDb = async () => {
-      await dataService.init();
-      const [allOrders, allGroups] = await Promise.all([
-        dataService.getOrders(),
-        dataService.getUserGroups()
-      ]);
-      setOrders(allOrders);
-      setUserGroups(allGroups);
-      setIsDbReady(true);
+      try {
+        await dataService.init();
+        const [allOrders, allGroups, backendConfig] = await Promise.all([
+          dataService.getOrders(),
+          dataService.getUserGroups(),
+          dataService.getAppConfig()
+        ]);
+        setOrders(allOrders);
+        setUserGroups(allGroups);
+
+        // AUTHORITATIVE SYNC: Backend config overwrites local state on startup
+        if (backendConfig && (Object.keys(backendConfig.settings || {}).length > 0 || Object.keys(backendConfig.modules || {}).length > 0)) {
+          setConfig(prev => ({
+            ...prev,
+            settings: { ...prev.settings, ...backendConfig.settings },
+            modules: { ...prev.modules, ...backendConfig.modules }
+          }));
+        }
+
+        // BOOTSTRAP: If backend has no settings yet, seed them now so the audit service can find them
+        const needsSettingsBootstrap = !(backendConfig?.settings as any)?.id;
+        const needsModulesBootstrap = !(backendConfig?.modules as any)?.id;
+        if (needsSettingsBootstrap || needsModulesBootstrap) {
+          console.debug("[App] Bootstrapping missing settings/modules to backend");
+          try {
+            if (needsSettingsBootstrap) await dataService.updateSettings(INITIAL_CONFIG.settings);
+            if (needsModulesBootstrap) await dataService.updateModules(INITIAL_CONFIG.modules);
+          } catch (e) {
+            console.debug("[App] Settings bootstrap deferred (no admin logged in yet)");
+          }
+        }
+
+        setIsDbReady(true);
+        setConnectionError(false);
+      } catch (e) {
+        console.error("Initialization failed: Backend unreachable", e);
+        setConnectionError(true);
+      }
     };
     initDb();
   }, [refreshKey, currentUser]);
-
-  useEffect(() => {
-    if (currentUser) {
-      // Global startup audit: Check compliance rules (silent mode)
-      // This ensures dashboard colors/badges are correct immediately after restart/login
-      dataService.performThresholdAudit(config, (msg) => console.debug(msg), true);
-    }
-  }, [currentUser]);
 
   const effectiveRoles = useMemo(() => {
     if (!currentUser) return [] as UserRole[];
@@ -132,6 +136,30 @@ const App: React.FC = () => {
   }, [currentUser, userGroups]);
 
   const hasRole = (role: UserRole) => effectiveRoles.includes('admin') || effectiveRoles.includes(role);
+
+  // Persistent sync to backend (Admin only)
+  useEffect(() => {
+    if (isDbReady && currentUser && hasRole('admin')) {
+      const sync = async () => {
+        try {
+          await Promise.all([
+            dataService.updateSettings(config.settings),
+            dataService.updateModules(config.modules)
+          ]);
+        } catch (e) {
+          console.debug("Backend config sync pending/failed");
+          setConnectionError(true);
+        }
+      };
+      sync();
+    }
+  }, [config, isDbReady, currentUser, effectiveRoles]);
+
+  useEffect(() => {
+    if (currentUser) {
+      dataService.performThresholdAudit(config, (msg) => console.debug(msg), true);
+    }
+  }, [currentUser]);
 
   const navItems = useMemo(() => {
     const items = [
@@ -311,6 +339,42 @@ const App: React.FC = () => {
       default: return null;
     }
   };
+
+  if (connectionError) {
+    return (
+      <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl z-[1000] flex items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full space-y-8 animate-in zoom-in-95 duration-300">
+          <div className="w-24 h-24 bg-rose-600/20 rounded-full flex items-center justify-center mx-auto text-rose-500 text-4xl border border-rose-500/30">
+            <i className="fa-solid fa-cloud-slash animate-pulse"></i>
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-black text-white uppercase tracking-tight">Backend Service Offline</h2>
+            <p className="text-slate-400 text-sm font-medium leading-relaxed">
+              The authoritative connection to the Nexus ERP backend has been lost. To prevent data inconsistency, access to local cached data is prohibited.
+            </p>
+          </div>
+          <div className="pt-4">
+            <button
+              onClick={() => { setConnectionError(false); setRefreshKey(prev => prev + 1); }}
+              className="px-10 py-5 bg-white text-slate-950 font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-2xl hover:bg-slate-100 transition-all active:scale-95"
+            >
+              Attempt Reconnection
+            </button>
+          </div>
+          <p className="text-[9px] text-slate-600 font-bold uppercase tracking-widest">ERROR_CODE: BACKEND_UNREACHABLE</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isDbReady) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
+        <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mb-6 animate-bounce">N</div>
+        <p className="text-slate-400 text-xs font-black uppercase tracking-[0.3em]">Initializing Nexus Environment...</p>
+      </div>
+    );
+  }
 
   if (!currentUser) return <Login onLogin={setCurrentUser} />;
 

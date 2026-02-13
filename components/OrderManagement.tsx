@@ -84,6 +84,31 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     return existingOrders.filter(o => o.status === OrderStatus.LOGGED);
   }, [existingOrders]);
 
+  // Auto-retrieval of existing POs
+  const lastAutoLoadedRef = useRef<string | null>(null);
+
+  // Clear tracking ref when starting a fresh acquisition
+  useEffect(() => {
+    if (!editingOrderId) lastAutoLoadedRef.current = null;
+  }, [editingOrderId]);
+
+  useEffect(() => {
+    if (!customerReferenceNumber || editingOrderId || isScanning) return;
+
+    const normalizedRef = customerReferenceNumber.trim().toLowerCase();
+    const match = existingOrders.find(o =>
+      o.customerReferenceNumber?.trim().toLowerCase() === normalizedRef ||
+      o.internalOrderNumber?.trim().toLowerCase() === normalizedRef
+    );
+
+    if (match && match.id !== lastAutoLoadedRef.current) {
+      console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber}`);
+      lastAutoLoadedRef.current = match.id;
+      loadOrder(match);
+      setMessage({ type: 'info', text: 'Existing PO identified. Record retrieved and loaded.' });
+    }
+  }, [customerReferenceNumber, existingOrders.length, editingOrderId, isScanning]);
+
   const hasLoggingViolations = useMemo(() => {
     return loggedOrders.some(o => o.loggingComplianceViolation);
   }, [loggedOrders]);
@@ -277,6 +302,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, items: items as any }, config.settings.minimumMarginPct, currentUser.username);
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
+        // Prevent duplicate PO IDs on the frontend side
+        const isDuplicate = existingOrders.some(o =>
+          o.customerReferenceNumber?.trim().toLowerCase() === customerReferenceNumber.trim().toLowerCase()
+        );
+        if (isDuplicate) {
+          setMessage({ type: 'error', text: `Duplicate PO ID: ${customerReferenceNumber} already exists in the system.` });
+          return;
+        }
+
         await dataService.addOrder({
           customerName, customerReferenceNumber, orderDate,
           paymentSlaDays,

@@ -8,7 +8,14 @@ const LogTimeline: React.FC<{ logs: LogEntry[] }> = ({ logs }) => (
     {logs.slice().reverse().map((log, i) => (
       <div key={i} className="relative">
         <div className="absolute -left-[21px] top-1.5 w-2 h-2 rounded-full bg-blue-500 border-2 border-white shadow-sm"></div>
-        <div className="text-[11px] font-bold text-slate-800">{log.message}</div>
+        <div className="text-[11px] font-bold text-slate-800 flex items-center gap-2">
+          {log.message}
+          {log.user && (
+            <span className="text-[9px] font-medium text-slate-400 border border-slate-200 px-1.5 py-0.5 rounded bg-slate-50 uppercase tracking-tighter flex items-center gap-1">
+              <i className="fa-solid fa-user text-[7px] opacity-60"></i> {log.user}
+            </span>
+          )}
+        </div>
         <div className="text-[9px] text-slate-400 mt-0.5 flex items-center gap-1.5">
           <i className="fa-solid fa-clock opacity-50"></i>
           {new Date(log.timestamp).toLocaleString()}
@@ -28,10 +35,10 @@ interface CRMModuleProps {
 
 export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser }) => {
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [custForm, setCustForm] = useState<Omit<Customer, 'id' | 'logs'>>({ 
-    name: '', 
-    email: '', 
-    phone: '', 
+  const [custForm, setCustForm] = useState<Omit<Customer, 'id' | 'logs'>>({
+    name: '',
+    email: '',
+    phone: '',
     address: '',
     location: '',
     contactName: '',
@@ -40,7 +47,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
     contactEmail: '',
     paymentTermDays: 45
   });
-  
+
   const [activeTab, setActiveTab] = useState<CRMTab>('form');
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [isFormVisible, setIsFormVisible] = useState(false);
@@ -55,7 +62,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
     const data = await dataService.getCustomers();
     setCustomers(data);
     setLoading(false);
-    
+
     if (editingCustomer) {
       const updated = data.find(x => x.id === editingCustomer.id);
       if (updated) setEditingCustomer(updated);
@@ -63,10 +70,10 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
   };
 
   const resetForm = () => {
-    setCustForm({ 
-      name: '', 
-      email: '', 
-      phone: '', 
+    setCustForm({
+      name: '',
+      email: '',
+      phone: '',
       address: '',
       location: '',
       contactName: '',
@@ -110,7 +117,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
       // Fix: Pass currentUser.username as the second argument
       await dataService.addCustomer(custForm, currentUser.username);
     }
-    
+
     await loadCustomers();
     resetForm();
   };
@@ -144,7 +151,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
           <h2 className="text-xl font-bold text-slate-800">Customer Management</h2>
           <p className="text-sm text-slate-500">View and manage your organization's customer database and contacts.</p>
         </div>
-        <button 
+        <button
           onClick={() => {
             if (isFormVisible) resetForm();
             else setIsFormVisible(true);
@@ -160,7 +167,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm animate-in fade-in slide-in-from-top-4 duration-300 overflow-hidden">
           {/* Tabs Navigation */}
           <div className="flex border-b border-slate-100">
-            <button 
+            <button
               onClick={() => setActiveTab('form')}
               className={`flex-1 px-6 py-4 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all relative ${activeTab === 'form' ? 'text-blue-600 bg-blue-50/30' : 'text-slate-400 hover:text-slate-600'}`}
             >
@@ -169,7 +176,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
               {activeTab === 'form' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600"></div>}
             </button>
             {editingCustomer && (
-              <button 
+              <button
                 onClick={() => setActiveTab('history')}
                 className={`flex-1 px-6 py-4 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all relative ${activeTab === 'history' ? 'text-indigo-600 bg-indigo-50/30' : 'text-slate-400 hover:text-slate-600'}`}
               >
@@ -192,30 +199,30 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Company Name *</label>
-                        <input required className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.name} onChange={e => setCustForm({...custForm, name: e.target.value})} />
+                        <input required className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.name} onChange={e => setCustForm({ ...custForm, name: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Primary Email</label>
-                        <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.email} onChange={e => setCustForm({...custForm, email: e.target.value})} />
+                        <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.email} onChange={e => setCustForm({ ...custForm, email: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Switchboard / Phone</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.phone} onChange={e => setCustForm({...custForm, phone: e.target.value})} />
+                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.phone} onChange={e => setCustForm({ ...custForm, phone: e.target.value })} />
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Headquarters Address</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.address} onChange={e => setCustForm({...custForm, address: e.target.value})} />
+                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.address} onChange={e => setCustForm({ ...custForm, address: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Payment Term (Days)</label>
-                        <input type="number" min="0" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.paymentTermDays} onChange={e => setCustForm({...custForm, paymentTermDays: parseInt(e.target.value) || 0})} />
+                        <input type="number" min="0" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.paymentTermDays} onChange={e => setCustForm({ ...custForm, paymentTermDays: parseInt(e.target.value) || 0 })} />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Google Maps Location</label>
                         <div className="flex gap-2">
-                          <input className="flex-1 px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none text-xs" placeholder="https://google.com/maps/..." value={custForm.location} onChange={e => setCustForm({...custForm, location: e.target.value})} />
-                          <button 
-                            type="button" 
+                          <input className="flex-1 px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none text-xs" placeholder="https://google.com/maps/..." value={custForm.location} onChange={e => setCustForm({ ...custForm, location: e.target.value })} />
+                          <button
+                            type="button"
                             onClick={detectLocation}
                             disabled={isDetectingLocation}
                             className="px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
@@ -236,19 +243,19 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Contact Name</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactName} onChange={e => setCustForm({...custForm, contactName: e.target.value})} />
+                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactName} onChange={e => setCustForm({ ...custForm, contactName: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Contact Email</label>
-                        <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactEmail} onChange={e => setCustForm({...custForm, contactEmail: e.target.value})} />
+                        <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactEmail} onChange={e => setCustForm({ ...custForm, contactEmail: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Contact Mobile</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactPhone} onChange={e => setCustForm({...custForm, contactPhone: e.target.value})} />
+                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactPhone} onChange={e => setCustForm({ ...custForm, contactPhone: e.target.value })} />
                       </div>
                       <div className="md:col-span-3 space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Personal Contact Address (If different)</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress} onChange={e => setCustForm({...custForm, contactAddress: e.target.value})} />
+                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress} onChange={e => setCustForm({ ...custForm, contactAddress: e.target.value })} />
                       </div>
                     </div>
                   </div>
@@ -266,11 +273,11 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
             ) : (
               <div className="p-8 animate-in fade-in slide-in-from-bottom-2 duration-300 min-h-[400px]">
                 <div className="flex justify-between items-center mb-6">
-                   <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                     <i className="fa-solid fa-list-check"></i>
-                     Full Audit History for {editingCustomer?.name}
-                   </h4>
-                   <div className="text-[10px] text-slate-400 font-medium italic">Chronological list of all system modifications</div>
+                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <i className="fa-solid fa-list-check"></i>
+                    Full Audit History for {editingCustomer?.name}
+                  </h4>
+                  <div className="text-[10px] text-slate-400 font-medium italic">Chronological list of all system modifications</div>
                 </div>
                 {editingCustomer && <LogTimeline logs={editingCustomer.logs} />}
               </div>
@@ -309,12 +316,12 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                     </div>
                     <div className="text-xs text-slate-500 mt-1">{cust.address}</div>
                     <div className="flex gap-4 mt-2">
-                       <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium">
-                         <i className="fa-solid fa-envelope opacity-60"></i> {cust.email || 'N/A'}
-                       </div>
-                       <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium">
-                         <i className="fa-solid fa-phone opacity-60"></i> {cust.phone || 'N/A'}
-                       </div>
+                      <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium">
+                        <i className="fa-solid fa-envelope opacity-60"></i> {cust.email || 'N/A'}
+                      </div>
+                      <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium">
+                        <i className="fa-solid fa-phone opacity-60"></i> {cust.phone || 'N/A'}
+                      </div>
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -335,14 +342,14 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end gap-1">
-                      <button 
+                      <button
                         onClick={() => handleEdit(cust, 'history')}
                         className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
                         title="View Audit History"
                       >
                         <i className="fa-solid fa-clock-rotate-left"></i>
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleEdit(cust, 'form')}
                         className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
                         title="Edit Profile"

@@ -10,25 +10,29 @@ interface LoginProps {
 export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    setError(false);
+    setError(null);
 
     try {
       const user = await dataService.verifyLogin(username, password);
       if (user) {
         onLogin(user);
       } else {
-        setError(true);
+        setError("Invalid identity or passcode. Access denied.");
         setIsLoading(false);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login fault:", err);
-      setError(true);
+      if (err.message.includes('Failed to fetch') || err.message.includes('unreachable')) {
+        setError("Network Error: Cannot establish connection to backend.");
+      } else {
+        setError("Invalid identity or passcode. Access denied.");
+      }
       setIsLoading(false);
     }
   };
@@ -82,9 +86,9 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
 
             {error && (
-              <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3 text-rose-500 text-xs font-bold animate-in fade-in slide-in-from-top-1">
+              <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3 text-rose-500 text-[10px] font-bold animate-in fade-in slide-in-from-top-1">
                 <i className="fa-solid fa-circle-exclamation"></i>
-                Invalid identity or passcode. Access denied.
+                <span className="uppercase tracking-tight leading-relaxed">{error}</span>
               </div>
             )}
 

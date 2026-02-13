@@ -1,5 +1,31 @@
 {
-  "customers": [],
+  "customers": [
+    {
+      "name": "Unilever Mashreq for Import and Export",
+      "email": "Ahmed.H-Faissel@unilever.com",
+      "phone": "",
+      "address": "Giza",
+      "paymentTermDays": 30,
+      "contactName": "Ahmed Hemedah",
+      "contactPhone": "",
+      "contactEmail": "Ahmed.H-Faissel@unilever.com",
+      "contactAddress": "",
+      "logs": [
+        {
+          "timestamp": "2026-02-13T07:36:33.287Z",
+          "message": "Entity registered",
+          "user": "admin"
+        },
+        {
+          "timestamp": "2026-02-13T09:01:43.313Z",
+          "message": "Profile updated",
+          "user": "admin"
+        }
+      ],
+      "id": "customers_1770968193298",
+      "location": ""
+    }
+  ],
   "orders": [
     {
       "customerName": "Unilever Mashreq for Import and Export",
@@ -7,7 +33,7 @@
       "orderDate": "2025-08-31",
       "paymentSlaDays": 30,
       "dataEntryTimestamp": "2026-02-12T20:06:14.565Z",
-      "status": "LOGGED",
+      "status": "REJECTED",
       "items": [
         {
           "id": "temp_1",
@@ -27,9 +53,321 @@
           "message": "Order acquisition recorded",
           "status": "LOGGED",
           "user": "admin"
+        },
+        {
+          "timestamp": "2026-02-13T07:34:49.762Z",
+          "message": "Rejected: nothing to say",
+          "status": "REJECTED",
+          "user": "admin"
         }
       ],
       "id": "orders_1770926774571",
+      "loggingComplianceViolation": true,
+      "rejectionReason": "nothing to say"
+    },
+    {
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "PO16948286",
+      "orderDate": "2025-08-31",
+      "paymentSlaDays": 30,
+      "dataEntryTimestamp": "2026-02-13T07:36:43.161Z",
+      "status": "REJECTED",
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "64886429 VASELINE@20% POFF STKR N",
+          "quantity": 16000,
+          "unit": "pcs",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0002",
+      "logs": [
+        {
+          "timestamp": "2026-02-13T07:36:43.179Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "admin"
+        },
+        {
+          "timestamp": "2026-02-13T07:36:51.740Z",
+          "message": "[SYSTEM] Compliance Alert Sent: Logging Delay reported to erpalerts@quickstor.net",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T07:36:54.607Z",
+          "message": "[SYSTEM] New Order Notification Sent to erpalerts@quickstor.net",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T07:38:51.468Z",
+          "message": "Rejected: Order is rejected due to didnt'send email",
+          "status": "REJECTED",
+          "user": "admin"
+        }
+      ],
+      "id": "orders_1770968203190",
+      "loggingComplianceViolation": true,
+      "rejectionReason": "Order is rejected due to didnt'send email"
+    },
+    {
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "PO16948286",
+      "orderDate": "2025-08-31",
+      "paymentSlaDays": 30,
+      "dataEntryTimestamp": "2026-02-13T07:51:55.659Z",
+      "status": "REJECTED",
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "64886429 VASELINE@20% POFF STKR N",
+          "quantity": 16000,
+          "unit": "pcs",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0003",
+      "logs": [
+        {
+          "timestamp": "2026-02-13T07:51:55.684Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "admin"
+        },
+        {
+          "timestamp": "2026-02-13T07:52:52.643Z",
+          "message": "[SYSTEM] Compliance Alert Sent: Logging Delay reported to erpalerts@quickstor.net",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T07:52:56.490Z",
+          "message": "[SYSTEM] New Order Notification Sent to erpalerts@quickstor.net",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:03:49.176Z",
+          "message": "Rejected: not to managers yet",
+          "status": "REJECTED",
+          "user": "admin"
+        }
+      ],
+      "id": "orders_1770969115697",
+      "loggingComplianceViolation": true,
+      "rejectionReason": "not to managers yet"
+    },
+    {
+      "id": "orders_1770969891707",
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "PO16948286",
+      "orderDate": "2025-08-31",
+      "paymentSlaDays": 30,
+      "dataEntryTimestamp": "2026-02-13T08:04:51.675Z",
+      "status": "REJECTED",
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "64886429 VASELINE@20% POFF STKR N",
+          "quantity": 16000,
+          "unit": "pcs",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0004",
+      "logs": [
+        {
+          "timestamp": "2026-02-13T08:04:51.692Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "admin"
+        },
+        {
+          "timestamp": "2026-02-13T08:05:23.591Z",
+          "message": "[SYSTEM] Compliance Alert Sent to erpalerts@quickstor.net",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:05:27.115Z",
+          "message": "[SYSTEM] New Order Notification Sent to erpalerts@quickstor.net",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:17:42.559Z",
+          "message": "Rejected: not to managers",
+          "status": "REJECTED",
+          "user": "admin"
+        }
+      ],
+      "loggingComplianceViolation": true,
+      "rejectionReason": "not to managers"
+    },
+    {
+      "id": "orders_1770970866585",
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "PO16948286",
+      "orderDate": "2025-08-31",
+      "paymentSlaDays": 30,
+      "dataEntryTimestamp": "2026-02-13T08:21:06.554Z",
+      "status": "REJECTED",
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "64886429VASELINE@20% POFF STKR N",
+          "quantity": 16000,
+          "unit": "pcs",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0005",
+      "logs": [
+        {
+          "timestamp": "2026-02-13T08:21:06.576Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "admin"
+        },
+        {
+          "timestamp": "2026-02-13T08:21:21.742Z",
+          "message": "[SYSTEM] Compliance Alert Sent to admin (erpalerts@quickstor.net) via group: Admin Fallback",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:21:25.359Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: Admin Fallback",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:35:58.910Z",
+          "message": "Rejected: not to managers again\n",
+          "status": "REJECTED",
+          "user": "admin"
+        }
+      ],
+      "loggingComplianceViolation": true,
+      "rejectionReason": "not to managers again\n"
+    },
+    {
+      "id": "orders_1770971801371",
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "PO16948286",
+      "orderDate": "2025-08-31",
+      "paymentSlaDays": 30,
+      "dataEntryTimestamp": "2026-02-13T08:36:41.364Z",
+      "status": "REJECTED",
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "64886429 VASELINE@20% POFF STKR N",
+          "quantity": 16000,
+          "unit": "pcs",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0006",
+      "logs": [
+        {
+          "timestamp": "2026-02-13T08:36:41.370Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "admin"
+        },
+        {
+          "timestamp": "2026-02-13T08:37:22.491Z",
+          "message": "[SYSTEM] Compliance Alert Sent to admin (erpalerts@quickstor.net) via group: Admin Fallback",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:37:26.068Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: Admin Fallback",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:44:09.229Z",
+          "message": "Rejected: not to manager for the 6 times",
+          "status": "REJECTED",
+          "user": "admin"
+        }
+      ],
+      "loggingComplianceViolation": true,
+      "rejectionReason": "not to manager for the 6 times"
+    },
+    {
+      "id": "orders_1770972288567",
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "PO16948286",
+      "orderDate": "2025-08-31",
+      "paymentSlaDays": 30,
+      "dataEntryTimestamp": "2026-02-13T08:44:48.561Z",
+      "status": "LOGGED",
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "64886429 VASELINE@20% POFF STKR N",
+          "quantity": 16000,
+          "unit": "pcs",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0007",
+      "logs": [
+        {
+          "timestamp": "2026-02-13T08:44:48.566Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "admin"
+        },
+        {
+          "timestamp": "2026-02-13T08:45:22.803Z",
+          "message": "[SYSTEM] Compliance Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:45:22.803Z",
+          "message": "[SYSTEM] Compliance Alert Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:45:26.546Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T08:45:26.546Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        }
+      ],
       "loggingComplianceViolation": true
     }
   ],
@@ -99,7 +437,9 @@
         "finance",
         "crm"
       ],
-      "groupIds": [],
+      "groupIds": [
+        "userGroups_1770925213983"
+      ],
       "email": "erpalerts@quickstor.net",
       "password": "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918",
       "id": "users_1770924488025"
@@ -107,14 +447,230 @@
     {
       "name": "Mohamad Negm",
       "username": "mnegm",
-      "roles": [
-        "management"
+      "roles": [],
+      "groupIds": [
+        "userGroups_1770926600857"
       ],
-      "groupIds": [],
       "email": "Mohamed.allam@psp-co.org",
       "password": "5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5",
       "id": "users_1770924542429"
     }
   ],
-  "notifications": []
+  "notifications": [
+    {
+      "id": "nt_1770967850474_orders_1770926774571",
+      "journalKey": "delay_orders_1770926774571",
+      "orderId": "orders_1770926774571",
+      "type": "logging_delay",
+      "sentAt": "2026-02-13T07:30:50.474Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_new_1770967853132_orders_1770926774571",
+      "journalKey": "new_order_orders_1770926774571",
+      "orderId": "orders_1770926774571",
+      "type": "new_order",
+      "sentAt": "2026-02-13T07:30:53.132Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1770968211740_orders_1770968203190",
+      "journalKey": "delay_orders_1770968203190",
+      "orderId": "orders_1770968203190",
+      "type": "logging_delay",
+      "sentAt": "2026-02-13T07:36:51.740Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_new_1770968214607_orders_1770968203190",
+      "journalKey": "new_order_orders_1770968203190",
+      "orderId": "orders_1770968203190",
+      "type": "new_order",
+      "sentAt": "2026-02-13T07:36:54.607Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1770969172643_orders_1770969115697",
+      "journalKey": "delay_orders_1770969115697",
+      "orderId": "orders_1770969115697",
+      "type": "logging_delay",
+      "sentAt": "2026-02-13T07:52:52.643Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_new_1770969176490_orders_1770969115697",
+      "journalKey": "new_order_orders_1770969115697",
+      "orderId": "orders_1770969115697",
+      "type": "new_order",
+      "sentAt": "2026-02-13T07:52:56.490Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_d_1770969923591",
+      "journalKey": "delay_orders_1770969891707",
+      "orderId": "orders_1770969891707",
+      "type": "logging_delay",
+      "sentAt": "2026-02-13T08:05:23.591Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_n_1770969927115",
+      "journalKey": "new_order_orders_1770969891707",
+      "orderId": "orders_1770969891707",
+      "type": "new_order",
+      "sentAt": "2026-02-13T08:05:27.115Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_d_1770970881741",
+      "journalKey": "delay_orders_1770970866585",
+      "orderId": "orders_1770970866585",
+      "type": "logging_delay",
+      "sentAt": "2026-02-13T08:21:21.741Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_n_1770970885359",
+      "journalKey": "new_order_orders_1770970866585",
+      "orderId": "orders_1770970866585",
+      "type": "new_order",
+      "sentAt": "2026-02-13T08:21:25.359Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_d_1770971842491",
+      "journalKey": "delay_orders_1770971801371",
+      "orderId": "orders_1770971801371",
+      "type": "logging_delay",
+      "sentAt": "2026-02-13T08:37:22.491Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_n_1770971846068",
+      "journalKey": "new_order_orders_1770971801371",
+      "orderId": "orders_1770971801371",
+      "type": "new_order",
+      "sentAt": "2026-02-13T08:37:26.068Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_d_1770972322803",
+      "journalKey": "delay_orders_1770972288567",
+      "orderId": "orders_1770972288567",
+      "type": "logging_delay",
+      "sentAt": "2026-02-13T08:45:22.803Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1770972326546",
+      "journalKey": "new_order_orders_1770972288567",
+      "orderId": "orders_1770972288567",
+      "type": "new_order",
+      "sentAt": "2026-02-13T08:45:26.546Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "id": "settings_1770972093950",
+      "enableNewOrderAlerts": true,
+      "newOrderAlertGroupIds": [
+        "userGroups_1770925213983",
+        "userGroups_1770926600857"
+      ],
+      "thresholdNotifications": {
+        "loggingDelayThresholdDays": [
+          "userGroups_1770925213983",
+          "userGroups_1770926600857"
+        ],
+        "minimumMarginPct": [
+          "userGroups_1770925213983"
+        ],
+        "defaultPaymentSlaDays": [
+          "userGroups_1770925213983"
+        ]
+      },
+      "loggingDelayThresholdDays": 1,
+      "minimumMarginPct": 15,
+      "defaultPaymentSlaDays": 30,
+      "companyName": "شراكه خدمات التعبئه",
+      "companyAddress": "شارع المصانع أوسيم",
+      "emailConfig": {
+        "smtpServer": "mail.quickstor.net",
+        "smtpPort": 465,
+        "username": "erpalerts@quickstor.net",
+        "password": "YousefNadody123!",
+        "senderName": "Nexus System Alert",
+        "senderEmail": "erpalerts@quickstor.net",
+        "useSsl": true
+      },
+      "aiProvider": "gemini",
+      "openaiConfig": {
+        "apiKey": "",
+        "baseUrl": "https://api.openai.com/v1",
+        "modelName": "gpt-4o"
+      },
+      "companyLogo": "",
+      "orderEditTimeLimitHrs": 1,
+      "technicalReviewLimitHrs": 2,
+      "pendingOfferLimitHrs": 2,
+      "rfpSentLimitHrs": 24,
+      "awardedLimitHrs": 8,
+      "issuePoLimitHrs": 1,
+      "orderedLimitHrs": 72,
+      "waitingFactoryLimitHrs": 5,
+      "mfgFinishLimitHrs": 1,
+      "transitToHubLimitHrs": 2,
+      "productHubLimitHrs": 24,
+      "invoicedLimitHrs": 1,
+      "hubReleasedLimitHrs": 1,
+      "deliveryLimitHrs": 3,
+      "deliveredLimitHrs": 1080
+    }
+  ],
+  "modules": [
+    {
+      "id": "modules_1770973217790",
+      "orderManagement": true,
+      "procurement": true,
+      "crm": true,
+      "inventory": true,
+      "technicalReview": true,
+      "suppliers": true,
+      "shipping": false,
+      "reception": true,
+      "finance": true,
+      "factory": true
+    }
+  ]
 }

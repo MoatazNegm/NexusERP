@@ -6,7 +6,6 @@ import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-
 import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -15,173 +14,10 @@ const DB_PATH = path.join(__dirname, 'db.json');
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
 
-// ... (DB Init logic remains)
-
-const app = express();
-const PORT = 3005;
-
-app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
-
-// ... (Serve details) ...
-
-// Backup Endpoint
-app.get('/api/v1/backup', (req, res) => {
-    const db = readDb();
-    // Return the entire DB object (includes users, settings, data, images)
-    res.json(db);
-});
-
-// Restore Endpoint
-app.post('/api/v1/restore', (req, res) => {
-    const backupData = req.body;
-
-    // Basic validation
-    if (!backupData || typeof backupData !== 'object') {
-        return res.status(400).json({ error: "Invalid backup data format" });
-    }
-
-    // Safety: Backup current DB before restore ? (Optional, but good practice. Skipped for simplicity as per request "wipes all")
-
-    if (writeDb(backupData)) {
-        res.json({ message: "System restored successfully. Reloading..." });
-    } else {
-        res.status(500).json({ error: "Restore failed to write to disk." });
-    }
-});
-
-// Serve Static Frontend
-app.use(express.static(path.join(__dirname, 'dist')));
-
-// Helper: Hash Password
-const hashPassword = (password) => {
-    return crypto.createHash('sha256').update(password).digest('hex');
-};
-// Helper: Send Email
-const sendEmail = async (to, subject, body, config) => {
-    if (!config || !config.smtpServer) {
-        console.error("[Email] Configuration missing.");
-        return false;
-    }
-
-    const transporter = nodemailer.createTransport({
-        host: config.smtpServer,
-        port: config.smtpPort,
-        secure: config.useSsl,
-        auth: {
-            user: config.username,
-            pass: config.password,
-        },
-        tls: {
-            rejectUnauthorized: false // Common fix for corporate/restricted mail servers
-        }
-    });
-
-    try {
-        await transporter.sendMail({
-            from: `"${config.senderName}" <${config.senderEmail}>`,
-            to: to.join(','),
-            subject: subject,
-            text: body,
-            html: body.replace(/\n/g, '<br>')
-        });
-        console.log(`[Email] Alert sent to: ${to.join(', ')}`);
-        return { success: true };
-    } catch (err) {
-        console.error("[Email] Send failed:", err.message);
-        return { success: false, error: err.message };
-    }
-};
-
-// Threshold Audit Service
-const runThresholdAudit = async () => {
-    console.debug(`[Audit] Routine check started at ${new Date().toISOString()}`);
-    const db = readDb();
-    const orders = db.orders || [];
-    const settings = db.settings || {};
-    const users = db.users || [];
-
-    let dbChanged = false;
-
-    // thresholdNotifications mapping for logging delay
-    const delayThresholdDays = settings.loggingDelayThresholdDays || 1;
-    const loggingDelayGroupIds = (settings.thresholdNotifications || {})['logging_delay'] || ['grp_super'];
-    const newOrderGroupIds = settings.newOrderAlertGroupIds || ['grp_super'];
-    const notifications = db.notifications || [];
-
-    for (const order of orders) {
-        if (order.status === 'FULFILLED' || order.status === 'REJECTED') continue;
-
-        // 1. Logging Delay Threshold
-        const poDate = new Date(order.orderDate).getTime();
-        const entryDate = new Date(order.dataEntryTimestamp).getTime();
-        const delayDays = (entryDate - poDate) / (1000 * 60 * 60 * 24);
-
-        if (delayDays > delayThresholdDays) {
-            order.loggingComplianceViolation = true;
-            dbChanged = true;
-
-            const journalKey = `delay_${order.id}`;
-            const alreadySent = notifications.some(n => n.journalKey === journalKey);
-
-            if (!alreadySent) {
-                const recipientEmails = users
-                    .filter(u => u.groupIds?.some(gid => loggingDelayGroupIds.includes(gid)))
-                    .map(u => u.email).filter(e => !!e);
-
-                if (recipientEmails.length > 0) {
-                    const result = await sendEmail(
-                        recipientEmails,
-                        `[NEXUS] Compliance Alert: Logging Delay - ${order.internalOrderNumber}`,
-                        `Dear Team,\n\nOrder ${order.internalOrderNumber} for ${order.customerName} has been flagged for a logging delay violation.\n\nPO Date: ${order.orderDate}\nSystem Entry Date: ${new Date(order.dataEntryTimestamp).toLocaleDateString()}\nDelay: ${delayDays.toFixed(1)} days\n\nRegards,\nNexus ERP System`,
-                        settings.emailConfig
-                    );
-                    if (result.success) {
-                        notifications.push({ id: `nt_${Date.now()}_${order.id}`, journalKey, orderId: order.id, type: 'logging_delay', sentAt: new Date().toISOString(), recipients: recipientEmails });
-                        dbChanged = true;
-                    }
-                }
-            }
-        }
-
-        // 2. New Order Alerts (Backend Migration)
-        if (settings.enableNewOrderAlerts) {
-            const journalKey = `new_order_${order.id}`;
-            const alreadySent = notifications.some(n => n.journalKey === journalKey);
-
-            if (!alreadySent) {
-                const recipientEmails = users
-                    .filter(u => u.groupIds?.some(gid => newOrderGroupIds.includes(gid)))
-                    .map(u => u.email).filter(e => !!e);
-
-                if (recipientEmails.length > 0) {
-                    const result = await sendEmail(
-                        recipientEmails,
-                        `[NEXUS] New Order Recorded: ${order.internalOrderNumber}`,
-                        `Dear Team,\n\nA new purchase order has been logged in the system.\n\nOrder ID: ${order.internalOrderNumber}\nCustomer: ${order.customerName}\nPO Date: ${order.orderDate}\n\nRegards,\nNexus ERP System`,
-                        settings.emailConfig
-                    );
-                    if (result.success) {
-                        notifications.push({ id: `nt_new_${Date.now()}_${order.id}`, journalKey, orderId: order.id, type: 'new_order', sentAt: new Date().toISOString(), recipients: recipientEmails });
-                        dbChanged = true;
-                    }
-                }
-            }
-        }
-    }
-
-    if (dbChanged) {
-        db.notifications = notifications;
-        writeDb(db);
-    }
-};
-
-// --- API ROUTES ---
+// --- DATABASE HANDLERS ---
 const readDb = () => {
     try {
-        if (!fs.existsSync(DB_PATH)) {
-            return {};
-        }
+        if (!fs.existsSync(DB_PATH)) return {};
         const data = fs.readFileSync(DB_PATH, 'utf8');
         return JSON.parse(data);
     } catch (err) {
@@ -200,98 +36,283 @@ const writeDb = (data) => {
     }
 };
 
-// --- GENERIC CRUD HANDLERS ---
-const getCollection = (collectionName) => (req, res) => {
-    const db = readDb();
-    // Security: Don't return passwords for users collection
-    if (collectionName === 'users') {
-        const users = db[collectionName] || [];
-        const safeUsers = users.map(({ password, ...u }) => u);
-        return res.json(safeUsers);
-    }
-    res.json(db[collectionName] || []);
+// --- HELPERS ---
+const hashPassword = (password) => {
+    return crypto.createHash('sha256').update(password).digest('hex');
 };
 
-const addToCollection = (collectionName) => (req, res) => {
-    const db = readDb();
-    const collection = db[collectionName] || [];
-    let newItem = req.body;
-
-    // Auto-generate ID if missing
-    if (!newItem.id) newItem.id = `${collectionName}_${Date.now()}`;
-
-    // Security: Hash password for new users
-    if (collectionName === 'users' && newItem.password) {
-        newItem.password = hashPassword(newItem.password);
+const sendEmail = async (to, subject, body, config) => {
+    if (!config || !config.smtpServer) {
+        console.warn("[Email] Configuration missing.");
+        return { success: false, error: "SMTP configuration missing" };
     }
 
-    collection.push(newItem);
-    db[collectionName] = collection;
-
-    if (writeDb(db)) {
-        // Return without password
-        if (collectionName === 'users') {
-            const { password, ...safeItem } = newItem;
-            res.status(201).json(safeItem);
-        } else {
-            res.status(201).json(newItem);
+    const transporter = nodemailer.createTransport({
+        host: config.smtpServer,
+        port: config.smtpPort,
+        secure: config.useSsl,
+        auth: {
+            user: config.username,
+            pass: config.password,
+        },
+        tls: {
+            rejectUnauthorized: false
         }
-    } else {
-        res.status(500).json({ error: "Failed to save item" });
+    });
+
+    try {
+        await transporter.sendMail({
+            from: `"${config.senderName}" <${config.senderEmail}>`,
+            to: Array.isArray(to) ? to.join(',') : to,
+            subject: subject,
+            text: body,
+            html: body.replace(/\n/g, '<br>')
+        });
+        console.log(`[Email] Alert sent to: ${to}`);
+        return { success: true };
+    } catch (err) {
+        console.error("[Email] Send failed:", err.message);
+        return { success: false, error: err.message };
     }
 };
 
-const updateInCollection = (collectionName) => (req, res) => {
+// --- AUDIT SERVICE ---
+const runThresholdAudit = async () => {
+    console.debug(`[Audit] Routine check started at ${new Date().toISOString()}`);
     const db = readDb();
-    const collection = db[collectionName] || [];
-    const { id } = req.params;
-    const updates = req.body;
+    const orders = db.orders || [];
+    const users = db.users || [];
+    const notifications = db.notifications || [];
 
-    const index = collection.findIndex(item => item.id === id);
+    // settings could be an object or a single-item array in db.json
+    const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
+        ? db.settings[0]
+        : (db.settings || {});
+
+    const settings = {
+        loggingDelayThresholdDays: 1,
+        enableNewOrderAlerts: true,
+        newOrderAlertGroupIds: [],
+        thresholdNotifications: {},
+        emailConfig: {
+            smtpServer: 'mail.quickstor.net',
+            smtpPort: 465,
+            username: 'erpalerts@quickstor.net',
+            password: 'YousefNadody123!',
+            senderName: 'Nexus System Alert',
+            senderEmail: 'erpalerts@quickstor.net',
+            useSsl: true
+        },
+        ...dbSettings
+    };
+
+    let dbChanged = false;
+
+    const userGroups = db.userGroups || [];
+
+    const getRecipients = (groupIds) => {
+        if (!groupIds || !Array.isArray(groupIds)) groupIds = [];
+
+        console.debug(`[Audit] getRecipients called with groupIds: [${groupIds.join(', ')}]`);
+        console.debug(`[Audit] Available userGroups: [${userGroups.map(g => `${g.id}(${g.name})`).join(', ')}]`);
+        console.debug(`[Audit] Available users: [${users.map(u => `${u.username}(groups:${(u.groupIds || []).join('+')})`).join(', ')}]`);
+
+        const recipients = [];
+        const seenEmails = new Set();
+
+        groupIds.forEach(gid => {
+            const group = userGroups.find(g => g.id === gid);
+            const groupName = group ? group.name : gid;
+
+            users.forEach(u => {
+                if (u.groupIds?.includes(gid) && u.email && !seenEmails.has(u.email)) {
+                    recipients.push({ name: u.name || u.username, email: u.email, groupName });
+                    seenEmails.add(u.email);
+                }
+            });
+        });
+
+        console.debug(`[Audit] Found ${recipients.length} recipients from groups: [${recipients.map(r => `${r.name}(${r.groupName})`).join(', ')}]`);
+
+        if (recipients.length === 0) {
+            users.forEach(u => {
+                if (u.roles?.includes('admin') && u.email && !seenEmails.has(u.email)) {
+                    recipients.push({ name: u.name || u.username, email: u.email, groupName: 'Admin Fallback' });
+                    seenEmails.add(u.email);
+                }
+            });
+            if (recipients.length > 0) {
+                console.debug(`[Audit] Fallback to admins for groups: [${groupIds.join(', ')}]`);
+            }
+        }
+        return recipients;
+    };
+
+    for (const order of orders) {
+        if (order.status === 'FULFILLED' || order.status === 'REJECTED') continue;
+
+        // 1. Logging Delay
+        const delayThresholdDays = settings.loggingDelayThresholdDays || 1;
+        const poDate = new Date(order.orderDate).getTime();
+        const entryDate = new Date(order.dataEntryTimestamp).getTime();
+        const delayDays = (entryDate - poDate) / (1000 * 60 * 60 * 24);
+
+        if (delayDays > delayThresholdDays) {
+            if (!order.loggingComplianceViolation) {
+                order.loggingComplianceViolation = true;
+                dbChanged = true;
+            }
+
+            const journalKey = `delay_${order.id}`;
+            const alreadySent = notifications.some(n => n.journalKey === journalKey);
+
+            if (!alreadySent) {
+                const groupIds = settings.thresholdNotifications?.['loggingDelayThresholdDays'] || [];
+                const recipients = getRecipients(groupIds);
+
+                if (recipients.length > 0) {
+                    const recipientEmails = recipients.map(r => r.email);
+                    const result = await sendEmail(recipientEmails, `[NEXUS] Compliance Alert: Logging Delay - ${order.internalOrderNumber}`,
+                        `Order ${order.internalOrderNumber} delayed by ${delayDays.toFixed(1)} days.`, settings.emailConfig);
+
+                    if (result.success) {
+                        notifications.push({ id: `nt_d_${Date.now()}`, journalKey, orderId: order.id, type: 'logging_delay', sentAt: new Date().toISOString(), recipients: recipientEmails });
+                        if (!order.logs) order.logs = [];
+
+                        // Per-user granular logging
+                        recipients.forEach(r => {
+                            order.logs.push({
+                                timestamp: new Date().toISOString(),
+                                message: `[SYSTEM] Compliance Alert Sent to ${r.name} (${r.email}) via group: ${r.groupName}`,
+                                status: order.status,
+                                user: 'System'
+                            });
+                        });
+                        dbChanged = true;
+                    }
+                } else {
+                    // Record failure in audit log
+                    if (!order.logs) order.logs = [];
+                    order.logs.push({
+                        timestamp: new Date().toISOString(),
+                        message: `[SYSTEM] [ALERT_FAILED] No recipients found for logging delay alert. Assigned groups: ${groupIds.join(', ')}`,
+                        status: order.status,
+                        user: 'System'
+                    });
+                    // Still journal it to avoid spamming the log every 1 minute
+                    notifications.push({ id: `nt_err_d_${Date.now()}`, journalKey, orderId: order.id, type: 'logging_delay_error', sentAt: new Date().toISOString(), recipients: [] });
+                    dbChanged = true;
+                }
+            }
+        }
+
+        // 2. New Order
+        if (settings.enableNewOrderAlerts) {
+            const journalKey = `new_order_${order.id}`;
+            const alreadySent = notifications.some(n => n.journalKey === journalKey);
+            if (!alreadySent) {
+                const groupIds = settings.newOrderAlertGroupIds || [];
+                const recipients = getRecipients(groupIds);
+                if (recipients.length > 0) {
+                    const recipientEmails = recipients.map(r => r.email);
+                    const result = await sendEmail(recipientEmails, `[NEXUS] New Order: ${order.internalOrderNumber}`,
+                        `A new order ${order.internalOrderNumber} has been logged.`, settings.emailConfig);
+
+                    if (result.success) {
+                        notifications.push({ id: `nt_n_${Date.now()}`, journalKey, orderId: order.id, type: 'new_order', sentAt: new Date().toISOString(), recipients: recipientEmails });
+                        if (!order.logs) order.logs = [];
+
+                        // Per-user granular logging
+                        recipients.forEach(r => {
+                            order.logs.push({
+                                timestamp: new Date().toISOString(),
+                                message: `[SYSTEM] New Order Notification Sent to ${r.name} (${r.email}) via group: ${r.groupName}`,
+                                status: order.status,
+                                user: 'System'
+                            });
+                        });
+                        dbChanged = true;
+                    }
+                } else {
+                    // Record failure in audit log
+                    if (!order.logs) order.logs = [];
+                    order.logs.push({
+                        timestamp: new Date().toISOString(),
+                        message: `[SYSTEM] [ALERT_FAILED] No recipients found for new order alert. Assigned groups: ${groupIds.join(', ')}`,
+                        status: order.status,
+                        user: 'System'
+                    });
+                    // Still journal it to avoid spamming the log every 1 minute
+                    notifications.push({ id: `nt_err_n_${Date.now()}`, journalKey, orderId: order.id, type: 'new_order_error', sentAt: new Date().toISOString(), recipients: [] });
+                    dbChanged = true;
+                }
+            }
+        }
+    }
+
+    if (dbChanged) {
+        db.notifications = notifications;
+        writeDb(db);
+    }
+};
+
+// --- APP SETUP ---
+const app = express();
+const PORT = 3005;
+
+app.use(cors());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// --- GENERIC CRUD ---
+const getCollection = (col) => (req, res) => {
+    const db = readDb();
+    if (col === 'users') return res.json((db[col] || []).map(({ password, ...u }) => u));
+    res.json(db[col] || []);
+};
+
+const addToCollection = (col) => (req, res) => {
+    const db = readDb();
+    if (!db[col]) db[col] = [];
+
+    // Specialized validation for orders: prevent duplicate PO IDs
+    if (col === 'orders' && req.body.customerReferenceNumber) {
+        const poId = req.body.customerReferenceNumber.trim().toLowerCase();
+        const isDuplicate = db[col].some(o => o.customerReferenceNumber?.trim().toLowerCase() === poId);
+        if (isDuplicate) {
+            return res.status(400).json({ error: `Duplicate PO ID: "${req.body.customerReferenceNumber}" already exists.` });
+        }
+    }
+
+    const newItem = { id: `${col}_${Date.now()}`, ...req.body };
+    if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
+    db[col].push(newItem);
+    if (writeDb(db)) res.status(201).json(col === 'users' ? (({ password, ...u }) => u)(newItem) : newItem);
+    else res.status(500).json({ error: "Write failed" });
+};
+
+const updateInCollection = (col) => (req, res) => {
+    const db = readDb();
+    if (!db[col]) return res.status(404).json({ error: "Not found" });
+    const index = db[col].findIndex(it => it.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Item not found" });
-
-    let updatedItem = { ...collection[index], ...updates };
-
-    // Security: Hash password if updating user password
-    if (collectionName === 'users' && updates.password) {
-        updatedItem.password = hashPassword(updates.password);
-    }
-
-    collection[index] = updatedItem;
-    db[collectionName] = collection;
-
-    if (writeDb(db)) {
-        if (collectionName === 'users') {
-            const { password, ...safeItem } = updatedItem;
-            res.json(safeItem);
-        } else {
-            res.json(updatedItem);
-        }
-    } else {
-        res.status(500).json({ error: "Failed to update item" });
-    }
+    const updated = { ...db[col][index], ...req.body };
+    if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
+    db[col][index] = updated;
+    if (writeDb(db)) res.json(col === 'users' ? (({ password, ...u }) => u)(updated) : updated);
+    else res.status(500).json({ error: "Update failed" });
 };
 
-const deleteFromCollection = (collectionName) => (req, res) => {
+const deleteFromCollection = (col) => (req, res) => {
     const db = readDb();
-    const collection = db[collectionName] || [];
-    const { id } = req.params;
-
-    const newCollection = collection.filter(item => item.id !== id);
-    if (newCollection.length === collection.length) return res.status(404).json({ error: "Item not found" });
-
-    db[collectionName] = newCollection;
-
-    if (writeDb(db)) {
-        res.status(200).json({ message: "Deleted successfully" });
-    } else {
-        res.status(500).json({ error: "Failed to delete item" });
-    }
+    if (!db[col]) return res.status(404).json({ error: "Not found" });
+    db[col] = db[col].filter(it => it.id !== req.params.id);
+    if (writeDb(db)) res.json({ message: "Deleted" });
+    else res.status(500).json({ error: "Delete failed" });
 };
 
-// --- API ROUTES ---
-const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications'];
-
+// --- ROUTES ---
+const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules'];
 COLLECTIONS.forEach(col => {
     app.get(`/api/v1/${col}`, getCollection(col));
     app.post(`/api/v1/${col}`, addToCollection(col));
@@ -299,123 +320,55 @@ COLLECTIONS.forEach(col => {
     app.delete(`/api/v1/${col}/:id`, deleteFromCollection(col));
 });
 
-// Email Relay Endpoint (for UI Testing)
-app.post('/api/v1/relay/dispatch', async (req, res) => {
-    const { Host, Port, Username, Password, To, From, Subject, Body } = req.body;
-
-    const config = {
-        smtpServer: Host,
-        smtpPort: Port,
-        username: Username,
-        password: Password,
-        senderName: 'Nexus ERP Test',
-        senderEmail: From || Username,
-        useSsl: Port === 465
-    };
-
-    const toList = Array.isArray(To) ? To : [To];
-    const result = await sendEmail(toList, Subject, Body, config);
-
-    if (result.success) {
-        res.json({ message: 'Email sent successfully' });
-    } else {
-        res.status(500).json({ error: result.error || 'Failed to send email' });
-    }
+app.post('/api/v1/wipe', (req, res) => {
+    const db = readDb();
+    const BUSINESS_COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'notifications'];
+    BUSINESS_COLLECTIONS.forEach(col => {
+        db[col] = [];
+    });
+    if (writeDb(db)) res.json({ message: "Wipe successful" });
+    else res.status(500).json({ error: "Wipe failed" });
 });
 
-// Auth Endpoint
+app.get('/api/v1/backup', (req, res) => res.json(readDb()));
+app.post('/api/v1/restore', (req, res) => {
+    if (writeDb(req.body)) res.json({ message: "Restored" });
+    else res.status(500).json({ error: "Restore failed" });
+});
+
+app.post('/api/v1/relay/dispatch', async (req, res) => {
+    const { Host, Port, Username, Password, To, From, Subject, Body } = req.body;
+    const result = await sendEmail(To, Subject, Body, { smtpServer: Host, smtpPort: Port, username: Username, password: Password, senderName: 'Nexus Relay', senderEmail: From || Username, useSsl: Port === 465 });
+    if (result.success) res.json({ message: "Sent" });
+    else res.status(500).json({ error: result.error });
+});
+
 app.post('/api/v1/login', (req, res) => {
     const { username, password } = req.body;
     const db = readDb();
-    const users = db.users || [];
-    const user = users.find(u => u.username === username);
+    const user = (db.users || []).find(u => u.username === username);
+    const isFactory = username === 'factory' && (Date.now() - SERVER_START_TIME) < 300000 && password === FACTORY_PASS;
 
-    // 1. Factory Reset Check
-    // 5 minutes window (300,000 ms)
-    const isFactoryWindow = (Date.now() - SERVER_START_TIME) < 300000;
-
-    // User is now 'factory', ensuring it's hidden from DB listings (unless someone names a user 'factory')
-    if (username === 'factory' && isFactoryWindow && password === FACTORY_PASS) {
-        if (user) {
-            const { password: _, ...safeUser } = user;
-            return res.json(safeUser);
-        } else {
-            // Fail-safe: Synthetic Admin
-            return res.json({
-                id: 'temp_admin_factory',
-                username: 'factory',
-                name: 'System Factory Lead',
-                roles: ['admin'],
-                email: 'system@nexus.local',
-                firstName: 'System',
-                lastName: 'Factory'
-            });
-        }
-    }
-
-    // 2. Standard Auth
+    if (isFactory) return res.json(user || { id: 'factory', username: 'factory', name: 'Factory Admin', roles: ['admin'], email: 'factory@nexus.local' });
     if (user && user.password === hashPassword(password)) {
-        const { password: _, ...safeUser } = user;
-        return res.json(safeUser);
+        const { password: _, ...safe } = user;
+        return res.json(safe);
     }
-
-    res.status(401).json({ error: "Invalid credentials" });
+    res.status(401).json({ error: "Auth failed" });
 });
 
-// Change Password Endpoint
-app.post('/api/v1/change-password', (req, res) => {
-    const { userId, oldPassword, newPassword } = req.body;
-    const db = readDb();
-    const users = db.users || [];
-    const index = users.findIndex(u => u.id === userId);
-
-    if (index === -1) return res.status(404).json({ error: "User not found" });
-
-    const user = users[index];
-    if (user.password !== hashPassword(oldPassword)) {
-        return res.status(401).json({ error: "Incorrect current password" });
-    }
-
-    user.password = hashPassword(newPassword);
-    db.users = users;
-
-    if (writeDb(db)) {
-        res.json({ message: "Password updated successfully" });
-    } else {
-        res.status(500).json({ error: "Failed to update password" });
-    }
-});
-
-// Special: Init DB with default data (for migration/testing)
 app.post('/api/v1/init-defaults', (req, res) => {
     const db = readDb();
     if (Object.keys(db).length === 0 || req.body.force) {
-        let defaults = req.body.defaults || {};
-
-        // Security: Hash default users' passwords
-        if (defaults.users && Array.isArray(defaults.users)) {
-            defaults.users = defaults.users.map(u => ({
-                ...u,
-                password: u.password ? hashPassword(u.password) : undefined
-            }));
-        }
-
-        if (writeDb({ ...db, ...defaults })) {
-            res.json({ message: "Defaults initialized" });
-        } else {
-            res.status(500).json({ error: "Failed to write defaults" });
-        }
-    } else {
-        res.status(400).json({ message: "DB not empty" });
-    }
+        const dd = req.body.defaults || {};
+        if (dd.users) dd.users = dd.users.map(u => u.password ? { ...u, password: hashPassword(u.password) } : u);
+        if (writeDb({ ...db, ...dd })) res.json({ message: "Initialized" });
+        else res.status(500).json({ error: "Failed" });
+    } else res.status(400).json({ message: "NotEmpty" });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Backend] Nexus Engine & Frontend running on http://localhost:${PORT}`);
-
-    // Initial Audit on Start
+    console.log(`[Backend] Running on http://localhost:${PORT}`);
     runThresholdAudit();
-
-    // Scheduled Audit every 1 minute
     setInterval(runThresholdAudit, 60000);
 });

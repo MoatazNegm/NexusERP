@@ -186,7 +186,6 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       const newConfig = await dataService.importSecureBackup(file, passcode);
       if (newConfig) {
         onConfigUpdate(newConfig);
-        localStorage.setItem('nexus_config', JSON.stringify(newConfig));
         setMessage({ type: 'success', text: 'Restoration complete. Refreshing...' });
         setTimeout(() => window.location.reload(), 1500);
       }

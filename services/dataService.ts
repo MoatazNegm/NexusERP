@@ -16,7 +16,7 @@ import {
   EmailConfig,
   CompStatus
 } from '../types';
-import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS } from '../constants';
+import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
@@ -169,6 +169,15 @@ class DataService {
   async getOrders() { return this.get<CustomerOrder>('orders'); }
   async addOrder(order: Omit<CustomerOrder, 'id' | 'internalOrderNumber' | 'logs'>, user: string, config: AppConfig) {
     const orders = await this.getOrders();
+
+    // Strict uniqueness check for PO ID
+    const isDuplicate = orders.some(o =>
+      o.customerReferenceNumber?.trim().toLowerCase() === order.customerReferenceNumber?.trim().toLowerCase()
+    );
+    if (isDuplicate) {
+      throw new Error(`Duplicate PO ID: ${order.customerReferenceNumber} already exists.`);
+    }
+
     const count = orders.length;
     const internalOrderNumber = `INT-2024-${String(count + 1).padStart(4, '0')}`;
 
@@ -569,21 +578,42 @@ class DataService {
   }
 
   async getAppConfig(): Promise<AppConfig> {
-    try {
-      const [settings, modules] = await Promise.all([
-        this.get('settings'),
-        this.get('modules')
-      ]);
-      // Settings and modules are likely returned as arrays by the generic getCollection unless specified otherwise.
-      // However server.js returns: if (collectionName === 'users') ... else res.json(db[collectionName] || []);
-      // And for 'settings', db.settings is likely an OBJECT, not array. 
-      // Wait, generic handler: res.json(db[collectionName] || []);
-      // If db.settings is an object, it returns it. If it's missing, returns []. 
-      // So we cast it.
-      return { settings: settings as any, modules: modules as any };
-    } catch (e) {
-      console.error("Failed to load config", e);
-      throw e;
+    const [settingsArr, modulesArr] = await Promise.all([
+      this.get<any>('settings'),
+      this.get<any>('modules')
+    ]);
+
+    // Since generic collection GET returns an array, we take the first element if it exists
+    const settings = (Array.isArray(settingsArr) && settingsArr.length > 0) ? settingsArr[0] : null;
+    const modules = (Array.isArray(modulesArr) && modulesArr.length > 0) ? modulesArr[0] : null;
+
+    // If no settings exist yet, return defaults so the app can bootstrap
+    if (!settings && !modules) {
+      console.debug("[DataService] No backend settings found — returning defaults for bootstrap");
+      return INITIAL_CONFIG;
+    }
+
+    return {
+      settings: settings || INITIAL_CONFIG.settings,
+      modules: modules || INITIAL_CONFIG.modules
+    };
+  }
+
+  async updateSettings(settings: any) {
+    const existing = await this.get<any>('settings');
+    if (existing.length > 0) {
+      return this.put('settings', existing[0].id, settings);
+    } else {
+      return this.post('settings', settings);
+    }
+  }
+
+  async updateModules(modules: any) {
+    const existing = await this.get<any>('modules');
+    if (existing.length > 0) {
+      return this.put('modules', existing[0].id, modules);
+    } else {
+      return this.post('modules', modules);
     }
   }
 
@@ -636,6 +666,18 @@ class DataService {
       console.error(`Restore failed: ${err.message}`);
       throw err;
     }
+  }
+
+  async clearAllData() {
+    const res = await fetch(`${BACKEND_URL}/api/v1/wipe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Failed to wipe database");
+    }
+    return true;
   }
 }
 
