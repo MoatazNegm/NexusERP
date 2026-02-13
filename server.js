@@ -430,8 +430,20 @@ app.post('/api/v1/wipe', (req, res) => {
 
 app.get('/api/v1/backup', (req, res) => res.json(readDb()));
 app.post('/api/v1/restore', (req, res) => {
-    if (writeDb(req.body)) res.json({ message: "Restored" });
-    else res.status(500).json({ error: "Restore failed" });
+    const data = req.body;
+    const required = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'settings', 'modules'];
+    const missing = required.filter(col => !data[col]);
+
+    if (missing.length > 0) {
+        return res.status(400).json({ error: `Restore failed: Missing collections: [${missing.join(', ')}]` });
+    }
+
+    if (writeDb(data)) {
+        console.log(`[System] Database restored manually at ${new Date().toISOString()}`);
+        res.json({ message: "Restored" });
+    } else {
+        res.status(500).json({ error: "Restore failed during file write" });
+    }
 });
 
 app.post('/api/v1/relay/dispatch', async (req, res) => {
