@@ -1,4 +1,4 @@
-
+﻿
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -77,6 +77,57 @@ const sendEmail = async (to, subject, body, config) => {
 };
 
 // --- AUDIT SERVICE ---
+
+// Maps OrderStatus â†’ settings config key (hours-based time-in-status thresholds)
+const STATUS_TO_THRESHOLD = {
+    'LOGGED': 'orderEditTimeLimitHrs',
+    'TECHNICAL_REVIEW': 'technicalReviewLimitHrs',
+    'NEGATIVE_MARGIN': 'pendingOfferLimitHrs',
+    'IN_HOLD': null, // event-based, not time-based
+    'WAITING_SUPPLIERS': 'pendingOfferLimitHrs',
+    'WAITING_FACTORY': 'waitingFactoryLimitHrs',
+    'MANUFACTURING': 'mfgFinishLimitHrs',
+    'MANUFACTURING_COMPLETED': 'mfgFinishLimitHrs',
+    'UNDER_TEST': null, // skipped for now
+    'TRANSITION_TO_STOCK': 'transitToHubLimitHrs',
+    'IN_PRODUCT_HUB': 'productHubLimitHrs',
+    'ISSUE_INVOICE': 'invoicedLimitHrs',
+    'INVOICED': 'hubReleasedLimitHrs',
+    'HUB_RELEASED': 'deliveryLimitHrs',
+    'DELIVERY': 'deliveredLimitHrs',
+    'DELIVERED': 'deliveredLimitHrs',
+    'PARTIAL_PAYMENT': null  // handled by special payment SLA check
+};
+
+// Maps Component CompStatus â†’ settings config key (procurement process thresholds)
+const COMP_STATUS_TO_THRESHOLD = {
+    'RFP_SENT': 'rfpSentLimitHrs',
+    'AWARDED': 'awardedLimitHrs',
+    'ORDERED': 'orderedLimitHrs'
+};
+
+// Human-friendly labels for email subjects and logs
+const THRESHOLD_LABELS = {
+    orderEditTimeLimitHrs: 'Order Draft Window',
+    technicalReviewLimitHrs: 'Tech Review Limit',
+    pendingOfferLimitHrs: 'Pending Offer Limit',
+    rfpSentLimitHrs: 'RFP Response Window',
+    awardedLimitHrs: 'Award Review',
+    issuePoLimitHrs: 'Issue PO Window',
+    orderedLimitHrs: 'Supplier Fulfillment',
+    waitingFactoryLimitHrs: 'Waiting Factory',
+    mfgFinishLimitHrs: 'Manufacturing Run',
+    transitToHubLimitHrs: 'Transit to Hub',
+    productHubLimitHrs: 'Hub Processing',
+    invoicedLimitHrs: 'Invoice Generation',
+    hubReleasedLimitHrs: 'Hub Release Sync',
+    deliveryLimitHrs: 'Delivery Transit',
+    deliveredLimitHrs: 'Post-Delivery Archiving',
+    loggingDelayThresholdDays: 'Logging Delay (Compliance)',
+    minimumMarginPct: 'Negative Margin',
+    defaultPaymentSlaDays: 'Payment SLA Overdue'
+};
+
 const runThresholdAudit = async () => {
     console.debug(`[Audit] Routine check started at ${new Date().toISOString()}`);
     const db = readDb();
@@ -84,7 +135,6 @@ const runThresholdAudit = async () => {
     const users = db.users || [];
     const notifications = db.notifications || [];
 
-    // settings could be an object or a single-item array in db.json
     const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
         ? db.settings[0]
         : (db.settings || {});
@@ -107,23 +157,17 @@ const runThresholdAudit = async () => {
     };
 
     let dbChanged = false;
-
     const userGroups = db.userGroups || [];
 
+    // --- Recipient resolution (with admin fallback) ---
     const getRecipients = (groupIds) => {
         if (!groupIds || !Array.isArray(groupIds)) groupIds = [];
-
-        console.debug(`[Audit] getRecipients called with groupIds: [${groupIds.join(', ')}]`);
-        console.debug(`[Audit] Available userGroups: [${userGroups.map(g => `${g.id}(${g.name})`).join(', ')}]`);
-        console.debug(`[Audit] Available users: [${users.map(u => `${u.username}(groups:${(u.groupIds || []).join('+')})`).join(', ')}]`);
-
         const recipients = [];
         const seenEmails = new Set();
 
         groupIds.forEach(gid => {
             const group = userGroups.find(g => g.id === gid);
             const groupName = group ? group.name : gid;
-
             users.forEach(u => {
                 if (u.groupIds?.includes(gid) && u.email && !seenEmails.has(u.email)) {
                     recipients.push({ name: u.name || u.username, email: u.email, groupName });
@@ -132,8 +176,6 @@ const runThresholdAudit = async () => {
             });
         });
 
-        console.debug(`[Audit] Found ${recipients.length} recipients from groups: [${recipients.map(r => `${r.name}(${r.groupName})`).join(', ')}]`);
-
         if (recipients.length === 0) {
             users.forEach(u => {
                 if (u.roles?.includes('admin') && u.email && !seenEmails.has(u.email)) {
@@ -141,215 +183,159 @@ const runThresholdAudit = async () => {
                     seenEmails.add(u.email);
                 }
             });
-            if (recipients.length > 0) {
-                console.debug(`[Audit] Fallback to admins for groups: [${groupIds.join(', ')}]`);
-            }
         }
         return recipients;
     };
 
+    // --- Generic alert dispatcher (deduplicates all notification logic) ---
+    const sendAlertForOrder = async (order, journalKey, alertType, thresholdKey, subject, body) => {
+        const alreadySent = notifications.some(n => n.journalKey === journalKey);
+        if (alreadySent) return;
+
+        const groupIds = settings.thresholdNotifications?.[thresholdKey] || [];
+        if (groupIds.length === 0) return; // no groups assigned, skip silently
+
+        const recipients = getRecipients(groupIds);
+        if (!order.logs) order.logs = [];
+        const label = THRESHOLD_LABELS[thresholdKey] || thresholdKey;
+
+        if (recipients.length > 0) {
+            const recipientEmails = recipients.map(r => r.email);
+            const result = await sendEmail(recipientEmails, subject, body, settings.emailConfig);
+            if (result.success) {
+                notifications.push({ id: `nt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, journalKey, orderId: order.id, type: alertType, sentAt: new Date().toISOString(), recipients: recipientEmails });
+                recipients.forEach(r => {
+                    order.logs.push({ timestamp: new Date().toISOString(), message: `[SYSTEM] ${label} Alert Sent to ${r.name} (${r.email}) via group: ${r.groupName}`, status: order.status, user: 'System' });
+                });
+                dbChanged = true;
+            }
+        } else {
+            order.logs.push({ timestamp: new Date().toISOString(), message: `[SYSTEM] [ALERT_FAILED] No recipients for ${label} alert. Groups: ${groupIds.join(', ')}`, status: order.status, user: 'System' });
+            notifications.push({ id: `nt_err_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, journalKey, orderId: order.id, type: `${alertType}_error`, sentAt: new Date().toISOString(), recipients: [] });
+            dbChanged = true;
+        }
+    };
+
+    // --- Process each order ---
     for (const order of orders) {
         if (order.status === 'FULFILLED' || order.status === 'REJECTED') continue;
 
-        // 1. Logging Delay
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // A. SPECIAL CHECKS (non-time-in-status)
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+        // A1. Logging Delay (PO date vs data entry date, in days)
         const delayThresholdDays = settings.loggingDelayThresholdDays || 1;
         const poDate = new Date(order.orderDate).getTime();
         const entryDate = new Date(order.dataEntryTimestamp).getTime();
         const delayDays = (entryDate - poDate) / (1000 * 60 * 60 * 24);
-
         if (delayDays > delayThresholdDays) {
-            if (!order.loggingComplianceViolation) {
-                order.loggingComplianceViolation = true;
-                dbChanged = true;
-            }
-
-            const journalKey = `delay_${order.id}`;
-            const alreadySent = notifications.some(n => n.journalKey === journalKey);
-
-            if (!alreadySent) {
-                const groupIds = settings.thresholdNotifications?.['loggingDelayThresholdDays'] || [];
-                const recipients = getRecipients(groupIds);
-
-                if (recipients.length > 0) {
-                    const recipientEmails = recipients.map(r => r.email);
-                    const result = await sendEmail(recipientEmails, `[NEXUS] Compliance Alert: Logging Delay - ${order.internalOrderNumber}`,
-                        `Order ${order.internalOrderNumber} delayed by ${delayDays.toFixed(1)} days.`, settings.emailConfig);
-
-                    if (result.success) {
-                        notifications.push({ id: `nt_d_${Date.now()}`, journalKey, orderId: order.id, type: 'logging_delay', sentAt: new Date().toISOString(), recipients: recipientEmails });
-                        if (!order.logs) order.logs = [];
-
-                        // Per-user granular logging
-                        recipients.forEach(r => {
-                            order.logs.push({
-                                timestamp: new Date().toISOString(),
-                                message: `[SYSTEM] Compliance Alert Sent to ${r.name} (${r.email}) via group: ${r.groupName}`,
-                                status: order.status,
-                                user: 'System'
-                            });
-                        });
-                        dbChanged = true;
-                    }
-                } else {
-                    // Record failure in audit log
-                    if (!order.logs) order.logs = [];
-                    order.logs.push({
-                        timestamp: new Date().toISOString(),
-                        message: `[SYSTEM] [ALERT_FAILED] No recipients found for logging delay alert. Assigned groups: ${groupIds.join(', ')}`,
-                        status: order.status,
-                        user: 'System'
-                    });
-                    // Still journal it to avoid spamming the log every 1 minute
-                    notifications.push({ id: `nt_err_d_${Date.now()}`, journalKey, orderId: order.id, type: 'logging_delay_error', sentAt: new Date().toISOString(), recipients: [] });
-                    dbChanged = true;
-                }
-            }
+            if (!order.loggingComplianceViolation) { order.loggingComplianceViolation = true; dbChanged = true; }
+            await sendAlertForOrder(order, `delay_${order.id}`, 'logging_delay', 'loggingDelayThresholdDays',
+                `[NEXUS] Compliance Alert: Logging Delay - ${order.internalOrderNumber}`,
+                `Order ${order.internalOrderNumber} was logged ${delayDays.toFixed(1)} days after the PO date, exceeding the ${delayThresholdDays}-day threshold.`);
         }
 
-        // 2. New Order
+        // A2. New Order Alert
         if (settings.enableNewOrderAlerts) {
-            const journalKey = `new_order_${order.id}`;
-            const alreadySent = notifications.some(n => n.journalKey === journalKey);
-            if (!alreadySent) {
+            const jk = `new_order_${order.id}`;
+            if (!notifications.some(n => n.journalKey === jk)) {
                 const groupIds = settings.newOrderAlertGroupIds || [];
                 const recipients = getRecipients(groupIds);
+                if (!order.logs) order.logs = [];
                 if (recipients.length > 0) {
-                    const recipientEmails = recipients.map(r => r.email);
-                    const result = await sendEmail(recipientEmails, `[NEXUS] New Order: ${order.internalOrderNumber}`,
-                        `A new order ${order.internalOrderNumber} has been logged.`, settings.emailConfig);
-
+                    const emails = recipients.map(r => r.email);
+                    const result = await sendEmail(emails, `[NEXUS] New Order: ${order.internalOrderNumber}`, `A new order ${order.internalOrderNumber} has been logged.`, settings.emailConfig);
                     if (result.success) {
-                        notifications.push({ id: `nt_n_${Date.now()}`, journalKey, orderId: order.id, type: 'new_order', sentAt: new Date().toISOString(), recipients: recipientEmails });
-                        if (!order.logs) order.logs = [];
-
-                        // Per-user granular logging
-                        recipients.forEach(r => {
-                            order.logs.push({
-                                timestamp: new Date().toISOString(),
-                                message: `[SYSTEM] New Order Notification Sent to ${r.name} (${r.email}) via group: ${r.groupName}`,
-                                status: order.status,
-                                user: 'System'
-                            });
-                        });
+                        notifications.push({ id: `nt_n_${Date.now()}`, journalKey: jk, orderId: order.id, type: 'new_order', sentAt: new Date().toISOString(), recipients: emails });
+                        recipients.forEach(r => { order.logs.push({ timestamp: new Date().toISOString(), message: `[SYSTEM] New Order Notification Sent to ${r.name} (${r.email}) via group: ${r.groupName}`, status: order.status, user: 'System' }); });
                         dbChanged = true;
                     }
                 } else {
-                    // Record failure in audit log
-                    if (!order.logs) order.logs = [];
-                    order.logs.push({
-                        timestamp: new Date().toISOString(),
-                        message: `[SYSTEM] [ALERT_FAILED] No recipients found for new order alert. Assigned groups: ${groupIds.join(', ')}`,
-                        status: order.status,
-                        user: 'System'
-                    });
-                    // Still journal it to avoid spamming the log every 1 minute
-                    notifications.push({ id: `nt_err_n_${Date.now()}`, journalKey, orderId: order.id, type: 'new_order_error', sentAt: new Date().toISOString(), recipients: [] });
+                    order.logs.push({ timestamp: new Date().toISOString(), message: `[SYSTEM] [ALERT_FAILED] No recipients for new order alert. Groups: ${groupIds.join(', ')}`, status: order.status, user: 'System' });
+                    notifications.push({ id: `nt_err_n_${Date.now()}`, journalKey: jk, orderId: order.id, type: 'new_order_error', sentAt: new Date().toISOString(), recipients: [] });
                     dbChanged = true;
                 }
             }
         }
 
-        // 3. Negative Margin Alert
+        // A3. IN_HOLD notification (event-based, like new order alert)
+        if (order.status === 'IN_HOLD') {
+            await sendAlertForOrder(order, `in_hold_${order.id}`, 'in_hold', 'pendingOfferLimitHrs',
+                `[NEXUS] Order On Hold: ${order.internalOrderNumber}`,
+                `Order ${order.internalOrderNumber} has been placed ON HOLD. Customer: ${order.customerName}.`);
+        }
+
+        // A4. Negative Margin (status-based, not time-based)
         if (order.status === 'NEGATIVE_MARGIN') {
-            const journalKey = `margin_${order.id}`;
-            const alreadySent = notifications.some(n => n.journalKey === journalKey);
-            if (!alreadySent) {
-                // Calculate actual margin for the email body
-                let totalRevenue = 0, totalCost = 0;
-                (order.items || []).forEach(it => {
-                    totalRevenue += (it.quantity * it.pricePerUnit);
-                    (it.components || []).forEach(c => {
-                        totalCost += (c.quantity * (c.unitCost || 0));
-                    });
-                });
-                const marginAmt = totalRevenue - totalCost;
-                const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+            let totalRevenue = 0, totalCost = 0;
+            (order.items || []).forEach(it => {
+                totalRevenue += (it.quantity * it.pricePerUnit);
+                (it.components || []).forEach(c => { totalCost += (c.quantity * (c.unitCost || 0)); });
+            });
+            const markupPct = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+            await sendAlertForOrder(order, `margin_${order.id}`, 'negative_margin', 'minimumMarginPct',
+                `[NEXUS] Margin Alert: ${order.internalOrderNumber} below ${settings.minimumMarginPct || 15}%`,
+                `Order ${order.internalOrderNumber} has a margin of ${markupPct.toFixed(1)}%, below the minimum threshold of ${settings.minimumMarginPct || 15}%.`);
+        }
 
-                const groupIds = settings.thresholdNotifications?.['minimumMarginPct'] || [];
-                const recipients = getRecipients(groupIds);
-                if (recipients.length > 0) {
-                    const recipientEmails = recipients.map(r => r.email);
-                    const result = await sendEmail(recipientEmails,
-                        `[NEXUS] Margin Alert: ${order.internalOrderNumber} below ${settings.minimumMarginPct || 15}%`,
-                        `Order ${order.internalOrderNumber} has a margin of ${markupPct.toFixed(1)}%, which is below the minimum threshold of ${settings.minimumMarginPct || 15}%.`,
-                        settings.emailConfig);
-
-                    if (result.success) {
-                        notifications.push({ id: `nt_m_${Date.now()}`, journalKey, orderId: order.id, type: 'negative_margin', sentAt: new Date().toISOString(), recipients: recipientEmails });
-                        if (!order.logs) order.logs = [];
-                        recipients.forEach(r => {
-                            order.logs.push({
-                                timestamp: new Date().toISOString(),
-                                message: `[SYSTEM] Margin Alert Sent to ${r.name} (${r.email}) via group: ${r.groupName}. Margin: ${markupPct.toFixed(1)}%`,
-                                status: order.status,
-                                user: 'System'
-                            });
-                        });
-                        dbChanged = true;
-                    }
-                } else {
-                    if (!order.logs) order.logs = [];
-                    order.logs.push({
-                        timestamp: new Date().toISOString(),
-                        message: `[SYSTEM] [ALERT_FAILED] No recipients found for margin alert. Assigned groups: ${groupIds.join(', ')}`,
-                        status: order.status,
-                        user: 'System'
-                    });
-                    notifications.push({ id: `nt_err_m_${Date.now()}`, journalKey, orderId: order.id, type: 'negative_margin_error', sentAt: new Date().toISOString(), recipients: [] });
-                    dbChanged = true;
+        // A5. Payment SLA Overdue (days since invoice)
+        if (order.status === 'INVOICED' || order.status === 'DELIVERED' || order.status === 'PARTIAL_PAYMENT') {
+            const slaDays = order.paymentSlaDays || settings.defaultPaymentSlaDays || 30;
+            const invoiceLog = [...(order.logs || [])].reverse().find(l => l.status === 'INVOICED' || l.status === 'DELIVERED');
+            if (invoiceLog) {
+                const daysSince = (Date.now() - new Date(invoiceLog.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+                if (daysSince > slaDays) {
+                    await sendAlertForOrder(order, `payment_sla_${order.id}`, 'payment_sla', 'defaultPaymentSlaDays',
+                        `[NEXUS] Payment Overdue: ${order.internalOrderNumber}`,
+                        `Order ${order.internalOrderNumber} is ${daysSince.toFixed(0)} days since invoice, exceeding the SLA of ${slaDays} days.`);
                 }
             }
         }
 
-        // 4. Payment SLA Overdue Alert
-        if (order.status === 'INVOICED' || order.status === 'DELIVERED' || order.status === 'PARTIAL_PAYMENT') {
-            const paymentSlaDays = order.paymentSlaDays || settings.defaultPaymentSlaDays || 30;
-            // Find the invoice/delivery date from order logs
-            const invoiceLog = [...(order.logs || [])].reverse().find(l =>
-                l.status === 'INVOICED' || l.status === 'DELIVERED'
-            );
-            if (invoiceLog) {
-                const invoiceDate = new Date(invoiceLog.timestamp).getTime();
-                const daysSinceInvoice = (Date.now() - invoiceDate) / (1000 * 60 * 60 * 24);
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // B. DYNAMIC: Order-level time-in-status threshold checks
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        const thresholdKey = STATUS_TO_THRESHOLD[order.status];
+        if (thresholdKey) {
+            const limitHrs = settings[thresholdKey];
+            const groupIds = settings.thresholdNotifications?.[thresholdKey] || [];
+            if (limitHrs > 0 && groupIds.length > 0) {
+                const lastStatusLog = [...(order.logs || [])].reverse().find(l => l.status === order.status);
+                const statusEnteredAt = lastStatusLog ? new Date(lastStatusLog.timestamp).getTime() : new Date(order.dataEntryTimestamp).getTime();
+                const elapsedHrs = (Date.now() - statusEnteredAt) / (1000 * 60 * 60);
+                if (elapsedHrs > limitHrs) {
+                    const label = THRESHOLD_LABELS[thresholdKey] || thresholdKey;
+                    await sendAlertForOrder(order, `threshold_${thresholdKey}_${order.id}`, `threshold_${thresholdKey}`, thresholdKey,
+                        `[NEXUS] ${label} Exceeded: ${order.internalOrderNumber}`,
+                        `Order ${order.internalOrderNumber} has been in "${order.status}" for ${elapsedHrs.toFixed(1)} hours, exceeding the ${limitHrs}h limit (${label}).`);
+                }
+            }
+        }
 
-                if (daysSinceInvoice > paymentSlaDays) {
-                    const journalKey = `payment_sla_${order.id}`;
-                    const alreadySent = notifications.some(n => n.journalKey === journalKey);
-                    if (!alreadySent) {
-                        const groupIds = settings.thresholdNotifications?.['defaultPaymentSlaDays'] || [];
-                        const recipients = getRecipients(groupIds);
-                        if (recipients.length > 0) {
-                            const recipientEmails = recipients.map(r => r.email);
-                            const result = await sendEmail(recipientEmails,
-                                `[NEXUS] Payment Overdue: ${order.internalOrderNumber}`,
-                                `Order ${order.internalOrderNumber} is ${daysSinceInvoice.toFixed(0)} days since invoice, exceeding the SLA of ${paymentSlaDays} days.`,
-                                settings.emailConfig);
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // C. DYNAMIC: Component-level procurement threshold checks
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        for (const item of (order.items || [])) {
+            for (const comp of (item.components || [])) {
+                const compThresholdKey = COMP_STATUS_TO_THRESHOLD[comp.status];
+                if (!compThresholdKey) continue;
 
-                            if (result.success) {
-                                notifications.push({ id: `nt_p_${Date.now()}`, journalKey, orderId: order.id, type: 'payment_sla', sentAt: new Date().toISOString(), recipients: recipientEmails });
-                                if (!order.logs) order.logs = [];
-                                recipients.forEach(r => {
-                                    order.logs.push({
-                                        timestamp: new Date().toISOString(),
-                                        message: `[SYSTEM] Payment SLA Alert Sent to ${r.name} (${r.email}) via group: ${r.groupName}. Days: ${daysSinceInvoice.toFixed(0)}/${paymentSlaDays}`,
-                                        status: order.status,
-                                        user: 'System'
-                                    });
-                                });
-                                dbChanged = true;
-                            }
-                        } else {
-                            if (!order.logs) order.logs = [];
-                            order.logs.push({
-                                timestamp: new Date().toISOString(),
-                                message: `[SYSTEM] [ALERT_FAILED] No recipients found for payment SLA alert. Assigned groups: ${groupIds.join(', ')}`,
-                                status: order.status,
-                                user: 'System'
-                            });
-                            notifications.push({ id: `nt_err_p_${Date.now()}`, journalKey, orderId: order.id, type: 'payment_sla_error', sentAt: new Date().toISOString(), recipients: [] });
-                            dbChanged = true;
-                        }
-                    }
+                const limitHrs = settings[compThresholdKey];
+                const groupIds = settings.thresholdNotifications?.[compThresholdKey] || [];
+                if (!limitHrs || limitHrs <= 0 || groupIds.length === 0) continue;
+
+                const statusEnteredAt = comp.statusUpdatedAt ? new Date(comp.statusUpdatedAt).getTime() : (comp.procurementStartedAt ? new Date(comp.procurementStartedAt).getTime() : 0);
+                if (statusEnteredAt === 0) continue;
+
+                const elapsedHrs = (Date.now() - statusEnteredAt) / (1000 * 60 * 60);
+                if (elapsedHrs > limitHrs) {
+                    const label = THRESHOLD_LABELS[compThresholdKey] || compThresholdKey;
+                    const journalKey = `comp_${compThresholdKey}_${order.id}_${item.id}_${comp.id}`;
+                    await sendAlertForOrder(order, journalKey, `comp_${compThresholdKey}`, compThresholdKey,
+                        `[NEXUS] ${label} Exceeded: ${order.internalOrderNumber} / ${comp.componentNumber || comp.description}`,
+                        `Component "${comp.description}" (${comp.componentNumber || 'N/A'}) in order ${order.internalOrderNumber}, item "${item.description}", ` +
+                        `has been in "${comp.status}" for ${elapsedHrs.toFixed(1)} hours, exceeding the ${limitHrs}h limit (${label}).`);
                 }
             }
         }
@@ -360,6 +346,7 @@ const runThresholdAudit = async () => {
         writeDb(db);
     }
 };
+
 
 // --- APP SETUP ---
 const app = express();

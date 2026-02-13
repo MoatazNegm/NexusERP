@@ -256,7 +256,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     updateSetting('settings', 'newOrderAlertGroupIds', updated);
   };
 
-  const ThresholdInput = ({ label, configKey }: { label: string, configKey: keyof AppConfig['settings'] }) => {
+  const ThresholdInput = ({ label, configKey, helpText }: { label: string, configKey: keyof AppConfig['settings'], helpText?: string }) => {
     const activeGroupIds = config.settings.thresholdNotifications?.[configKey] || [];
     const activeGroupsArray = Array.isArray(activeGroupIds) ? activeGroupIds : [];
 
@@ -264,6 +264,13 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       <div className="space-y-2.5 p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col">
         <div className="flex justify-between items-start">
           <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">{label}</label>
+          {helpText && <div className="relative group">
+            <i className="fa-solid fa-circle-info text-[10px] text-blue-400 cursor-help"></i>
+            <div className="absolute bottom-full right-0 mb-2 w-56 p-3 bg-slate-800 text-white text-[10px] rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 leading-relaxed font-medium pointer-events-none">
+              {helpText}
+              <div className="absolute top-full right-2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-800"></div>
+            </div>
+          </div>}
         </div>
         <input type="number" className="w-full p-3 border-2 border-white rounded-xl font-black bg-white focus:border-blue-500 outline-none text-sm" value={config.settings[configKey] as number} onChange={e => updateSetting('settings', configKey, parseFloat(e.target.value) || 0)} />
 
@@ -571,9 +578,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Global Compliance & Audit</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <ThresholdInput label="Min Margin %" configKey="minimumMarginPct" />
-                  <ThresholdInput label="Logging Delay Threshold (Days)" configKey="loggingDelayThresholdDays" />
-                  <ThresholdInput label="Default Payment SLA (d)" configKey="defaultPaymentSlaDays" />
+                  <ThresholdInput label="Min Margin %" configKey="minimumMarginPct" helpText="Orders with margin % below this value will be flagged as NEGATIVE_MARGIN and an alert will be sent to the assigned groups." />
+                  <ThresholdInput label="Logging Delay Threshold (Days)" configKey="loggingDelayThresholdDays" helpText="If the gap between PO date and the data entry date exceeds this many days, a compliance violation alert is triggered." />
+                  <ThresholdInput label="Default Payment SLA (d)" configKey="defaultPaymentSlaDays" helpText="Days after invoicing/delivery before a payment overdue alert is sent. Per-order SLA overrides this default." />
                 </div>
               </div>
 
@@ -583,10 +590,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Pre-Production Thresholds</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <ThresholdInput label="Order Draft Window (h)" configKey="orderEditTimeLimitHrs" />
-                  <ThresholdInput label="Tech Review Limit (h)" configKey="technicalReviewLimitHrs" />
-                  <ThresholdInput label="Pending Offer Limit (h)" configKey="pendingOfferLimitHrs" />
-                  <ThresholdInput label="RFP Response Window (h)" configKey="rfpSentLimitHrs" />
+                  <ThresholdInput label="Order Draft Window (h)" configKey="orderEditTimeLimitHrs" helpText="Max hours an order can stay in LOGGED status before an alert is sent. The editorial team should finalize the order within this window." />
+                  <ThresholdInput label="Tech Review Limit (h)" configKey="technicalReviewLimitHrs" helpText="Max hours an order can remain in TECHNICAL_REVIEW status before an overdue alert is triggered." />
+                  <ThresholdInput label="Pending Offer Limit (h)" configKey="pendingOfferLimitHrs" helpText="Max hours an order can stay in NEGATIVE_MARGIN / IN_HOLD / WAITING_SUPPLIERS status before an alert is triggered." />
+                  <ThresholdInput label="RFP Response Window (h)" configKey="rfpSentLimitHrs" helpText="Max hours a component can stay in RFP_SENT status (awaiting supplier quotes) before an alert is triggered. This is a component-level procurement threshold." />
                 </div>
               </div>
 
@@ -596,11 +603,11 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Manufacturing & Procurement</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <ThresholdInput label="Award Review (h)" configKey="awardedLimitHrs" />
-                  <ThresholdInput label="Issue PO Window (h)" configKey="issuePoLimitHrs" />
-                  <ThresholdInput label="Supplier Fulfillment (h)" configKey="orderedLimitHrs" />
-                  <ThresholdInput label="Waiting Factory (h)" configKey="waitingFactoryLimitHrs" />
-                  <ThresholdInput label="Manufacturing Run (h)" configKey="mfgFinishLimitHrs" />
+                  <ThresholdInput label="Award Review (h)" configKey="awardedLimitHrs" helpText="Max hours a component can stay in AWARDED status (supplier selected, PO pending). Procurement must issue the order before this limit." />
+                  <ThresholdInput label="Issue PO Window (h)" configKey="issuePoLimitHrs" helpText="Reserved for future use. Will define the maximum time to issue a purchase order after component award." />
+                  <ThresholdInput label="Supplier Fulfillment (h)" configKey="orderedLimitHrs" helpText="Max hours a component can remain in ORDERED status (PO sent to supplier, awaiting parts delivery). Component-level procurement threshold." />
+                  <ThresholdInput label="Waiting Factory (h)" configKey="waitingFactoryLimitHrs" helpText="Max hours an order can stay in WAITING_FACTORY status before an alert is triggered. All components received, awaiting manufacturing start." />
+                  <ThresholdInput label="Manufacturing Run (h)" configKey="mfgFinishLimitHrs" helpText="Max hours an order can remain in MANUFACTURING or MANUFACTURING_COMPLETED status before an alert is triggered." />
                 </div>
               </div>
 
@@ -610,12 +617,12 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Logistics & Post-Ops</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <ThresholdInput label="Transit to Hub (h)" configKey="transitToHubLimitHrs" />
-                  <ThresholdInput label="Hub Processing (h)" configKey="productHubLimitHrs" />
-                  <ThresholdInput label="Invoice Generation (h)" configKey="invoicedLimitHrs" />
-                  <ThresholdInput label="Hub Release Sync (h)" configKey="hubReleasedLimitHrs" />
-                  <ThresholdInput label="Delivery Transit (h)" configKey="deliveryLimitHrs" />
-                  <ThresholdInput label="Post-Delivery Archiving (h)" configKey="deliveredLimitHrs" />
+                  <ThresholdInput label="Transit to Hub (h)" configKey="transitToHubLimitHrs" helpText="Max hours an order can stay in TRANSITION_TO_STOCK status before an alert. Products are in transit to the product hub." />
+                  <ThresholdInput label="Hub Processing (h)" configKey="productHubLimitHrs" helpText="Max hours an order can remain in IN_PRODUCT_HUB status. Products are at the hub awaiting invoice or dispatch." />
+                  <ThresholdInput label="Invoice Generation (h)" configKey="invoicedLimitHrs" helpText="Max hours an order can stay in ISSUE_INVOICE status before an alert. Finance should generate the invoice within this window." />
+                  <ThresholdInput label="Hub Release Sync (h)" configKey="hubReleasedLimitHrs" helpText="Max hours an order can remain in INVOICED or HUB_RELEASED status before alert. Awaiting hub release or delivery scheduling." />
+                  <ThresholdInput label="Delivery Transit (h)" configKey="deliveryLimitHrs" helpText="Max hours an order can stay in DELIVERY status before an alert. Products are in transit to the customer." />
+                  <ThresholdInput label="Post-Delivery Archiving (h)" configKey="deliveredLimitHrs" helpText="Max hours an order can stay in DELIVERED status before an alert. Order should be archived or payment confirmed." />
                 </div>
               </div>
             </div>
