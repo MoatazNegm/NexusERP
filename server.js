@@ -248,6 +248,111 @@ const runThresholdAudit = async () => {
                 }
             }
         }
+
+        // 3. Negative Margin Alert
+        if (order.status === 'NEGATIVE_MARGIN') {
+            const journalKey = `margin_${order.id}`;
+            const alreadySent = notifications.some(n => n.journalKey === journalKey);
+            if (!alreadySent) {
+                // Calculate actual margin for the email body
+                let totalRevenue = 0, totalCost = 0;
+                (order.items || []).forEach(it => {
+                    totalRevenue += (it.quantity * it.pricePerUnit);
+                    (it.components || []).forEach(c => {
+                        totalCost += (c.quantity * (c.unitCost || 0));
+                    });
+                });
+                const marginAmt = totalRevenue - totalCost;
+                const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+
+                const groupIds = settings.thresholdNotifications?.['minimumMarginPct'] || [];
+                const recipients = getRecipients(groupIds);
+                if (recipients.length > 0) {
+                    const recipientEmails = recipients.map(r => r.email);
+                    const result = await sendEmail(recipientEmails,
+                        `[NEXUS] Margin Alert: ${order.internalOrderNumber} below ${settings.minimumMarginPct || 15}%`,
+                        `Order ${order.internalOrderNumber} has a margin of ${markupPct.toFixed(1)}%, which is below the minimum threshold of ${settings.minimumMarginPct || 15}%.`,
+                        settings.emailConfig);
+
+                    if (result.success) {
+                        notifications.push({ id: `nt_m_${Date.now()}`, journalKey, orderId: order.id, type: 'negative_margin', sentAt: new Date().toISOString(), recipients: recipientEmails });
+                        if (!order.logs) order.logs = [];
+                        recipients.forEach(r => {
+                            order.logs.push({
+                                timestamp: new Date().toISOString(),
+                                message: `[SYSTEM] Margin Alert Sent to ${r.name} (${r.email}) via group: ${r.groupName}. Margin: ${markupPct.toFixed(1)}%`,
+                                status: order.status,
+                                user: 'System'
+                            });
+                        });
+                        dbChanged = true;
+                    }
+                } else {
+                    if (!order.logs) order.logs = [];
+                    order.logs.push({
+                        timestamp: new Date().toISOString(),
+                        message: `[SYSTEM] [ALERT_FAILED] No recipients found for margin alert. Assigned groups: ${groupIds.join(', ')}`,
+                        status: order.status,
+                        user: 'System'
+                    });
+                    notifications.push({ id: `nt_err_m_${Date.now()}`, journalKey, orderId: order.id, type: 'negative_margin_error', sentAt: new Date().toISOString(), recipients: [] });
+                    dbChanged = true;
+                }
+            }
+        }
+
+        // 4. Payment SLA Overdue Alert
+        if (order.status === 'INVOICED' || order.status === 'DELIVERED' || order.status === 'PARTIAL_PAYMENT') {
+            const paymentSlaDays = order.paymentSlaDays || settings.defaultPaymentSlaDays || 30;
+            // Find the invoice/delivery date from order logs
+            const invoiceLog = [...(order.logs || [])].reverse().find(l =>
+                l.status === 'INVOICED' || l.status === 'DELIVERED'
+            );
+            if (invoiceLog) {
+                const invoiceDate = new Date(invoiceLog.timestamp).getTime();
+                const daysSinceInvoice = (Date.now() - invoiceDate) / (1000 * 60 * 60 * 24);
+
+                if (daysSinceInvoice > paymentSlaDays) {
+                    const journalKey = `payment_sla_${order.id}`;
+                    const alreadySent = notifications.some(n => n.journalKey === journalKey);
+                    if (!alreadySent) {
+                        const groupIds = settings.thresholdNotifications?.['defaultPaymentSlaDays'] || [];
+                        const recipients = getRecipients(groupIds);
+                        if (recipients.length > 0) {
+                            const recipientEmails = recipients.map(r => r.email);
+                            const result = await sendEmail(recipientEmails,
+                                `[NEXUS] Payment Overdue: ${order.internalOrderNumber}`,
+                                `Order ${order.internalOrderNumber} is ${daysSinceInvoice.toFixed(0)} days since invoice, exceeding the SLA of ${paymentSlaDays} days.`,
+                                settings.emailConfig);
+
+                            if (result.success) {
+                                notifications.push({ id: `nt_p_${Date.now()}`, journalKey, orderId: order.id, type: 'payment_sla', sentAt: new Date().toISOString(), recipients: recipientEmails });
+                                if (!order.logs) order.logs = [];
+                                recipients.forEach(r => {
+                                    order.logs.push({
+                                        timestamp: new Date().toISOString(),
+                                        message: `[SYSTEM] Payment SLA Alert Sent to ${r.name} (${r.email}) via group: ${r.groupName}. Days: ${daysSinceInvoice.toFixed(0)}/${paymentSlaDays}`,
+                                        status: order.status,
+                                        user: 'System'
+                                    });
+                                });
+                                dbChanged = true;
+                            }
+                        } else {
+                            if (!order.logs) order.logs = [];
+                            order.logs.push({
+                                timestamp: new Date().toISOString(),
+                                message: `[SYSTEM] [ALERT_FAILED] No recipients found for payment SLA alert. Assigned groups: ${groupIds.join(', ')}`,
+                                status: order.status,
+                                user: 'System'
+                            });
+                            notifications.push({ id: `nt_err_p_${Date.now()}`, journalKey, orderId: order.id, type: 'payment_sla_error', sentAt: new Date().toISOString(), recipients: [] });
+                            dbChanged = true;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (dbChanged) {
