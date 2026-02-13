@@ -55,7 +55,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Workstation Identity</label>
               <div className="relative group">
                 <i className="fa-solid fa-user absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors z-10"></i>
-                <input 
+                <input
                   type="text"
                   required
                   className="w-full bg-white border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all shadow-sm"
@@ -70,7 +70,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Access Passcode</label>
               <div className="relative group">
                 <i className="fa-solid fa-lock absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors z-10"></i>
-                <input 
+                <input
                   type="password"
                   required
                   className="w-full bg-white border border-slate-200 rounded-2xl py-4 pl-12 pr-4 text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all shadow-sm"
@@ -88,7 +88,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
               </div>
             )}
 
-            <button 
+            <button
               disabled={isLoading}
               type="submit"
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-blue-900/20 transition-all active:scale-95 flex items-center justify-center gap-3 uppercase text-xs tracking-[0.2em] disabled:opacity-50"
@@ -99,8 +99,8 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           </form>
 
           <div className="mt-10 pt-8 border-t border-slate-800 text-center">
-             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Authorized Access Only</p>
-             <p className="text-[9px] text-slate-600 mt-2">v2.5.0 Secure Build — © 2024 Nexus Operations</p>
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Authorized Access Only</p>
+            <p className="text-[9px] text-slate-600 mt-2">v2.5.0 Secure Build — © 2024 Nexus Operations</p>
           </div>
         </div>
       </div>

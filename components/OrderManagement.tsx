@@ -5,6 +5,8 @@ import { CustomerOrderItem, OrderStatus, Customer, AppConfig, CustomerOrder, Use
 import { GoogleGenAI } from "@google/genai";
 import { STATUS_CONFIG } from '../constants';
 
+import { AddCustomerModal } from './AddCustomerModal';
+
 interface OrderManagementProps {
   onGoToCRM?: () => void;
   onNavigateToReview?: (orderId: string, itemId: string) => void;
@@ -67,6 +69,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [isScanning, setIsScanning] = useState(false);
   const [isNewCustomerCreated, setIsNewCustomerCreated] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { fetchData(); }, [refreshKey]);
@@ -80,6 +83,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const loggedOrders = useMemo(() => {
     return existingOrders.filter(o => o.status === OrderStatus.LOGGED);
   }, [existingOrders]);
+
+  const hasLoggingViolations = useMemo(() => {
+    return loggedOrders.some(o => o.loggingComplianceViolation);
+  }, [loggedOrders]);
 
   const hubReleasedOrders = useMemo(() => {
     return existingOrders.filter(o => o.status === OrderStatus.HUB_RELEASED);
@@ -139,7 +146,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         reader.readAsDataURL(file);
       });
 
+      const existingCustomerNames = customers.map(c => c.name).slice(0, 50).join(', '); // Passing a sample of known names
       const prompt = `
+        Context: The following customers already exist in our database: [${existingCustomerNames}]. 
+        If the name on the PO is a logical match (e.g., "Google" vs "Google Inc"), you MUST use the exact name from the database.
+
         Extract all details from this Purchase Order image. 
         Structure the response as valid JSON with these keys:
         - customer: { name, email, phone, address, contactName }
@@ -147,8 +158,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         - paymentSlaDays: (Extract the number of days for payment terms like 'Net 30', '45 days', 'Payment due in 15 days'. Only return the integer)
         - date: (The date on the PO in YYYY-MM-DD format)
         - items: [ { description, quantity, unit, price, taxPercent } ]
-        Rules: Output ONLY the JSON object. Default items tax to 14 if found, otherwise null. 
-        Important: If "Net 30" is found, paymentSlaDays should be 30.
+        
+        Rules: 
+        1. Output ONLY the JSON object. 
+        2. Default items taxPercent to 14 if tax is detected but the specific rate is not clearly legible (standard VAT).
+        3. If "Net 30" is found, paymentSlaDays should be 30.
       `;
 
       let textOutput = "";
@@ -227,15 +241,19 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       if (extracted.date) setOrderDate(extracted.date);
 
       if (extracted.items) {
-        setItems(extracted.items.map((i: any, idx: number) => ({
-          id: `temp_${Date.now()}_${idx}`,
-          description: i.description,
-          quantity: i.quantity,
-          unit: i.unit || 'pcs',
-          pricePerUnit: i.price,
-          taxPercent: i.taxPercent !== null ? i.taxPercent : 0,
-          taxDetected: i.taxPercent !== null
-        })));
+        setItems(extracted.items.map((i: any, idx: number) => {
+          const hasTax = i.taxPercent !== null && i.taxPercent !== undefined;
+          return {
+            id: `temp_${Date.now()}_${idx}`,
+            description: i.description,
+            quantity: i.quantity,
+            unit: i.unit || 'pcs',
+            pricePerUnit: i.price,
+            taxPercent: hasTax ? i.taxPercent : 14, // Default to 14% if tax is implied but not set
+            taxDetected: true,
+            logs: []
+          };
+        }));
       }
       setMessage({ type: 'success', text: 'Vision mapping complete.' });
     } catch (err) {
@@ -247,7 +265,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const resetForm = () => {
     setCustomerName(''); setCustomerReferenceNumber(''); setOrderDate(today);
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
-    setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true }]);
+    setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true, logs: [] }]);
     setEditingOrderId(null); setMessage(null); setIsNewCustomerCreated(false);
   };
 
@@ -288,6 +306,25 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     }
   };
 
+  const handleCustomerBlur = () => {
+    if (customerName && !customers.some(c => c.name.toLowerCase() === customerName.toLowerCase())) {
+      setShowAddCustomerModal(true);
+    }
+  };
+
+  const handleSaveNewCustomer = async (data: any) => {
+    try {
+      const newCust = await dataService.addCustomer(data, currentUser.username);
+      setCustomers(prev => [...prev, newCust]);
+      setCustomerName(newCust.name); // Ensure exact casing match
+      setIsNewCustomerCreated(true);
+      setShowAddCustomerModal(false);
+      setMessage({ type: 'success', text: 'New Customer Entity Registered.' });
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Failed to register customer.' });
+    }
+  };
+
   return (
     <div className="max-w-[1200px] mx-auto pb-12 space-y-6">
       <div className="flex gap-1 p-1 bg-slate-200 rounded-xl w-fit shadow-inner overflow-x-auto">
@@ -299,11 +336,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         </button>
         <button
           onClick={() => setActiveTab('logged')}
-          className={`px-8 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all relative flex items-center gap-2 whitespace-nowrap ${activeTab === 'logged' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+          className={`px-8 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all relative flex items-center gap-2 whitespace-nowrap ${activeTab === 'logged'
+            ? (hasLoggingViolations ? 'bg-rose-50 text-rose-600 shadow-sm border border-rose-100' : 'bg-white text-blue-600 shadow-sm')
+            : (hasLoggingViolations ? 'text-rose-500 hover:text-rose-700 hover:bg-rose-50' : 'text-slate-500 hover:text-slate-800')
+            }`}
         >
-          <i className="fa-solid fa-folder-open"></i> Logged Orders
+          <i className={`fa-solid ${hasLoggingViolations ? 'fa-triangle-exclamation animate-pulse' : 'fa-folder-open'}`}></i> Logged Orders
           {loggedOrders.length > 0 && (
-            <span className="w-5 h-5 bg-blue-600 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white font-black">{loggedOrders.length}</span>
+            <span className={`w-5 h-5 text-[10px] flex items-center justify-center rounded-full border-2 border-white font-black ${hasLoggingViolations ? 'bg-rose-600 text-white animate-pulse' : 'bg-blue-600 text-white'
+              }`}>{loggedOrders.length}</span>
           )}
         </button>
         <button
@@ -339,7 +380,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
           {message && (
             <div className={`mb-6 p-4 rounded-2xl border flex items-center gap-3 animate-in slide-in-from-top-4 ${message.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' :
-                message.type === 'info' ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-rose-50 border-rose-100 text-rose-700'
+              message.type === 'info' ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-rose-50 border-rose-100 text-rose-700'
               }`}>
               <i className={`fa-solid ${message.type === 'success' ? 'fa-circle-check' : message.type === 'error' ? 'fa-triangle-exclamation' : 'fa-circle-info'}`}></i>
               <span className="text-xs font-bold uppercase">{message.text}</span>
@@ -386,13 +427,50 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Customer Entity Name</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between items-center">
+                      <span>Customer Entity Name</span>
+                      {customerName && (
+                        <span className={`text-[8px] px-2 py-0.5 rounded-full border transition-all ${isNewCustomerCreated
+                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200 animate-pulse'
+                          : (customers.some(c => c.name.toLowerCase() === customerName.toLowerCase())
+                            ? 'bg-blue-100 text-blue-700 border-blue-200'
+                            : 'bg-slate-100 text-slate-400 border-slate-200')
+                          }`}>
+                          {isNewCustomerCreated
+                            ? 'New Auto-Registered Entity'
+                            : (customers.some(c => c.name.toLowerCase() === customerName.toLowerCase())
+                              ? 'Matched with CRM Profile'
+                              : 'Manual/Unmapped Entity')}
+                        </span>
+                      )}
+                    </label>
                     <input
                       disabled={editStatus.isFrozen}
                       className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
                       placeholder="Enter Legal Entity Name..."
                       value={customerName}
-                      onChange={e => setCustomerName(e.target.value)}
+                      list="crm-customer-suggestions"
+                      onChange={e => {
+                        setCustomerName(e.target.value);
+                        setIsNewCustomerCreated(false);
+                      }}
+                      onBlur={handleCustomerBlur}
+                      required
+                    />
+                    <datalist id="crm-customer-suggestions">
+                      {customers.map(c => (
+                        <option key={c.id} value={c.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">PO Received Date</label>
+                    <input
+                      disabled={editStatus.isFrozen}
+                      type="date"
+                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                      value={orderDate}
+                      onChange={e => setOrderDate(e.target.value)}
                       required
                     />
                   </div>
@@ -445,7 +523,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     );
                   })}
                   {!editStatus.isFrozen && (
-                    <button type="button" onClick={() => setItems([...items, { id: `temp_${Date.now()}`, description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true }])} className="px-6 py-3 bg-white border border-blue-100 text-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2">
+                    <button type="button" onClick={() => setItems([...items, { id: `temp_${Date.now()}`, description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true, logs: [] }])} className="px-6 py-3 bg-white border border-blue-100 text-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2">
                       <i className="fa-solid fa-plus"></i> Append Line Item
                     </button>
                   )}
@@ -484,7 +562,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest">
                   <tr>
-                    <th className="px-8 py-5">Internal Reference</th>
+                    <th className="px-8 py-5">Internal Ref / PO Ref</th>
                     <th className="px-8 py-5">Customer Entity</th>
                     <th className="px-8 py-5">Created Date</th>
                     <th className="px-8 py-5">Lines</th>
@@ -493,10 +571,20 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {loggedOrders.map(draft => (
-                    <tr key={draft.id} className="hover:bg-slate-50/80 transition-all group">
-                      <td className="px-8 py-6 font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</td>
+                    <tr key={draft.id} className={`hover:bg-slate-50/80 transition-all group ${draft.loggingComplianceViolation ? 'bg-rose-50 hover:!bg-rose-100 border-l-4 border-rose-500' : ''}`}>
+                      <td className="px-8 py-6">
+                        <div className="font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">PO: {draft.customerReferenceNumber || 'N/A'}</div>
+                        {draft.loggingComplianceViolation && <div className="mt-1"><span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-200 uppercase tracking-wider">Logging Delay</span></div>}
+                      </td>
                       <td className="px-8 py-6 font-black text-slate-800">{draft.customerName}</td>
-                      <td className="px-8 py-6 text-xs text-slate-500 font-bold">{new Date(draft.dataEntryTimestamp).toLocaleDateString()}</td>
+                      <td className="px-8 py-6 text-xs text-slate-500 font-bold">
+                        {(() => {
+                          const log = draft.logs.find(l => l.status === OrderStatus.LOGGED);
+                          const dateStr = log ? log.timestamp : draft.dataEntryTimestamp;
+                          return new Date(dateStr).toLocaleDateString();
+                        })()}
+                      </td>
                       <td className="px-8 py-6"><span className="px-2.5 py-1 bg-slate-100 rounded-lg text-[10px] font-black text-slate-600 border border-slate-200">{draft.items.length} POS</span></td>
                       <td className="px-8 py-6 text-right">
                         <button
@@ -552,8 +640,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   {hubReleasedOrders.map(order => (
                     <tr key={order.id} className="hover:bg-sky-50/40 transition-all group">
                       <td className="px-8 py-6 font-mono text-xs font-black text-sky-600 uppercase">
-                        {order.internalOrderNumber}
-                        <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">Inv: {order.invoiceNumber || 'ISSUED'}</div>
+                        <div>{order.internalOrderNumber}</div>
+                        <div className="flex flex-col gap-0.5 mt-1.5">
+                          <div className="text-[9px] text-slate-500 font-black uppercase">PO: {order.customerReferenceNumber || 'UNMATCHED'}</div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase">Inv: {order.invoiceNumber || 'NOT ISSUED'}</div>
+                        </div>
                       </td>
                       <td className="px-8 py-6">
                         <div className="font-black text-slate-800 text-sm tracking-tight">{order.customerName}</div>
@@ -602,6 +693,20 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             </div>
           )}
         </div>
+      )}
+
+      {/* Add Customer Modal */}
+      {showAddCustomerModal && (
+        <AddCustomerModal
+          initialName={customerName}
+          config={config}
+          onSave={handleSaveNewCustomer}
+          onClose={() => {
+            setShowAddCustomerModal(false);
+            // Optionally clear the invalid name if they canceled?
+            // setCustomerName(''); 
+          }}
+        />
       )}
     </div>
   );

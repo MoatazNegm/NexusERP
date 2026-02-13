@@ -53,7 +53,19 @@ const App: React.FC = () => {
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [config, setConfig] = useState<AppConfig>(() => {
     const saved = localStorage.getItem('nexus_config');
-    return saved ? JSON.parse(saved) : INITIAL_CONFIG;
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Migration: Ensure new critical alerts are enabled even if legacy config had them off
+      return {
+        ...parsed,
+        settings: {
+          ...INITIAL_CONFIG.settings, // Ensure new keys exist
+          ...parsed.settings,
+          enableNewOrderAlerts: true // Force enable for this update to fix missing notifications
+        }
+      };
+    }
+    return INITIAL_CONFIG;
   });
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => window.innerWidth < 1024);
@@ -80,7 +92,7 @@ const App: React.FC = () => {
     if (!currentUser) return;
     const syncInterval = setInterval(() => {
       setRefreshKey(prev => prev + 1);
-    }, 30000);
+    }, 5000);
     return () => clearInterval(syncInterval);
   }, [currentUser]);
 
@@ -97,6 +109,14 @@ const App: React.FC = () => {
     };
     initDb();
   }, [refreshKey, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) {
+      // Global startup audit: Check compliance rules (silent mode)
+      // This ensures dashboard colors/badges are correct immediately after restart/login
+      dataService.performThresholdAudit(config, (msg) => console.debug(msg), true);
+    }
+  }, [currentUser]);
 
   const effectiveRoles = useMemo(() => {
     if (!currentUser) return [] as UserRole[];
@@ -147,10 +167,11 @@ const App: React.FC = () => {
       const ordersInStatus = orders.filter(o => o.status === status);
       acc[status] = {
         count: ordersInStatus.length,
-        hasOverdue: ordersInStatus.some(o => isOrderOverThreshold(o, config.settings))
+        hasOverdue: ordersInStatus.some(o => isOrderOverThreshold(o, config.settings)),
+        hasViolation: ordersInStatus.some(o => o.loggingComplianceViolation)
       };
       return acc;
-    }, {} as Record<string, { count: number, hasOverdue: boolean }>);
+    }, {} as Record<string, { count: number, hasOverdue: boolean, hasViolation: boolean }>);
 
     const negativeMarginOrders = orders.filter(o => o.status === OrderStatus.NEGATIVE_MARGIN);
 
@@ -229,7 +250,7 @@ const App: React.FC = () => {
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {Object.entries(STATUS_CONFIG).map(([status, cfg]) => {
-                  const stats = dashboardMetrics.statusCounts[status] || { count: 0, hasOverdue: false };
+                  const stats = dashboardMetrics.statusCounts[status] || { count: 0, hasOverdue: false, hasViolation: false };
                   const isActive = dashboardStatusFilter === status;
 
                   return (
@@ -248,15 +269,20 @@ const App: React.FC = () => {
                           <i className="fa-solid fa-clock-rotate-left"></i>
                         </div>
                       )}
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs mb-3 ${stats.hasOverdue ? 'bg-rose-600 text-white' :
+                      {stats.hasViolation && (
+                        <div className="absolute top-0 right-6 p-2 text-[8px] text-rose-600 animate-bounce">
+                          <i className="fa-solid fa-triangle-exclamation"></i>
+                        </div>
+                      )}
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs mb-3 ${stats.hasOverdue || stats.hasViolation ? 'bg-rose-600 text-white' :
                         isActive ? 'bg-blue-600 text-white' : 'bg-slate-50 text-slate-400 group-hover:bg-slate-100'
                         }`}>
                         <i className={`fa-solid ${cfg.icon}`}></i>
                       </div>
                       <div>
-                        <div className={`text-[9px] font-black uppercase tracking-tight leading-tight mb-1 ${stats.hasOverdue ? 'text-rose-700' : isActive ? 'text-blue-700' : 'text-slate-500'
+                        <div className={`text-[9px] font-black uppercase tracking-tight leading-tight mb-1 ${stats.hasOverdue || stats.hasViolation ? 'text-rose-700' : isActive ? 'text-blue-700' : 'text-slate-500'
                           }`}>{cfg.label}</div>
-                        <div className={`text-xl font-black ${stats.hasOverdue ? 'text-rose-600' : 'text-slate-800'}`}>{stats.count}</div>
+                        <div className={`text-xl font-black ${stats.hasOverdue || stats.hasViolation ? 'text-rose-600' : 'text-slate-800'}`}>{stats.count}</div>
                       </div>
                     </button>
                   );

@@ -6,8 +6,14 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
     server: {
-      port: 3005,
+      port: 3006,
       host: '0.0.0.0',
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3005',
+          changeOrigin: true
+        }
+      }
     },
     preview: {
       port: parseInt(process.env.PORT || '3005'),

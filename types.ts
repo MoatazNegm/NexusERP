@@ -175,6 +175,7 @@ export interface CustomerOrder {
     timestamp: string;
     type: 'HOLD_RELEASE' | 'MARGIN_RELEASE';
   };
+  loggingComplianceViolation?: boolean;
 }
 
 export interface OpenAIConfig {
@@ -230,7 +231,7 @@ export interface AppConfig {
     deliveredLimitHrs: number;
     defaultPaymentSlaDays: number;
     minimumMarginPct: number;
-    loggingDelayThresholdHrs: number;
+    loggingDelayThresholdDays: number;
     thresholdNotifications: Record<string, string[]>;
     enableNewOrderAlerts: boolean;
     newOrderAlertGroupIds: string[];

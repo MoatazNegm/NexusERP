@@ -1,0 +1,120 @@
+{
+  "customers": [],
+  "orders": [
+    {
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "PO16948286",
+      "orderDate": "2025-08-31",
+      "paymentSlaDays": 30,
+      "dataEntryTimestamp": "2026-02-12T20:06:14.565Z",
+      "status": "LOGGED",
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "64886429 VASELINE@20% POFF STKR N",
+          "quantity": 1600,
+          "unit": "pcs",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0001",
+      "logs": [
+        {
+          "timestamp": "2026-02-12T20:06:14.571Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "admin"
+        }
+      ],
+      "id": "orders_1770926774571",
+      "loggingComplianceViolation": true
+    }
+  ],
+  "inventory": [],
+  "suppliers": [],
+  "procurement": [],
+  "userGroups": [
+    {
+      "name": "superusers",
+      "description": "can change the settings and help all the staff",
+      "roles": [
+        "admin",
+        "management",
+        "order_management",
+        "factory",
+        "crm",
+        "finance",
+        "procurement"
+      ],
+      "id": "userGroups_1770925213983"
+    },
+    {
+      "name": "Managers",
+      "description": "see variably what we need ",
+      "roles": [
+        "management"
+      ],
+      "id": "userGroups_1770926600857"
+    },
+    {
+      "name": "operations",
+      "description": "makes the logistics",
+      "roles": [
+        "order_management",
+        "procurement",
+        "crm"
+      ],
+      "id": "userGroups_1770927056150"
+    },
+    {
+      "name": "Finance team",
+      "description": "manage the finance",
+      "roles": [
+        "finance"
+      ],
+      "id": "userGroups_1770927073133"
+    },
+    {
+      "name": "Factory team",
+      "description": "for the factory process",
+      "roles": [
+        "factory"
+      ],
+      "id": "userGroups_1770927107048"
+    }
+  ],
+  "users": [
+    {
+      "name": "admin",
+      "username": "admin",
+      "roles": [
+        "admin",
+        "management",
+        "order_management",
+        "factory",
+        "procurement",
+        "finance",
+        "crm"
+      ],
+      "groupIds": [],
+      "email": "erpalerts@quickstor.net",
+      "password": "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918",
+      "id": "users_1770924488025"
+    },
+    {
+      "name": "Mohamad Negm",
+      "username": "mnegm",
+      "roles": [
+        "management"
+      ],
+      "groupIds": [],
+      "email": "Mohamed.allam@psp-co.org",
+      "password": "5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5",
+      "id": "users_1770924542429"
+    }
+  ],
+  "notifications": []
+}

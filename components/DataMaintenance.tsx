@@ -573,7 +573,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <ThresholdInput label="Min Margin %" configKey="minimumMarginPct" />
-                  <ThresholdInput label="Audit Delay (h)" configKey="loggingDelayThresholdHrs" />
+                  <ThresholdInput label="Logging Delay Threshold (Days)" configKey="loggingDelayThresholdDays" />
                   <ThresholdInput label="Default Payment SLA (d)" configKey="defaultPaymentSlaDays" />
                 </div>
               </div>

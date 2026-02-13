@@ -11,7 +11,7 @@ interface OrderReportProps {
 }
 
 const getStatusLimit = (status: OrderStatus, settings: any) => {
-  switch(status) {
+  switch (status) {
     case OrderStatus.LOGGED: return settings.orderEditTimeLimitHrs;
     case OrderStatus.TECHNICAL_REVIEW: return settings.technicalReviewLimitHrs;
     case OrderStatus.WAITING_SUPPLIERS: return settings.pendingOfferLimitHrs;
@@ -29,7 +29,7 @@ const getStatusLimit = (status: OrderStatus, settings: any) => {
 
 const ThresholdTimer: React.FC<{ order: CustomerOrder, config: AppConfig }> = ({ order, config }) => {
   const [remaining, setRemaining] = useState<number>(0);
-  
+
   useEffect(() => {
     const calc = () => {
       const limitHrs = getStatusLimit(order.status, config.settings);
@@ -67,7 +67,7 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState<OrderStatus[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
-  
+
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -91,7 +91,7 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     let baseRange = { startDate: '', endDate: '' };
-    
+
     switch (dateFilter) {
       case 'today': baseRange = { startDate: todayStr, endDate: todayStr }; break;
       case 'yesterday':
@@ -167,11 +167,11 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
           <div className="flex gap-4 animate-in slide-in-from-top-2 duration-300 p-4 bg-white rounded-xl border border-slate-200">
             <div className="flex-1 space-y-1">
               <label className="text-[9px] font-black text-slate-400 uppercase">From Date</label>
-              <input type="date" className="w-full px-3 py-2 border rounded-lg bg-white text-xs outline-none" value={customRange.start} onChange={e => setCustomRange({...customRange, start: e.target.value})} />
+              <input type="date" className="w-full px-3 py-2 border rounded-lg bg-white text-xs outline-none" value={customRange.start} onChange={e => setCustomRange({ ...customRange, start: e.target.value })} />
             </div>
             <div className="flex-1 space-y-1">
               <label className="text-[9px] font-black text-slate-400 uppercase">To Date</label>
-              <input type="date" className="w-full px-3 py-2 border rounded-lg bg-white text-xs outline-none" value={customRange.end} onChange={e => setCustomRange({...customRange, end: e.target.value})} />
+              <input type="date" className="w-full px-3 py-2 border rounded-lg bg-white text-xs outline-none" value={customRange.end} onChange={e => setCustomRange({ ...customRange, end: e.target.value })} />
             </div>
           </div>
         )}
@@ -204,11 +204,12 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
             <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Syncing activity stream...</span>
           </div>
         )}
-        
+
         <table className="w-full text-left">
           <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase text-slate-400 tracking-widest">
             <tr>
-              <th className="px-6 py-4">Logged Date</th>
+              <th className="px-6 py-4">System Logged</th>
+              <th className="px-6 py-4">PO Received</th>
               <th className="px-6 py-4">Customer Account</th>
               <th className="px-6 py-4">PO / Internal ID</th>
               <th className="px-6 py-4">Workflow</th>
@@ -217,14 +218,27 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {orders.map(order => (
-              <tr 
-                key={order.id} 
+              <tr
+                key={order.id}
                 onClick={() => setSelectedOrder(order)}
                 className="hover:bg-blue-50/30 cursor-pointer transition-colors group"
               >
+                <td className="px-6 py-4 whitespace-nowrap text-slate-500 text-xs font-medium">
+                  {new Date(order.dataEntryTimestamp).toLocaleDateString()}
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap text-slate-500 text-xs font-medium">{order.orderDate}</td>
                 <td className="px-6 py-4">
-                  <div className="font-bold text-slate-800">{order.customerName}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-bold text-slate-800">{order.customerName}</div>
+                    {order.loggingComplianceViolation && (
+                      <div className="group/warn relative">
+                        <i className="fa-solid fa-triangle-exclamation text-rose-500 text-[10px] animate-pulse"></i>
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[8px] font-black uppercase rounded opacity-0 group-hover/warn:opacity-100 transition-opacity whitespace-nowrap z-50">
+                          Logging Delay Breach
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </td>
                 <td className="px-6 py-4">
                   <div className="font-mono text-[10px] text-blue-600 font-bold">{order.internalOrderNumber}</div>
@@ -246,7 +260,7 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
             ))}
           </tbody>
         </table>
-        
+
         {!loading && orders.length === 0 && (
           <div className="p-20 text-center flex flex-col items-center gap-4 text-slate-400">
             <i className="fa-solid fa-folder-open text-4xl opacity-10"></i>
@@ -256,9 +270,9 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
       </div>
 
       {selectedOrder && (
-        <OrderDetailsModal 
-          order={selectedOrder} 
-          onClose={() => setSelectedOrder(null)} 
+        <OrderDetailsModal
+          order={selectedOrder}
+          onClose={() => setSelectedOrder(null)}
         />
       )}
     </div>
