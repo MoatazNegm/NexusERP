@@ -256,22 +256,30 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     updateSetting('settings', 'newOrderAlertGroupIds', updated);
   };
 
+  const [activeTooltip, setActiveTooltip] = React.useState<string | null>(null);
+
   const ThresholdInput = ({ label, configKey, helpText }: { label: string, configKey: keyof AppConfig['settings'], helpText?: string }) => {
     const activeGroupIds = config.settings.thresholdNotifications?.[configKey] || [];
     const activeGroupsArray = Array.isArray(activeGroupIds) ? activeGroupIds : [];
+    const tooltipId = `tooltip_${configKey}`;
 
     return (
       <div className="space-y-2.5 p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col">
         <div className="flex justify-between items-start">
           <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">{label}</label>
-          {helpText && <div className="relative group">
-            <i className="fa-solid fa-circle-info text-[10px] text-blue-400 cursor-help"></i>
-            <div className="absolute bottom-full right-0 mb-2 w-56 p-3 bg-slate-800 text-white text-[10px] rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 leading-relaxed font-medium pointer-events-none">
+          {helpText && <div className="relative"
+            onMouseEnter={() => setActiveTooltip(tooltipId)}
+            onMouseLeave={() => setActiveTooltip(null)}
+            onClick={() => setActiveTooltip(activeTooltip === tooltipId ? null : tooltipId)}
+          >
+            <i className="fa-solid fa-circle-question text-sm text-blue-400 hover:text-blue-600 cursor-help transition-colors"></i>
+            {activeTooltip === tooltipId && <div style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: 8, width: 220, padding: 12, backgroundColor: '#1e293b', color: 'white', fontSize: 11, borderRadius: 12, boxShadow: '0 10px 25px rgba(0,0,0,0.3)', zIndex: 9999, lineHeight: 1.5, fontWeight: 500 }}>
               {helpText}
-              <div className="absolute top-full right-2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-800"></div>
-            </div>
+              <div style={{ position: 'absolute', top: '100%', right: 8, width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '5px solid #1e293b' }}></div>
+            </div>}
           </div>}
         </div>
+
         <input type="number" className="w-full p-3 border-2 border-white rounded-xl font-black bg-white focus:border-blue-500 outline-none text-sm" value={config.settings[configKey] as number} onChange={e => updateSetting('settings', configKey, parseFloat(e.target.value) || 0)} />
 
         <div className="mt-2 space-y-2">

@@ -366,6 +366,12 @@
           "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
           "status": "LOGGED",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-02-13T12:17:35.221Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
         }
       ],
       "loggingComplianceViolation": true
@@ -598,6 +604,16 @@
         "erpalerts@quickstor.net",
         "Mohamed.allam@psp-co.org"
       ]
+    },
+    {
+      "id": "nt_1770985055221_umlk",
+      "journalKey": "threshold_orderEditTimeLimitHrs_orders_1770972288567",
+      "orderId": "orders_1770972288567",
+      "type": "threshold_orderEditTimeLimitHrs",
+      "sentAt": "2026-02-13T12:17:35.221Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
     }
   ],
   "settings": [
@@ -617,6 +633,51 @@
           "userGroups_1770925213983"
         ],
         "defaultPaymentSlaDays": [
+          "userGroups_1770925213983"
+        ],
+        "orderEditTimeLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "technicalReviewLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "pendingOfferLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "rfpSentLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "awardedLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "issuePoLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "orderedLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "waitingFactoryLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "mfgFinishLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "transitToHubLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "productHubLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "invoicedLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "hubReleasedLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "deliveryLimitHrs": [
+          "userGroups_1770925213983"
+        ],
+        "deliveredLimitHrs": [
           "userGroups_1770925213983"
         ]
       },
