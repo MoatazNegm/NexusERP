@@ -496,7 +496,7 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-      <AIAssistant orders={orders} config={config} />
+      {hasRole('management') && <AIAssistant orders={orders} config={config} />}
     </div>
   );
 };
