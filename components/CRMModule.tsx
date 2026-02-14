@@ -112,10 +112,10 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
 
     if (editingCustomer) {
       // Fix: Pass currentUser.username as the third argument
-      await dataService.updateCustomer(editingCustomer.id, custForm, currentUser.username);
+      await dataService.updateCustomer(editingCustomer.id, custForm);
     } else {
       // Fix: Pass currentUser.username as the second argument
-      await dataService.addCustomer(custForm, currentUser.username);
+      await dataService.addCustomer(custForm);
     }
 
     await loadCustomers();
