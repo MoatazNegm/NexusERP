@@ -14,6 +14,62 @@ const DB_PATH = path.join(__dirname, 'db.json');
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
 
+const OrderStatus = {
+    LOGGED: 'LOGGED',
+    TECHNICAL_REVIEW: 'TECHNICAL_REVIEW',
+    NEGATIVE_MARGIN: 'NEGATIVE_MARGIN',
+    IN_HOLD: 'IN_HOLD',
+    REJECTED: 'REJECTED',
+    WAITING_SUPPLIERS: 'WAITING_SUPPLIERS',
+    WAITING_FACTORY: 'WAITING_FACTORY',
+    DELIVERY: 'DELIVERY',
+    MANUFACTURING: 'MANUFACTURING',
+    MANUFACTURING_COMPLETED: 'MANUFACTURING_COMPLETED',
+    UNDER_TEST: 'UNDER_TEST',
+    TRANSITION_TO_STOCK: 'TRANSITION_TO_STOCK',
+    IN_PRODUCT_HUB: 'IN_PRODUCT_HUB',
+    ISSUE_INVOICE: 'ISSUE_INVOICE',
+    INVOICED: 'INVOICED',
+    HUB_RELEASED: 'HUB_RELEASED',
+    DELIVERED: 'DELIVERED',
+    PARTIAL_PAYMENT: 'PARTIAL_PAYMENT',
+    FULFILLED: 'FULFILLED'
+};
+
+const evaluateMarginStatus = (items, minMargin, currentStatus) => {
+    let totalRevenue = 0;
+    let totalCost = 0;
+    let hasComponents = false;
+
+    (items || []).forEach(it => {
+        totalRevenue += ((it.quantity || 0) * (it.pricePerUnit || 0));
+        if (it.components && it.components.length > 0) {
+            hasComponents = true;
+            it.components.forEach(c => {
+                totalCost += ((c.quantity || 0) * (c.unitCost || 0));
+            });
+        }
+    });
+
+    const marginAmt = totalRevenue - totalCost;
+    const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+
+    // Priority 1: Margin Protection
+    if (markupPct < minMargin) return OrderStatus.NEGATIVE_MARGIN;
+
+    // Priority 2: Technical Workflow Transition
+    if (hasComponents && currentStatus === OrderStatus.LOGGED) {
+        return OrderStatus.TECHNICAL_REVIEW;
+    }
+
+    // Priority 3: Recovery from Negative Margin
+    if (currentStatus === OrderStatus.NEGATIVE_MARGIN) {
+        return OrderStatus.TECHNICAL_REVIEW;
+    }
+
+    return currentStatus;
+};
+
 // --- DATABASE HANDLERS ---
 const readDb = () => {
     try {
@@ -376,8 +432,26 @@ const addToCollection = (col) => (req, res) => {
         }
     }
 
-    const newItem = { id: `${col}_${Date.now()}`, ...req.body };
+    let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
+
+    if (col === 'orders') {
+        const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
+        const minMargin = dbSettings.minimumMarginPct || 15;
+
+        // Lazy init logs
+        if (!newItem.logs) newItem.logs = [];
+        (newItem.items || []).forEach(it => { if (!it.logs) it.logs = []; });
+
+        const nextStatus = evaluateMarginStatus(newItem.items, minMargin, newItem.status || OrderStatus.LOGGED);
+        if (nextStatus !== newItem.status) {
+            const old = newItem.status || 'NEW';
+            newItem.status = nextStatus;
+            const reason = nextStatus === OrderStatus.NEGATIVE_MARGIN ? 'Margin Protection' : 'Technical Study Initialization';
+            newItem.logs.push({ timestamp: new Date().toISOString(), message: `[AUTO] ${reason}: Status moved from ${old} to ${nextStatus}`, status: nextStatus, user: 'System' });
+        }
+    }
+
     db[col].push(newItem);
     if (writeDb(db)) res.status(201).json(col === 'users' ? (({ password, ...u }) => u)(newItem) : newItem);
     else res.status(500).json({ error: "Write failed" });
@@ -388,8 +462,26 @@ const updateInCollection = (col) => (req, res) => {
     if (!db[col]) return res.status(404).json({ error: "Not found" });
     const index = db[col].findIndex(it => it.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Item not found" });
-    const updated = { ...db[col][index], ...req.body };
+    let updated = { ...db[col][index], ...req.body };
     if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
+
+    if (col === 'orders') {
+        const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
+        const minMargin = dbSettings.minimumMarginPct || 15;
+
+        // Lazy init logs
+        if (!updated.logs) updated.logs = [];
+        (updated.items || []).forEach(it => { if (!it.logs) it.logs = []; });
+
+        const nextStatus = evaluateMarginStatus(updated.items, minMargin, updated.status);
+        if (nextStatus !== updated.status) {
+            const old = updated.status;
+            updated.status = nextStatus;
+            const reason = nextStatus === OrderStatus.NEGATIVE_MARGIN ? 'Margin Protection' : 'Workflow Update';
+            updated.logs.push({ timestamp: new Date().toISOString(), message: `[AUTO] ${reason}: Status moved from ${old} to ${nextStatus}`, status: nextStatus, user: 'System' });
+        }
+    }
+
     db[col][index] = updated;
     if (writeDb(db)) res.json(col === 'users' ? (({ password, ...u }) => u)(updated) : updated);
     else res.status(500).json({ error: "Update failed" });
