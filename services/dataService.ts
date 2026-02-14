@@ -209,16 +209,35 @@ class DataService {
   private evaluateMarginStatus(items: CustomerOrderItem[], minMargin: number, currentStatus: OrderStatus): OrderStatus {
     let totalRevenue = 0;
     let totalCost = 0;
+    let hasComponents = false;
+
     items.forEach(it => {
       totalRevenue += (it.quantity * it.pricePerUnit);
-      it.components?.forEach(c => {
-        totalCost += (c.quantity * (c.unitCost || 0));
-      });
+      if (it.components && it.components.length > 0) {
+        hasComponents = true;
+        it.components.forEach(c => {
+          totalCost += (c.quantity * (c.unitCost || 0));
+        });
+      }
     });
+
     const marginAmt = totalRevenue - totalCost;
     const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+
+    // Priority 1: Margin Protection
     if (markupPct < minMargin) return OrderStatus.NEGATIVE_MARGIN;
-    return currentStatus === OrderStatus.NEGATIVE_MARGIN ? OrderStatus.TECHNICAL_REVIEW : currentStatus;
+
+    // Priority 2: Technical Workflow Transition
+    if (hasComponents && currentStatus === OrderStatus.LOGGED) {
+      return OrderStatus.TECHNICAL_REVIEW;
+    }
+
+    // Priority 3: Recovery from Negative Margin
+    if (currentStatus === OrderStatus.NEGATIVE_MARGIN) {
+      return OrderStatus.TECHNICAL_REVIEW;
+    }
+
+    return currentStatus;
   }
 
   async updateOrder(id: string, updates: Partial<CustomerOrder>, minMarginPct: number, user: string) {
@@ -260,8 +279,10 @@ class DataService {
 
     const nextStatus = this.evaluateMarginStatus(order.items, minMarginPct, order.status);
     if (nextStatus !== order.status) {
+      const oldStatus = order.status;
       order.status = nextStatus;
-      order.logs.push(await this.createLog(`Margin Protection: Order moved to ${nextStatus}`, nextStatus, 'System'));
+      const reason = nextStatus === OrderStatus.NEGATIVE_MARGIN ? 'Margin Protection' : 'Technical Study Initialization';
+      order.logs.push(await this.createLog(`${reason}: Order moved from ${oldStatus} to ${nextStatus}`, nextStatus, 'System'));
     }
 
     if (!item.logs) item.logs = [];
@@ -277,6 +298,14 @@ class DataService {
     item.components = item.components?.filter(c => c.id !== compId);
     if (!item.logs) item.logs = [];
     item.logs.push(await this.createLog(`Removed component ${compId}`, undefined, user));
+
+    const nextStatus = this.evaluateMarginStatus(order.items, minMarginPct, order.status);
+    if (nextStatus !== order.status) {
+      const oldStatus = order.status;
+      order.status = nextStatus;
+      order.logs.push(await this.createLog(`Workflow update: Order moved from ${oldStatus} to ${nextStatus} after component removal`, nextStatus, 'System'));
+    }
+
     await this.put('orders', orderId, order);
     return order;
   }
@@ -289,7 +318,16 @@ class DataService {
     if (!comp) throw new Error('Component not found');
     Object.assign(comp, updates);
     comp.statusUpdatedAt = new Date().toISOString();
+
+    const nextStatus = this.evaluateMarginStatus(order.items, minMarginPct, order.status);
+    if (nextStatus !== order.status) {
+      const oldStatus = order.status;
+      order.status = nextStatus;
+      order.logs.push(await this.createLog(`Workflow update: Order moved from ${oldStatus} to ${nextStatus} after component modification`, nextStatus, 'System'));
+    }
+
     await this.put('orders', orderId, order);
+    return order;
   }
 
   private async getOrderOrThrow(id: string) {
