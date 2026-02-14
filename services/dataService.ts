@@ -59,9 +59,16 @@ class DataService {
   }
 
   private async post<T>(endpoint: string, data: any): Promise<T> {
+    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
+      ? JSON.parse(localStorage.getItem('nexus_user')!).username
+      : 'System';
+
     const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user': user
+      },
       body: JSON.stringify(data)
     });
     if (!res.ok) throw new Error(`Failed to create in ${endpoint}: ${res.statusText}`);
@@ -69,9 +76,16 @@ class DataService {
   }
 
   private async put<T>(endpoint: string, id: string, data: any): Promise<T> {
+    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
+      ? JSON.parse(localStorage.getItem('nexus_user')!).username
+      : 'System';
+
     const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user': user
+      },
       body: JSON.stringify(data)
     });
     if (!res.ok) throw new Error(`Failed to update ${endpoint}/${id}: ${res.statusText}`);
@@ -86,26 +100,14 @@ class DataService {
   // --- ENTITY METHODS ---
 
   async getCustomers() { return this.get<Customer>('customers'); }
-  async addCustomer(cust: Omit<Customer, 'id' | 'logs'>, user: string) {
-    const newCust = { ...cust, logs: [await this.createLog('Entity registered', undefined, user)] };
-    return this.post<Customer>('customers', newCust);
+  async addCustomer(cust: Omit<Customer, 'id' | 'logs'>) {
+    return this.post<Customer>('customers', cust);
   }
-  async updateCustomer(id: string, updates: Partial<Customer>, user: string) {
-    const customers = await this.getCustomers();
-    const cust = customers.find(c => c.id === id);
-    if (!cust) throw new Error('Customer not found');
-    const updated = { ...cust, ...updates };
-    updated.logs.push(await this.createLog('Profile updated', undefined, user));
-    return this.put<Customer>('customers', id, updated);
+  async updateCustomer(id: string, updates: Partial<Customer>) {
+    return this.put<Customer>('customers', id, updates);
   }
-  async setCustomerHold(id: string, isHold: boolean, reason: string, user: string) {
-    const customers = await this.getCustomers();
-    const cust = customers.find(c => c.id === id);
-    if (!cust) throw new Error('Customer not found');
-    cust.isHold = isHold;
-    cust.holdReason = reason;
-    cust.logs.push(await this.createLog(`${isHold ? 'Credit Hold Engaged' : 'Credit Released'}: ${reason}`, undefined, user));
-    await this.put('customers', id, cust);
+  async setCustomerHold(id: string, isHold: boolean, reason: string) {
+    return this.put('customers', id, { isHold, holdReason: reason });
   }
   async isCustomerOverdue(name: string) {
     const customers = await this.getCustomers();
@@ -114,51 +116,31 @@ class DataService {
   }
 
   async getSuppliers() { return this.get<Supplier>('suppliers'); }
-  async addSupplier(supp: Omit<Supplier, 'id' | 'logs' | 'priceList'>, user: string) {
-    const newSupp = { ...supp, priceList: [], logs: [await this.createLog('Vendor initialized', undefined, user)] };
-    return this.post<Supplier>('suppliers', newSupp);
+  async addSupplier(supp: Omit<Supplier, 'id' | 'logs' | 'priceList'>) {
+    return this.post<Supplier>('suppliers', supp);
   }
-  async updateSupplier(id: string, updates: Partial<Supplier>, user: string) {
+  async updateSupplier(id: string, updates: Partial<Supplier>) {
+    return this.put<Supplier>('suppliers', id, updates);
+  }
+  async blacklistSupplier(id: string, reason: string) {
+    return this.put('suppliers', id, { isBlacklisted: true, blacklistReason: reason });
+  }
+  async removeSupplierBlacklist(id: string, reason: string) {
+    return this.put('suppliers', id, { isBlacklisted: false, blacklistReason: undefined });
+  }
+  async addPartToSupplier(id: string, part: Omit<SupplierPart, 'id'>) {
     const suppliers = await this.getSuppliers();
     const supp = suppliers.find(s => s.id === id);
     if (!supp) throw new Error('Vendor not found');
-    const updated = { ...supp, ...updates };
-    updated.logs.push(await this.createLog('Vendor profile updated', undefined, user));
-    return this.put<Supplier>('suppliers', id, updated);
+    supp.priceList.push(part as any); // Backend will add ID
+    return this.put('suppliers', id, supp);
   }
-  async blacklistSupplier(id: string, reason: string, user: string) {
-    const suppliers = await this.getSuppliers();
-    const supp = suppliers.find(s => s.id === id);
-    if (!supp) throw new Error('Vendor not found');
-    supp.isBlacklisted = true;
-    supp.blacklistReason = reason;
-    supp.logs.push(await this.createLog(`Blacklisted: ${reason}`, undefined, user));
-    await this.put('suppliers', id, supp);
-  }
-  async removeSupplierBlacklist(id: string, reason: string, user: string) {
-    const suppliers = await this.getSuppliers();
-    const supp = suppliers.find(s => s.id === id);
-    if (!supp) throw new Error('Vendor not found');
-    supp.isBlacklisted = false;
-    supp.blacklistReason = undefined;
-    supp.logs.push(await this.createLog(`Blacklist removed: ${reason}`, undefined, user));
-    await this.put('suppliers', id, supp);
-  }
-  async addPartToSupplier(id: string, part: Omit<SupplierPart, 'id'>, user: string) {
-    const suppliers = await this.getSuppliers();
-    const supp = suppliers.find(s => s.id === id);
-    if (!supp) throw new Error('Vendor not found');
-    supp.priceList.push({ ...part, id: `sp_${Date.now()}` });
-    supp.logs.push(await this.createLog(`Part added to catalog: ${part.description}`, undefined, user));
-    await this.put('suppliers', id, supp);
-  }
-  async removePartFromSupplier(id: string, partId: string, user: string) {
+  async removePartFromSupplier(id: string, partId: string) {
     const suppliers = await this.getSuppliers();
     const supp = suppliers.find(s => s.id === id);
     if (!supp) throw new Error('Vendor not found');
     supp.priceList = supp.priceList.filter(p => p.id !== partId);
-    supp.logs.push(await this.createLog(`Removed part ref ${partId}`, undefined, user));
-    await this.put('suppliers', id, supp);
+    return this.put('suppliers', id, supp);
   }
 
   async getInventory() { return this.get<InventoryItem>('inventory'); }
@@ -167,96 +149,74 @@ class DataService {
   }
 
   async getOrders() { return this.get<CustomerOrder>('orders'); }
-  async addOrder(order: Omit<CustomerOrder, 'id' | 'internalOrderNumber' | 'logs'>, user: string, config: AppConfig) {
-    const orders = await this.getOrders();
+  async addOrder(order: Omit<CustomerOrder, 'id' | 'internalOrderNumber' | 'logs'>) {
+    return this.post<CustomerOrder>('orders', order);
+  }
 
-    // Strict uniqueness check for PO ID
-    const isDuplicate = orders.some(o =>
-      o.customerReferenceNumber?.trim().toLowerCase() === order.customerReferenceNumber?.trim().toLowerCase()
-    );
-    if (isDuplicate) {
-      throw new Error(`Duplicate PO ID: ${order.customerReferenceNumber} already exists.`);
+
+  async updateOrder(id: string, updates: Partial<CustomerOrder>) {
+    return this.put<CustomerOrder>('orders', id, updates);
+  }
+
+  async dispatchAction(orderId: string, action: string, payload?: any) {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+    const user = JSON.parse(localStorage.getItem('currentUser') || '{}').username || 'System';
+
+    const response = await fetch(`${backendUrl}/api/v1/orders/${orderId}/dispatch-action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user': user
+      },
+      body: JSON.stringify({ action, payload })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || `Action ${action} failed`);
     }
-
-    const count = orders.length;
-    const internalOrderNumber = `INT-2024-${String(count + 1).padStart(4, '0')}`;
-
-    const newOrder = {
-      ...order,
-      internalOrderNumber,
-      status: OrderStatus.LOGGED,
-      logs: [await this.createLog('Order acquisition recorded', OrderStatus.LOGGED, user)]
-    };
-
-    const savedOrder = await this.post<CustomerOrder>('orders', newOrder);
-
-    // Compliance Check - Asynchronous to not block UI
-    this.checkComplianceAndNotify(savedOrder, user, config).catch(e => console.error("Compliance Check Error:", e));
-
-    return savedOrder;
+    return response.json();
   }
 
-  private async checkComplianceAndNotify(order: CustomerOrder, user: string, config: AppConfig) {
-    // Logic moved to Backend Audit Service for at-least-once journaling.
-  }
-
-
-  async updateOrder(id: string, updates: Partial<CustomerOrder>, minMarginPct: number, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    const updated = { ...order, ...updates };
-
-
-    updated.logs.push(await this.createLog('Order modified', undefined, user));
-    return this.put<CustomerOrder>('orders', id, updated);
-  }
-
-  async toggleItemAcceptance(orderId: string, itemId: string, user: string) {
+  async toggleItemAcceptance(orderId: string, itemId: string) {
     const order = await this.getOrderOrThrow(orderId);
     const item = order.items.find(i => i.id === itemId);
     if (!item) throw new Error('Item not found');
+
+    // We still have toggle locally because it's a simple property, 
+    // but we'll move it to backend soon if needed. For now, 
+    // since acceptance affects Study Finalization, we keep it as a PUT of the partial order.
     item.isAccepted = !item.isAccepted;
-    if (!item.logs) item.logs = [];
-    item.logs.push(await this.createLog(`${item.isAccepted ? 'Tech study approved' : 'Study revoked'}`, undefined, user));
-    await this.put('orders', orderId, order);
-    return order;
-  }
-
-  async addComponentToItem(orderId: string, itemId: string, comp: Omit<ManufacturingComponent, 'id' | 'statusUpdatedAt' | 'componentNumber'>, minMarginPct: number, user: string) {
-    const order = await this.getOrderOrThrow(orderId);
-    const item = order.items.find(i => i.id === itemId);
-    if (!item) throw new Error('Item not found');
-
-    const id = `c_${Date.now()}`;
-    const componentNumber = `CMP-${order.internalOrderNumber}-${item.id.split('_').pop()}-${(item.components?.length || 0) + 1}`;
-    const newComp = { ...comp, id, componentNumber, statusUpdatedAt: new Date().toISOString() };
-
-    if (!item.components) item.components = [];
-    item.components.push(newComp);
-
-    if (!item.logs) item.logs = [];
-    item.logs.push(await this.createLog(`Added component: "${comp.description}"`, undefined, user));
     return this.put<CustomerOrder>('orders', orderId, order);
   }
 
-  async removeComponent(orderId: string, itemId: string, compId: string, minMarginPct: number, user: string) {
+  async addComponentToItem(orderId: string, itemId: string, comp: Omit<ManufacturingComponent, 'id' | 'statusUpdatedAt' | 'componentNumber'>) {
+    const order = await this.getOrderOrThrow(orderId);
+    const item = order.items.find(i => i.id === itemId);
+    if (!item) throw new Error('Item not found');
+
+    if (!item.components) item.components = [];
+    item.components.push(comp as any);
+
+    return this.put<CustomerOrder>('orders', orderId, order);
+  }
+
+  async removeComponent(orderId: string, itemId: string, compId: string) {
     const order = await this.getOrderOrThrow(orderId);
     const item = order.items.find(i => i.id === itemId);
     if (!item) throw new Error('Item not found');
     item.components = item.components?.filter(c => c.id !== compId);
-    if (!item.logs) item.logs = [];
-    item.logs.push(await this.createLog(`Removed component ${compId}`, undefined, user));
 
     return this.put<CustomerOrder>('orders', orderId, order);
   }
 
-  async updateComponent(orderId: string, itemId: string, compId: string, updates: Partial<ManufacturingComponent>, minMarginPct: number, user: string) {
+  async updateComponent(orderId: string, itemId: string, compId: string, updates: Partial<ManufacturingComponent>) {
     const order = await this.getOrderOrThrow(orderId);
     const item = order.items.find(i => i.id === itemId);
     if (!item) throw new Error('Item not found');
     const comp = item.components?.find(c => c.id === compId);
     if (!comp) throw new Error('Component not found');
     Object.assign(comp, updates);
-    comp.statusUpdatedAt = new Date().toISOString();
 
     return this.put<CustomerOrder>('orders', orderId, order);
   }
@@ -268,140 +228,70 @@ class DataService {
     return order;
   }
 
-  async finalizeTechnicalReview(orderId: string, user: string) {
-    const order = await this.getOrderOrThrow(orderId);
-    if (!order.items.every(it => it.isAccepted)) throw new Error('Study incomplete');
-    order.status = OrderStatus.WAITING_SUPPLIERS;
-    order.logs.push(await this.createLog('Technical study finalized.', OrderStatus.WAITING_SUPPLIERS, user));
-    await this.put('orders', orderId, order);
+  async finalizeTechnicalReview(orderId: string) {
+    return this.dispatchAction(orderId, 'finalize-study');
   }
 
-  async rollbackOrderToLogged(orderId: string, reason: string, user: string) {
-    const order = await this.getOrderOrThrow(orderId);
-    order.status = OrderStatus.LOGGED;
-    order.logs.push(await this.createLog(`Rollback: ${reason}`, OrderStatus.LOGGED, user));
-    await this.put('orders', orderId, order);
+  async rollbackOrderToLogged(orderId: string, reason: string) {
+    return this.dispatchAction(orderId, 'rollback-to-logged', { reason });
   }
 
   async getUniquePoNumber() { return `PO-${Date.now().toString().slice(-6)}`; }
 
-  async receiveComponent(orderId: string, itemId: string, compId: string, user: string) {
-    const order = await this.getOrderOrThrow(orderId);
-    const item = order.items.find(i => i.id === itemId);
-    if (!item) throw new Error('Item not found');
-    const comp = item.components?.find(c => c.id === compId);
-    if (!comp) throw new Error('Component not found');
-    comp.status = 'RECEIVED';
-    comp.statusUpdatedAt = new Date().toISOString();
-    await this.put('orders', orderId, order);
+  async receiveComponent(orderId: string, itemId: string, compId: string) {
+    return this.dispatchAction(orderId, 'receive-component', { itemId, compId });
   }
 
-  async startProduction(id: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.MANUFACTURING;
-    order.logs.push(await this.createLog('Production started', OrderStatus.MANUFACTURING, user));
-    await this.put('orders', id, order);
+  async startProduction(id: string) {
+    return this.dispatchAction(id, 'start-production');
   }
 
-  async finishProduction(id: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.MANUFACTURING_COMPLETED;
-    order.logs.push(await this.createLog('Production finished', OrderStatus.MANUFACTURING_COMPLETED, user));
-    await this.put('orders', id, order);
+  async finishProduction(id: string) {
+    return this.dispatchAction(id, 'finish-production');
   }
 
-  async receiveAtProductHub(id: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.IN_PRODUCT_HUB;
-    order.logs.push(await this.createLog('Arrival at Hub', OrderStatus.IN_PRODUCT_HUB, user));
-    await this.put('orders', id, order);
+  async receiveAtProductHub(id: string) {
+    return this.dispatchAction(id, 'receive-hub');
   }
 
-  async issueInvoice(id: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.INVOICED;
-    order.invoiceNumber = `INV-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000)}`;
-    order.logs.push(await this.createLog(`Invoice issued: ${order.invoiceNumber}`, OrderStatus.INVOICED, user));
-    await this.put('orders', id, order);
+  async issueInvoice(id: string) {
+    return this.dispatchAction(id, 'issue-invoice');
   }
 
-  async releaseForDelivery(id: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.HUB_RELEASED;
-    order.logs.push(await this.createLog('Released for dispatch', OrderStatus.HUB_RELEASED, user));
-    await this.put('orders', id, order);
+  async releaseForDelivery(id: string) {
+    return this.dispatchAction(id, 'release-delivery');
   }
 
-  async confirmOrderDelivery(id: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.DELIVERED;
-    order.logs.push(await this.createLog('Hand-off confirmed', OrderStatus.DELIVERED, user));
-    await this.put('orders', id, order);
+  async confirmOrderDelivery(id: string) {
+    return this.dispatchAction(id, 'confirm-delivery');
   }
 
-  async recordPayment(id: string, amount: number, comment: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    if (!order.payments) order.payments = [];
-    order.payments.push({ amount, timestamp: new Date().toISOString(), comment });
-    await this.put('orders', id, order);
+  async recordPayment(id: string, amount: number, memo: string) {
+    return this.dispatchAction(id, 'record-payment', { amount, memo });
   }
 
-  async setOrderHold(id: string, isHold: boolean, reason: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    if (isHold) {
-      order.previousStatus = order.status;
-      order.status = OrderStatus.IN_HOLD;
-      order.holdReason = reason;
-      order.logs.push(await this.createLog(`Hold: ${reason}`, OrderStatus.IN_HOLD, user));
-    } else {
-      const next = order.previousStatus || OrderStatus.LOGGED;
-      order.status = next;
-      order.previousStatus = undefined;
-      order.logs.push(await this.createLog(`Hold released: ${reason}`, next, user));
-    }
-    await this.put('orders', id, order);
+  async setOrderHold(id: string, isHold: boolean, reason: string) {
+    return this.dispatchAction(id, 'toggle-hold', { hold: isHold, reason });
   }
 
-  async rejectOrder(id: string, reason: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.REJECTED;
-    order.rejectionReason = reason;
-    order.logs.push(await this.createLog(`Rejected: ${reason}`, OrderStatus.REJECTED, user));
-    await this.put('orders', id, order);
+  async rejectOrder(id: string, reason: string) {
+    return this.dispatchAction(id, 'reject-order', { reason });
   }
 
-  async releaseMarginBlock(id: string, comment: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    const next = order.previousStatus || OrderStatus.TECHNICAL_REVIEW;
-    order.status = next;
-    order.previousStatus = undefined;
-    order.logs.push(await this.createLog(`Override: ${comment}`, next, user));
-    await this.put('orders', id, order);
+  async releaseMarginBlock(id: string, reason: string) {
+    return this.dispatchAction(id, 'release-margin', { reason });
   }
 
-  async cancelInvoice(id: string, reason: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.ISSUE_INVOICE;
-    order.invoiceNumber = undefined;
-    order.logs.push(await this.createLog(`Invoice Voided: ${reason}`, OrderStatus.ISSUE_INVOICE, user));
-    await this.put('orders', id, order);
+  async cancelInvoice(id: string, reason: string) {
+    return this.dispatchAction(id, 'void-invoice', { reason });
   }
 
-  async cancelPayment(id: string, index: number, reason: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    if (order.payments) {
-      order.payments.splice(index, 1);
-      order.logs.push(await this.createLog(`Payment Voided: ${reason}`, undefined, user));
-      await this.put('orders', id, order);
-    }
+  async cancelPayment(id: string, index: number, reason: string) {
+    return this.dispatchAction(id, 'cancel-payment', { index, reason });
   }
 
-  async revertInvoicedOrderToSourcing(id: string, reason: string, user: string) {
-    const order = await this.getOrderOrThrow(id);
-    order.status = OrderStatus.WAITING_SUPPLIERS;
-    order.invoiceNumber = undefined;
-    order.logs.push(await this.createLog(`Reverted to Sourcing: ${reason}`, OrderStatus.WAITING_SUPPLIERS, user));
-    await this.put('orders', id, order);
+  async revertInvoicedOrderToSourcing(id: string, reason: string) {
+    return this.dispatchAction(id, 'rollback-to-logged', { reason });
   }
 
   async getReport(params: any) {
@@ -470,15 +360,6 @@ class DataService {
     }
   }
 
-  async createLog(message: string, status?: string, user?: string, nextStep?: string): Promise<LogEntry> {
-    return {
-      timestamp: new Date().toISOString(),
-      message,
-      status,
-      user: user || 'System',
-      nextStep
-    };
-  }
 
   // Implementation of specific business auditing required by Dashboard
   async performThresholdAudit(config: AppConfig, log: (msg: string) => void, silent: boolean = false) {

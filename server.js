@@ -97,6 +97,65 @@ const hashPassword = (password) => {
     return crypto.createHash('sha256').update(password).digest('hex');
 };
 
+// --- LOGGING & ID HELPERS ---
+const createAuditLog = (message, status, user) => ({
+    timestamp: new Date().toISOString(),
+    message,
+    status,
+    user: user || 'System'
+});
+
+const generateInternalOrderNumber = (db) => {
+    const orders = db.orders || [];
+    const count = orders.length;
+    return `INT-2024-${String(count + 1).padStart(4, '0')}`;
+};
+
+const processedOrderInternal = (order, db, user, isNew) => {
+    // 1. Ensure basic structures
+    if (!order.logs) order.logs = [];
+    if (!order.items) order.items = [];
+
+    // 2. Handle New Order specific side-effects
+    if (isNew) {
+        if (!order.internalOrderNumber) order.internalOrderNumber = generateInternalOrderNumber(db);
+        if (!order.dataEntryTimestamp) order.dataEntryTimestamp = new Date().toISOString();
+        if (order.logs.length === 0) {
+            order.logs.push(createAuditLog('Order acquisition recorded', OrderStatus.LOGGED, user));
+        }
+    }
+
+    // 3. Process Items and Components
+    order.items.forEach((item, idx) => {
+        if (!item.logs) item.logs = [];
+        if (!item.components) item.components = [];
+
+        item.components.forEach((comp, cIdx) => {
+            if (!comp.id) comp.id = `c_${Date.now()}_${idx}_${cIdx}`;
+            if (!comp.componentNumber) {
+                // Generate a friendly component number if missing
+                comp.componentNumber = `CMP-${order.internalOrderNumber}-${(item.id || 'ITEM').split('_').pop()}-${cIdx + 1}`;
+            }
+            if (!comp.status) comp.status = 'NEW';
+            if (!comp.statusUpdatedAt) comp.statusUpdatedAt = new Date().toISOString();
+        });
+    });
+
+    // 4. Force Status Evaluation
+    const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
+    const minMargin = dbSettings.minimumMarginPct || 15;
+    const nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED);
+
+    if (nextStatus !== order.status) {
+        const old = order.status || 'NEW';
+        order.status = nextStatus;
+        const reason = nextStatus === OrderStatus.NEGATIVE_MARGIN ? 'Margin Protection' : (isNew ? 'Initial Status' : 'Workflow Update');
+        order.logs.push(createAuditLog(`[AUTO] ${reason}: Status moved from ${old} to ${nextStatus}`, nextStatus, 'System'));
+    }
+
+    return order;
+};
+
 const sendEmail = async (to, subject, body, config) => {
     if (!config || !config.smtpServer) {
         console.warn("[Email] Configuration missing.");
@@ -276,10 +335,6 @@ const runThresholdAudit = async () => {
     for (const order of orders) {
         if (order.status === 'FULFILLED' || order.status === 'REJECTED') continue;
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-        // A. SPECIAL CHECKS (non-time-in-status)
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
         // A1. Logging Delay (PO date vs data entry date, in days)
         const delayThresholdDays = settings.loggingDelayThresholdDays || 1;
         const poDate = new Date(order.orderDate).getTime();
@@ -349,9 +404,7 @@ const runThresholdAudit = async () => {
             }
         }
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // B. DYNAMIC: Order-level time-in-status threshold checks
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         const thresholdKey = STATUS_TO_THRESHOLD[order.status];
         if (thresholdKey) {
             const limitHrs = settings[thresholdKey];
@@ -369,9 +422,7 @@ const runThresholdAudit = async () => {
             }
         }
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // C. DYNAMIC: Component-level procurement threshold checks
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         for (const item of (order.items || [])) {
             for (const comp of (item.components || [])) {
                 const compThresholdKey = COMP_STATUS_TO_THRESHOLD[comp.status];
@@ -403,7 +454,6 @@ const runThresholdAudit = async () => {
     }
 };
 
-
 // --- APP SETUP ---
 const app = express();
 const PORT = process.env.PORT || 3005;
@@ -433,23 +483,17 @@ const addToCollection = (col) => (req, res) => {
     }
 
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
+    const user = req.headers['x-user'] || 'System';
+
     if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
 
     if (col === 'orders') {
-        const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
-        const minMargin = dbSettings.minimumMarginPct || 15;
+        newItem = processedOrderInternal(newItem, db, user, true);
+    }
 
-        // Lazy init logs
-        if (!newItem.logs) newItem.logs = [];
-        (newItem.items || []).forEach(it => { if (!it.logs) it.logs = []; });
-
-        const nextStatus = evaluateMarginStatus(newItem.items, minMargin, newItem.status || OrderStatus.LOGGED);
-        if (nextStatus !== newItem.status) {
-            const old = newItem.status || 'NEW';
-            newItem.status = nextStatus;
-            const reason = nextStatus === OrderStatus.NEGATIVE_MARGIN ? 'Margin Protection' : 'Technical Study Initialization';
-            newItem.logs.push({ timestamp: new Date().toISOString(), message: `[AUTO] ${reason}: Status moved from ${old} to ${nextStatus}`, status: nextStatus, user: 'System' });
-        }
+    if (col === 'customers' || col === 'suppliers') {
+        if (!newItem.logs) newItem.logs = [createAuditLog('Entity registered', undefined, user)];
+        if (col === 'suppliers' && !newItem.priceList) newItem.priceList = [];
     }
 
     db[col].push(newItem);
@@ -462,23 +506,29 @@ const updateInCollection = (col) => (req, res) => {
     if (!db[col]) return res.status(404).json({ error: "Not found" });
     const index = db[col].findIndex(it => it.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Item not found" });
-    let updated = { ...db[col][index], ...req.body };
+
+    const user = req.headers['x-user'] || 'System';
+    const oldItem = db[col][index];
+    let updated = { ...oldItem, ...req.body };
+
     if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
 
     if (col === 'orders') {
-        const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
-        const minMargin = dbSettings.minimumMarginPct || 15;
+        updated = processedOrderInternal(updated, db, user, false);
+        if (!req.body.status) {
+            updated.logs.push(createAuditLog('Order modified', updated.status, user));
+        }
+    }
 
-        // Lazy init logs
+    if (col === 'customers' || col === 'suppliers') {
         if (!updated.logs) updated.logs = [];
-        (updated.items || []).forEach(it => { if (!it.logs) it.logs = []; });
+        updated.logs.push(createAuditLog('Profile updated', undefined, user));
 
-        const nextStatus = evaluateMarginStatus(updated.items, minMargin, updated.status);
-        if (nextStatus !== updated.status) {
-            const old = updated.status;
-            updated.status = nextStatus;
-            const reason = nextStatus === OrderStatus.NEGATIVE_MARGIN ? 'Margin Protection' : 'Workflow Update';
-            updated.logs.push({ timestamp: new Date().toISOString(), message: `[AUTO] ${reason}: Status moved from ${old} to ${nextStatus}`, status: nextStatus, user: 'System' });
+        if (updated.isHold !== oldItem.isHold) {
+            updated.logs.push(createAuditLog(`${updated.isHold ? 'Hold Engaged' : 'Hold Released'}: ${updated.holdReason || 'Manual update'}`, undefined, user));
+        }
+        if (updated.isBlacklisted !== oldItem.isBlacklisted) {
+            updated.logs.push(createAuditLog(`${updated.isBlacklisted ? 'Blacklisted' : 'Blacklist Removed'}: ${updated.blacklistReason || 'Manual update'}`, undefined, user));
         }
     }
 
@@ -518,6 +568,149 @@ app.post('/api/v1/wipe', (req, res) => {
     });
     if (writeDb(db)) res.json({ message: "Wipe successful" });
     else res.status(500).json({ error: "Wipe failed" });
+});
+
+app.post('/api/v1/orders/:id/dispatch-action', (req, res) => {
+    const { action, payload } = req.body;
+    const db = readDb();
+    const index = db.orders.findIndex(it => it.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: "Order not found" });
+
+    const user = req.headers['x-user'] || 'System';
+    let order = db.orders[index];
+    const oldStatus = order.status;
+
+    try {
+        switch (action) {
+            case 'finalize-study':
+                if (order.items.some(it => !it.isAccepted)) throw new Error("All items must be accepted before finalizing study");
+                order.status = OrderStatus.WAITING_SUPPLIERS;
+                order.logs.push(createAuditLog('Technical study finalized and pushed to Procurement', order.status, user));
+                break;
+
+            case 'rollback-to-logged':
+                order.status = OrderStatus.LOGGED;
+                order.logs.push(createAuditLog(`Rollback to Registry: ${payload?.reason || 'Manual rollback'}`, order.status, user));
+                break;
+
+            case 'issue-invoice':
+                if (order.status !== OrderStatus.IN_PRODUCT_HUB && order.status !== OrderStatus.ISSUE_INVOICE) throw new Error("Order not ready for invoicing");
+                const count = (db.orders.filter(o => o.invoiceNumber).length + 1).toString().padStart(4, '0');
+                order.invoiceNumber = `INV-24-${count}`;
+                order.status = OrderStatus.INVOICED;
+                order.logs.push(createAuditLog(`Commercial Invoice ${order.invoiceNumber} Issued`, order.status, user));
+                break;
+
+            case 'void-invoice':
+                const oldInv = order.invoiceNumber;
+                order.invoiceNumber = undefined;
+                order.status = OrderStatus.ISSUE_INVOICE;
+                order.logs.push(createAuditLog(`Tax Invoice ${oldInv} VOIDED. Returned to Billing queue. Reason: ${payload?.reason || 'Correction required'}`, order.status, user));
+                break;
+
+            case 'start-production':
+                order.status = OrderStatus.MANUFACTURING;
+                order.logs.push(createAuditLog('Order released to Plant for production', order.status, user));
+                break;
+
+            case 'finish-production':
+                order.status = OrderStatus.MANUFACTURING_COMPLETED;
+                order.logs.push(createAuditLog('Plant confirmed manufacturing completion', order.status, user));
+                break;
+
+            case 'receive-hub':
+                order.status = OrderStatus.IN_PRODUCT_HUB;
+                order.logs.push(createAuditLog('Products received and logged in Hub storage', order.status, user));
+                break;
+
+            case 'release-delivery':
+                order.status = OrderStatus.HUB_RELEASED;
+                order.logs.push(createAuditLog('Dispatch authorized. Released for customer delivery.', order.status, user));
+                break;
+
+            case 'confirm-delivery':
+                order.status = OrderStatus.DELIVERED;
+                order.logs.push(createAuditLog('Customer confirmed receipt of goods. Hand-off complete.', order.status, user));
+                break;
+
+            case 'receive-component':
+                const itemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (itemIdx === -1) throw new Error("Item not found");
+                const compIdx = order.items[itemIdx].components?.findIndex(c => c.id === payload.compId);
+                if (compIdx === -1) throw new Error("Component not found");
+                order.items[itemIdx].components[compIdx].status = 'RECEIVED';
+                order.items[itemIdx].components[compIdx].statusUpdatedAt = new Date().toISOString();
+                order.logs.push(createAuditLog(`Component Received: ${order.items[itemIdx].components[compIdx].description}`, order.status, user));
+                break;
+
+            case 'cancel-payment':
+                if (!order.payments || !order.payments[payload.index]) throw new Error("Payment index not found");
+                const [removed] = order.payments.splice(payload.index, 1);
+                order.logs.push(createAuditLog(`Payment of ${removed.amount} VOIDED: ${payload.reason || 'Correction'}`, order.status, user));
+                break;
+
+            case 'toggle-hold':
+                const isHold = payload?.hold;
+                if (isHold) {
+                    order.statusBeforeHold = order.status;
+                    order.status = OrderStatus.IN_HOLD;
+                    order.logs.push(createAuditLog(`Order placed in STRATEGIC HOLD: ${payload?.reason || 'No reason provided'}`, order.status, user));
+                } else {
+                    order.status = order.statusBeforeHold || OrderStatus.LOGGED;
+                    order.logs.push(createAuditLog(`Order released from Hold to ${order.status}`, order.status, user));
+                    delete order.statusBeforeHold;
+                }
+                break;
+
+            case 'reject-order':
+                order.status = OrderStatus.REJECTED;
+                order.logs.push(createAuditLog(`ORDER REJECTED: ${payload?.reason || 'Business decision'}`, order.status, user));
+                break;
+
+            case 'release-margin':
+                if (order.status !== OrderStatus.NEGATIVE_MARGIN) throw new Error("Order does not have a margin block");
+                order.status = OrderStatus.WAITING_SUPPLIERS; // Return to procurement flow
+                order.logs.push(createAuditLog(`Margin block manually bypassed: ${payload?.reason || 'Management overrides'}`, order.status, user));
+                break;
+
+            case 'record-payment':
+                if (!order.payments) order.payments = [];
+                order.payments.push({
+                    amount: payload.amount,
+                    date: new Date().toISOString(),
+                    user,
+                    memo: payload.memo || 'Regular payment'
+                });
+                const totalPaid = order.payments.reduce((s, p) => s + p.amount, 0);
+                // Calculate gross revenue to see if fully paid
+                let revenue = 0;
+                order.items.forEach(it => revenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+
+                if (totalPaid >= revenue) {
+                    order.status = OrderStatus.FULFILLED;
+                    order.logs.push(createAuditLog(`Full payment reconciled. Order lifecycle FULFILLED.`, order.status, user));
+                } else {
+                    order.status = OrderStatus.PARTIAL_PAYMENT;
+                    order.logs.push(createAuditLog(`Payment of ${payload.amount} recorded. Bal: ${Math.max(0, revenue - totalPaid).toLocaleString()}`, order.status, user));
+                }
+                break;
+
+            default:
+                throw new Error(`Unknown action: ${action}`);
+        }
+
+        // Run through status processor (handles margin evaluation etc)
+        order = processedOrderInternal(order, db, user, false);
+
+        db.orders[index] = order;
+        if (writeDb(db)) {
+            res.json(order);
+        } else {
+            res.status(500).json({ error: "Failed to save data" });
+        }
+    } catch (e) {
+        res.status(400).json({ error: e.message });
+    }
 });
 
 app.get('/api/v1/backup', (req, res) => res.json(readDb()));

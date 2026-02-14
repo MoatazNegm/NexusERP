@@ -14,7 +14,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
   const [selectedItem, setSelectedItem] = useState<CustomerOrderItem | null>(null);
   const [invSearch, setInvSearch] = useState('');
   const [compQty, setCompQty] = useState(1);
-  
+
   const [showOrderSuggestions, setShowOrderSuggestions] = useState(false);
   const [showInvSuggestions, setShowInvSuggestions] = useState(false);
 
@@ -61,14 +61,13 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
 
   const handleAddComponent = async (inv: InventoryItem) => {
     if (!selectedOrder || !selectedItem) return;
-    
+
     const available = inv.quantityInStock - (inv.quantityReserved || 0);
     if (compQty > available) {
       alert(`Insufficient available stock! Physical: ${inv.quantityInStock}, Reserved: ${inv.quantityReserved || 0}, Requested: ${compQty}.`);
       return;
     }
 
-    // Fix: Pass minMarginPct as the fourth and currentUser.username as the fifth argument
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
       description: inv.description,
       quantity: compQty,
@@ -78,7 +77,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
       source: 'STOCK',
       inventoryItemId: inv.id,
       status: 'RESERVED'
-    }, config.settings.minimumMarginPct, currentUser.username);
+    });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setInvSearch('');
@@ -87,7 +86,6 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
 
   const handleAddSupplierPart = async (supp: Supplier, part: SupplierPart) => {
     if (!selectedOrder || !selectedItem) return;
-    // Fix: Pass minMarginPct as the fourth and currentUser.username as the fifth argument
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
       description: part.description,
       quantity: compQty,
@@ -98,7 +96,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
       supplierId: supp.id,
       supplierPartId: part.id,
       status: 'ORDERED'
-    }, config.settings.minimumMarginPct, currentUser.username);
+    });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setInvSearch('');
@@ -107,7 +105,6 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
 
   const handleAddProcurementComp = async () => {
     if (!selectedOrder || !selectedItem || !invSearch) return;
-    // Fix: Pass minMarginPct as the fourth and currentUser.username as the fifth argument
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
       description: invSearch,
       quantity: compQty,
@@ -116,7 +113,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
       taxPercent: 14,
       source: 'PROCUREMENT',
       status: 'PENDING_OFFER'
-    }, config.settings.minimumMarginPct, currentUser.username);
+    });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setInvSearch('');
@@ -125,8 +122,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
 
   const removeComp = async (cid: string) => {
     if (!selectedOrder || !selectedItem) return;
-    // Fix: Pass minMarginPct as the fourth and currentUser.username as the fifth argument
-    const updated = await dataService.removeComponent(selectedOrder.id, selectedItem.id, cid, config.settings.minimumMarginPct, currentUser.username);
+    const updated = await dataService.removeComponent(selectedOrder.id, selectedItem.id, cid);
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
   };
@@ -155,7 +151,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
             />
             <i className="fa-solid fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"></i>
           </div>
-          
+
           {showOrderSuggestions && (
             <div className="absolute top-[calc(100%-1rem)] left-6 right-6 z-20 bg-white border border-slate-200 rounded-xl shadow-2xl mt-2 overflow-hidden animate-in fade-in slide-in-from-top-1">
               <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
@@ -210,8 +206,8 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
       <div className="lg:col-span-2">
         {!selectedItem ? (
           <div className="h-full flex flex-col items-center justify-center p-20 bg-white rounded-2xl border-2 border-dashed border-slate-200 text-slate-400">
-             <i className="fa-solid fa-microscope text-5xl mb-6 opacity-20"></i>
-             <p className="font-medium">Select a line item to begin technical study and BoM creation.</p>
+            <i className="fa-solid fa-microscope text-5xl mb-6 opacity-20"></i>
+            <p className="font-medium">Select a line item to begin technical study and BoM creation.</p>
           </div>
         ) : (
           <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
@@ -234,79 +230,79 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                   <div className="md:col-span-2 space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Global Sourcing Engine</label>
                     <div className="flex gap-2">
-                       <input 
-                         type="number" 
-                         className="w-16 px-3 py-2 border rounded-lg text-sm font-bold shadow-sm bg-white text-slate-900"
-                         value={compQty}
-                         onChange={e => setCompQty(parseInt(e.target.value) || 1)}
-                       />
-                       <div className="flex-1 relative">
-                          <input
-                            type="text"
-                            onFocus={() => setShowInvSuggestions(true)}
-                            onBlur={() => setTimeout(() => setShowInvSuggestions(false), 200)}
-                            className="w-full px-4 py-2 border-2 border-blue-100 rounded-lg bg-white outline-none focus:ring-4 focus:ring-blue-50 text-sm transition-all text-slate-900"
-                            placeholder="Search inventory SKU or Supplier Price Lists..."
-                            value={invSearch}
-                            onChange={(e) => setInvSearch(e.target.value)}
-                          />
-                          {showInvSuggestions && (invResults.length > 0 || supplierResults.length > 0) && (
-                            <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl z-20 overflow-hidden divide-y animate-in slide-in-from-top-1 max-h-[300px] overflow-y-auto">
-                              {invResults.map(i => {
-                                const netAvailable = i.quantityInStock - (i.quantityReserved || 0);
-                                return (
-                                  <button
-                                    key={i.id}
-                                    type="button"
-                                    onMouseDown={() => handleAddComponent(i)}
-                                    className="w-full text-left p-4 hover:bg-blue-50 flex justify-between items-center group transition-colors"
-                                  >
-                                    <div>
-                                      <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700">
-                                          <i className="fa-solid fa-box-open mr-2 opacity-50"></i>{i.description}
-                                      </div>
-                                      <div className="text-[10px] text-slate-400 flex gap-2 items-center">
-                                          <span className="font-mono bg-slate-100 px-1 rounded">{i.sku}</span>
-                                          <span className={`${netAvailable <= 0 ? 'text-red-500 font-bold' : ''}`}>Available: {netAvailable} {i.unit}</span>
-                                          <span className="text-slate-300">|</span>
-                                          <span>Stock: {i.quantityInStock}</span>
-                                          <span className="text-green-600 font-bold">Cost: {i.lastCost} L.E.</span>
-                                      </div>
-                                    </div>
-                                    <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">IN-STOCK</span>
-                                  </button>
-                                );
-                              })}
-                              {supplierResults.map(({ supplier, part }) => (
+                      <input
+                        type="number"
+                        className="w-16 px-3 py-2 border rounded-lg text-sm font-bold shadow-sm bg-white text-slate-900"
+                        value={compQty}
+                        onChange={e => setCompQty(parseInt(e.target.value) || 1)}
+                      />
+                      <div className="flex-1 relative">
+                        <input
+                          type="text"
+                          onFocus={() => setShowInvSuggestions(true)}
+                          onBlur={() => setTimeout(() => setShowInvSuggestions(false), 200)}
+                          className="w-full px-4 py-2 border-2 border-blue-100 rounded-lg bg-white outline-none focus:ring-4 focus:ring-blue-50 text-sm transition-all text-slate-900"
+                          placeholder="Search inventory SKU or Supplier Price Lists..."
+                          value={invSearch}
+                          onChange={(e) => setInvSearch(e.target.value)}
+                        />
+                        {showInvSuggestions && (invResults.length > 0 || supplierResults.length > 0) && (
+                          <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl z-20 overflow-hidden divide-y animate-in slide-in-from-top-1 max-h-[300px] overflow-y-auto">
+                            {invResults.map(i => {
+                              const netAvailable = i.quantityInStock - (i.quantityReserved || 0);
+                              return (
                                 <button
-                                  key={part.id}
+                                  key={i.id}
                                   type="button"
-                                  onMouseDown={() => handleAddSupplierPart(supplier, part)}
-                                  className="w-full text-left p-4 hover:bg-amber-50 flex justify-between items-center group transition-colors"
+                                  onMouseDown={() => handleAddComponent(i)}
+                                  className="w-full text-left p-4 hover:bg-blue-50 flex justify-between items-center group transition-colors"
                                 >
                                   <div>
-                                    <div className="text-xs font-bold text-slate-800 group-hover:text-amber-700">
-                                        <i className="fa-solid fa-truck-field mr-2 opacity-50"></i>{part.description}
+                                    <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700">
+                                      <i className="fa-solid fa-box-open mr-2 opacity-50"></i>{i.description}
                                     </div>
                                     <div className="text-[10px] text-slate-400 flex gap-2 items-center">
-                                        <span className="font-mono bg-slate-100 px-1 rounded">{part.partNumber}</span>
-                                        <span>Supplier: {supplier.name}</span>
-                                        <span className="text-amber-600 font-black">Offer: {part.price} L.E.</span>
+                                      <span className="font-mono bg-slate-100 px-1 rounded">{i.sku}</span>
+                                      <span className={`${netAvailable <= 0 ? 'text-red-500 font-bold' : ''}`}>Available: {netAvailable} {i.unit}</span>
+                                      <span className="text-slate-300">|</span>
+                                      <span>Stock: {i.quantityInStock}</span>
+                                      <span className="text-green-600 font-bold">Cost: {i.lastCost} L.E.</span>
                                     </div>
                                   </div>
-                                  <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-2 py-0.5 rounded">EXTERNAL</span>
+                                  <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">IN-STOCK</span>
                                 </button>
-                              ))}
-                            </div>
-                          )}
-                       </div>
-                       <button
-                         onClick={handleAddProcurementComp}
-                         className="px-4 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-black transition-colors shadow-lg flex items-center gap-2 whitespace-nowrap"
-                       >
-                         <i className="fa-solid fa-plus"></i>
-                         Custom External
-                       </button>
+                              );
+                            })}
+                            {supplierResults.map(({ supplier, part }) => (
+                              <button
+                                key={part.id}
+                                type="button"
+                                onMouseDown={() => handleAddSupplierPart(supplier, part)}
+                                className="w-full text-left p-4 hover:bg-amber-50 flex justify-between items-center group transition-colors"
+                              >
+                                <div>
+                                  <div className="text-xs font-bold text-slate-800 group-hover:text-amber-700">
+                                    <i className="fa-solid fa-truck-field mr-2 opacity-50"></i>{part.description}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 flex gap-2 items-center">
+                                    <span className="font-mono bg-slate-100 px-1 rounded">{part.partNumber}</span>
+                                    <span>Supplier: {supplier.name}</span>
+                                    <span className="text-amber-600 font-black">Offer: {part.price} L.E.</span>
+                                  </div>
+                                </div>
+                                <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-2 py-0.5 rounded">EXTERNAL</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={handleAddProcurementComp}
+                        className="px-4 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-black transition-colors shadow-lg flex items-center gap-2 whitespace-nowrap"
+                      >
+                        <i className="fa-solid fa-plus"></i>
+                        Custom External
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -344,9 +340,9 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                           </td>
                           <td className="px-4 py-4">
                             {c.unitCost === 0 ? (
-                                <span className="text-[10px] font-bold text-amber-500 italic">Awaiting Offer</span>
+                              <span className="text-[10px] font-bold text-amber-500 italic">Awaiting Offer</span>
                             ) : (
-                                <span className="font-bold text-slate-700">{c.unitCost.toLocaleString()} <span className="text-[9px] text-slate-400">L.E.</span></span>
+                              <span className="font-bold text-slate-700">{c.unitCost.toLocaleString()} <span className="text-[9px] text-slate-400">L.E.</span></span>
                             )}
                           </td>
                           <td className="px-4 py-4 font-black text-slate-900">
@@ -359,9 +355,9 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                             </div>
                           </td>
                           <td className="px-4 py-4 text-right">
-                             <button onClick={() => removeComp(c.id)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 p-2">
-                               <i className="fa-solid fa-trash-can"></i>
-                             </button>
+                            <button onClick={() => removeComp(c.id)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 p-2">
+                              <i className="fa-solid fa-trash-can"></i>
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -369,9 +365,9 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                         <tr>
                           <td colSpan={8} className="px-4 py-16 text-center text-slate-400">
                             <div className="max-w-xs mx-auto space-y-2">
-                                <i className="fa-solid fa-layer-group text-3xl opacity-20 block mb-4"></i>
-                                <div className="font-bold text-slate-600">BoM is empty</div>
-                                <div className="text-xs">Search inventory or supplier lists to build the manufacturing cost study.</div>
+                              <i className="fa-solid fa-layer-group text-3xl opacity-20 block mb-4"></i>
+                              <div className="font-bold text-slate-600">BoM is empty</div>
+                              <div className="text-xs">Search inventory or supplier lists to build the manufacturing cost study.</div>
                             </div>
                           </td>
                         </tr>
@@ -381,28 +377,27 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                 </div>
 
                 <div className="pt-8 flex justify-between items-center border-t border-slate-100">
-                   <div className="flex gap-4">
-                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Internal Components</div>
-                            <div className="text-xl font-bold text-slate-800">{selectedItem.components?.filter(c => c.source === 'STOCK').length || 0}</div>
-                        </div>
-                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">External Requirements</div>
-                            <div className="text-xl font-bold text-slate-800">{selectedItem.components?.filter(c => c.source === 'PROCUREMENT').length || 0}</div>
-                        </div>
-                   </div>
-                   <button 
-                     onClick={async () => {
-                        // Fix: Pass currentUser.username as the third argument
-                        const updated = await dataService.toggleItemAcceptance(selectedOrder.id, selectedItem.id, currentUser.username);
-                        setSelectedOrder(updated);
-                        setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
-                     }}
-                     className={`px-8 py-3 rounded-xl font-black uppercase text-xs transition-all flex items-center gap-2 shadow-lg ${selectedItem.isAccepted ? 'bg-red-50 text-red-600 hover:bg-red-100 shadow-red-100' : 'bg-green-600 text-white hover:bg-green-700 shadow-green-100'}`}
-                   >
-                     <i className={`fa-solid ${selectedItem.isAccepted ? 'fa-rotate-left' : 'fa-check-double'}`}></i>
-                     {selectedItem.isAccepted ? 'Revoke Study Approval' : 'Complete Study & Save BoM'}
-                   </button>
+                  <div className="flex gap-4">
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Internal Components</div>
+                      <div className="text-xl font-bold text-slate-800">{selectedItem.components?.filter(c => c.source === 'STOCK').length || 0}</div>
+                    </div>
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">External Requirements</div>
+                      <div className="text-xl font-bold text-slate-800">{selectedItem.components?.filter(c => c.source === 'PROCUREMENT').length || 0}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const updated = await dataService.toggleItemAcceptance(selectedOrder.id, selectedItem.id);
+                      setSelectedOrder(updated);
+                      setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
+                    }}
+                    className={`px-8 py-3 rounded-xl font-black uppercase text-xs transition-all flex items-center gap-2 shadow-lg ${selectedItem.isAccepted ? 'bg-red-50 text-red-600 hover:bg-red-100 shadow-red-100' : 'bg-green-600 text-white hover:bg-green-700 shadow-green-100'}`}
+                  >
+                    <i className={`fa-solid ${selectedItem.isAccepted ? 'fa-rotate-left' : 'fa-check-double'}`}></i>
+                    {selectedItem.isAccepted ? 'Revoke Study Approval' : 'Complete Study & Save BoM'}
+                  </button>
                 </div>
               </div>
             </div>

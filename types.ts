@@ -57,7 +57,7 @@ export interface Payment {
 }
 
 export interface Customer {
-  id: string;
+  id?: string;
   name: string;
   email: string;
   phone: string;
@@ -70,7 +70,7 @@ export interface Customer {
   paymentTermDays: number;
   isHold?: boolean;
   holdReason?: string;
-  logs: LogEntry[];
+  logs?: LogEntry[];
 }
 
 export interface SupplierPart {
@@ -82,7 +82,7 @@ export interface SupplierPart {
 }
 
 export interface Supplier {
-  id: string;
+  id?: string;
   name: string;
   email: string;
   phone: string;
@@ -94,15 +94,15 @@ export interface Supplier {
   contactEmail?: string;
   isBlacklisted?: boolean;
   blacklistReason?: string;
-  priceList: SupplierPart[];
-  logs: LogEntry[];
+  priceList?: SupplierPart[];
+  logs?: LogEntry[];
 }
 
 export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' | 'ORDERED' | 'RECEIVED' | 'RESERVED' | 'IN_MANUFACTURING' | 'MANUFACTURED';
 
 export interface ManufacturingComponent {
-  id: string;
-  componentNumber: string;
+  id?: string;
+  componentNumber?: string;
   poNumber?: string;
   description: string;
   quantity: number;
@@ -114,8 +114,8 @@ export interface ManufacturingComponent {
   supplierId?: string;
   supplierPartId?: string;
   rfpSupplierIds?: string[];
-  status: CompStatus;
-  statusUpdatedAt: string;
+  status?: CompStatus;
+  statusUpdatedAt?: string;
   procurementStartedAt?: string;
 }
 
@@ -155,17 +155,17 @@ export interface ProcurementLine {
 
 export interface CustomerOrder {
   id: string;
-  internalOrderNumber: string;
+  internalOrderNumber?: string;
   customerReferenceNumber: string;
   customerName: string;
   orderDate: string;
-  dataEntryTimestamp: string;
-  status: OrderStatus;
+  dataEntryTimestamp?: string;
+  status?: OrderStatus;
   previousStatus?: OrderStatus;
   invoiceNumber?: string;
   paymentSlaDays: number;
   items: CustomerOrderItem[];
-  logs: LogEntry[];
+  logs?: LogEntry[];
   payments?: Payment[];
   rejectionReason?: string;
   holdReason?: string;

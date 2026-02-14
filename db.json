@@ -339,7 +339,27 @@
           "taxPercent": 14,
           "isAccepted": false,
           "taxDetected": true,
-          "logs": []
+          "logs": [
+            {
+              "timestamp": "2026-02-14T04:37:31.642Z",
+              "message": "Added component: \"stickers N flow\"",
+              "user": "admin"
+            }
+          ],
+          "components": [
+            {
+              "description": "stickers N flow",
+              "quantity": 200,
+              "unit": "pcs",
+              "unitCost": 0,
+              "taxPercent": 14,
+              "source": "PROCUREMENT",
+              "status": "PENDING_OFFER",
+              "id": "c_1771043851642",
+              "componentNumber": "CMP-INT-2024-0007-1-1",
+              "statusUpdatedAt": "2026-02-14T04:37:31.642Z"
+            }
+          ]
         }
       ],
       "internalOrderNumber": "INT-2024-0007",

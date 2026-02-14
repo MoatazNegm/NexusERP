@@ -252,7 +252,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             contactPhone: extracted.customer.phone || '',
             contactEmail: extracted.customer.email || '',
             contactAddress: extracted.customer.address || ''
-          }, currentUser.username);
+          });
           setCustomers(prev => [...prev, newCust]);
           setIsNewCustomerCreated(true);
         }
@@ -299,7 +299,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     if (editStatus.isFrozen) return;
     try {
       if (editingOrderId) {
-        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, items: items as any }, config.settings.minimumMarginPct, currentUser.username);
+        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, items: items as any });
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
         // Prevent duplicate PO IDs on the frontend side
@@ -312,12 +312,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         }
 
         await dataService.addOrder({
-          customerName, customerReferenceNumber, orderDate,
+          customerName,
+          customerReferenceNumber,
+          orderDate,
           paymentSlaDays,
-          dataEntryTimestamp: new Date().toISOString(),
-          status: OrderStatus.LOGGED,
           items: items as any
-        }, currentUser.username, config);
+        });
         setMessage({ type: 'success', text: 'Acquisition committed.' });
       }
       await fetchData();
@@ -330,7 +330,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const handleConfirmDelivery = async (orderId: string) => {
     setProcessingId(orderId);
     try {
-      await dataService.confirmOrderDelivery(orderId, currentUser.username);
+      await dataService.confirmOrderDelivery(orderId);
       await fetchData();
       setMessage({ type: 'success', text: 'Hand-off successfully logged. Record moved to Delivered.' });
     } catch (e) {
@@ -348,7 +348,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
   const handleSaveNewCustomer = async (data: any) => {
     try {
-      const newCust = await dataService.addCustomer(data, currentUser.username);
+      const newCust = await dataService.addCustomer(data);
       setCustomers(prev => [...prev, newCust]);
       setCustomerName(newCust.name); // Ensure exact casing match
       setIsNewCustomerCreated(true);
