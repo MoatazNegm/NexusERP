@@ -179,6 +179,17 @@ const App: React.FC = () => {
     return items.filter(item => hasRole(item.role));
   }, [effectiveRoles]);
 
+  // View Access Enforcement: Redirect if activeView is not in navItems (missing permission)
+  useEffect(() => {
+    if (isDbReady && currentUser && navItems.length > 0) {
+      const isAllowed = navItems.some(item => item.id === activeView);
+      if (!isAllowed) {
+        // Redirect to first available view
+        setActiveView(navItems[0].id as View);
+      }
+    }
+  }, [isDbReady, currentUser, navItems, activeView]);
+
   const dashboardMetrics = useMemo(() => {
     let totalRevenue = 0;
     let totalCost = 0;
