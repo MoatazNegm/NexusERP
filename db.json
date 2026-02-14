@@ -43,7 +43,8 @@
           "pricePerUnit": 0.77,
           "taxPercent": 14,
           "isAccepted": false,
-          "taxDetected": true
+          "taxDetected": true,
+          "logs": []
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
@@ -81,7 +82,8 @@
           "pricePerUnit": 0.77,
           "taxPercent": 14,
           "isAccepted": false,
-          "taxDetected": true
+          "taxDetected": true,
+          "logs": []
         }
       ],
       "internalOrderNumber": "INT-2024-0002",
@@ -131,7 +133,8 @@
           "pricePerUnit": 0.77,
           "taxPercent": 14,
           "isAccepted": false,
-          "taxDetected": true
+          "taxDetected": true,
+          "logs": []
         }
       ],
       "internalOrderNumber": "INT-2024-0003",
@@ -182,7 +185,8 @@
           "pricePerUnit": 0.77,
           "taxPercent": 14,
           "isAccepted": false,
-          "taxDetected": true
+          "taxDetected": true,
+          "logs": []
         }
       ],
       "internalOrderNumber": "INT-2024-0004",
@@ -232,7 +236,8 @@
           "pricePerUnit": 0.77,
           "taxPercent": 14,
           "isAccepted": false,
-          "taxDetected": true
+          "taxDetected": true,
+          "logs": []
         }
       ],
       "internalOrderNumber": "INT-2024-0005",
@@ -282,7 +287,8 @@
           "pricePerUnit": 0.77,
           "taxPercent": 14,
           "isAccepted": false,
-          "taxDetected": true
+          "taxDetected": true,
+          "logs": []
         }
       ],
       "internalOrderNumber": "INT-2024-0006",
@@ -332,7 +338,8 @@
           "pricePerUnit": 0.77,
           "taxPercent": 14,
           "isAccepted": false,
-          "taxDetected": true
+          "taxDetected": true,
+          "logs": []
         }
       ],
       "internalOrderNumber": "INT-2024-0007",
@@ -695,11 +702,11 @@
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
       },
-      "aiProvider": "gemini",
+      "aiProvider": "openai",
       "openaiConfig": {
-        "apiKey": "",
-        "baseUrl": "https://api.openai.com/v1",
-        "modelName": "gpt-4o"
+        "apiKey": "sk-564950c867524d52877203f00e924444",
+        "baseUrl": "https://api.deepseek.com/v1",
+        "modelName": "deepseek-chat"
       },
       "companyLogo": "",
       "orderEditTimeLimitHrs": 1,

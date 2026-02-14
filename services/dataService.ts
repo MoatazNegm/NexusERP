@@ -240,6 +240,7 @@ class DataService {
     const item = order.items.find(i => i.id === itemId);
     if (!item) throw new Error('Item not found');
     item.isAccepted = !item.isAccepted;
+    if (!item.logs) item.logs = [];
     item.logs.push(await this.createLog(`${item.isAccepted ? 'Tech study approved' : 'Study revoked'}`, undefined, user));
     await this.put('orders', orderId, order);
     return order;
@@ -263,6 +264,7 @@ class DataService {
       order.logs.push(await this.createLog(`Margin Protection: Order moved to ${nextStatus}`, nextStatus, 'System'));
     }
 
+    if (!item.logs) item.logs = [];
     item.logs.push(await this.createLog(`Added component: "${comp.description}"`, undefined, user));
     await this.put('orders', orderId, order);
     return order;
@@ -273,6 +275,7 @@ class DataService {
     const item = order.items.find(i => i.id === itemId);
     if (!item) throw new Error('Item not found');
     item.components = item.components?.filter(c => c.id !== compId);
+    if (!item.logs) item.logs = [];
     item.logs.push(await this.createLog(`Removed component ${compId}`, undefined, user));
     await this.put('orders', orderId, order);
     return order;
