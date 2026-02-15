@@ -11,7 +11,7 @@ import multer from 'multer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DB_PATH = path.join(__dirname, 'db.json');
+const DB_PATH = path.join(__dirname, 'db_test.json');
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
 
@@ -363,21 +363,11 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         if (order.status === OrderStatus.WAITING_SUPPLIERS) {
             const hasItems = order.items && order.items.length > 0;
             if (hasItems) {
-                // Check for Standard Orders (Reserved)
                 const allReserved = order.items.every(item =>
                     (item.components || []).every(comp => comp.status === 'RESERVED')
                 );
 
-                // Check for Stock Orders (Received/In Stock)
-                const allReceived = order.items.every(item =>
-                    (item.components || []).every(comp => ['RECEIVED', 'IN_STOCK'].includes(comp.status))
-                );
-
-                if (order.customerName === 'Internal Stock' && allReceived) {
-                    const old = order.status;
-                    order.status = OrderStatus.FULFILLED;
-                    order.logs.push(createAuditLog(`[AUTO] Stock Replenishment Complete: All items in stock. Status moved from ${old} to ${order.status}`, order.status, 'System'));
-                } else if (allReserved) {
+                if (allReserved) {
                     const old = order.status;
                     order.status = OrderStatus.WAITING_FACTORY;
                     order.logs.push(createAuditLog(`[AUTO] Procurement Complete: All components reserved. Status moved from ${old} to ${order.status}`, order.status, 'System'));
@@ -711,7 +701,7 @@ const runThresholdAudit = async () => {
 
 // --- APP SETUP ---
 const app = express();
-const PORT = process.env.PORT || 3005;
+const PORT = 3006;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));

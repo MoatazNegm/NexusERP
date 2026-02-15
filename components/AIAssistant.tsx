@@ -41,7 +41,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
   useEffect(() => {
     try {
       // Default to 'neutral' if config is missing or invalid
-      const chartConfig = config?.settings?.chartConfig || {};
+      const chartConfig = config?.settings?.chartConfig || {} as any;
       const themeName = chartConfig.theme || 'neutral';
 
       const primaryColor = chartConfig.primaryColor || '#6366f1';
@@ -198,14 +198,64 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
     }
   };
 
+  const [position, setPosition] = useState<{ top: number, left: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const onMouseMove = (e: MouseEvent) => {
+      setPosition({
+        top: e.clientY - dragOffset.current.y,
+        left: e.clientX - dragOffset.current.x
+      });
+    };
+
+    const onMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isDragging]);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Prevent drag if clicking the bounce dot or other future interactive elements if any
+    e.stopPropagation();
+
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      dragOffset.current = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+      setPosition({ top: rect.top, left: rect.left });
+      setIsDragging(true);
+    }
+  };
+
   return (
     <>
       <button
-        onClick={() => setIsOpen(true)}
-        className={`fixed bottom-8 right-8 w-16 h-16 rounded-full bg-slate-900 text-white shadow-2xl z-[100] transition-all hover:scale-110 hover:bg-blue-600 flex items-center justify-center group ${isOpen ? 'opacity-0 scale-0' : 'opacity-100 scale-100'}`}
+        ref={buttonRef}
+        onMouseDown={handleMouseDown}
+        onClick={(e) => {
+          // Prevent click if we just dragged (simple check: if we moved significantly? 
+          // Actually, standard click fires on mouseup. If we were dragging, we probably don't want to open. 
+          // But for now, let's keep it simple. Usually small drags are clicks.)
+          if (!isDragging) setIsOpen(true);
+        }}
+        style={position ? { top: position.top, left: position.left, position: 'fixed', bottom: 'auto', right: 'auto', touchAction: 'none' } : {}}
+        className={`fixed z-[100] w-16 h-16 rounded-full bg-slate-900 text-white shadow-2xl transition-transform hover:scale-110 hover:bg-indigo-600 flex items-center justify-center group cursor-move ${!position ? 'bottom-8 right-8' : ''} ${isOpen ? 'opacity-0 scale-0' : 'opacity-100 scale-100'}`}
       >
-        <i className="fa-solid fa-brain-circuit text-2xl"></i>
-        <span className="absolute -top-1 -right-1 w-5 h-5 bg-blue-500 rounded-full border-2 border-white animate-bounce"></span>
+        <i className="fa-solid fa-face-smile-wink text-3xl text-indigo-100"></i>
+        <span className="absolute -top-1 -right-1 w-5 h-5 bg-indigo-500 rounded-full border-2 border-white animate-bounce"></span>
       </button>
 
       <div className={`fixed top-0 right-0 h-full w-full md:w-[600px] bg-white shadow-2xl z-[110] transition-all duration-500 transform ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>

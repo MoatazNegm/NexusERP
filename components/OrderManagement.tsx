@@ -441,6 +441,18 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     }
   };
 
+  const startStockOrder = () => {
+    resetForm();
+    setActiveTab('new');
+    setCustomerName('Internal Stock');
+    setCustomerReferenceNumber(`STOCK-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`);
+    setOrderDate(today);
+    setPaymentSlaDays(0);
+    setItems([{ id: 'temp_1', description: 'Stock Replenishment', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 0, taxDetected: true, logs: [] }]);
+    setMessage({ type: 'info', text: 'Internal Stock Order template loaded.' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <div className="max-w-[1200px] mx-auto pb-12 space-y-6">
       <div className="flex gap-1 p-1 bg-slate-200 rounded-xl w-fit shadow-inner overflow-x-auto">
@@ -449,6 +461,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           className={`px-8 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'new' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
         >
           <i className="fa-solid fa-plus"></i> New Acquisition
+        </button>
+        <button
+          onClick={startStockOrder}
+          className={`px-8 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap text-slate-500 hover:text-emerald-600 hover:bg-emerald-50`}
+        >
+          <i className="fa-solid fa-boxes-stacked"></i> Order for Stock
         </button>
         <button
           onClick={() => setActiveTab('logged')}
@@ -584,11 +602,20 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     <input
                       disabled={editStatus.isFrozen}
                       type="date"
-                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                      max={new Date().toISOString().split('T')[0]} // HTML5 constraint
+                      className={`w-full p-4 border-2 rounded-2xl outline-none font-bold transition-all shadow-inner ${new Date(orderDate) > new Date(new Date().toISOString().split('T')[0])
+                          ? 'bg-rose-50 border-rose-200 text-rose-600 focus:border-rose-400'
+                          : 'bg-slate-50 border-slate-100 focus:bg-white focus:border-blue-500'
+                        }`}
                       value={orderDate}
                       onChange={e => setOrderDate(e.target.value)}
                       required
                     />
+                    {new Date(orderDate) > new Date(new Date().toISOString().split('T')[0]) && (
+                      <div className="text-[9px] font-black text-rose-500 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse">
+                        <i className="fa-solid fa-circle-exclamation"></i> Future dates are not allowed
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment SLA (Days)</label>
@@ -652,7 +679,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-rose-400">Total VAT (14%)</div><div className="text-3xl font-black text-rose-400">+{totals.taxTotal.toLocaleString()}</div></div>
                     <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-emerald-400">Grand Transaction Total</div><div className="text-4xl font-black text-emerald-400">{totals.total.toLocaleString()}</div></div>
                   </div>
-                  <button disabled={editStatus.isFrozen} type="submit" className={`px-16 py-5 rounded-3xl font-black uppercase text-sm tracking-[0.2em] transition-all active:scale-95 shadow-xl relative z-10 ${editStatus.isFrozen ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : (editingOrderId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700')}`}>
+                  <button
+                    disabled={editStatus.isFrozen || new Date(orderDate) > new Date(new Date().toISOString().split('T')[0])}
+                    type="submit"
+                    className={`px-16 py-5 rounded-3xl font-black uppercase text-sm tracking-[0.2em] transition-all active:scale-95 shadow-xl relative z-10 ${editStatus.isFrozen || new Date(orderDate) > new Date(new Date().toISOString().split('T')[0])
+                        ? 'bg-slate-700 text-slate-500 cursor-not-allowed opacity-50'
+                        : (editingOrderId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700')
+                      }`}
+                  >
                     {editStatus.isFrozen ? 'LOCKED' : (editingOrderId ? 'Save Modification' : 'Commit Acquisition')}
                   </button>
                 </div>

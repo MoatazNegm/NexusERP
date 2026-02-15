@@ -18,6 +18,25 @@
           "user": "System"
         }
       ]
+    },
+    {
+      "id": "customers_1771170343375",
+      "name": "Unilever Mashreq for Import and Export (LLC)",
+      "email": "",
+      "phone": "",
+      "address": "15 Sphinx Square, EL-Mohandeseen, Giza (6th floor) Cairo, dummy Egypt",
+      "paymentTermDays": 30,
+      "contactName": "Ahmed Hemedah",
+      "contactPhone": "",
+      "contactEmail": "",
+      "contactAddress": "15 Sphinx Square, EL-Mohandeseen, Giza (6th floor) Cairo, dummy Egypt",
+      "logs": [
+        {
+          "timestamp": "2026-02-15T15:45:43.377Z",
+          "message": "Entity registered",
+          "user": "System"
+        }
+      ]
     }
   ],
   "orders": [

@@ -1,0 +1,105 @@
+{
+  "orders": [
+    {
+      "id": "orders_1771172110890",
+      "customerName": "Internal Stock",
+      "customerReferenceNumber": "STOCK-TEST-001",
+      "orderDate": "2026-02-15",
+      "paymentSlaDays": 0,
+      "items": [
+        {
+          "description": "Stock Replenishment",
+          "quantity": 1,
+          "unit": "pcs",
+          "pricePerUnit": 0,
+          "taxPercent": 0,
+          "isAccepted": false,
+          "components": [
+            {
+              "description": "100 Ohm Resistor",
+              "quantity": 10,
+              "unit": "pcs",
+              "unitCost": 10.5,
+              "source": "PROCUREMENT",
+              "inventoryItemId": "inv_test_1",
+              "status": "RECEIVED",
+              "id": "c_1771172110893_0_0",
+              "componentNumber": "CMP-INT-2024-0001-ITEM-1",
+              "statusUpdatedAt": "2026-02-15T16:15:10.893Z"
+            }
+          ],
+          "logs": []
+        }
+      ],
+      "status": "TECHNICAL_REVIEW",
+      "logs": [
+        {
+          "timestamp": "2026-02-15T16:15:10.892Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T16:15:10.894Z",
+          "message": "[AUTO] Initial Status: Status moved from LOGGED to TECHNICAL_REVIEW",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T16:15:10.904Z",
+          "message": "[AUTO] Stock Replenishment: 10 units of RES-100 added to Free Stock. Valuation updated to 10.5.",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T16:15:10.904Z",
+          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T16:15:55.335Z",
+          "message": "[SYSTEM] [ALERT_FAILED] No recipients for new order alert. Groups: ",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0001",
+      "dataEntryTimestamp": "2026-02-15T16:15:10.891Z",
+      "loggingComplianceViolation": false
+    }
+  ],
+  "inventory": [
+    {
+      "id": "inv_test_1",
+      "sku": "RES-100",
+      "description": "100 Ohm Resistor",
+      "quantityInStock": 60,
+      "quantityReserved": 0,
+      "unit": "pcs",
+      "lastCost": 10.5,
+      "category": "Electronics"
+    }
+  ],
+  "settings": [
+    {
+      "minimumMarginPct": 15,
+      "emailConfig": {
+        "smtpServer": "mail.example.com"
+      }
+    }
+  ],
+  "users": [],
+  "customers": [],
+  "suppliers": [],
+  "notifications": [
+    {
+      "id": "nt_err_n_1771172155336",
+      "journalKey": "new_order_orders_1771172110890",
+      "orderId": "orders_1771172110890",
+      "type": "new_order_error",
+      "sentAt": "2026-02-15T16:15:55.336Z",
+      "recipients": []
+    }
+  ]
+}
