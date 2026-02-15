@@ -176,6 +176,7 @@ export interface CustomerOrder {
     type: 'HOLD_RELEASE' | 'MARGIN_RELEASE';
   };
   loggingComplianceViolation?: boolean;
+  isOverdue?: boolean;
 }
 
 export interface OpenAIConfig {
@@ -235,5 +236,7 @@ export interface AppConfig {
     thresholdNotifications: Record<string, string[]>;
     enableNewOrderAlerts: boolean;
     newOrderAlertGroupIds: string[];
+    enableRollbackAlerts: boolean;
+    rollbackAlertGroupIds: string[];
   };
 }

@@ -58,9 +58,59 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('all');
   const [processingId, setProcessingId] = useState<string | null>(null);
-
+  const [searchQuery, setSearchQuery] = useState('');
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmState | null>(null);
   const [receivedQtyInput, setReceivedQtyInput] = useState<string>('');
+
+  // Delivery Note PDF State
+  const deliveryNoteRef = React.useRef<HTMLDivElement>(null);
+  const [printingOrder, setPrintingOrder] = useState<CustomerOrder | null>(null);
+  const [confirmingDeliveryId, setConfirmingDeliveryId] = useState<string | null>(null);
+  const podUploadRef = React.useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (printingOrder) {
+      setTimeout(() => {
+        if (deliveryNoteRef.current) {
+          generatePdf();
+        } else {
+          console.error("Ref not found after timeout");
+          alert("Error: Template not generated. Please try again.");
+          setPrintingOrder(null);
+        }
+      }, 100);
+    }
+  }, [printingOrder]);
+
+  const generatePdf = async () => {
+    if (!deliveryNoteRef.current || !printingOrder) return;
+    try {
+      setProcessingId(printingOrder.id);
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(deliveryNoteRef.current, {
+        scale: 2,
+        useCORS: true,
+        logging: true,
+        backgroundColor: '#ffffff'
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+      pdf.save(`DeliveryNote-${printingOrder.internalOrderNumber}.pdf`);
+    } catch (e: any) {
+      console.error("PDF Gen Error:", e);
+      alert(`Failed to generate PDF: ${e.message}`);
+    } finally {
+      setPrintingOrder(null);
+      setProcessingId(null);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -77,6 +127,15 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
     setSuppliers(suppData);
     setLoading(false);
   };
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return items;
+    return items.filter(i =>
+      (i.sku || '').toLowerCase().includes(q) ||
+      (i.description || '').toLowerCase().includes(q)
+    );
+  }, [items, searchQuery]);
 
   const transitComponents = useMemo(() => {
     const list: { order: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent }[] = [];
@@ -165,6 +224,29 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
     }
   };
 
+  const handlePodUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0] || !confirmingDeliveryId) return;
+    const file = e.target.files[0];
+
+    setProcessingId(confirmingDeliveryId);
+    try {
+      const uploadRes = await dataService.uploadProofOfDelivery(file);
+      if (uploadRes.success) {
+        await dataService.confirmOrderDelivery(confirmingDeliveryId, uploadRes.filePath);
+        alert("Delivery confirmed and POD uploaded successfully.");
+        await loadData();
+      } else {
+        throw new Error(uploadRes.error || "Upload failed");
+      }
+    } catch (err: any) {
+      alert("Failed to confirm delivery: " + err.message);
+    } finally {
+      setProcessingId(null);
+      setConfirmingDeliveryId(null);
+      if (podUploadRef.current) podUploadRef.current.value = '';
+    }
+  };
+
   const isConfirmationAllowed = useMemo(() => {
     if (!pendingConfirm) return false;
     if (pendingConfirm.type !== 'material') return true;
@@ -173,6 +255,82 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
 
   return (
     <div className="space-y-6">
+      {printingOrder && (
+        <div className="fixed -left-[3000px] top-0">
+          <div ref={deliveryNoteRef} className="bg-white p-12 text-slate-900 font-sans" style={{ width: '800px', minHeight: '1100px', letterSpacing: '0px', fontVariantLigatures: 'normal', direction: 'ltr' }}>
+            {/* Header */}
+            <div className="flex justify-between items-start mb-12">
+              <div>
+                <div className="w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center text-2xl font-black mb-4">NX</div>
+                <h1 className="text-2xl font-black text-slate-900 uppercase" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyName}</h1>
+                <p className="text-sm font-medium text-slate-500 max-w-[200px]" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyAddress}</p>
+              </div>
+              <div className="text-right">
+                <h2 className="text-4xl font-black text-slate-200 uppercase mb-2" style={{ letterSpacing: '0px' }}>Delivery Note</h2>
+                <div className="text-sm font-bold text-slate-400 uppercase">#{printingOrder.internalOrderNumber}</div>
+                <div className="text-xs font-bold text-slate-400 mt-1">Date: {new Date().toLocaleDateString()}</div>
+              </div>
+            </div>
+
+            {/* Receiver Info */}
+            <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 mb-10 flex justify-between">
+              <div>
+                <div className="text-[10px] font-black text-slate-400 uppercase mb-2" style={{ letterSpacing: '0px' }}>Deliver To</div>
+                <div className="text-lg font-black text-slate-800" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{printingOrder.customerName}</div>
+                <div className="text-sm font-medium text-slate-600 mt-1" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{printingOrder.customerReferenceNumber}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] font-black text-slate-400 uppercase mb-2" style={{ letterSpacing: '0px' }}>Reference Documents</div>
+                <div className="text-sm font-bold text-slate-600">PO Ref: {printingOrder.customerReferenceNumber}</div>
+                <div className="text-sm font-bold text-slate-600">Inv Ref: {printingOrder.invoiceNumber || 'PENDING'}</div>
+              </div>
+            </div>
+
+            {/* Items Table */}
+            <div className="mb-16">
+              <table className="w-full text-left">
+                <thead className="bg-slate-900 text-white text-[10px] font-black uppercase">
+                  <tr>
+                    <th className="px-6 py-4 rounded-l-xl">Item Description</th>
+                    <th className="px-6 py-4 text-center">Unit</th>
+                    <th className="px-6 py-4 text-right rounded-r-xl">Delivered Qty</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {printingOrder.items.map((item, idx) => (
+                    <tr key={idx}>
+                      <td className="px-6 py-6 font-bold text-slate-800" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{item.description}</td>
+                      <td className="px-6 py-6 text-center text-sm font-medium text-slate-500">{item.unit}</td>
+                      <td className="px-6 py-6 text-right font-black text-slate-900">{item.quantity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Signatures */}
+            <div className="grid grid-cols-2 gap-12 mt-auto">
+              <div className="border-t-2 border-slate-200 pt-4">
+                <div className="text-[10px] font-black text-slate-400 uppercase mb-8" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>Issued By ({config.settings.companyName})</div>
+                <div className="h-16"></div>
+                <div className="text-xs font-bold text-slate-900 border-t border-dashed border-slate-300 pt-2 w-2/3">Authorized Signature & Date</div>
+              </div>
+              <div className="border-t-2 border-slate-200 pt-4">
+                <div className="text-[10px] font-black text-slate-400 uppercase mb-8" style={{ letterSpacing: '0px' }}>Received By (Customer)</div>
+                <div className="text-sm font-bold text-slate-800 mb-2">Name: __________________________</div>
+                <div className="text-sm font-bold text-slate-800 mb-6">ID/Ref: __________________________</div>
+                <div className="h-4"></div>
+                <div className="text-xs font-bold text-slate-900 border-t border-dashed border-slate-300 pt-2 w-2/3">Customer Signature & Date</div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="mt-12 text-center text-[10px] font-bold text-slate-300 uppercase" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>
+              Thank you for your business • {config.settings.companyName}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap gap-1 p-1 bg-slate-200 rounded-2xl w-fit">
         {(['inventory', 'reception', 'hub', 'dispatch'] as const).map(tab => (
           <button
@@ -190,8 +348,18 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
 
       {activeTab === 'inventory' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-8 border-b border-slate-100 flex justify-between items-center">
+          <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
             <div><h3 className="text-xl font-black text-slate-800">Physical Stock</h3></div>
+            <div className="flex-1 max-w-md relative mx-4">
+              <input
+                type="text"
+                placeholder="Search SKU or Description..."
+                className="w-full px-5 py-3 pl-12 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-blue-50 focus:border-blue-500 transition-all font-bold text-sm"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+              <i className="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 text-lg"></i>
+            </div>
             <button onClick={() => setIsAdding(!isAdding)} className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-black transition-all">Add Item</button>
           </div>
           <table className="w-full text-left">
@@ -205,7 +373,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {items.map(item => (
+              {filteredItems.map(item => (
                 <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-8 py-6">
                     <div className="font-mono text-[10px] font-black text-blue-600">{item.sku}</div>
@@ -400,6 +568,13 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                           {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-ramp-box"></i>}
                           Authorize Dispatch & Release
                         </button>
+                        <button
+                          onClick={() => setPrintingOrder(order)}
+                          disabled={processingId === order.id}
+                          className="px-6 py-2 bg-blue-50 text-blue-600 font-black text-[10px] uppercase rounded-xl hover:bg-blue-100 transition-all flex items-center gap-2"
+                        >
+                          <i className="fa-solid fa-file-contract"></i> Download Delivery Note
+                        </button>
                         <p className="text-[8px] text-slate-400 font-bold uppercase pr-1 italic opacity-0 group-hover:opacity-100 transition-opacity">Attach physical Tax Invoice to manifest</p>
                       </div>
                     </td>
@@ -427,55 +602,72 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
               <table className="w-full text-left">
                 <tbody className="divide-y divide-slate-50 text-sm">
                   {recentDispatches.map(order => (
-                    <tr key={order.id}>
+                    <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-8 py-4 font-mono text-[10px] text-slate-400">{order.internalOrderNumber}</td>
                       <td className="px-8 py-4 font-bold text-slate-500 text-xs">{order.customerName}</td>
-                      <td className="px-8 py-4 text-right">
-                        <span className="px-3 py-1 bg-slate-50 text-slate-400 text-[8px] font-black uppercase rounded border">Released to Logistics</span>
+                      <td className="px-8 py-4 text-right flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setPrintingOrder(order)}
+                          className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2"
+                        >
+                          <i className="fa-solid fa-download"></i> Delivery Note
+                        </button>
+                        <button
+                          disabled={processingId === order.id}
+                          onClick={() => { setConfirmingDeliveryId(order.id); setTimeout(() => podUploadRef.current?.click(), 100); }}
+                          className="px-4 py-2 bg-emerald-600 text-white font-bold text-[10px] uppercase rounded-lg hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-sm"
+                        >
+                          {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check"></i>}
+                          Confirm Delivered
+                        </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              <input type="file" ref={podUploadRef} className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={handlePodUpload} />
             </div>
           )}
         </div>
-      )}
+      )
+      }
 
-      {pendingConfirm && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md p-8 animate-in zoom-in-95">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shadow-inner"><i className="fa-solid fa-truck-ramp-box"></i></div>
-              <div><h3 className="text-xl font-black text-slate-800">Verification Gate</h3><p className="text-[10px] font-black text-slate-400 uppercase">Input exact received quantity</p></div>
-            </div>
-            <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 mb-8 space-y-6">
-              <div className="text-center">
-                <div className="text-[10px] font-black text-slate-400 uppercase mb-2">Expected Quantity</div>
-                <div className="text-3xl font-black text-slate-800">{pendingConfirm.comp?.quantity} <span className="text-sm font-bold text-slate-400">{pendingConfirm.comp?.unit}</span></div>
+      {
+        pendingConfirm && (
+          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+            <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md p-8 animate-in zoom-in-95">
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shadow-inner"><i className="fa-solid fa-truck-ramp-box"></i></div>
+                <div><h3 className="text-xl font-black text-slate-800">Verification Gate</h3><p className="text-[10px] font-black text-slate-400 uppercase">Input exact received quantity</p></div>
               </div>
-              <div className="space-y-1">
-                <label className="text-[9px] font-black text-blue-600 uppercase ml-1">Physical Count Input</label>
-                <input
-                  type="number" step="any" autoFocus
-                  className="w-full p-4 border-2 border-white bg-white rounded-2xl text-center text-2xl font-black focus:border-blue-500 outline-none shadow-sm"
-                  placeholder="0.00" value={receivedQtyInput} onChange={e => setReceivedQtyInput(e.target.value)}
-                />
-                {receivedQtyInput && parseFloat(receivedQtyInput) !== pendingConfirm.comp?.quantity && (
-                  <div className="text-[9px] font-black text-rose-500 uppercase mt-2 text-center flex items-center justify-center gap-2 animate-pulse"><i className="fa-solid fa-triangle-exclamation"></i> Mismatch Detected</div>
-                )}
+              <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 mb-8 space-y-6">
+                <div className="text-center">
+                  <div className="text-[10px] font-black text-slate-400 uppercase mb-2">Expected Quantity</div>
+                  <div className="text-3xl font-black text-slate-800">{pendingConfirm.comp?.quantity} <span className="text-sm font-bold text-slate-400">{pendingConfirm.comp?.unit}</span></div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-blue-600 uppercase ml-1">Physical Count Input</label>
+                  <input
+                    type="number" step="any" autoFocus
+                    className="w-full p-4 border-2 border-white bg-white rounded-2xl text-center text-2xl font-black focus:border-blue-500 outline-none shadow-sm"
+                    placeholder="0.00" value={receivedQtyInput} onChange={e => setReceivedQtyInput(e.target.value)}
+                  />
+                  {receivedQtyInput && parseFloat(receivedQtyInput) !== pendingConfirm.comp?.quantity && (
+                    <div className="text-[9px] font-black text-rose-500 uppercase mt-2 text-center flex items-center justify-center gap-2 animate-pulse"><i className="fa-solid fa-triangle-exclamation"></i> Mismatch Detected</div>
+                  )}
+                </div>
               </div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => setPendingConfirm(null)} className="flex-1 py-4 bg-slate-100 text-slate-400 font-black rounded-2xl text-[10px] uppercase">Cancel</button>
-              <button
-                onClick={executeMaterialReception} disabled={!isConfirmationAllowed}
-                className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all ${isConfirmationAllowed ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale'}`}
-              >Confirm Receipt</button>
+              <div className="flex gap-2">
+                <button onClick={() => setPendingConfirm(null)} className="flex-1 py-4 bg-slate-100 text-slate-400 font-black rounded-2xl text-[10px] uppercase">Cancel</button>
+                <button
+                  onClick={executeMaterialReception} disabled={!isConfirmationAllowed}
+                  className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all ${isConfirmationAllowed ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale'}`}
+                >Confirm Receipt</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 };

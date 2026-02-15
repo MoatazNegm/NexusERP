@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Uploads
+uploads/
+
+# Test Scripts
+test_*.js
+verify_*.js

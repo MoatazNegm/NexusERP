@@ -262,8 +262,23 @@ class DataService {
     return this.dispatchAction(id, 'release-delivery');
   }
 
-  async confirmOrderDelivery(id: string) {
-    return this.dispatchAction(id, 'confirm-delivery');
+  async uploadProofOfDelivery(file: File) {
+    const formData = new FormData();
+    formData.append('podFile', file);
+
+    const response = await fetch(`${BACKEND_URL}/api/upload-pod`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error("File upload failed");
+    }
+    return await response.json();
+  }
+
+  async confirmOrderDelivery(id: string, podFilePath: string) {
+    return this.dispatchAction(id, 'confirm-delivery', { podFilePath });
   }
 
   async recordPayment(id: string, amount: number, memo: string) {

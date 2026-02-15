@@ -1,39 +1,32 @@
 {
   "customers": [
     {
+      "id": "customers_1771146775966",
       "name": "Unilever Mashreq for Import and Export",
       "email": "Ahmed.H-Faissel@unilever.com",
       "phone": "",
-      "address": "Giza",
+      "address": "",
       "paymentTermDays": 30,
       "contactName": "Ahmed Hemedah",
       "contactPhone": "",
-      "contactEmail": "Ahmed.H-Faissel@unilever.com",
+      "contactEmail": "",
       "contactAddress": "",
       "logs": [
         {
-          "timestamp": "2026-02-13T07:36:33.287Z",
+          "timestamp": "2026-02-15T09:12:55.966Z",
           "message": "Entity registered",
-          "user": "admin"
-        },
-        {
-          "timestamp": "2026-02-13T09:01:43.313Z",
-          "message": "Profile updated",
-          "user": "admin"
+          "user": "System"
         }
-      ],
-      "id": "customers_1770968193298",
-      "location": ""
+      ]
     }
   ],
   "orders": [
     {
+      "id": "orders_1771146809651",
       "customerName": "Unilever Mashreq for Import and Export",
       "customerReferenceNumber": "PO16948286",
       "orderDate": "2025-08-31",
       "paymentSlaDays": 30,
-      "dataEntryTimestamp": "2026-02-12T20:06:14.565Z",
-      "status": "REJECTED",
       "items": [
         {
           "id": "temp_1",
@@ -44,368 +37,806 @@
           "taxPercent": 14,
           "isAccepted": false,
           "taxDetected": true,
-          "logs": []
-        }
-      ],
-      "internalOrderNumber": "INT-2024-0001",
-      "logs": [
-        {
-          "timestamp": "2026-02-12T20:06:14.571Z",
-          "message": "Order acquisition recorded",
-          "status": "LOGGED",
-          "user": "admin"
-        },
-        {
-          "timestamp": "2026-02-13T07:34:49.762Z",
-          "message": "Rejected: nothing to say",
-          "status": "REJECTED",
-          "user": "admin"
-        }
-      ],
-      "id": "orders_1770926774571",
-      "loggingComplianceViolation": true,
-      "rejectionReason": "nothing to say"
-    },
-    {
-      "customerName": "Unilever Mashreq for Import and Export",
-      "customerReferenceNumber": "PO16948286",
-      "orderDate": "2025-08-31",
-      "paymentSlaDays": 30,
-      "dataEntryTimestamp": "2026-02-13T07:36:43.161Z",
-      "status": "REJECTED",
-      "items": [
-        {
-          "id": "temp_1",
-          "description": "64886429 VASELINE@20% POFF STKR N",
-          "quantity": 16000,
-          "unit": "pcs",
-          "pricePerUnit": 0.77,
-          "taxPercent": 14,
-          "isAccepted": false,
-          "taxDetected": true,
-          "logs": []
-        }
-      ],
-      "internalOrderNumber": "INT-2024-0002",
-      "logs": [
-        {
-          "timestamp": "2026-02-13T07:36:43.179Z",
-          "message": "Order acquisition recorded",
-          "status": "LOGGED",
-          "user": "admin"
-        },
-        {
-          "timestamp": "2026-02-13T07:36:51.740Z",
-          "message": "[SYSTEM] Compliance Alert Sent: Logging Delay reported to erpalerts@quickstor.net",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T07:36:54.607Z",
-          "message": "[SYSTEM] New Order Notification Sent to erpalerts@quickstor.net",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T07:38:51.468Z",
-          "message": "Rejected: Order is rejected due to didnt'send email",
-          "status": "REJECTED",
-          "user": "admin"
-        }
-      ],
-      "id": "orders_1770968203190",
-      "loggingComplianceViolation": true,
-      "rejectionReason": "Order is rejected due to didnt'send email"
-    },
-    {
-      "customerName": "Unilever Mashreq for Import and Export",
-      "customerReferenceNumber": "PO16948286",
-      "orderDate": "2025-08-31",
-      "paymentSlaDays": 30,
-      "dataEntryTimestamp": "2026-02-13T07:51:55.659Z",
-      "status": "REJECTED",
-      "items": [
-        {
-          "id": "temp_1",
-          "description": "64886429 VASELINE@20% POFF STKR N",
-          "quantity": 16000,
-          "unit": "pcs",
-          "pricePerUnit": 0.77,
-          "taxPercent": 14,
-          "isAccepted": false,
-          "taxDetected": true,
-          "logs": []
-        }
-      ],
-      "internalOrderNumber": "INT-2024-0003",
-      "logs": [
-        {
-          "timestamp": "2026-02-13T07:51:55.684Z",
-          "message": "Order acquisition recorded",
-          "status": "LOGGED",
-          "user": "admin"
-        },
-        {
-          "timestamp": "2026-02-13T07:52:52.643Z",
-          "message": "[SYSTEM] Compliance Alert Sent: Logging Delay reported to erpalerts@quickstor.net",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T07:52:56.490Z",
-          "message": "[SYSTEM] New Order Notification Sent to erpalerts@quickstor.net",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T08:03:49.176Z",
-          "message": "Rejected: not to managers yet",
-          "status": "REJECTED",
-          "user": "admin"
-        }
-      ],
-      "id": "orders_1770969115697",
-      "loggingComplianceViolation": true,
-      "rejectionReason": "not to managers yet"
-    },
-    {
-      "id": "orders_1770969891707",
-      "customerName": "Unilever Mashreq for Import and Export",
-      "customerReferenceNumber": "PO16948286",
-      "orderDate": "2025-08-31",
-      "paymentSlaDays": 30,
-      "dataEntryTimestamp": "2026-02-13T08:04:51.675Z",
-      "status": "REJECTED",
-      "items": [
-        {
-          "id": "temp_1",
-          "description": "64886429 VASELINE@20% POFF STKR N",
-          "quantity": 16000,
-          "unit": "pcs",
-          "pricePerUnit": 0.77,
-          "taxPercent": 14,
-          "isAccepted": false,
-          "taxDetected": true,
-          "logs": []
-        }
-      ],
-      "internalOrderNumber": "INT-2024-0004",
-      "logs": [
-        {
-          "timestamp": "2026-02-13T08:04:51.692Z",
-          "message": "Order acquisition recorded",
-          "status": "LOGGED",
-          "user": "admin"
-        },
-        {
-          "timestamp": "2026-02-13T08:05:23.591Z",
-          "message": "[SYSTEM] Compliance Alert Sent to erpalerts@quickstor.net",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T08:05:27.115Z",
-          "message": "[SYSTEM] New Order Notification Sent to erpalerts@quickstor.net",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T08:17:42.559Z",
-          "message": "Rejected: not to managers",
-          "status": "REJECTED",
-          "user": "admin"
-        }
-      ],
-      "loggingComplianceViolation": true,
-      "rejectionReason": "not to managers"
-    },
-    {
-      "id": "orders_1770970866585",
-      "customerName": "Unilever Mashreq for Import and Export",
-      "customerReferenceNumber": "PO16948286",
-      "orderDate": "2025-08-31",
-      "paymentSlaDays": 30,
-      "dataEntryTimestamp": "2026-02-13T08:21:06.554Z",
-      "status": "REJECTED",
-      "items": [
-        {
-          "id": "temp_1",
-          "description": "64886429VASELINE@20% POFF STKR N",
-          "quantity": 16000,
-          "unit": "pcs",
-          "pricePerUnit": 0.77,
-          "taxPercent": 14,
-          "isAccepted": false,
-          "taxDetected": true,
-          "logs": []
-        }
-      ],
-      "internalOrderNumber": "INT-2024-0005",
-      "logs": [
-        {
-          "timestamp": "2026-02-13T08:21:06.576Z",
-          "message": "Order acquisition recorded",
-          "status": "LOGGED",
-          "user": "admin"
-        },
-        {
-          "timestamp": "2026-02-13T08:21:21.742Z",
-          "message": "[SYSTEM] Compliance Alert Sent to admin (erpalerts@quickstor.net) via group: Admin Fallback",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T08:21:25.359Z",
-          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: Admin Fallback",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T08:35:58.910Z",
-          "message": "Rejected: not to managers again\n",
-          "status": "REJECTED",
-          "user": "admin"
-        }
-      ],
-      "loggingComplianceViolation": true,
-      "rejectionReason": "not to managers again\n"
-    },
-    {
-      "id": "orders_1770971801371",
-      "customerName": "Unilever Mashreq for Import and Export",
-      "customerReferenceNumber": "PO16948286",
-      "orderDate": "2025-08-31",
-      "paymentSlaDays": 30,
-      "dataEntryTimestamp": "2026-02-13T08:36:41.364Z",
-      "status": "REJECTED",
-      "items": [
-        {
-          "id": "temp_1",
-          "description": "64886429 VASELINE@20% POFF STKR N",
-          "quantity": 16000,
-          "unit": "pcs",
-          "pricePerUnit": 0.77,
-          "taxPercent": 14,
-          "isAccepted": false,
-          "taxDetected": true,
-          "logs": []
-        }
-      ],
-      "internalOrderNumber": "INT-2024-0006",
-      "logs": [
-        {
-          "timestamp": "2026-02-13T08:36:41.370Z",
-          "message": "Order acquisition recorded",
-          "status": "LOGGED",
-          "user": "admin"
-        },
-        {
-          "timestamp": "2026-02-13T08:37:22.491Z",
-          "message": "[SYSTEM] Compliance Alert Sent to admin (erpalerts@quickstor.net) via group: Admin Fallback",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T08:37:26.068Z",
-          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: Admin Fallback",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-13T08:44:09.229Z",
-          "message": "Rejected: not to manager for the 6 times",
-          "status": "REJECTED",
-          "user": "admin"
-        }
-      ],
-      "loggingComplianceViolation": true,
-      "rejectionReason": "not to manager for the 6 times"
-    },
-    {
-      "id": "orders_1770972288567",
-      "customerName": "Unilever Mashreq for Import and Export",
-      "customerReferenceNumber": "PO16948286",
-      "orderDate": "2025-08-31",
-      "paymentSlaDays": 30,
-      "dataEntryTimestamp": "2026-02-13T08:44:48.561Z",
-      "status": "LOGGED",
-      "items": [
-        {
-          "id": "temp_1",
-          "description": "64886429 VASELINE@20% POFF STKR N",
-          "quantity": 16000,
-          "unit": "pcs",
-          "pricePerUnit": 0.77,
-          "taxPercent": 14,
-          "isAccepted": false,
-          "taxDetected": true,
-          "logs": [
-            {
-              "timestamp": "2026-02-14T04:37:31.642Z",
-              "message": "Added component: \"stickers N flow\"",
-              "user": "admin"
-            }
-          ],
+          "logs": [],
           "components": [
             {
-              "description": "stickers N flow",
-              "quantity": 200,
+              "description": "dfjadkl",
+              "quantity": 100,
               "unit": "pcs",
-              "unitCost": 0,
+              "unitCost": 1,
               "taxPercent": 14,
               "source": "PROCUREMENT",
-              "status": "PENDING_OFFER",
-              "id": "c_1771043851642",
-              "componentNumber": "CMP-INT-2024-0007-1-1",
-              "statusUpdatedAt": "2026-02-14T04:37:31.642Z"
+              "status": "Manufactured",
+              "id": "c_1771146879690_0_0",
+              "componentNumber": "CMP-INT-2024-0001-1-1",
+              "statusUpdatedAt": "2026-02-15T09:15:27.473Z",
+              "rfpSupplierIds": [],
+              "supplierId": "suppliers_1771146837526",
+              "poNumber": "PO-899860",
+              "procurementStartedAt": "2026-02-15T09:15:00.673Z",
+              "inventoryItemId": "inv_1771146912948_70poo"
             }
-          ]
+          ],
+          "status": "Manufactured"
         }
       ],
-      "internalOrderNumber": "INT-2024-0007",
       "logs": [
         {
-          "timestamp": "2026-02-13T08:44:48.566Z",
+          "timestamp": "2026-02-15T09:13:29.651Z",
           "message": "Order acquisition recorded",
           "status": "LOGGED",
-          "user": "admin"
+          "user": "System"
         },
         {
-          "timestamp": "2026-02-13T08:45:22.803Z",
-          "message": "[SYSTEM] Compliance Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "timestamp": "2026-02-15T09:13:29.651Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-13T08:45:22.803Z",
-          "message": "[SYSTEM] Compliance Alert Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "timestamp": "2026-02-15T09:13:42.666Z",
+          "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-13T08:45:26.546Z",
+          "timestamp": "2026-02-15T09:13:42.666Z",
+          "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:13:46.010Z",
           "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-13T08:45:26.546Z",
+          "timestamp": "2026-02-15T09:13:46.010Z",
           "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-13T12:17:35.221Z",
-          "message": "[SYSTEM] Order Draft Window Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "LOGGED",
+          "timestamp": "2026-02-15T09:14:39.690Z",
+          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:14:43.660Z",
+          "message": "Technical study finalized and pushed to Procurement",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:14:52.226Z",
+          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:15:12.948Z",
+          "message": "Component Received & Reserved: dfjadkl",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:15:12.948Z",
+          "message": "[AUTO] Procurement Complete: All components reserved. Status moved from WAITING_SUPPLIERS to WAITING_FACTORY",
+          "status": "WAITING_FACTORY",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:15:26.463Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:15:27.473Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:21:42.268Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:34:20.113Z",
+          "message": "PO Received at Product Hub: Ready for Invoicing",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:40:38.628Z",
+          "message": "[SYSTEM] Hub Processing Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "IN_PRODUCT_HUB",
           "user": "System"
         }
       ],
-      "loggingComplianceViolation": true
+      "internalOrderNumber": "INT-2024-0001",
+      "dataEntryTimestamp": "2026-02-15T09:13:29.651Z",
+      "status": "IN_PRODUCT_HUB",
+      "loggingComplianceViolation": false,
+      "isOverdue": false
+    },
+    {
+      "id": "orders_1771147303289",
+      "customerReferenceNumber": "PO-START-1771147303287",
+      "customerName": "Start Prod Customer",
+      "status": "DELIVERED",
+      "items": [
+        {
+          "description": "Product X",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Comp Y",
+              "quantity": 10,
+              "inventoryItemId": "inventory_1771147303283",
+              "source": "PROCUREMENT",
+              "status": "Manufactured",
+              "id": "c_1771147303289_0_0",
+              "componentNumber": "CMP-INT-2024-0002-ITEM-1",
+              "statusUpdatedAt": "2026-02-15T10:37:05.434Z"
+            }
+          ],
+          "logs": [],
+          "status": "Manufactured"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-02-15T09:21:43.289Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-02-15T09:21:43.292Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-02-15T09:22:05.686Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:22:05.686Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:28:56.081Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:37:05.434Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:37:14.786Z",
+          "message": "PO Received at Product Hub: Ready for Invoicing",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:37:58.418Z",
+          "message": "Official Tax Invoice Generated: INV-260215-101",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:44:54.504Z",
+          "message": "[SYSTEM] Hub Release Sync Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T11:10:40.975Z",
+          "message": "Shipment Released from Hub to Logistics Provider",
+          "status": "HUB_RELEASED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T11:16:50.439Z",
+          "message": "[SYSTEM] Delivery Transit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "HUB_RELEASED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T11:28:22.962Z",
+          "message": "Customer Delivery Confirmed & POD Filed: uploads/pod/pod-1771154902823-112172315.pdf",
+          "status": "DELIVERED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0002",
+      "dataEntryTimestamp": "2026-02-15T09:21:43.289Z",
+      "invoiceNumber": "INV-260215-101",
+      "podFilePath": "uploads/pod/pod-1771154902823-112172315.pdf"
+    },
+    {
+      "id": "orders_1771147345145",
+      "customerReferenceNumber": "PO-START-1771147345143",
+      "customerName": "Start Prod Customer",
+      "status": "MANUFACTURING_COMPLETED",
+      "items": [
+        {
+          "description": "Product X",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Comp Y",
+              "quantity": 10,
+              "inventoryItemId": "inventory_1771147345137",
+              "source": "CONSUMED",
+              "status": "Manufactured",
+              "id": "c_1771147345145_0_0",
+              "componentNumber": "CMP-INT-2024-0003-ITEM-1",
+              "statusUpdatedAt": "2026-02-15T10:37:06.105Z"
+            }
+          ],
+          "logs": [],
+          "status": "Manufactured"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-02-15T09:22:25.145Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-02-15T09:22:25.149Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-02-15T09:22:25.149Z",
+          "message": "[Inventory] Released 10 units of PROD-START-1771147345097 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:22:55.622Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:22:55.622Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:28:58.580Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:37:06.105Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0003",
+      "dataEntryTimestamp": "2026-02-15T09:22:25.145Z"
+    },
+    {
+      "id": "orders_1771147375655",
+      "customerReferenceNumber": "PO-START-1771147375653",
+      "customerName": "Start Prod Customer",
+      "status": "MANUFACTURING",
+      "items": [
+        {
+          "description": "Product X",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Comp Y",
+              "quantity": 10,
+              "inventoryItemId": "inventory_1771147375646",
+              "source": "CONSUMED",
+              "status": "RESERVED",
+              "id": "c_1771147375656_0_0",
+              "componentNumber": "CMP-INT-2024-0004-ITEM-1",
+              "statusUpdatedAt": "2026-02-15T09:22:55.656Z"
+            }
+          ],
+          "logs": []
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-02-15T09:22:55.656Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-02-15T09:22:55.660Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-02-15T09:22:55.660Z",
+          "message": "[Inventory] Released 10 units of PROD-START-1771147375605 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:23:56.269Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:23:56.269Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:30:55.725Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0004",
+      "dataEntryTimestamp": "2026-02-15T09:22:55.656Z"
+    },
+    {
+      "id": "orders_1771147601560",
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "PO16948282",
+      "orderDate": "2026-03-01",
+      "paymentSlaDays": 30,
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "64886429 VASELINE@20% POFF STKR N",
+          "quantity": 16000,
+          "unit": "pcs",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true,
+          "logs": [],
+          "components": [
+            {
+              "description": "ldjkd dkjfa",
+              "quantity": 10,
+              "unit": "pcs",
+              "unitCost": 1,
+              "taxPercent": 14,
+              "source": "CONSUMED",
+              "status": "Manufactured",
+              "id": "c_1771148218037_0_0",
+              "componentNumber": "CMP-INT-2024-0005-1-1",
+              "statusUpdatedAt": "2026-02-15T09:38:42.808Z",
+              "rfpSupplierIds": [],
+              "supplierId": "suppliers_1771146837526",
+              "poNumber": "PO-256204",
+              "procurementStartedAt": "2026-02-15T09:37:37.704Z",
+              "inventoryItemId": "inv_1771148293997_lt39b"
+            }
+          ],
+          "status": "Manufactured"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-02-15T09:26:41.560Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:26:41.560Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:26:55.627Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:26:55.627Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:36:58.037Z",
+          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:37:00.874Z",
+          "message": "Technical study finalized and pushed to Procurement",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:37:18.056Z",
+          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:38:13.997Z",
+          "message": "Component Received & Reserved: ldjkd dkjfa",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:38:13.997Z",
+          "message": "[AUTO] Procurement Complete: All components reserved. Status moved from WAITING_SUPPLIERS to WAITING_FACTORY",
+          "status": "WAITING_FACTORY",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:38:41.335Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:38:41.335Z",
+          "message": "[Inventory] Released 10 units of CMP-INT-2024-0005-1-1 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:38:42.808Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:45:14.949Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:52:34.897Z",
+          "message": "PO Received at Product Hub: Ready for Invoicing",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:58:47.086Z",
+          "message": "[SYSTEM] Hub Processing Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:09:11.287Z",
+          "message": "Official Tax Invoice Generated: INV-260215-810",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:31:57.550Z",
+          "message": "Payment of 2000 recorded. Bal: 12,044.8",
+          "status": "PARTIAL_PAYMENT",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T11:29:05.482Z",
+          "message": "Full payment reconciled. Order lifecycle FULFILLED.",
+          "status": "FULFILLED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0005",
+      "dataEntryTimestamp": "2026-02-15T09:26:41.560Z",
+      "status": "FULFILLED",
+      "loggingComplianceViolation": false,
+      "isOverdue": false,
+      "invoiceNumber": "INV-260215-810",
+      "payments": [
+        {
+          "amount": 2000,
+          "date": "2026-02-15T10:31:57.514Z",
+          "user": "System",
+          "memo": "partial"
+        },
+        {
+          "amount": 12044.800000000001,
+          "date": "2026-02-15T11:29:05.482Z",
+          "user": "System",
+          "memo": "done all"
+        }
+      ]
+    },
+    {
+      "id": "orders_1771149107065",
+      "customerReferenceNumber": "TEST-HUB-1",
+      "customerName": "Test Customer",
+      "orderDate": "2026-02-15T09:51:47.023Z",
+      "paymentSlaDays": 30,
+      "items": [
+        {
+          "id": "it_1771149107023",
+          "orderNumber": "L1",
+          "description": "Test Item",
+          "quantity": 1,
+          "unit": "pcs",
+          "pricePerUnit": 100,
+          "taxPercent": 14,
+          "logs": [],
+          "components": [],
+          "status": "Manufactured"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-02-15T09:51:47.065Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-02-15T09:51:47.065Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:51:47.077Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-02-15T09:51:47.081Z",
+          "message": "PO Received at Product Hub: Ready for Invoicing",
+          "status": "IN_PRODUCT_HUB",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-02-15T09:52:47.522Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:52:47.522Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T09:59:47.300Z",
+          "message": "[SYSTEM] Hub Processing Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:14:39.219Z",
+          "message": "Official Tax Invoice Generated: INV-260215-654",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:39:39.281Z",
+          "message": "[SYSTEM] Hub Release Sync Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0006",
+      "dataEntryTimestamp": "2026-02-15T09:51:47.065Z",
+      "status": "INVOICED",
+      "loggingComplianceViolation": false,
+      "invoiceNumber": "INV-260215-654"
+    },
+    {
+      "id": "orders_1771150119965",
+      "customerReferenceNumber": "TEST-INV-1",
+      "customerName": "Invoice Test Customer",
+      "orderDate": "2026-02-15T10:08:39.923Z",
+      "items": [
+        {
+          "id": "it_1771150119923",
+          "orderNumber": "L1",
+          "description": "Billable Item",
+          "quantity": 5,
+          "unit": "pcs",
+          "pricePerUnit": 200,
+          "taxPercent": 14,
+          "logs": [],
+          "components": []
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-02-15T10:08:39.965Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-02-15T10:08:39.966Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:08:39.975Z",
+          "message": "PO Received at Product Hub: Ready for Invoicing",
+          "status": "IN_PRODUCT_HUB",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-02-15T10:08:39.979Z",
+          "message": "Official Tax Invoice Generated: INV-260215-628",
+          "status": "INVOICED",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-02-15T10:09:40.465Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:09:40.465Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:39:43.314Z",
+          "message": "[SYSTEM] Hub Release Sync Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:44:40.180Z",
+          "message": "Shipment Released from Hub to Logistics Provider",
+          "status": "HUB_RELEASED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T10:50:45.379Z",
+          "message": "[SYSTEM] Delivery Transit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "HUB_RELEASED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T11:10:25.756Z",
+          "message": "Customer Delivery Confirmed & POD Filed",
+          "status": "DELIVERED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0007",
+      "dataEntryTimestamp": "2026-02-15T10:08:39.965Z",
+      "status": "DELIVERED",
+      "loggingComplianceViolation": false,
+      "invoiceNumber": "INV-260215-628"
     }
   ],
-  "inventory": [],
-  "suppliers": [],
+  "inventory": [
+    {
+      "id": "inv_1771146912948_70poo",
+      "name": "dfjadkl",
+      "sku": "CMP-INT-2024-0001-1-1",
+      "quantityInStock": 100,
+      "quantityReserved": 100,
+      "category": "Uncategorized",
+      "unit": "Unit",
+      "minStockLevel": 0,
+      "lastUpdated": "2026-02-15T09:15:12.948Z"
+    },
+    {
+      "id": "inventory_1771147303283",
+      "sku": "PROD-START-1771147303248",
+      "description": "Production Start Item",
+      "quantityInStock": 100,
+      "quantityReserved": 50,
+      "unitCost": 10
+    },
+    {
+      "id": "inventory_1771147345137",
+      "sku": "PROD-START-1771147345097",
+      "description": "Production Start Item",
+      "quantityInStock": 90,
+      "quantityReserved": 40,
+      "unitCost": 10
+    },
+    {
+      "id": "inventory_1771147375646",
+      "sku": "PROD-START-1771147375605",
+      "description": "Production Start Item",
+      "quantityInStock": 90,
+      "quantityReserved": 40,
+      "unitCost": 10
+    },
+    {
+      "id": "inv_1771148293997_lt39b",
+      "name": "ldjkd dkjfa",
+      "sku": "CMP-INT-2024-0005-1-1",
+      "quantityInStock": 0,
+      "quantityReserved": 0,
+      "category": "Uncategorized",
+      "unit": "Unit",
+      "minStockLevel": 0,
+      "lastUpdated": "2026-02-15T09:38:13.997Z"
+    }
+  ],
+  "suppliers": [
+    {
+      "id": "suppliers_1771146837526",
+      "name": "supp1",
+      "email": "ddaklsldfj@dkajsd.com",
+      "phone": "",
+      "address": "giza",
+      "location": "",
+      "contactName": "dfdkaj",
+      "contactPhone": "",
+      "contactAddress": "",
+      "contactEmail": "dlfajsk@gizla.com",
+      "logs": [
+        {
+          "timestamp": "2026-02-15T09:13:57.526Z",
+          "message": "Entity registered",
+          "user": "System"
+        }
+      ],
+      "priceList": []
+    },
+    {
+      "id": "suppliers_1771146860410",
+      "name": "xupp2",
+      "email": "dkjfaskl@sl.com",
+      "phone": "",
+      "address": "dfak",
+      "location": "",
+      "contactName": "dfajkl",
+      "contactPhone": "",
+      "contactAddress": "",
+      "contactEmail": "dafkjl@dljadk.com",
+      "logs": [
+        {
+          "timestamp": "2026-02-15T09:14:20.410Z",
+          "message": "Entity registered",
+          "user": "System"
+        }
+      ],
+      "priceList": []
+    }
+  ],
   "procurement": [],
   "userGroups": [
     {
@@ -491,153 +922,219 @@
   ],
   "notifications": [
     {
-      "id": "nt_1770967850474_orders_1770926774571",
-      "journalKey": "delay_orders_1770926774571",
-      "orderId": "orders_1770926774571",
+      "id": "nt_1771146822666_p4xw",
+      "journalKey": "delay_orders_1771146809651",
+      "orderId": "orders_1771146809651",
       "type": "logging_delay",
-      "sentAt": "2026-02-13T07:30:50.474Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_new_1770967853132_orders_1770926774571",
-      "journalKey": "new_order_orders_1770926774571",
-      "orderId": "orders_1770926774571",
-      "type": "new_order",
-      "sentAt": "2026-02-13T07:30:53.132Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1770968211740_orders_1770968203190",
-      "journalKey": "delay_orders_1770968203190",
-      "orderId": "orders_1770968203190",
-      "type": "logging_delay",
-      "sentAt": "2026-02-13T07:36:51.740Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_new_1770968214607_orders_1770968203190",
-      "journalKey": "new_order_orders_1770968203190",
-      "orderId": "orders_1770968203190",
-      "type": "new_order",
-      "sentAt": "2026-02-13T07:36:54.607Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1770969172643_orders_1770969115697",
-      "journalKey": "delay_orders_1770969115697",
-      "orderId": "orders_1770969115697",
-      "type": "logging_delay",
-      "sentAt": "2026-02-13T07:52:52.643Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_new_1770969176490_orders_1770969115697",
-      "journalKey": "new_order_orders_1770969115697",
-      "orderId": "orders_1770969115697",
-      "type": "new_order",
-      "sentAt": "2026-02-13T07:52:56.490Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_d_1770969923591",
-      "journalKey": "delay_orders_1770969891707",
-      "orderId": "orders_1770969891707",
-      "type": "logging_delay",
-      "sentAt": "2026-02-13T08:05:23.591Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_n_1770969927115",
-      "journalKey": "new_order_orders_1770969891707",
-      "orderId": "orders_1770969891707",
-      "type": "new_order",
-      "sentAt": "2026-02-13T08:05:27.115Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_d_1770970881741",
-      "journalKey": "delay_orders_1770970866585",
-      "orderId": "orders_1770970866585",
-      "type": "logging_delay",
-      "sentAt": "2026-02-13T08:21:21.741Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_n_1770970885359",
-      "journalKey": "new_order_orders_1770970866585",
-      "orderId": "orders_1770970866585",
-      "type": "new_order",
-      "sentAt": "2026-02-13T08:21:25.359Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_d_1770971842491",
-      "journalKey": "delay_orders_1770971801371",
-      "orderId": "orders_1770971801371",
-      "type": "logging_delay",
-      "sentAt": "2026-02-13T08:37:22.491Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_n_1770971846068",
-      "journalKey": "new_order_orders_1770971801371",
-      "orderId": "orders_1770971801371",
-      "type": "new_order",
-      "sentAt": "2026-02-13T08:37:26.068Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_d_1770972322803",
-      "journalKey": "delay_orders_1770972288567",
-      "orderId": "orders_1770972288567",
-      "type": "logging_delay",
-      "sentAt": "2026-02-13T08:45:22.803Z",
+      "sentAt": "2026-02-15T09:13:42.666Z",
       "recipients": [
         "erpalerts@quickstor.net",
         "Mohamed.allam@psp-co.org"
       ]
     },
     {
-      "id": "nt_n_1770972326546",
-      "journalKey": "new_order_orders_1770972288567",
-      "orderId": "orders_1770972288567",
+      "id": "nt_n_1771146826010",
+      "journalKey": "new_order_orders_1771146809651",
+      "orderId": "orders_1771146809651",
       "type": "new_order",
-      "sentAt": "2026-02-13T08:45:26.546Z",
+      "sentAt": "2026-02-15T09:13:46.010Z",
       "recipients": [
         "erpalerts@quickstor.net",
         "Mohamed.allam@psp-co.org"
       ]
     },
     {
-      "id": "nt_1770985055221_umlk",
-      "journalKey": "threshold_orderEditTimeLimitHrs_orders_1770972288567",
-      "orderId": "orders_1770972288567",
-      "type": "threshold_orderEditTimeLimitHrs",
-      "sentAt": "2026-02-13T12:17:35.221Z",
+      "id": "nt_1771147302268_ci2j",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1771146809651",
+      "orderId": "orders_1771146809651",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-02-15T09:21:42.268Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_n_1771147325686",
+      "journalKey": "new_order_orders_1771147303289",
+      "orderId": "orders_1771147303289",
+      "type": "new_order",
+      "sentAt": "2026-02-15T09:22:05.686Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1771147375622",
+      "journalKey": "new_order_orders_1771147345145",
+      "orderId": "orders_1771147345145",
+      "type": "new_order",
+      "sentAt": "2026-02-15T09:22:55.622Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1771147436269",
+      "journalKey": "new_order_orders_1771147375655",
+      "orderId": "orders_1771147375655",
+      "type": "new_order",
+      "sentAt": "2026-02-15T09:23:56.269Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1771147615627",
+      "journalKey": "new_order_orders_1771147601560",
+      "orderId": "orders_1771147601560",
+      "type": "new_order",
+      "sentAt": "2026-02-15T09:26:55.627Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1771147736081_7kgx",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1771147303289",
+      "orderId": "orders_1771147303289",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-02-15T09:28:56.081Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771147738580_zfe7",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1771147345145",
+      "orderId": "orders_1771147345145",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-02-15T09:28:58.580Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771147855725_fn9p",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1771147375655",
+      "orderId": "orders_1771147375655",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-02-15T09:30:55.725Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771148714949_bjjv",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1771147601560",
+      "orderId": "orders_1771147601560",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-02-15T09:45:14.949Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_n_1771149167522",
+      "journalKey": "new_order_orders_1771149107065",
+      "orderId": "orders_1771149107065",
+      "type": "new_order",
+      "sentAt": "2026-02-15T09:52:47.522Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1771149527086_jka7",
+      "journalKey": "threshold_productHubLimitHrs_orders_1771147601560",
+      "orderId": "orders_1771147601560",
+      "type": "threshold_productHubLimitHrs",
+      "sentAt": "2026-02-15T09:58:47.086Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771149587300_x57w",
+      "journalKey": "threshold_productHubLimitHrs_orders_1771149107065",
+      "orderId": "orders_1771149107065",
+      "type": "threshold_productHubLimitHrs",
+      "sentAt": "2026-02-15T09:59:47.300Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_n_1771150180465",
+      "journalKey": "new_order_orders_1771150119965",
+      "orderId": "orders_1771150119965",
+      "type": "new_order",
+      "sentAt": "2026-02-15T10:09:40.465Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1771151979281_tr3e",
+      "journalKey": "threshold_hubReleasedLimitHrs_orders_1771149107065",
+      "orderId": "orders_1771149107065",
+      "type": "threshold_hubReleasedLimitHrs",
+      "sentAt": "2026-02-15T10:39:39.281Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771151983314_70y3",
+      "journalKey": "threshold_hubReleasedLimitHrs_orders_1771150119965",
+      "orderId": "orders_1771150119965",
+      "type": "threshold_hubReleasedLimitHrs",
+      "sentAt": "2026-02-15T10:39:43.314Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771152038628_f1ci",
+      "journalKey": "threshold_productHubLimitHrs_orders_1771146809651",
+      "orderId": "orders_1771146809651",
+      "type": "threshold_productHubLimitHrs",
+      "sentAt": "2026-02-15T10:40:38.628Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771152294504_vi1h",
+      "journalKey": "threshold_hubReleasedLimitHrs_orders_1771147303289",
+      "orderId": "orders_1771147303289",
+      "type": "threshold_hubReleasedLimitHrs",
+      "sentAt": "2026-02-15T10:44:54.504Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771152645378_pyic",
+      "journalKey": "threshold_deliveryLimitHrs_orders_1771150119965",
+      "orderId": "orders_1771150119965",
+      "type": "threshold_deliveryLimitHrs",
+      "sentAt": "2026-02-15T10:50:45.378Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771154210439_bnte",
+      "journalKey": "threshold_deliveryLimitHrs_orders_1771147303289",
+      "orderId": "orders_1771147303289",
+      "type": "threshold_deliveryLimitHrs",
+      "sentAt": "2026-02-15T11:16:50.439Z",
       "recipients": [
         "erpalerts@quickstor.net"
       ]
@@ -731,19 +1228,23 @@
       "companyLogo": "",
       "orderEditTimeLimitHrs": 1,
       "technicalReviewLimitHrs": 2,
-      "pendingOfferLimitHrs": 2,
-      "rfpSentLimitHrs": 24,
+      "pendingOfferLimitHrs": 0.1,
+      "rfpSentLimitHrs": 0.1,
       "awardedLimitHrs": 8,
       "issuePoLimitHrs": 1,
-      "orderedLimitHrs": 72,
-      "waitingFactoryLimitHrs": 5,
-      "mfgFinishLimitHrs": 1,
-      "transitToHubLimitHrs": 2,
-      "productHubLimitHrs": 24,
+      "orderedLimitHrs": 0.1,
+      "waitingFactoryLimitHrs": 0.1,
+      "mfgFinishLimitHrs": 0.1,
+      "transitToHubLimitHrs": 0.1,
+      "productHubLimitHrs": 0.1,
       "invoicedLimitHrs": 1,
-      "hubReleasedLimitHrs": 1,
-      "deliveryLimitHrs": 3,
-      "deliveredLimitHrs": 1080
+      "hubReleasedLimitHrs": 0.1,
+      "deliveryLimitHrs": 0.1,
+      "deliveredLimitHrs": 1080,
+      "enableRollbackAlerts": true,
+      "rollbackAlertGroupIds": [
+        "userGroups_1770925213983"
+      ]
     }
   ],
   "modules": [

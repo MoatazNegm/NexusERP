@@ -256,6 +256,14 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     updateSetting('settings', 'newOrderAlertGroupIds', updated);
   };
 
+  const toggleRollbackGroup = (groupId: string) => {
+    const current = config.settings.rollbackAlertGroupIds || [];
+    const updated = current.includes(groupId)
+      ? current.filter(id => id !== groupId)
+      : [...current, groupId];
+    updateSetting('settings', 'rollbackAlertGroupIds', updated);
+  };
+
   const [activeTooltip, setActiveTooltip] = React.useState<string | null>(null);
 
   const ThresholdInput = ({ label, configKey, helpText }: { label: string, configKey: keyof AppConfig['settings'], helpText?: string }) => {
@@ -521,7 +529,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   >
                     <div className="space-y-1.5">
                       {auditLogs.map((log, idx) => {
-                        const colors = {
+                        const colors: Record<string, string> = {
                           info: 'text-slate-400',
                           alert: 'text-amber-400 font-bold',
                           error: 'text-rose-400 font-bold',
@@ -575,6 +583,35 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       className={`relative w-14 h-8 rounded-full transition-colors duration-300 ${config.settings.enableNewOrderAlerts ? 'bg-blue-600' : 'bg-slate-300'}`}
                     >
                       <div className={`absolute top-1.5 w-5 h-5 bg-white rounded-full transition-all duration-300 ${config.settings.enableNewOrderAlerts ? 'left-8 shadow-sm' : 'left-1'}`}></div>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-6 bg-rose-50/50 rounded-3xl border border-rose-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-black text-rose-900 uppercase">Rollback Notifications</h4>
+                    <p className="text-[10px] text-rose-700 font-medium">Notify specific groups when an order is rolled back to Registry.</p>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="flex flex-wrap gap-1 max-w-xs">
+                      {groups.map(g => (
+                        <button
+                          key={g.id}
+                          onClick={() => toggleRollbackGroup(g.id)}
+                          className={`px-3 py-1.5 rounded-xl text-[8px] font-black uppercase transition-all border ${config.settings.rollbackAlertGroupIds?.includes(g.id)
+                            ? 'bg-rose-600 border-rose-600 text-white shadow-md'
+                            : 'bg-white border-rose-200 text-rose-400 hover:border-rose-300'
+                            }`}
+                        >
+                          {g.name}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => updateSetting('settings', 'enableRollbackAlerts', !config.settings.enableRollbackAlerts)}
+                      className={`relative w-14 h-8 rounded-full transition-colors duration-300 ${config.settings.enableRollbackAlerts ? 'bg-rose-600' : 'bg-slate-300'}`}
+                    >
+                      <div className={`absolute top-1.5 w-5 h-5 bg-white rounded-full transition-all duration-300 ${config.settings.enableRollbackAlerts ? 'left-8 shadow-sm' : 'left-1'}`}></div>
                     </button>
                   </div>
                 </div>
@@ -927,34 +964,38 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
             </div>
           )}
         </div>
-      </div>
+      </div >
 
-      {showPasscodeModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-sm p-8 border border-slate-100">
-            <h3 className="text-xl font-black text-slate-800 mb-6 uppercase text-center">Security Access</h3>
-            <input type="password" autoFocus className="w-full p-5 bg-slate-50 border rounded-2xl text-center text-2xl tracking-widest font-black outline-none mb-6" placeholder="••••" value={passcode} onChange={e => setPasscode(e.target.value)} />
-            <div className="flex gap-3">
-              <button onClick={() => { setShowPasscodeModal(null); setPasscode(''); }} className="flex-1 py-4 bg-slate-100 text-slate-500 font-bold rounded-xl uppercase text-[10px]">Abort</button>
-              <button onClick={showPasscodeModal.type === 'export' ? handleExport : handleImport} className="flex-[2] py-4 bg-blue-600 text-white font-black rounded-xl uppercase text-[10px] shadow-xl">Execute</button>
+      {
+        showPasscodeModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+            <div className="bg-white rounded-[3rem] shadow-2xl w-full max-sm p-8 border border-slate-100">
+              <h3 className="text-xl font-black text-slate-800 mb-6 uppercase text-center">Security Access</h3>
+              <input type="password" autoFocus className="w-full p-5 bg-slate-50 border rounded-2xl text-center text-2xl tracking-widest font-black outline-none mb-6" placeholder="••••" value={passcode} onChange={e => setPasscode(e.target.value)} />
+              <div className="flex gap-3">
+                <button onClick={() => { setShowPasscodeModal(null); setPasscode(''); }} className="flex-1 py-4 bg-slate-100 text-slate-500 font-bold rounded-xl uppercase text-[10px]">Abort</button>
+                <button onClick={showPasscodeModal.type === 'export' ? handleExport : handleImport} className="flex-[2] py-4 bg-blue-600 text-white font-black rounded-xl uppercase text-[10px] shadow-xl">Execute</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
-      {confirmReset && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-md p-10 text-center border border-slate-100">
-            <i className="fa-solid fa-skull-crossbones text-rose-600 text-5xl mb-6"></i>
-            <h3 className="text-xl font-black text-slate-800 uppercase mb-4 tracking-tight">Irreversible Wipe</h3>
-            <p className="text-sm text-slate-600 leading-relaxed mb-8">All business records (Orders, CRM, Inventory) will be permanently deleted.</p>
-            <div className="flex gap-4">
-              <button onClick={() => setConfirmReset(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-2xl uppercase text-[10px]">Cancel</button>
-              <button onClick={async () => { await dataService.clearAllData(); window.location.reload(); }} className="flex-[2] py-4 bg-rose-600 text-white font-black rounded-2xl uppercase text-[10px] shadow-xl">Confirm Delete</button>
+      {
+        confirmReset && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+            <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-md p-10 text-center border border-slate-100">
+              <i className="fa-solid fa-skull-crossbones text-rose-600 text-5xl mb-6"></i>
+              <h3 className="text-xl font-black text-slate-800 uppercase mb-4 tracking-tight">Irreversible Wipe</h3>
+              <p className="text-sm text-slate-600 leading-relaxed mb-8">All business records (Orders, CRM, Inventory) will be permanently deleted.</p>
+              <div className="flex gap-4">
+                <button onClick={() => setConfirmReset(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-2xl uppercase text-[10px]">Cancel</button>
+                <button onClick={async () => { await dataService.clearAllData(); window.location.reload(); }} className="flex-[2] py-4 bg-rose-600 text-white font-black rounded-2xl uppercase text-[10px] shadow-xl">Confirm Delete</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 };

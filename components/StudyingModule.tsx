@@ -38,12 +38,12 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
 
   const filteredOrders = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    return allOrders.filter(o => o.customerName.toLowerCase().includes(q) || o.internalOrderNumber.toLowerCase().includes(q));
+    return allOrders.filter(o => (o.customerName || '').toLowerCase().includes(q) || (o.internalOrderNumber || '').toLowerCase().includes(q));
   }, [searchQuery, allOrders]);
 
   const invResults = useMemo(() => {
     const q = invSearch.toLowerCase();
-    return inventory.filter(i => i.description.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q));
+    return inventory.filter(i => (i.description || '').toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q));
   }, [invSearch, inventory]);
 
   const supplierResults = useMemo(() => {
@@ -51,7 +51,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
     const results: { supplier: Supplier, part: SupplierPart }[] = [];
     suppliers.forEach(supp => {
       supp.priceList.forEach(part => {
-        if (part.description.toLowerCase().includes(q) || part.partNumber.toLowerCase().includes(q)) {
+        if ((part.description || '').toLowerCase().includes(q) || (part.partNumber || '').toLowerCase().includes(q)) {
           results.push({ supplier: supp, part });
         }
       });

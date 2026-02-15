@@ -21,39 +21,14 @@ import { Login } from './components/Login';
 import { dataService } from './services/dataService';
 import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, UserGroup } from './types';
 
-const getStatusLimit = (status: OrderStatus, settings: any) => {
-  switch (status) {
-    case OrderStatus.LOGGED: return settings.orderEditTimeLimitHrs;
-    case OrderStatus.TECHNICAL_REVIEW: return settings.technicalReviewLimitHrs;
-    case OrderStatus.WAITING_SUPPLIERS: return settings.pendingOfferLimitHrs;
-    case OrderStatus.WAITING_FACTORY: return settings.waitingFactoryLimitHrs;
-    case OrderStatus.MANUFACTURING: return settings.mfgFinishLimitHrs;
-    case OrderStatus.MANUFACTURING_COMPLETED: return settings.transitToHubLimitHrs;
-    case OrderStatus.TRANSITION_TO_STOCK: return settings.transitToHubLimitHrs;
-    case OrderStatus.IN_PRODUCT_HUB: return settings.productHubLimitHrs;
-    case OrderStatus.ISSUE_INVOICE: return settings.invoicedLimitHrs;
-    case OrderStatus.INVOICED: return settings.hubReleasedLimitHrs;
-    case OrderStatus.HUB_RELEASED: return settings.deliveryLimitHrs;
-    case OrderStatus.DELIVERY: return settings.deliveredLimitHrs;
-    default: return 0;
-  }
-};
-
-const isOrderOverThreshold = (order: CustomerOrder, settings: any) => {
-  const limitHrs = getStatusLimit(order.status, settings);
-  if (limitHrs === 0) return false;
-  const lastLog = [...order.logs].reverse().find(l => l.status === order.status);
-  const startTime = lastLog ? new Date(lastLog.timestamp).getTime() : new Date(order.dataEntryTimestamp).getTime();
-  const elapsedMs = Date.now() - startTime;
-  return elapsedMs > (limitHrs * 3600000);
-};
+// Backend handles threshold calculation (isOverdue flag)
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [config, setConfig] = useState<AppConfig>(INITIAL_CONFIG);
 
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => window.innerWidth < 1024);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [isSidebarHovered, setIsSidebarHovered] = useState(false);
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [userGroups, setUserGroups] = useState<UserGroup[]>([]);
@@ -206,7 +181,7 @@ const App: React.FC = () => {
       const ordersInStatus = orders.filter(o => o.status === status);
       acc[status] = {
         count: ordersInStatus.length,
-        hasOverdue: ordersInStatus.some(o => isOrderOverThreshold(o, config.settings)),
+        hasOverdue: ordersInStatus.some(o => o.isOverdue),
         hasViolation: ordersInStatus.some(o => o.loggingComplianceViolation)
       };
       return acc;

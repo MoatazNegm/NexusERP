@@ -100,20 +100,20 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       if (!isReviewable) return false;
 
       if (!q) return true;
-      const matchPO = o.internalOrderNumber.toLowerCase().includes(q);
-      const matchCustomer = o.customerName.toLowerCase().includes(q);
+      const matchPO = (o.internalOrderNumber || '').toLowerCase().includes(q);
+      const matchCustomer = (o.customerName || '').toLowerCase().includes(q);
       const matchRef = (o.customerReferenceNumber || '').toLowerCase().includes(q);
-      const matchItems = o.items.some(it => it.description.toLowerCase().includes(q));
+      const matchItems = o.items.some(it => (it.description || '').toLowerCase().includes(q));
 
       return matchPO || matchCustomer || matchRef || matchItems;
     });
-    return filtered.sort((a, b) => a.orderDate.localeCompare(b.orderDate));
+    return filtered.sort((a, b) => (a.orderDate || a.dataEntryTimestamp || '').localeCompare(b.orderDate || b.dataEntryTimestamp || ''));
   }, [searchQuery, orders]);
 
   const invResults = useMemo(() => {
     const q = compSearch.toLowerCase();
     if (!q) return [];
-    return inventory.filter(i => i.description.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q));
+    return inventory.filter(i => (i.description || '').toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q));
   }, [compSearch, inventory]);
 
   const supplierResults = useMemo(() => {
@@ -122,7 +122,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     const results: { supplier: Supplier, part: SupplierPart }[] = [];
     suppliers.forEach(supp => {
       supp.priceList.forEach(part => {
-        if (part.description.toLowerCase().includes(q) || part.partNumber.toLowerCase().includes(q)) {
+        if ((part.description || '').toLowerCase().includes(q) || (part.partNumber || '').toLowerCase().includes(q)) {
           results.push({ supplier: supp, part });
         }
       });
@@ -506,7 +506,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                             <th className="px-6 py-4 text-center">Qty</th>
                             <th className="px-6 py-4 text-right">Unit Cost</th>
                             <th className="px-6 py-4 text-right">Subtotal</th>
-                            {!selectedItem.isAccepted && <th className="px-6 py-4 w-10"></th>}
+                            <th className="px-6 py-4 w-10"></th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -522,16 +522,14 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               <td className="px-6 py-4 text-center font-bold text-slate-700">{c.quantity} <span className="text-[10px] text-slate-400 font-normal">{c.unit}</span></td>
                               <td className="px-6 py-4 text-right font-black text-slate-500">{c.unitCost.toLocaleString()}</td>
                               <td className="px-6 py-4 text-right font-black text-slate-900">{(c.quantity * c.unitCost).toLocaleString()}</td>
-                              {!selectedItem.isAccepted && (
-                                <td className="px-6 py-4 text-right">
-                                  <button
-                                    onClick={() => dataService.removeComponent(selectedOrder.id, selectedItem.id, c.id).then(o => { setSelectedOrder(o); setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); })}
-                                    className="p-2 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
-                                  >
-                                    <i className="fa-solid fa-trash-can"></i>
-                                  </button>
-                                </td>
-                              )}
+                              <td className="px-6 py-4 text-right">
+                                <button
+                                  onClick={() => dataService.removeComponent(selectedOrder.id, selectedItem.id, c.id).then(o => { setSelectedOrder(o); setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); })}
+                                  className="p-2 text-slate-300 hover:text-rose-500 transition-colors"
+                                >
+                                  <i className="fa-solid fa-trash-can"></i>
+                                </button>
+                              </td>
                             </tr>
                           ))}
                           {(!selectedItem.components || selectedItem.components.length === 0) && (
