@@ -17,6 +17,7 @@ export const INITIAL_CONFIG: AppConfig = {
   settings: {
     aiProvider: 'gemini',
     openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
+    geminiConfig: { apiKey: '', modelName: 'gemini-1.5-flash' },
     emailConfig: {
       smtpServer: 'mail.quickstor.net',
       smtpPort: 465,
@@ -32,7 +33,9 @@ export const INITIAL_CONFIG: AppConfig = {
     orderEditTimeLimitHrs: 1, technicalReviewLimitHrs: 2, pendingOfferLimitHrs: 2, rfpSentLimitHrs: 24, awardedLimitHrs: 8, issuePoLimitHrs: 1, orderedLimitHrs: 72, waitingFactoryLimitHrs: 5, mfgFinishLimitHrs: 1, transitToHubLimitHrs: 2, productHubLimitHrs: 24, invoicedLimitHrs: 1, hubReleasedLimitHrs: 1, deliveryLimitHrs: 3, deliveredLimitHrs: 1080, defaultPaymentSlaDays: 30, minimumMarginPct: 15, loggingDelayThresholdDays: 1,
     thresholdNotifications: {},
     enableNewOrderAlerts: true,
-    newOrderAlertGroupIds: []
+    newOrderAlertGroupIds: [],
+    enableRollbackAlerts: true,
+    rollbackAlertGroupIds: []
   }
 };
 

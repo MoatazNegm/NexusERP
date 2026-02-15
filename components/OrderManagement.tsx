@@ -268,9 +268,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       let textOutput = "";
 
       if (config.settings.aiProvider === 'gemini') {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const apiKey = config.settings.geminiConfig?.apiKey;
+        const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
+
+        if (!apiKey) {
+          throw new Error("Gemini API Key is not configured.");
+        }
+
+        const ai = new GoogleGenAI({ apiKey });
         const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
+          model: modelName,
           contents: {
             parts: [
               { inlineData: { mimeType: file.type, data: base64Data } },
@@ -405,7 +412,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const handleConfirmDelivery = async (orderId: string) => {
     setProcessingId(orderId);
     try {
-      await dataService.confirmOrderDelivery(orderId);
+      await dataService.confirmOrderDelivery(orderId, '');
       await fetchData();
       setMessage({ type: 'success', text: 'Hand-off successfully logged. Record moved to Delivered.' });
     } catch (e) {

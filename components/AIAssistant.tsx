@@ -3,12 +3,31 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import mermaid from 'mermaid';
 import { CustomerOrder, OrderStatus, AppConfig } from '../types';
 
 interface AIAssistantProps {
   orders: CustomerOrder[];
   config: AppConfig;
 }
+
+const Mermaid = ({ chart }: { chart: string }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const [svg, setSvg] = useState('');
+
+  useEffect(() => {
+    if (ref.current && chart) {
+      mermaid.render(`mermaid-${Math.random().toString(36).substr(2, 9)}`, chart).then(result => {
+        setSvg(result.svg);
+      }).catch(err => {
+        console.error('Mermaid Render Error:', err);
+        setSvg(`<p style="color:red; font-size:10px;">Failed to render chart: ${err.message}</p>`);
+      });
+    }
+  }, [chart]);
+
+  return <div ref={ref} dangerouslySetInnerHTML={{ __html: svg }} className="my-4 overflow-x-auto" />;
+};
 
 export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -18,6 +37,59 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      // Default to 'neutral' if config is missing or invalid
+      const chartConfig = config?.settings?.chartConfig || {};
+      const themeName = chartConfig.theme || 'neutral';
+
+      const primaryColor = chartConfig.primaryColor || '#6366f1';
+      const backgroundColor = chartConfig.backgroundColor || '#ffffff';
+      const textColor = chartConfig.textColor || (themeName === 'dark' ? '#f8fafc' : '#1e293b');
+
+      // Ensure valid theme name
+      const validThemes = ['neutral', 'base', 'forest', 'dark'];
+      const safeTheme = validThemes.includes(themeName) ? themeName : 'neutral';
+
+      const themeVariables = {
+        fontFamily: 'Inter, system-ui, sans-serif',
+        fontSize: '14px',
+        primaryColor: primaryColor,
+        primaryTextColor: textColor,
+        primaryBorderColor: primaryColor,
+        lineColor: safeTheme === 'dark' ? '#94a3b8' : '#64748b',
+        secondaryColor: safeTheme === 'dark' ? '#1e293b' : '#f0fdf4',
+        tertiaryColor: safeTheme === 'dark' ? '#334155' : '#fef2f2',
+        mainBkg: backgroundColor,
+        nodeBorder: primaryColor,
+        clusterBkg: backgroundColor,
+        titleColor: textColor,
+        edgeLabelBackground: backgroundColor,
+        actorBkg: backgroundColor,
+        actorBorder: primaryColor,
+        actorTextColor: textColor,
+        signalTextColor: textColor,
+        noteBkg: backgroundColor,
+        noteTextColor: textColor,
+      };
+
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: safeTheme,
+        securityLevel: 'loose',
+        themeVariables: themeVariables
+      });
+    } catch (err) {
+      console.error("Failed to initialize chart engine:", err);
+      // Fallback to safe default
+      try {
+        mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+      } catch (e) {
+        console.error("Critical: Mermaid failed to initialize even with defaults", e);
+      }
+    }
+  }, [config?.settings?.chartConfig]);
 
   // Compress the order ledger for AI consumption
   const orderLedgerSummary = useMemo(() => {
@@ -52,7 +124,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
 
     try {
       const currentDate = new Date().toISOString().split('T')[0];
-      
+
       const context = `
         ROLE: You are the Nexus ERP Strategic Assistant. You are a precise, brief, and helpful financial analyst.
         SYSTEM DATE: ${currentDate}
@@ -68,21 +140,34 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
            - CRITICAL: Tables MUST have a blank line before and after them to render correctly. Each row must be on a new line.
         3. CALCULATIONS: If asked for the "largest fulfilled", filter for status 'FULFILLED' and sort by 'value'.
         4. TIME SENSITIVITY: Use the SYSTEM DATE to interpret "last 3 months", "this year", etc.
+        5. CHARTS & DRAWINGS:
+           - You SUPPORT rendering charts using Mermaid.js.
+           - If a user asks for a chart, drawing, flowchart, or graph, provide the Mermaid code block starting with \`\`\`mermaid.
+           - Supported: Flowcharts (graph TD), Pie Charts (pie), Gantt Charts (gantt), Sequence Diagrams (sequenceDiagram).
+           - STYLING: The system uses a 'neutral' theme. Do NOT force dark themes. Keep diagrams simple and clean.
+           - Do NOT say "I cannot draw". You CAN draw using code.
       `;
 
       let responseText = "";
 
       if (config.settings.aiProvider === 'gemini') {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: `${context}\n\nUSER QUERY: ${userMsg}`,
-        });
-        responseText = response.text || "I was unable to process that query.";
+        const apiKey = config.settings.geminiConfig?.apiKey;
+        const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
+
+        if (!apiKey) {
+          responseText = "Configuration Error: Gemini API Key is missing. Please ask your administrator to configure it in System Control -> AI Engine.";
+        } else {
+          const ai = new GoogleGenAI({ apiKey });
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: `${context}\n\nUSER QUERY: ${userMsg}`,
+          });
+          responseText = response.text || "I was unable to process that query.";
+        }
       } else {
         const { apiKey, baseUrl, modelName } = config.settings.openaiConfig;
         const endpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
-        
+
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -115,7 +200,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
 
   return (
     <>
-      <button 
+      <button
         onClick={() => setIsOpen(true)}
         className={`fixed bottom-8 right-8 w-16 h-16 rounded-full bg-slate-900 text-white shadow-2xl z-[100] transition-all hover:scale-110 hover:bg-blue-600 flex items-center justify-center group ${isOpen ? 'opacity-0 scale-0' : 'opacity-100 scale-100'}`}
       >
@@ -143,12 +228,34 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50 custom-scrollbar">
             {messages.map((msg, i) => (
               <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[95%] p-5 rounded-2xl text-sm leading-relaxed ${
-                  msg.role === 'user' 
-                    ? 'bg-blue-600 text-white shadow-xl rounded-tr-none' 
-                    : 'bg-white border border-slate-200 text-slate-800 shadow-sm rounded-tl-none ai-content prose prose-sm prose-slate max-w-none overflow-x-auto'
-                }`}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                <div className={`max-w-[95%] p-5 rounded-2xl text-sm leading-relaxed ${msg.role === 'user'
+                  ? 'bg-blue-600 text-white shadow-xl rounded-tr-none'
+                  : 'bg-white border border-slate-200 text-slate-800 shadow-sm rounded-tl-none ai-content prose prose-sm prose-slate max-w-none overflow-x-auto'
+                  }`}>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      code({ node, inline, className, children, ...props }: any) {
+                        const match = /language-(\w+)/.exec(className || '');
+                        if (!inline && match && match[1] === 'mermaid') {
+                          return <Mermaid chart={String(children).replace(/\n$/, '')} />;
+                        }
+                        return !inline && match ? (
+                          <div className="mockup-code">
+                            <code className={className} {...props}>
+                              {children}
+                            </code>
+                          </div>
+                        ) : (
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        );
+                      }
+                    }}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
                 </div>
               </div>
             ))}
@@ -165,15 +272,15 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
 
           <div className="p-6 bg-white border-t border-slate-100">
             <div className="relative">
-              <input 
-                type="text" 
+              <input
+                type="text"
                 placeholder="Ask about orders, values, or trends..."
                 className="w-full pl-4 pr-12 py-4 bg-slate-100 border-2 border-transparent rounded-2xl outline-none focus:bg-white focus:border-blue-500 transition-all font-medium text-sm"
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSend()}
               />
-              <button 
+              <button
                 onClick={handleSend}
                 disabled={!input.trim()}
                 className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center hover:bg-blue-600 disabled:opacity-30 transition-colors"
@@ -182,9 +289,9 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
               </button>
             </div>
             <div className="mt-4 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-               <button onClick={() => setInput('What is the largest order fulfilled in the last 3 months?')} className="whitespace-nowrap px-3 py-1.5 bg-slate-50 border rounded-lg text-[10px] font-bold text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition-colors uppercase tracking-tight">Largest fulfilled 3m</button>
-               <button onClick={() => setInput('List all orders with negative margin.')} className="whitespace-nowrap px-3 py-1.5 bg-slate-50 border rounded-lg text-[10px] font-bold text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition-colors uppercase tracking-tight">Show negative margins</button>
-               <button onClick={() => setInput('Summarize this month revenue.')} className="whitespace-nowrap px-3 py-1.5 bg-slate-50 border rounded-lg text-[10px] font-bold text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition-colors uppercase tracking-tight">Monthly revenue</button>
+              <button onClick={() => setInput('Draw a flow chart diagram for a typical order cycle in NexusERP.')} className="whitespace-nowrap px-3 py-1.5 bg-slate-50 border rounded-lg text-[10px] font-bold text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition-colors uppercase tracking-tight">Draw Flowchart</button>
+              <button onClick={() => setInput('Show a pie chart of my top customers based on the data.')} className="whitespace-nowrap px-3 py-1.5 bg-slate-50 border rounded-lg text-[10px] font-bold text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition-colors uppercase tracking-tight">Customer Pie Chart</button>
+              <button onClick={() => setInput('Summarize this month revenue.')} className="whitespace-nowrap px-3 py-1.5 bg-slate-50 border rounded-lg text-[10px] font-bold text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition-colors uppercase tracking-tight">Monthly revenue</button>
             </div>
           </div>
         </div>

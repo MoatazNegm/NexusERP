@@ -185,6 +185,11 @@ export interface OpenAIConfig {
   modelName: string;
 }
 
+export interface GeminiConfig {
+  apiKey: string;
+  modelName: string;
+}
+
 export interface EmailConfig {
   smtpServer: string;
   smtpPort: number;
@@ -211,6 +216,7 @@ export interface AppConfig {
   settings: {
     aiProvider: AIProvider;
     openaiConfig: OpenAIConfig;
+    geminiConfig: GeminiConfig;
     emailConfig: EmailConfig;
     companyName: string;
     companyAddress: string;
@@ -238,5 +244,11 @@ export interface AppConfig {
     newOrderAlertGroupIds: string[];
     enableRollbackAlerts: boolean;
     rollbackAlertGroupIds: string[];
+    chartConfig?: {
+      theme: 'neutral' | 'dark' | 'forest' | 'base';
+      primaryColor?: string; // Hex code for main elements
+      backgroundColor?: string; // Hex code for background (if base theme)
+      textColor?: string; // Hex code for text elements
+    };
   };
 }

@@ -790,6 +790,12 @@
           "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
           "status": "LOGGED",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T14:53:56.804Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0008",
@@ -851,6 +857,12 @@
         {
           "timestamp": "2026-02-15T14:00:59.299Z",
           "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T15:01:09.999Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         }
@@ -1285,6 +1297,26 @@
         "erpalerts@quickstor.net",
         "Mohamed.allam@psp-co.org"
       ]
+    },
+    {
+      "id": "nt_1771167236804_y7cy",
+      "journalKey": "threshold_orderEditTimeLimitHrs_orders_1771163574869",
+      "orderId": "orders_1771163574869",
+      "type": "threshold_orderEditTimeLimitHrs",
+      "sentAt": "2026-02-15T14:53:56.804Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1771167669999_17ov",
+      "journalKey": "threshold_orderEditTimeLimitHrs_orders_1771164025995",
+      "orderId": "orders_1771164025995",
+      "type": "threshold_orderEditTimeLimitHrs",
+      "sentAt": "2026-02-15T15:01:09.999Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
     }
   ],
   "settings": [
@@ -1391,7 +1423,17 @@
       "enableRollbackAlerts": true,
       "rollbackAlertGroupIds": [
         "userGroups_1770925213983"
-      ]
+      ],
+      "geminiConfig": {
+        "apiKey": "AIzaSyB4Ls8l5V7_xWMDSHdVfPTEqseKsXF1s0E",
+        "modelName": "gemini-2.5-flash-lite"
+      },
+      "chartConfig": {
+        "theme": "dark",
+        "primaryColor": "#817536",
+        "textColor": "#1060e0",
+        "backgroundColor": "#363030"
+      }
     }
   ],
   "modules": [

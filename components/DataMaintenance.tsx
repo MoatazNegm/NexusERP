@@ -385,6 +385,220 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
             </div>
           )}
 
+
+          {activeTab === 'intelligence' && (
+            <div className="space-y-10 animate-in fade-in">
+              <div className="p-8 bg-indigo-900 rounded-[2.5rem] text-white flex items-center justify-between gap-6 shadow-2xl shadow-indigo-900/30">
+                <div className="flex items-center gap-6">
+                  <div className="w-16 h-16 rounded-3xl bg-white/10 flex items-center justify-center text-3xl">
+                    <i className="fa-solid fa-brain"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-black uppercase tracking-tight">AI Neural Engine</h4>
+                    <p className="text-xs text-indigo-200 font-medium opacity-80">Configure system intelligence provider.</p>
+                  </div>
+                </div>
+                <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-500/30">
+                  <button
+                    onClick={() => updateSetting('settings', 'aiProvider', 'gemini')}
+                    className={`px-6 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${config.settings.aiProvider === 'gemini' ? 'bg-indigo-500 text-white shadow-lg' : 'text-indigo-300 hover:text-white'}`}
+                  >
+                    Google Gemini
+                  </button>
+                  <button
+                    onClick={() => updateSetting('settings', 'aiProvider', 'openai')}
+                    className={`px-6 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${config.settings.aiProvider === 'openai' ? 'bg-indigo-500 text-white shadow-lg' : 'text-indigo-300 hover:text-white'}`}
+                  >
+                    OpenAI / Compatible
+                  </button>
+                </div>
+              </div>
+
+              {config.settings.aiProvider === 'gemini' ? (
+                <div className="p-8 bg-white rounded-3xl border-2 border-indigo-100 shadow-sm space-y-6">
+                  <div className="flex items-center gap-3 border-b border-indigo-50 pb-4">
+                    <i className="fa-brands fa-google text-indigo-600 text-xl"></i>
+                    <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">Gemini Configuration</h4>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">API Key</label>
+                    <div className="relative">
+                      <input
+                        type="password"
+                        className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
+                        value={config.settings.geminiConfig?.apiKey || ''}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.geminiConfig, apiKey: e.target.value };
+                          updateSetting('settings', 'geminiConfig', newConfig);
+                        }}
+                        placeholder="Enter your Gemini API Key..."
+                      />
+                    </div>
+                    <p className="text-[9px] text-slate-400 font-medium ml-1">Key is stored locally in your secure configuration.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Model Name</label>
+                    <input
+                      type="text"
+                      className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
+                      value={config.settings.geminiConfig?.modelName || 'gemini-1.5-flash'}
+                      onChange={e => {
+                        const newConfig = { ...config.settings.geminiConfig, modelName: e.target.value };
+                        updateSetting('settings', 'geminiConfig', newConfig);
+                      }}
+                      placeholder="e.g. gemini-1.5-flash"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="p-8 bg-white rounded-3xl border-2 border-emerald-100 shadow-sm space-y-6">
+                  <div className="flex items-center gap-3 border-b border-emerald-50 pb-4">
+                    <i className="fa-solid fa-bolt text-emerald-600 text-xl"></i>
+                    <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">OpenAI / Compatible Configuration</h4>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">API Key</label>
+                    <input
+                      type="password"
+                      className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
+                      value={config.settings.openaiConfig.apiKey}
+                      onChange={e => {
+                        const newConfig = { ...config.settings.openaiConfig, apiKey: e.target.value };
+                        updateSetting('settings', 'openaiConfig', newConfig);
+                      }}
+                      placeholder="sk-..."
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Base URL</label>
+                      <input
+                        type="text"
+                        className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
+                        value={config.settings.openaiConfig.baseUrl}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.openaiConfig, baseUrl: e.target.value };
+                          updateSetting('settings', 'openaiConfig', newConfig);
+                        }}
+                        placeholder="https://api.openai.com/v1"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Model Name</label>
+                      <input
+                        type="text"
+                        className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
+                        value={config.settings.openaiConfig.modelName}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.openaiConfig, modelName: e.target.value };
+                          updateSetting('settings', 'openaiConfig', newConfig);
+                        }}
+                        placeholder="gpt-4o"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+              )}
+
+              <div className="p-10 bg-slate-50 rounded-[3rem] border border-slate-200 space-y-8 animate-in slide-in-from-bottom-4">
+                <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+                  <i className="fa-solid fa-palette text-indigo-600"></i>
+                  <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Visual Analysis Settings</h5>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Chart Theme</label>
+                    <select
+                      className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-indigo-500 transition-all shadow-sm"
+                      value={config.settings.chartConfig?.theme || 'neutral'}
+                      onChange={e => {
+                        const newConfig = { ...config.settings.chartConfig, theme: e.target.value };
+                        updateSetting('settings', 'chartConfig', newConfig);
+                      }}
+                    >
+                      <option value="neutral">Neutral (Recommended)</option>
+                      <option value="base">Base (Light)</option>
+                      <option value="forest">Forest (Green)</option>
+                      <option value="dark">Dark Mode</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Primary Color</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        className="w-12 h-12 p-1 bg-white border-2 border-white rounded-xl cursor-pointer shadow-sm"
+                        value={config.settings.chartConfig?.primaryColor || '#6366f1'}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.chartConfig, primaryColor: e.target.value };
+                          updateSetting('settings', 'chartConfig', newConfig);
+                        }}
+                      />
+                      <input
+                        type="text"
+                        className="flex-1 p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-indigo-500 transition-all shadow-sm"
+                        value={config.settings.chartConfig?.primaryColor || '#6366f1'}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.chartConfig, primaryColor: e.target.value };
+                          updateSetting('settings', 'chartConfig', newConfig);
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Background Color</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        className="w-12 h-12 p-1 bg-white border-2 border-white rounded-xl cursor-pointer shadow-sm"
+                        value={config.settings.chartConfig?.backgroundColor || '#ffffff'}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.chartConfig, backgroundColor: e.target.value };
+                          updateSetting('settings', 'chartConfig', newConfig);
+                        }}
+                      />
+                      <input
+                        type="text"
+                        className="flex-1 p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-indigo-500 transition-all shadow-sm"
+                        value={config.settings.chartConfig?.backgroundColor || '#ffffff'}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.chartConfig, backgroundColor: e.target.value };
+                          updateSetting('settings', 'chartConfig', newConfig);
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Text Color</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        className="w-12 h-12 p-1 bg-white border-2 border-white rounded-xl cursor-pointer shadow-sm"
+                        value={config.settings.chartConfig?.textColor || '#1e293b'}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.chartConfig, textColor: e.target.value };
+                          updateSetting('settings', 'chartConfig', newConfig);
+                        }}
+                      />
+                      <input
+                        type="text"
+                        className="flex-1 p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-indigo-500 transition-all shadow-sm"
+                        value={config.settings.chartConfig?.textColor || '#1e293b'}
+                        onChange={e => {
+                          const newConfig = { ...config.settings.chartConfig, textColor: e.target.value };
+                          updateSetting('settings', 'chartConfig', newConfig);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'email' && (
             <div className="space-y-10 animate-in fade-in">
               <div className="p-6 bg-slate-900 rounded-3xl text-white flex items-center justify-between gap-4">
@@ -842,90 +1056,6 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
             </div>
           )}
 
-          {activeTab === 'intelligence' && (
-            <div className="space-y-10 animate-in fade-in">
-              <div className="p-8 bg-slate-900 rounded-[3rem] text-white flex items-center justify-between gap-6 shadow-2xl shadow-blue-900/20">
-                <div className="flex items-center gap-6">
-                  <div className="w-16 h-16 rounded-3xl bg-blue-600 flex items-center justify-center text-3xl shadow-xl shadow-blue-500/20">
-                    <i className="fa-solid fa-brain-circuit"></i>
-                  </div>
-                  <div>
-                    <h4 className="text-lg font-black uppercase tracking-tight">Active Intelligence Provider</h4>
-                    <p className="text-xs text-slate-400 font-medium">Select the core engine for scanning POs and Strategic Analysis.</p>
-                  </div>
-                </div>
-                <div className="flex bg-slate-800 p-1.5 rounded-2xl border border-slate-700">
-                  {(['gemini', 'openai'] as const).map(provider => (
-                    <button
-                      key={provider}
-                      onClick={() => updateSetting('settings', 'aiProvider', provider)}
-                      className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${config.settings.aiProvider === provider
-                        ? 'bg-blue-600 text-white shadow-lg'
-                        : 'text-slate-500 hover:text-slate-300'
-                        }`}
-                    >
-                      {provider === 'openai' ? 'OpenAI / Compatible' : 'Google Gemini'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {config.settings.aiProvider === 'openai' && (
-                <div className="p-10 bg-slate-50 rounded-[3rem] border border-slate-200 space-y-8 animate-in slide-in-from-bottom-4">
-                  <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
-                    <i className="fa-solid fa-key text-blue-600"></i>
-                    <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">External Provider Credentials</h5>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Base API URL</label>
-                      <input
-                        className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all shadow-sm"
-                        value={config.settings.openaiConfig.baseUrl}
-                        onChange={e => updateSetting('settings', 'openaiConfig', { ...config.settings.openaiConfig, baseUrl: e.target.value })}
-                        placeholder="https://api.openai.com/v1"
-                      />
-                      <p className="text-[8px] text-slate-400 font-medium ml-1">Supports local models (Ollama/LM Studio) or DeepSeek proxies.</p>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Deployment Model Name</label>
-                      <input
-                        className="w-full p-4 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all shadow-sm"
-                        value={config.settings.openaiConfig.modelName}
-                        onChange={e => updateSetting('settings', 'openaiConfig', { ...config.settings.openaiConfig, modelName: e.target.value })}
-                        placeholder="gpt-4o or deepseek-chat"
-                      />
-                    </div>
-                    <div className="md:col-span-2 space-y-1.5">
-                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Authorization Bearer Token (API Key)</label>
-                      <div className="relative">
-                        <input
-                          type="password"
-                          className="w-full p-4 pl-12 border-2 border-white rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 transition-all shadow-sm"
-                          value={config.settings.openaiConfig.apiKey}
-                          onChange={e => updateSetting('settings', 'openaiConfig', { ...config.settings.openaiConfig, apiKey: e.target.value })}
-                          placeholder="sk-..."
-                        />
-                        <i className="fa-solid fa-lock absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {config.settings.aiProvider === 'gemini' && (
-                <div className="p-10 bg-blue-50/50 rounded-[3rem] border border-blue-100 flex flex-col items-center text-center space-y-4 animate-in slide-in-from-bottom-4">
-                  <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-2xl">
-                    <i className="fa-brands fa-google"></i>
-                  </div>
-                  <h5 className="text-sm font-black text-blue-900 uppercase">Native Gemini Integration</h5>
-                  <p className="text-xs text-blue-700 font-medium max-w-lg">
-                    Gemini is currently configured via system environment variables. No additional keys are required in the UI for this provider.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
 
           {activeTab === 'data' && (
             <div className="space-y-6">
