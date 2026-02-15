@@ -478,7 +478,17 @@ const runThresholdAudit = async () => {
 
         if (recipients.length > 0) {
             const recipientEmails = recipients.map(r => r.email);
-            const result = await sendEmail(recipientEmails, subject, body, settings.emailConfig);
+
+            const contextBlock = `\n\n--------------------------------------------------\n` +
+                `Order Context:\n` +
+                `Internal Ref: ${order.internalOrderNumber}\n` +
+                `Customer: ${order.customerName}\n` +
+                `PO Reference: ${order.customerReferenceNumber || 'N/A'}\n` +
+                `--------------------------------------------------`;
+
+            const fullBody = body + contextBlock;
+
+            const result = await sendEmail(recipientEmails, subject, fullBody, settings.emailConfig);
             if (result.success) {
                 notifications.push({ id: `nt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, journalKey, orderId: order.id, type: alertType, sentAt: new Date().toISOString(), recipients: recipientEmails });
                 recipients.forEach(r => {
@@ -520,7 +530,17 @@ const runThresholdAudit = async () => {
                 if (!order.logs) order.logs = [];
                 if (recipients.length > 0) {
                     const emails = recipients.map(r => r.email);
-                    const result = await sendEmail(emails, `[NEXUS] New Order: ${order.internalOrderNumber}`, `A new order ${order.internalOrderNumber} has been logged.`, settings.emailConfig);
+
+                    const contextBlock = `\n\n--------------------------------------------------\n` +
+                        `Order Context:\n` +
+                        `Internal Ref: ${order.internalOrderNumber}\n` +
+                        `Customer: ${order.customerName}\n` +
+                        `PO Reference: ${order.customerReferenceNumber || 'N/A'}\n` +
+                        `--------------------------------------------------`;
+
+                    const body = `A new order ${order.internalOrderNumber} has been logged.` + contextBlock;
+
+                    const result = await sendEmail(emails, `[NEXUS] New Order: ${order.internalOrderNumber}`, body, settings.emailConfig);
                     if (result.success) {
                         notifications.push({ id: `nt_n_${Date.now()}`, journalKey: jk, orderId: order.id, type: 'new_order', sentAt: new Date().toISOString(), recipients: emails });
                         recipients.forEach(r => { order.logs.push({ timestamp: new Date().toISOString(), message: `[SYSTEM] New Order Notification Sent to ${r.name} (${r.email}) via group: ${r.groupName}`, status: order.status, user: 'System' }); });

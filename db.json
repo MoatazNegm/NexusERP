@@ -745,6 +745,120 @@
       "status": "DELIVERED",
       "loggingComplianceViolation": false,
       "invoiceNumber": "INV-260215-628"
+    },
+    {
+      "id": "orders_1771163574869",
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "ldkslkdfpo",
+      "orderDate": "2026-02-15",
+      "paymentSlaDays": 30,
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "lsdks",
+          "quantity": 100,
+          "unit": "pcs",
+          "pricePerUnit": 30,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true,
+          "logs": [],
+          "components": []
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-02-15T13:52:54.870Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T13:52:54.870Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T13:53:37.537Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T13:53:37.537Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0008",
+      "dataEntryTimestamp": "2026-02-15T13:52:54.870Z",
+      "status": "LOGGED",
+      "loggingComplianceViolation": false
+    },
+    {
+      "id": "orders_1771164025995",
+      "customerName": "Unilever Mashreq for Import and Export",
+      "customerReferenceNumber": "dadk32sd",
+      "orderDate": "2025-02-15",
+      "paymentSlaDays": 30,
+      "items": [
+        {
+          "id": "temp_1",
+          "description": "dsfkajk",
+          "quantity": 20,
+          "unit": "pcs",
+          "pricePerUnit": 20,
+          "taxPercent": 14,
+          "isAccepted": false,
+          "taxDetected": true,
+          "logs": [],
+          "components": []
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-02-15T14:00:25.996Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T14:00:25.996Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T14:00:56.131Z",
+          "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T14:00:56.131Z",
+          "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T14:00:59.299Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-15T14:00:59.299Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0009",
+      "dataEntryTimestamp": "2026-02-15T14:00:25.996Z",
+      "status": "LOGGED",
+      "loggingComplianceViolation": true
     }
   ],
   "inventory": [
@@ -1137,6 +1251,39 @@
       "sentAt": "2026-02-15T11:16:50.439Z",
       "recipients": [
         "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_n_1771163617537",
+      "journalKey": "new_order_orders_1771163574869",
+      "orderId": "orders_1771163574869",
+      "type": "new_order",
+      "sentAt": "2026-02-15T13:53:37.537Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1771164056131_2ogd",
+      "journalKey": "delay_orders_1771164025995",
+      "orderId": "orders_1771164025995",
+      "type": "logging_delay",
+      "sentAt": "2026-02-15T14:00:56.131Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1771164059299",
+      "journalKey": "new_order_orders_1771164025995",
+      "orderId": "orders_1771164025995",
+      "type": "new_order",
+      "sentAt": "2026-02-15T14:00:59.299Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
       ]
     }
   ],
