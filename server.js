@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
 import multer from 'multer';
+import AdmZip from 'adm-zip';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -137,6 +138,21 @@ const resolveSettings = (db) => {
             senderName: 'Nexus System Alert',
             senderEmail: 'erpalerts@quickstor.net',
             useSsl: true
+        },
+        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice'],
+        roleMappings: {
+            dashboard: ['management'],
+            orders: ['order_management'],
+            technicalReview: ['order_management'],
+            finance: ['finance'],
+            procurement: ['procurement'],
+            factory: ['factory'],
+            inventory: ['inventory'],
+            shipment: ['order_management'],
+            crm: ['crm'],
+            suppliers: ['procurement'],
+            reporting: ['management'],
+            govEInvoice: ['Gov.EInvoice']
         },
         ...dbSettings
     };
@@ -716,6 +732,7 @@ const PORT = process.env.PORT || 3005;
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'dist')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // --- HEALTH CHECK HELPER ---
 const calculateOrderHealth = (order, settings) => {
@@ -899,7 +916,7 @@ app.get('{*path}', (req, res) => {
 
 app.post('/api/v1/wipe', (req, res) => {
     const db = readDb();
-    const BUSINESS_COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'notifications'];
+    const BUSINESS_COLLECTIONS = ['orders', 'inventory', 'procurement', 'notifications'];
     BUSINESS_COLLECTIONS.forEach(col => {
         db[col] = [];
     });
@@ -1140,6 +1157,33 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 });
 
 app.get('/api/v1/backup', (req, res) => res.json(readDb()));
+
+app.get('/api/v1/full-backup', (req, res) => {
+    try {
+        const zip = new AdmZip();
+
+        // Add database
+        if (fs.existsSync(DB_PATH)) {
+            zip.addLocalFile(DB_PATH);
+        }
+
+        // Add uploads directory
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (fs.existsSync(uploadsDir)) {
+            zip.addLocalFolder(uploadsDir, 'uploads');
+        }
+
+        const buffer = zip.toBuffer();
+        const date = new Date().toISOString().slice(0, 10);
+        res.set('Content-Type', 'application/zip');
+        res.set('Content-Disposition', `attachment; filename=nexus-full-archive-${date}.zip`);
+        res.send(buffer);
+    } catch (err) {
+        console.error("Full backup failed:", err);
+        res.status(500).json({ error: "Full backup failed" });
+    }
+});
+
 app.post('/api/v1/restore', (req, res) => {
     const data = req.body;
     const required = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'settings', 'modules'];
@@ -1154,6 +1198,29 @@ app.post('/api/v1/restore', (req, res) => {
         res.json({ message: "Restored" });
     } else {
         res.status(500).json({ error: "Restore failed during file write" });
+    }
+});
+
+const restoreUpload = multer({ storage: multer.memoryStorage() });
+app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
+
+        const zip = new AdmZip(req.file.buffer);
+        const entries = zip.getEntries();
+
+        // Basic verification
+        const hasDb = entries.some(e => e.entryName === 'db.json');
+        if (!hasDb) return res.status(400).json({ error: "Invalid archive: db.json missing" });
+
+        // Unpack everything to root
+        zip.extractAllTo(__dirname, true);
+
+        console.log(`[System] Full system restore completed at ${new Date().toISOString()}`);
+        res.json({ message: "Full system restored successfully" });
+    } catch (err) {
+        console.error("Full restore failed:", err);
+        res.status(500).json({ error: "Full restore failed: " + err.message });
     }
 });
 

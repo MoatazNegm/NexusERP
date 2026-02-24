@@ -547,6 +547,26 @@ class DataService {
     }
     return true;
   }
+
+  async exportFullSystemBackup(): Promise<Blob> {
+    const response = await fetch(`${BACKEND_URL}/api/v1/full-backup`);
+    if (!response.ok) throw new Error("Full backup failed");
+    return await response.blob();
+  }
+
+  async importFullSystemBackup(file: File): Promise<boolean> {
+    const formData = new FormData();
+    formData.append('archive', file);
+    const response = await fetch(`${BACKEND_URL}/api/v1/full-restore`, {
+      method: 'POST',
+      body: formData
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || "Full restore failed");
+    }
+    return true;
+  }
 }
 
 export const dataService = new DataService();

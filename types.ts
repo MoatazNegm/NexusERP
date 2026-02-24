@@ -21,7 +21,7 @@ export enum OrderStatus {
   FULFILLED = 'FULFILLED'
 }
 
-export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm';
+export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice';
 
 export interface UserGroup {
   id: string;
@@ -212,6 +212,7 @@ export interface AppConfig {
     reception: boolean;
     finance: boolean;
     factory: boolean;
+    govEInvoice?: boolean;
   };
   settings: {
     aiProvider: AIProvider;
@@ -250,5 +251,7 @@ export interface AppConfig {
       backgroundColor?: string; // Hex code for background (if base theme)
       textColor?: string; // Hex code for text elements
     };
+    availableRoles?: UserRole[];
+    roleMappings?: Record<string, UserRole[]>;
   };
 }

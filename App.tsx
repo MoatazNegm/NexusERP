@@ -6,6 +6,7 @@ import { ProcurementModule } from './components/ProcurementModule';
 import { TechnicalReviewModule } from './components/TechnicalReviewModule';
 import { InventoryModule } from './components/InventoryModule';
 import { SupplierModule } from './components/SupplierModule';
+import { ShipmentModule } from './components/ShipmentModule';
 import { ModuleGate } from './components/ModuleGate';
 import { DashboardCard } from './components/DashboardCard';
 import { OrderDetailsModal } from './components/OrderDetailsModal';
@@ -80,8 +81,8 @@ const App: React.FC = () => {
         if (needsSettingsBootstrap || needsModulesBootstrap) {
           console.debug("[App] Bootstrapping missing settings/modules to backend");
           try {
-            if (needsSettingsBootstrap) await dataService.updateSettings(INITIAL_CONFIG.settings);
-            if (needsModulesBootstrap) await dataService.updateModules(INITIAL_CONFIG.modules);
+            if (needsSettingsBootstrap) await dataService.updateSettings({ ...INITIAL_CONFIG.settings, id: 'system_settings' });
+            if (needsModulesBootstrap) await dataService.updateModules({ ...INITIAL_CONFIG.modules, id: 'system_modules' });
           } catch (e) {
             console.debug("[App] Settings bootstrap deferred (no admin logged in yet)");
           }
@@ -137,22 +138,32 @@ const App: React.FC = () => {
   }, [currentUser]);
 
   const navItems = useMemo(() => {
+    // Determine the active role mapping from the backend configuration.
+    // Fallback to empty mapping if config doesn't provide it during initialization.
+    const mapping = config.settings.roleMappings || {};
+
     const items = [
-      { id: 'dashboard', icon: 'fa-gauge-high', label: 'Dashboard', role: 'management' as UserRole },
-      { id: 'orders', icon: 'fa-clipboard-list', label: 'Order Management', role: 'order_management' as UserRole },
-      { id: 'technicalReview', icon: 'fa-microscope', label: 'Technical Review', role: 'order_management' as UserRole },
-      { id: 'finance', icon: 'fa-hand-holding-dollar', label: 'Finance Operations', role: 'finance' as UserRole },
-      { id: 'procurement', icon: 'fa-diagram-project', label: 'Procurement', role: 'procurement' as UserRole },
-      { id: 'factory', icon: 'fa-industry', label: 'Factory Build', role: 'factory' as UserRole },
-      { id: 'inventory', icon: 'fa-warehouse', label: 'Inventory & Hub', role: 'procurement' as UserRole },
-      { id: 'crm', icon: 'fa-users', label: 'CRM Contacts', role: 'crm' as UserRole },
-      { id: 'suppliers', icon: 'fa-truck-field', label: 'Suppliers', role: 'procurement' as UserRole },
-      { id: 'reporting', icon: 'fa-chart-column', label: 'Profitability', role: 'management' as UserRole },
-      { id: 'systemLogs', icon: 'fa-shield-halved', label: 'System Audit', role: 'admin' as UserRole },
-      { id: 'settings', icon: 'fa-gears', label: 'Settings', role: 'admin' as UserRole },
+      { id: 'dashboard', icon: 'fa-gauge-high', label: 'Dashboard', roles: mapping['dashboard'] || ['management'] as UserRole[] },
+      { id: 'orders', icon: 'fa-clipboard-list', label: 'Order Management', roles: mapping['orders'] || ['order_management'] as UserRole[], module: 'orderManagement' as keyof AppConfig['modules'] },
+      { id: 'technicalReview', icon: 'fa-microscope', label: 'Technical Review', roles: mapping['technicalReview'] || ['order_management'] as UserRole[], module: 'technicalReview' as keyof AppConfig['modules'] },
+      { id: 'finance', icon: 'fa-hand-holding-dollar', label: 'Finance Operations', roles: mapping['finance'] || ['finance'] as UserRole[], module: 'finance' as keyof AppConfig['modules'] },
+      { id: 'procurement', icon: 'fa-diagram-project', label: 'Procurement', roles: mapping['procurement'] || ['procurement'] as UserRole[], module: 'procurement' as keyof AppConfig['modules'] },
+      { id: 'factory', icon: 'fa-industry', label: 'Factory Build', roles: mapping['factory'] || ['factory'] as UserRole[], module: 'factory' as keyof AppConfig['modules'] },
+      { id: 'inventory', icon: 'fa-warehouse', label: 'Inventory & Hub', roles: mapping['inventory'] || ['inventory'] as UserRole[], module: 'inventory' as keyof AppConfig['modules'] },
+      { id: 'shipment', icon: 'fa-truck-ramp-box', label: 'Shipment', roles: mapping['shipment'] || ['order_management'] as UserRole[], module: 'shipping' as keyof AppConfig['modules'] },
+      { id: 'crm', icon: 'fa-users', label: 'CRM Contacts', roles: mapping['crm'] || ['crm'] as UserRole[], module: 'crm' as keyof AppConfig['modules'] },
+      { id: 'suppliers', icon: 'fa-truck-field', label: 'Suppliers', roles: mapping['suppliers'] || ['procurement'] as UserRole[], module: 'suppliers' as keyof AppConfig['modules'] },
+      { id: 'reporting', icon: 'fa-chart-column', label: 'Profitability', roles: mapping['reporting'] || ['management'] as UserRole[], module: 'finance' as keyof AppConfig['modules'] },
+      { id: 'govEInvoice', icon: 'fa-file-invoice-dollar', label: 'Gov.EInvoice', roles: mapping['govEInvoice'] || ['Gov.EInvoice'] as UserRole[], module: 'govEInvoice' as keyof AppConfig['modules'] },
+      { id: 'systemLogs', icon: 'fa-shield-halved', label: 'System Audit', roles: ['admin'] as UserRole[] },
+      { id: 'settings', icon: 'fa-gears', label: 'Settings', roles: ['admin'] as UserRole[] },
     ];
-    return items.filter(item => hasRole(item.role));
-  }, [effectiveRoles]);
+    return items.filter(item => {
+      const roleAllowed = item.roles.some((r: UserRole) => hasRole(r));
+      const moduleAllowed = !item.module || config.modules[item.module];
+      return roleAllowed && moduleAllowed;
+    });
+  }, [effectiveRoles, config.modules]);
 
   // View Access Enforcement: Redirect if activeView is not in navItems (missing permission)
   useEffect(() => {
@@ -163,7 +174,8 @@ const App: React.FC = () => {
         setActiveView(navItems[0].id as View);
       }
     }
-  }, [isDbReady, currentUser, navItems, activeView]);
+  }, [activeView, navItems, isDbReady, currentUser]);
+
 
   const dashboardMetrics = useMemo(() => {
     let totalRevenue = 0;
@@ -317,6 +329,7 @@ const App: React.FC = () => {
       case 'procurement': return <ProcurementModule config={config} refreshKey={refreshKey} currentUser={currentUser} />;
       case 'factory': return <FactoryModule config={config} refreshKey={refreshKey} currentUser={currentUser} />;
       case 'inventory': return <InventoryModule config={config} refreshKey={refreshKey} currentUser={currentUser} />;
+      case 'shipment': return <ShipmentModule config={config} refreshKey={refreshKey} currentUser={currentUser} />;
       case 'suppliers': return <SupplierModule currentUser={currentUser} refreshKey={refreshKey} />;
       case 'crm': return <CRMModule refreshKey={refreshKey} currentUser={currentUser} />;
       case 'reporting': return <ProfitabilityReport orders={orders} config={config} />;
@@ -487,5 +500,5 @@ const App: React.FC = () => {
   );
 };
 
-export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs';
+export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs';
 export default App;

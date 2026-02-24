@@ -12,7 +12,8 @@ export const INITIAL_CONFIG: AppConfig = {
     shipping: false,
     reception: true,
     finance: true,
-    factory: true
+    factory: true,
+    govEInvoice: true
   },
   settings: {
     aiProvider: 'gemini',
@@ -35,7 +36,22 @@ export const INITIAL_CONFIG: AppConfig = {
     enableNewOrderAlerts: true,
     newOrderAlertGroupIds: [],
     enableRollbackAlerts: true,
-    rollbackAlertGroupIds: []
+    rollbackAlertGroupIds: [],
+    availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice'],
+    roleMappings: {
+      dashboard: ['management'],
+      orders: ['order_management'],
+      technicalReview: ['order_management'],
+      finance: ['finance'],
+      procurement: ['procurement'],
+      factory: ['factory'],
+      inventory: ['inventory'],
+      shipment: ['order_management'],
+      crm: ['crm'],
+      suppliers: ['procurement'],
+      reporting: ['management'],
+      govEInvoice: ['Gov.EInvoice']
+    }
   }
 };
 
@@ -44,7 +60,7 @@ export const INITIAL_USER_GROUPS: UserGroup[] = [
     id: 'grp_super',
     name: 'Superusers',
     description: 'Full administrative control with access to all system modules and financial data.',
-    roles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm']
+    roles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory']
   },
   {
     id: 'grp_mgmt',
@@ -56,7 +72,7 @@ export const INITIAL_USER_GROUPS: UserGroup[] = [
     id: 'grp_ops',
     name: 'Operations Team',
     description: 'Standard access for order handling and manufacturing oversight.',
-    roles: ['order_management', 'factory', 'procurement', 'crm']
+    roles: ['order_management', 'factory', 'procurement', 'crm', 'inventory']
   }
 ];
 

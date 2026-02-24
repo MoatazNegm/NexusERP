@@ -13,8 +13,6 @@ interface DataMaintenanceProps {
 
 type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'email' | 'data';
 
-const AVAILABLE_ROLES: UserRole[] = ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm'];
-
 export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConfigUpdate, onRefresh, currentUser, isAdmin }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('modules');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -39,6 +37,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const auditLogRef = useRef<HTMLDivElement>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fullBackupInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -175,6 +174,43 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     } catch (e) {
       setMessage({ type: 'error', text: 'Backup failed.' });
     } finally { setIsProcessing(false); }
+  };
+
+  const handleFullExport = async () => {
+    setIsProcessing(true);
+    setMessage({ type: 'info', text: 'Generating full system archive (Database + Assets)...' });
+    try {
+      const blob = await dataService.exportFullSystemBackup();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `nexus-full-archive-${new Date().toISOString().slice(0, 10)}.zip`;
+      link.click();
+      setMessage({ type: 'success', text: 'Full system archive generated successfully.' });
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Full backup failed.' });
+    } finally { setIsProcessing(false); }
+  };
+
+  const handleFullImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!confirm("RESTORE WARNING: This will overwrite ALL data and uploaded documents with the contents of this archive. This action is irreversible. Proceed?")) {
+      e.target.value = '';
+      return;
+    }
+    setIsProcessing(true);
+    setMessage({ type: 'info', text: 'Restoring full system environment...' });
+    try {
+      await dataService.importFullSystemBackup(file);
+      setMessage({ type: 'success', text: 'Restoration complete. The system will now reload.' });
+      setTimeout(() => window.location.reload(), 2000);
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e.message || 'Restoration failed.' });
+    } finally {
+      setIsProcessing(false);
+      if (fullBackupInputRef.current) fullBackupInputRef.current.value = '';
+    }
   };
 
   const handleImport = async () => {
@@ -910,7 +946,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   <div className="space-y-4">
                     <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Functional Authorities (Roles)</label>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {AVAILABLE_ROLES.map(role => {
+                      {(config.settings.availableRoles || []).map(role => {
                         const isActive = editingGroup.roles?.includes(role);
                         return (
                           <button
@@ -1007,7 +1043,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       <div className="space-y-2">
                         <span className="text-[8px] font-black text-slate-400 uppercase">Assigned Roles</span>
                         <div className="flex flex-wrap gap-1">
-                          {AVAILABLE_ROLES.map(role => {
+                          {(config.settings.availableRoles || []).map(role => {
                             const active = editingUser.roles?.includes(role);
                             return (
                               <button key={role} onClick={() => setEditingUser({ ...editingUser, roles: active ? editingUser.roles?.filter(r => r !== role) : [...(editingUser.roles || []), role] })} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase border-2 transition-all ${active ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-100 text-slate-400'}`}>
@@ -1059,14 +1095,32 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
           {activeTab === 'data' && (
             <div className="space-y-6">
+              <div className="p-8 bg-sky-50/50 rounded-[2.5rem] border border-sky-100 space-y-4">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 bg-sky-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                    <i className="fa-solid fa-file-zipper text-xl"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-700 uppercase">Full System Archive</h4>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Comprehensive Protection • All Data & Attachments</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed italic">Recommended for server migrations or disaster recovery. Bundles `db.json` and the entire `uploads/` directory into a single archive.</p>
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                  <button onClick={handleFullExport} className="py-4 bg-white border border-sky-200 text-sky-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-sky-50 transition-colors">Download Archive</button>
+                  <button onClick={() => fullBackupInputRef.current?.click()} className="py-4 bg-sky-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:bg-sky-700 transition-all">Restore Archive</button>
+                  <input type="file" ref={fullBackupInputRef} className="hidden" accept=".zip" onChange={handleFullImport} />
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 space-y-4">
-                  <h4 className="text-sm font-black text-slate-700 uppercase">System Archive</h4>
-                  <p className="text-xs text-slate-500 leading-relaxed">Generates an AES-256 encrypted snapshot of all records and settings.</p>
-                  <button onClick={() => setShowPasscodeModal({ type: 'export' })} className="w-full py-4 bg-white border border-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-slate-50 transition-colors">Generate Backup</button>
+                  <h4 className="text-sm font-black text-slate-700 uppercase">System JSON Records</h4>
+                  <p className="text-xs text-slate-500 leading-relaxed">Generates an AES-256 encrypted snapshot of database records (excludes physical files).</p>
+                  <button onClick={() => setShowPasscodeModal({ type: 'export' })} className="w-full py-4 bg-white border border-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-slate-50 transition-colors">Export Snapshot</button>
                 </div>
                 <div className="p-8 bg-blue-50/30 rounded-[2.5rem] border border-blue-100 space-y-4">
-                  <h4 className="text-sm font-black text-slate-700 uppercase">Recover from Archive</h4>
+                  <h4 className="text-sm font-black text-slate-700 uppercase">Import JSON Snapshot</h4>
                   <p className="text-xs text-slate-500 leading-relaxed">Restore all data and settings from a valid .nxback archive file.</p>
                   <input
                     type="file"
@@ -1078,7 +1132,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       if (file) setShowPasscodeModal({ type: 'import', file });
                     }}
                   />
-                  <button onClick={() => fileInputRef.current?.click()} className="w-full py-4 bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:bg-blue-700 transition-all">Import Backup</button>
+                  <button onClick={() => fileInputRef.current?.click()} className="w-full py-4 bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:bg-blue-700 transition-all">Import Snapshot</button>
                 </div>
               </div>
 
