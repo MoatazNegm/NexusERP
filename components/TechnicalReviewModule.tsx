@@ -89,7 +89,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     fetchData();
   }, [refreshKey]);
 
-  const fetchData = async () => {
+  const fetchData = async (keepSelection = true) => {
     const [o, i, s] = await Promise.all([
       dataService.getOrders(),
       dataService.getInventory(),
@@ -99,7 +99,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setInventory(i);
     setSuppliers(s);
 
-    if (selectedOrder) {
+    if (keepSelection && selectedOrder) {
       const updatedOrder = o.find(x => x.id === selectedOrder.id);
       if (updatedOrder) {
         setSelectedOrder(updatedOrder);
@@ -244,7 +244,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       await dataService.finalizeTechnicalReview(selectedOrder.id);
       setSelectedOrder(null);
       setSelectedItem(null);
-      fetchData();
+      fetchData(false);
     } catch (e: any) {
       alert(e.message);
     } finally {
