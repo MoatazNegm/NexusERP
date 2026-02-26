@@ -58,41 +58,7 @@
           "taxPercent": 14,
           "taxDetected": true,
           "logs": [],
-          "components": [
-            {
-              "description": "part 1",
-              "quantity": 1,
-              "unit": "pcs",
-              "unitCost": 1,
-              "taxPercent": 14,
-              "source": "PROCUREMENT",
-              "status": "ORDERED",
-              "id": "c_1772113102619_0_0",
-              "componentNumber": "CMP-INT-2024-0001-0-1",
-              "statusUpdatedAt": "2026-02-26T13:39:05.074Z",
-              "rfpSupplierIds": [],
-              "supplierId": "suppliers_1771146860410",
-              "poNumber": "PO-144196",
-              "procurementStartedAt": "2026-02-26T13:39:05.074Z"
-            },
-            {
-              "description": "part 2",
-              "quantity": 1,
-              "unit": "pcs",
-              "unitCost": 3232243,
-              "taxPercent": 14,
-              "source": "PROCUREMENT",
-              "status": "AWARDED",
-              "id": "c_1772113105765_0_1",
-              "componentNumber": "CMP-INT-2024-0001-0-2",
-              "statusUpdatedAt": "2026-02-26T13:39:29.803Z",
-              "rfpSupplierIds": [
-                "suppliers_1771146860410",
-                "suppliers_1771146837526"
-              ],
-              "supplierId": "suppliers_1771146837526"
-            }
-          ],
+          "components": [],
           "isAccepted": false
         }
       ],
@@ -312,16 +278,58 @@
           "message": "[AUTO] Margin Protection: Status moved from WAITING_SUPPLIERS to NEGATIVE_MARGIN",
           "status": "NEGATIVE_MARGIN",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-02-26T13:46:09.956Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "NEGATIVE_MARGIN",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-26T13:46:12.824Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "NEGATIVE_MARGIN",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-26T13:48:19.268Z",
+          "message": "Component Received & Reserved: part 1",
+          "status": "NEGATIVE_MARGIN",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-26T13:48:19.314Z",
+          "message": "Rollback to Registry: dksldksldk (BoM cleared & stock released)",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-26T13:48:22.361Z",
+          "message": "[SYSTEM] Rollback Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
       "dataEntryTimestamp": "2026-02-26T13:07:10.110Z",
-      "status": "NEGATIVE_MARGIN",
-      "loggingComplianceViolation": false,
-      "isOverdue": false
+      "status": "LOGGED",
+      "loggingComplianceViolation": true,
+      "isOverdue": true
     }
   ],
-  "inventory": [],
+  "inventory": [
+    {
+      "id": "inv_1772113699268_bylo2",
+      "name": "part 1",
+      "sku": "CMP-INT-2024-0001-0-1",
+      "quantityInStock": 1,
+      "quantityReserved": 1,
+      "category": "Uncategorized",
+      "unit": "Unit",
+      "minStockLevel": 0,
+      "lastUpdated": "2026-02-26T13:48:19.268Z"
+    }
+  ],
   "suppliers": [
     {
       "id": "suppliers_1771146837526",
@@ -563,6 +571,26 @@
       "orderId": "orders_1772111230107",
       "type": "negative_margin",
       "sentAt": "2026-02-26T13:36:57.072Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1772113569956_od0o",
+      "journalKey": "threshold_pendingOfferLimitHrs_orders_1772111230107",
+      "orderId": "orders_1772111230107",
+      "type": "threshold_pendingOfferLimitHrs",
+      "sentAt": "2026-02-26T13:46:09.956Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1772113572824_t8yx",
+      "journalKey": "comp_orderedLimitHrs_orders_1772111230107_temp_1772111194684_0_c_1772113102619_0_0",
+      "orderId": "orders_1772111230107",
+      "type": "comp_orderedLimitHrs",
+      "sentAt": "2026-02-26T13:46:12.824Z",
       "recipients": [
         "erpalerts@quickstor.net"
       ]

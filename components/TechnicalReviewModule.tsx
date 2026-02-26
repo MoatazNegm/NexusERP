@@ -162,21 +162,30 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
   const handleAddComponent = async (inv: InventoryItem) => {
     if (!selectedOrder || !selectedItem) return;
-    const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-      description: inv.description,
-      quantity: compQty,
-      unit: inv.unit,
-      unitCost: inv.lastCost,
-      taxPercent: 14,
-      source: 'STOCK',
-      inventoryItemId: inv.id,
-      status: 'RESERVED'
-    });
-    setSelectedOrder(updated);
-    setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
-    setCompSearch('');
-    setShowCompSuggestions(false);
-    fetchData();
+    const available = inv.quantityInStock - (inv.quantityReserved || 0);
+    if (compQty > available) {
+      alert(`Insufficient stock for "${inv.description}": only ${available} ${inv.unit} available (${inv.quantityInStock} total, ${inv.quantityReserved || 0} reserved).`);
+      return;
+    }
+    try {
+      const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
+        description: inv.description,
+        quantity: compQty,
+        unit: inv.unit,
+        unitCost: inv.lastCost,
+        taxPercent: 14,
+        source: 'STOCK',
+        inventoryItemId: inv.id,
+        status: 'RESERVED'
+      });
+      setSelectedOrder(updated);
+      setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
+      setCompSearch('');
+      setShowCompSuggestions(false);
+      fetchData();
+    } catch (e: any) {
+      alert(e.message || 'Failed to add component');
+    }
   };
 
   const handleAddSupplierPart = async (supp: Supplier, part: SupplierPart) => {
@@ -550,21 +559,33 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
                               {showCompSuggestions && compSearch.length > 0 && (
                                 <div className="absolute top-full left-0 right-0 mt-3 bg-white border border-slate-200 rounded-[2rem] shadow-2xl z-[110] overflow-hidden divide-y divide-slate-50 max-h-80 overflow-y-auto animate-in slide-in-from-top-2 duration-300">
-                                  {invResults.map(i => (
-                                    <button key={i.id} onMouseDown={() => handleAddComponent(i)} className="w-full text-left p-5 hover:bg-blue-50 flex justify-between items-center group transition-colors">
-                                      <div>
-                                        <div className="font-black text-slate-800 group-hover:text-blue-600 text-xs">{i.description}</div>
-                                        <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4">
-                                          <span>SKU: {i.sku}</span>
-                                          <span className="text-emerald-600 font-black">Stock: {i.quantityInStock - (i.quantityReserved || 0)}</span>
+                                  {invResults.map(i => {
+                                    const available = i.quantityInStock - (i.quantityReserved || 0);
+                                    const isLow = available > 0 && available <= compQty;
+                                    const isOut = available <= 0;
+                                    return (
+                                      <button key={i.id} onMouseDown={() => handleAddComponent(i)} className={`w-full text-left p-5 hover:bg-blue-50 flex justify-between items-center group transition-colors ${isOut ? 'opacity-50' : ''}`}>
+                                        <div>
+                                          <div className="font-black text-slate-800 group-hover:text-blue-600 text-xs">{i.description}</div>
+                                          <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4">
+                                            <span>SKU: {i.sku}</span>
+                                            <span className={`font-black ${isOut ? 'text-rose-500' : isLow ? 'text-amber-500' : 'text-emerald-600'}`}>
+                                              Available: {available} {i.unit}
+                                            </span>
+                                            {(i.quantityReserved || 0) > 0 && (
+                                              <span className="text-blue-500">Reserved: {i.quantityReserved}</span>
+                                            )}
+                                          </div>
                                         </div>
-                                      </div>
-                                      <div className="flex flex-col items-end gap-1">
-                                        <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">In-Stock Catalog</span>
-                                        <div className="text-[9px] font-black text-slate-800">L.E. {i.lastCost?.toLocaleString()}</div>
-                                      </div>
-                                    </button>
-                                  ))}
+                                        <div className="flex flex-col items-end gap-1">
+                                          <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${isOut ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-700'}`}>
+                                            {isOut ? 'Out of Stock' : 'In-Stock Catalog'}
+                                          </span>
+                                          <div className="text-[9px] font-black text-slate-800">L.E. {i.lastCost?.toLocaleString()}</div>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
                                   {supplierResults.map(({ supplier, part }) => (
                                     <button key={part.id} onMouseDown={() => handleAddSupplierPart(supplier, part)} className="w-full text-left p-5 hover:bg-amber-50 flex justify-between items-center group transition-colors">
                                       <div>

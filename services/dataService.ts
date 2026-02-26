@@ -148,6 +148,10 @@ class DataService {
     await this.post('inventory', { ...item, quantityReserved: 0 });
   }
 
+  async updateInventoryItem(id: string, updates: Partial<InventoryItem>) {
+    return this.put<InventoryItem>('inventory', id, updates);
+  }
+
   async getOrders() { return this.get<CustomerOrder>('orders'); }
   async addOrder(order: Omit<CustomerOrder, 'id' | 'internalOrderNumber' | 'logs'>) {
     return this.post<CustomerOrder>('orders', order);
@@ -195,6 +199,22 @@ class DataService {
     const item = order.items.find(i => i.id === itemId);
     if (!item) throw new Error('Item not found');
 
+    // If it's a STOCK component, check availability and reserve
+    if (comp.source === 'STOCK' && comp.inventoryItemId) {
+      const allInv = await this.getInventory();
+      const invItem = allInv.find(i => i.id === comp.inventoryItemId);
+      if (invItem) {
+        const available = invItem.quantityInStock - (invItem.quantityReserved || 0);
+        if (comp.quantity > available) {
+          throw new Error(`Insufficient stock: only ${available} ${invItem.unit} available (${invItem.quantityInStock} in stock, ${invItem.quantityReserved || 0} reserved)`);
+        }
+        // Increment reserved quantity
+        await this.updateInventoryItem(invItem.id, {
+          quantityReserved: (invItem.quantityReserved || 0) + comp.quantity
+        });
+      }
+    }
+
     if (!item.components) item.components = [];
     item.components.push(comp as any);
 
@@ -205,8 +225,19 @@ class DataService {
     const order = await this.getOrderOrThrow(orderId);
     const item = order.items.find(i => i.id === itemId);
     if (!item) throw new Error('Item not found');
-    item.components = item.components?.filter(c => c.id !== compId);
 
+    // If removing a STOCK component, release the reservation
+    const comp = item.components?.find(c => c.id === compId);
+    if (comp && comp.source === 'STOCK' && comp.inventoryItemId && (comp.status === 'RESERVED' || comp.status === 'AVAILABLE')) {
+      const allInv = await this.getInventory();
+      const invItem = allInv.find(i => i.id === comp.inventoryItemId);
+      if (invItem) {
+        const newReserved = Math.max(0, (invItem.quantityReserved || 0) - comp.quantity);
+        await this.updateInventoryItem(invItem.id, { quantityReserved: newReserved });
+      }
+    }
+
+    item.components = item.components?.filter(c => c.id !== compId);
     return this.put<CustomerOrder>('orders', orderId, order);
   }
 
