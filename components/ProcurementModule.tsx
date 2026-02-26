@@ -78,6 +78,22 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [compHistory, setCompHistory] = useState<any[] | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
+  // Procurement resolution state (for in-transit components during rollback)
+  type CompResolution = 'CANCEL_PO' | 'RECEIVE_TO_STOCK';
+  interface InTransitCompRecord {
+    itemId: string;
+    itemDesc: string;
+    compId: string;
+    compDesc: string;
+    componentNumber?: string;
+    supplierName?: string;
+    quantity: number;
+    status: string;
+  }
+  const [pendingResolutions, setPendingResolutions] = useState<InTransitCompRecord[] | null>(null);
+  const [resolutionChoices, setResolutionChoices] = useState<Record<string, CompResolution>>({});
+  const [pendingRollbackOrder, setPendingRollbackOrder] = useState<CustomerOrder | null>(null);
+
   useEffect(() => { fetchData(); }, [refreshKey]);
 
   const fetchData = async () => {
@@ -153,6 +169,22 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       setIsActionLoading(order.id);
       try {
         if (!resetReason.trim()) throw new Error("Rollback reason is mandatory");
+
+        // Apply any pending resolutions before rolling back
+        if (pendingRollbackOrder && pendingResolutions && pendingResolutions.length > 0) {
+          for (const rec of pendingResolutions) {
+            const choice = resolutionChoices[rec.compId];
+            if (choice === 'RECEIVE_TO_STOCK') {
+              await dataService.dispatchAction(order.id, 'receive-component', { itemId: rec.itemId, compId: rec.compId });
+            } else {
+              await dataService.cancelComponentPo(order.id, rec.itemId, rec.compId);
+            }
+          }
+          setPendingResolutions(null);
+          setResolutionChoices({});
+          setPendingRollbackOrder(null);
+        }
+
         await dataService.rollbackOrderToLogged(order.id, resetReason);
         await fetchData();
         closeModal();
@@ -204,6 +236,51 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setAwardTaxPercent(14);
     setPoNumberInput('');
     setResetReason('');
+    setPendingResolutions(null);
+    setResolutionChoices({});
+    setPendingRollbackOrder(null);
+  };
+
+  // Check for in-transit components before initiating a rollback
+  const handleInitiateRollback = (order: CustomerOrder) => {
+    const IN_TRANSIT_STATUSES = ['ORDERED', 'AWARDED'];
+    const found: InTransitCompRecord[] = [];
+    order.items.forEach(item => {
+      (item.components || []).forEach(comp => {
+        if (IN_TRANSIT_STATUSES.includes(comp.status || '')) {
+          const supplier = suppliers.find(s => s.id === comp.supplierId);
+          found.push({
+            itemId: item.id,
+            itemDesc: item.description,
+            compId: comp.id!,
+            compDesc: comp.description,
+            componentNumber: comp.componentNumber,
+            supplierName: supplier?.name || 'Unknown Supplier',
+            quantity: comp.quantity,
+            status: comp.status || ''
+          });
+        }
+      });
+    });
+
+    if (found.length > 0) {
+      // Show resolution dialog first
+      const defaults: Record<string, CompResolution> = {};
+      found.forEach(c => { defaults[c.compId] = 'CANCEL_PO'; });
+      setPendingResolutions(found);
+      setResolutionChoices(defaults);
+      setPendingRollbackOrder(order);
+    } else {
+      // No in-transit components, go straight to rollback reason
+      setActiveAction({ type: 'ORDER_ROLLBACK', order });
+    }
+  };
+
+  // After user confirms resolutions
+  const handleConfirmResolutions = () => {
+    if (!pendingRollbackOrder) return;
+    // Move to the rollback reason dialog with order context
+    setActiveAction({ type: 'ORDER_ROLLBACK', order: pendingRollbackOrder });
   };
 
   const openHistory = async (comp: ManufacturingComponent) => {
@@ -395,7 +472,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
               <div className="flex items-center gap-4 mt-4 lg:mt-0">
                 <div className="flex items-center">
                   <button
-                    onClick={() => setActiveAction({ type: 'ORDER_ROLLBACK', order: o })}
+                    onClick={() => handleInitiateRollback(o)}
                     className="p-3 text-slate-300 hover:text-orange-500 transition-colors opacity-0 group-hover:opacity-100"
                     title="Rollback Entire Order to Logged Registry"
                   >
@@ -614,6 +691,85 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
               >
                 {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
                 {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : 'Commit Procurement'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* --- Procurement Resolution Modal (in-transit components before rollback) --- */}
+      {pendingResolutions && !activeAction && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl p-10 my-8 animate-in zoom-in-95 duration-200 border border-slate-100">
+            <div className="flex items-center gap-6 mb-8">
+              <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center text-3xl shadow-inner">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Outstanding Supplier Commitments</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                  {pendingResolutions.length} Component{pendingResolutions.length > 1 ? 's' : ''} in transit — Resolve before rollback
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
+              The following components have active supplier commitments. You must decide the fate of each before rolling back this order:
+            </p>
+
+            <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-2">
+              {pendingResolutions.map(rec => (
+                <div key={rec.compId} className="bg-slate-50 border border-slate-100 rounded-2xl p-5">
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <div className="font-black text-slate-800 text-sm">{rec.compDesc}</div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5 flex gap-3">
+                        <span>Ref: {rec.componentNumber || 'N/A'}</span>
+                        <span>Supplier: {rec.supplierName}</span>
+                        <span>Qty: {rec.quantity}</span>
+                      </div>
+                      <div className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded mt-1.5 w-fit border ${rec.status === 'ORDERED' ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-amber-600 bg-amber-50 border-amber-100'
+                        }`}>
+                        {rec.status === 'ORDERED' ? 'PO Issued — Awaiting Delivery' : 'Awarded — Pending PO Issuance'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'CANCEL_PO' }))}
+                      className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${resolutionChoices[rec.compId] === 'CANCEL_PO'
+                          ? 'bg-rose-600 text-white border-rose-600 shadow-lg'
+                          : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'
+                        }`}
+                    >
+                      <i className="fa-solid fa-ban"></i> Cancel Supplier PO
+                    </button>
+                    <button
+                      onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'RECEIVE_TO_STOCK' }))}
+                      className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${resolutionChoices[rec.compId] === 'RECEIVE_TO_STOCK'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg'
+                          : 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400'
+                        }`}
+                    >
+                      <i className="fa-solid fa-boxes-stacked"></i> Receive to Stock
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-8 flex gap-3">
+              <button
+                onClick={closeModal}
+                className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200"
+              >
+                Abort
+              </button>
+              <button
+                onClick={handleConfirmResolutions}
+                className="flex-[2] py-4 bg-amber-500 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-xl shadow-amber-200 hover:bg-amber-600 transition-all flex items-center justify-center gap-2"
+              >
+                <i className="fa-solid fa-arrow-right"></i>
+                Confirm Resolutions & Continue
               </button>
             </div>
           </div>

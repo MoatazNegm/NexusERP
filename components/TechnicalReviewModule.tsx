@@ -258,7 +258,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     const found: OrderedCompRecord[] = [];
     selectedOrder.items.forEach(item => {
       (item.components || []).forEach(comp => {
-        if (comp.status === 'ORDERED') {
+        if (comp.status === 'ORDERED' || comp.status === 'AWARDED') {
           const supplier = suppliers.find(s => s.id === comp.supplierId);
           found.push({
             itemId: item.id,
