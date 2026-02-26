@@ -1399,6 +1399,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}`, order.status, user));
                 break;
 
+            case 'void-action':
+                // Generic audit logging without status change
+                if (payload.message) {
+                    order.logs.push(createAuditLog(payload.message, order.status, user));
+                }
+                break;
+
             default:
                 throw new Error(`Unknown action: ${action}`);
         }

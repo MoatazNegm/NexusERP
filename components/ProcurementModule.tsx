@@ -63,7 +63,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
   // Modal States
   const [activeAction, setActiveAction] = useState<{
-    type: 'RFP' | 'AWARD' | 'PO' | 'RESET' | 'ORDER_ROLLBACK';
+    type: 'RFP' | 'AWARD' | 'PO' | 'RESET' | 'ORDER_ROLLBACK' | 'CANCEL_PO_BATCH';
     order: CustomerOrder;
     item?: CustomerOrderItem;
     comp?: ManufacturingComponent;
@@ -233,6 +233,25 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
             statusUpdatedAt: new Date().toISOString()
           });
         }
+      } else if (type === 'CANCEL_PO_BATCH') {
+        if (!resetReason.trim()) throw new Error("Cancellation reason is required");
+
+        setIsActionLoading('bulk-cancel');
+        for (const targetId of selectedCompIds) {
+          const target = multiComps.find(m => m.comp.id === targetId);
+          if (!target) continue;
+
+          await dataService.updateComponent(order.id, target.item.id, target.comp.id!, {
+            status: 'PENDING_OFFER',
+            poNumber: null,
+            supplierId: null,
+            statusUpdatedAt: new Date().toISOString()
+          });
+        }
+        // Log the batch cancellation
+        await dataService.dispatchAction(order.id, 'void-action', {
+          message: `Batch PO Cancellation for PO ${comp?.poNumber || 'N/A'}: ${resetReason}`
+        });
       } else {
         let updates: Partial<ManufacturingComponent> = { statusUpdatedAt: new Date().toISOString() };
 
@@ -554,7 +573,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         <i className="fa-solid fa-file-invoice"></i> Issue PO for All
                       </button>
                     )}
-                    {!allAwarded && !allOrderedOrHigher && comps.some(({ comp: cc }) => cc.status !== 'ORDERED') && (
+                    {!allAwarded && !allOrderedOrHigher && comps.some(({ comp: cc }) => cc.status === 'AWARDED') && (
                       <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
                         <i className="fa-solid fa-hourglass-half"></i>
                         Awaiting all awards for PO
@@ -663,22 +682,18 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                               <i className="fa-solid fa-file-pdf"></i> Download PO
                             </button>
                             <button
-                              onClick={async () => {
-                                if (!confirm(`Cancel PO ${c.poNumber || ''} for "${c.description}"?`)) return;
-                                setIsActionLoading(c.id || null);
-                                try {
-                                  await dataService.cancelComponentPo(o.id, i.id, c.id!);
-                                  await fetchData();
-                                } catch (e: any) {
-                                  alert(e.message || 'Failed to cancel PO');
-                                } finally {
-                                  setIsActionLoading(null);
-                                }
+                              onClick={() => {
+                                // Find all components sharing this PO number
+                                const samePo = comps.filter(x => x.comp.poNumber === c.poNumber && x.comp.status === 'ORDERED');
+                                setMultiComps(samePo);
+                                setSelectedCompIds(samePo.map(m => m.comp.id!));
+                                setResetReason('');
+                                setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
                               }}
-                              disabled={isActionLoading === c.id}
+                              disabled={isActionLoading != null}
                               className="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-rose-700 transition-all flex items-center gap-2"
                             >
-                              <i className="fa-solid fa-ban"></i> Cancel PO
+                              <i className="fa-solid fa-ban"></i> Cancel Order
                             </button>
                             <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
                               <i className="fa-solid fa-truck-fast mr-1"></i>In Transit
@@ -856,6 +871,55 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 </div>
               )}
 
+              {activeAction.type === 'CANCEL_PO_BATCH' && (
+                <div className="space-y-6">
+                  <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 flex justify-between items-center">
+                    <div>
+                      <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Cancelling PO</div>
+                      <div className="text-xl font-black text-rose-900 uppercase tracking-tight">
+                        {activeAction.comp?.poNumber || 'N/A'}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Components</div>
+                      <div className="text-lg font-black text-rose-600">{selectedCompIds.length}</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Affected Components</label>
+                    <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1 custom-scrollbar">
+                      {multiComps.map(({ comp: mc }) => (
+                        <div key={mc.id} className="p-3 bg-white border border-rose-100 rounded-xl flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-xs">
+                            <i className="fa-solid fa-ban"></i>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-black uppercase tracking-tight text-slate-400">{mc.componentNumber}</span>
+                            <span className="text-[11px] font-black uppercase tracking-tight text-slate-700">{mc.description}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
+                    <p className="text-[11px] text-rose-800 font-black leading-relaxed uppercase">
+                      Strategic Rollback: Reverting these components to the RFP stage. A mandatory comment is required for the audit trail.
+                    </p>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-rose-400 uppercase">Reason for Cancellation</label>
+                      <textarea
+                        className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100 placeholder:text-slate-300"
+                        placeholder="e.g. Supplier stock issue, project change, incorrect price..."
+                        rows={3}
+                        value={resetReason} onChange={e => setResetReason(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {(activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK') && (
                 <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
                   <p className="text-sm text-rose-800 font-bold leading-relaxed">
@@ -879,13 +943,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
             <div className="mt-10 flex gap-3">
               <button onClick={closeModal} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">Abort</button>
               <button
-                disabled={isActionLoading != null || ((activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK') && !resetReason.trim()) || (activeAction.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0))}
+                disabled={isActionLoading != null || ((activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0))}
                 onClick={handleExecuteAction}
-                className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
+                className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
                   }`}
               >
                 {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
-                {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : 'Commit Procurement'}
+                {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : activeAction.type === 'CANCEL_PO_BATCH' ? 'Confirm Cancellation' : 'Commit Procurement'}
               </button>
             </div>
           </div>
