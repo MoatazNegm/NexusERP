@@ -175,7 +175,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           for (const rec of pendingResolutions) {
             const choice = resolutionChoices[rec.compId];
             if (choice === 'RECEIVE_TO_STOCK') {
-              await dataService.dispatchAction(order.id, 'receive-component', { itemId: rec.itemId, compId: rec.compId });
+              await dataService.dispatchAction(order.id, 'convert-to-stock-order', { itemId: rec.itemId, compId: rec.compId });
             } else {
               await dataService.cancelComponentPo(order.id, rec.itemId, rec.compId);
             }
@@ -737,8 +737,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                     <button
                       onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'CANCEL_PO' }))}
                       className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${resolutionChoices[rec.compId] === 'CANCEL_PO'
-                          ? 'bg-rose-600 text-white border-rose-600 shadow-lg'
-                          : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'
+                        ? 'bg-rose-600 text-white border-rose-600 shadow-lg'
+                        : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'
                         }`}
                     >
                       <i className="fa-solid fa-ban"></i> Cancel Supplier PO
@@ -746,8 +746,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                     <button
                       onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'RECEIVE_TO_STOCK' }))}
                       className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${resolutionChoices[rec.compId] === 'RECEIVE_TO_STOCK'
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg'
-                          : 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg'
+                        : 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400'
                         }`}
                     >
                       <i className="fa-solid fa-boxes-stacked"></i> Receive to Stock

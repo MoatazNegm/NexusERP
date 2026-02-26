@@ -304,7 +304,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       for (const rec of orderedComponents) {
         const resolution = componentResolutions[rec.compId];
         if (resolution === 'RECEIVE_TO_STOCK') {
-          await dataService.dispatchAction(selectedOrder.id, 'receive-component', { itemId: rec.itemId, compId: rec.compId });
+          await dataService.dispatchAction(selectedOrder.id, 'convert-to-stock-order', { itemId: rec.itemId, compId: rec.compId });
         } else {
           // CANCEL_PO: just update component status to CANCELLED via a PUT on the order
           // We'll update the component's status gracefully by sending a patch

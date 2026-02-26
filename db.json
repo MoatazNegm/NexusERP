@@ -41,17 +41,17 @@
   ],
   "orders": [
     {
-      "id": "orders_1772111230107",
+      "id": "orders_1772114613133",
       "customerName": "Unilever Mashreq for Import and Export (LLC)",
       "customerReferenceNumber": "PO16948286",
       "orderDate": "2025-08-31",
       "paymentSlaDays": 30,
-      "targetDeliveryDays": 40,
-      "targetDeliveryDate": "2025-10-10",
+      "targetDeliveryDays": 0,
+      "targetDeliveryDate": "2026-02-26",
       "items": [
         {
-          "id": "temp_1772111194684_0",
-          "description": "64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "id": "temp_1772114611184_0",
+          "description": "64886429-VASELINE@20% POFF STKR N Material Number: 64886429",
           "quantity": 16000,
           "unit": "Pieces",
           "pricePerUnit": 0.77,
@@ -64,262 +64,100 @@
       ],
       "logs": [
         {
-          "timestamp": "2026-02-26T13:07:10.110Z",
+          "timestamp": "2026-02-26T14:03:33.133Z",
           "message": "Order acquisition recorded",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:07:10.112Z",
+          "timestamp": "2026-02-26T14:03:33.134Z",
           "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:07:21.737Z",
-          "message": "Order modified",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:07:50.697Z",
+          "timestamp": "2026-02-26T14:03:51.414Z",
           "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:07:50.697Z",
+          "timestamp": "2026-02-26T14:03:51.414Z",
           "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:07:53.882Z",
+          "timestamp": "2026-02-26T14:03:55.156Z",
           "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:07:53.882Z",
+          "timestamp": "2026-02-26T14:03:55.156Z",
           "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:07:56.616Z",
+          "timestamp": "2026-02-26T14:03:58.272Z",
           "message": "[SYSTEM] deliveryWarningDays Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:09:58.846Z",
+          "timestamp": "2026-02-26T14:04:10.123Z",
           "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
           "status": "TECHNICAL_REVIEW",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:10:18.823Z",
+          "timestamp": "2026-02-26T14:04:18.120Z",
           "message": "Technical study finalized and pushed to Procurement",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:10:59.204Z",
+          "timestamp": "2026-02-26T14:04:25.705Z",
           "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:11:51.369Z",
+          "timestamp": "2026-02-26T14:04:49.385Z",
           "message": "[AUTO] Margin Protection: Status moved from WAITING_SUPPLIERS to NEGATIVE_MARGIN",
           "status": "NEGATIVE_MARGIN",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:12:13.394Z",
-          "message": "Rollback to Registry: too high price (BoM cleared & stock released)",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:12:16.774Z",
-          "message": "[SYSTEM] Rollback Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:22:36.177Z",
-          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
-          "status": "TECHNICAL_REVIEW",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:28:50.282Z",
-          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "TECHNICAL_REVIEW",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:29:45.604Z",
-          "message": "Technical study finalized and pushed to Procurement",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:30:15.549Z",
-          "message": "Rollback to Registry: try again (BoM cleared & stock released)",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:30:19.553Z",
-          "message": "[SYSTEM] Rollback Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:30:35.912Z",
-          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
-          "status": "TECHNICAL_REVIEW",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:31:00.203Z",
-          "message": "Technical study finalized and pushed to Procurement",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:34:26.214Z",
-          "message": "Rollback to Registry: try again (BoM cleared & stock released)",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:34:29.524Z",
-          "message": "[SYSTEM] Rollback Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:34:47.157Z",
-          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
-          "status": "TECHNICAL_REVIEW",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:34:55.093Z",
-          "message": "Technical study finalized and pushed to Procurement",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:34:58.322Z",
-          "message": "Technical study finalized and pushed to Procurement",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:35:10.244Z",
-          "message": "Technical study finalized and pushed to Procurement",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:35:26.052Z",
-          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:35:58.730Z",
-          "message": "[AUTO] Margin Protection: Status moved from WAITING_SUPPLIERS to NEGATIVE_MARGIN",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:36:57.072Z",
-          "message": "[SYSTEM] Negative Margin Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:37:34.381Z",
-          "message": "Rollback to Registry: fdad (BoM cleared & stock released)",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:37:37.713Z",
-          "message": "[SYSTEM] Rollback Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:38:22.620Z",
-          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
-          "status": "TECHNICAL_REVIEW",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:38:32.888Z",
-          "message": "Technical study finalized and pushed to Procurement",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:38:43.311Z",
-          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:39:29.826Z",
-          "message": "[AUTO] Margin Protection: Status moved from WAITING_SUPPLIERS to NEGATIVE_MARGIN",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:46:09.956Z",
-          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:46:12.824Z",
-          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T13:48:19.268Z",
+          "timestamp": "2026-02-26T14:05:12.616Z",
           "message": "Component Received & Reserved: part 1",
           "status": "NEGATIVE_MARGIN",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:48:19.314Z",
-          "message": "Rollback to Registry: dksldksldk (BoM cleared & stock released)",
+          "timestamp": "2026-02-26T14:05:13.378Z",
+          "message": "Rollback to Registry: efad (BoM cleared & stock released)",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T13:48:22.361Z",
+          "timestamp": "2026-02-26T14:05:16.441Z",
           "message": "[SYSTEM] Rollback Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
-      "dataEntryTimestamp": "2026-02-26T13:07:10.110Z",
+      "dataEntryTimestamp": "2026-02-26T14:03:33.133Z",
       "status": "LOGGED",
       "loggingComplianceViolation": true,
-      "isOverdue": true
+      "isOverdue": false
     }
   ],
   "inventory": [
     {
-      "id": "inv_1772113699268_bylo2",
+      "id": "inv_1772114712614_yj12c",
       "name": "part 1",
       "sku": "CMP-INT-2024-0001-0-1",
       "quantityInStock": 1,
@@ -327,7 +165,7 @@
       "category": "Uncategorized",
       "unit": "Unit",
       "minStockLevel": 0,
-      "lastUpdated": "2026-02-26T13:48:19.268Z"
+      "lastUpdated": "2026-02-26T14:05:12.615Z"
     }
   ],
   "suppliers": [
@@ -524,73 +362,33 @@
   ],
   "notifications": [
     {
-      "id": "nt_1772111270697_c7a1",
-      "journalKey": "delay_orders_1772111230107",
-      "orderId": "orders_1772111230107",
+      "id": "nt_1772114631414_wmy9",
+      "journalKey": "delay_orders_1772114613133",
+      "orderId": "orders_1772114613133",
       "type": "logging_delay",
-      "sentAt": "2026-02-26T13:07:50.697Z",
+      "sentAt": "2026-02-26T14:03:51.414Z",
       "recipients": [
         "erpalerts@quickstor.net",
         "Mohamed.allam@psp-co.org"
       ]
     },
     {
-      "id": "nt_n_1772111273881",
-      "journalKey": "new_order_orders_1772111230107",
-      "orderId": "orders_1772111230107",
+      "id": "nt_n_1772114635156",
+      "journalKey": "new_order_orders_1772114613133",
+      "orderId": "orders_1772114613133",
       "type": "new_order",
-      "sentAt": "2026-02-26T13:07:53.881Z",
+      "sentAt": "2026-02-26T14:03:55.156Z",
       "recipients": [
         "erpalerts@quickstor.net",
         "Mohamed.allam@psp-co.org"
       ]
     },
     {
-      "id": "nt_1772111276616_7zoq",
-      "journalKey": "delivery_passed_orders_1772111230107",
-      "orderId": "orders_1772111230107",
-      "type": "delivery_passed",
-      "sentAt": "2026-02-26T13:07:56.616Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1772112530282_icej",
-      "journalKey": "comp_pendingOfferLimitHrs_orders_1772111230107_temp_1772111194684_0_c_1772112156177_0_0",
-      "orderId": "orders_1772111230107",
-      "type": "comp_pendingOfferLimitHrs",
-      "sentAt": "2026-02-26T13:28:50.282Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1772113017072_5x9o",
-      "journalKey": "margin_orders_1772111230107",
-      "orderId": "orders_1772111230107",
-      "type": "negative_margin",
-      "sentAt": "2026-02-26T13:36:57.072Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1772113569956_od0o",
-      "journalKey": "threshold_pendingOfferLimitHrs_orders_1772111230107",
-      "orderId": "orders_1772111230107",
-      "type": "threshold_pendingOfferLimitHrs",
-      "sentAt": "2026-02-26T13:46:09.956Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1772113572824_t8yx",
-      "journalKey": "comp_orderedLimitHrs_orders_1772111230107_temp_1772111194684_0_c_1772113102619_0_0",
-      "orderId": "orders_1772111230107",
-      "type": "comp_orderedLimitHrs",
-      "sentAt": "2026-02-26T13:46:12.824Z",
+      "id": "nt_1772114638272_x8i5",
+      "journalKey": "delivery_warning_0_orders_1772114613133",
+      "orderId": "orders_1772114613133",
+      "type": "delivery_warning",
+      "sentAt": "2026-02-26T14:03:58.272Z",
       "recipients": [
         "erpalerts@quickstor.net"
       ]

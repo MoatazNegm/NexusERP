@@ -1022,18 +1022,19 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         // Try to find existing inventory item by ID (if linked) or Description/PartNumber
         let invItem = db.inventory.find(i => i.id === comp.inventoryItemId);
         if (!invItem) {
-            invItem = db.inventory.find(i => (i.partNumber && i.partNumber === comp.componentNumber) || (i.name === comp.description));
+            invItem = db.inventory.find(i => (i.sku && i.sku === comp.componentNumber) || (i.description === comp.description));
         }
         if (action === 'RECEIVE') {
             if (!invItem) {
                 invItem = {
                     id: `inv_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-                    name: comp.description,
+                    description: comp.description,
                     sku: comp.componentNumber || `SKU-${Date.now()}`,
                     quantityInStock: 0,
                     quantityReserved: 0,
                     category: 'Uncategorized',
-                    unit: 'Unit',
+                    unit: comp.unit || 'Unit',
+                    lastCost: comp.unitCost || 0,
                     minStockLevel: 0,
                     lastUpdated: new Date().toISOString()
                 };
@@ -1044,15 +1045,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             invItem.quantityInStock = currentStock + (comp.quantity || 0);
             // Migrate legacy
             if (invItem.quantity !== undefined) delete invItem.quantity;
-
-            invItem.quantityReserved = (invItem.quantityReserved || 0) + (comp.quantity || 0);
+            invItem.lastCost = comp.unitCost || invItem.lastCost || 0;
             invItem.lastUpdated = new Date().toISOString();
-            console.log(`[Inventory] Received & Reserved: ${invItem.name}. Qty: ${invItem.quantity}, Rsrv: ${invItem.quantityReserved}`);
+            console.log(`[Inventory] Received: ${invItem.description}. Stock: ${invItem.quantityInStock}, Rsrv: ${invItem.quantityReserved}`);
         } else if (action === 'RELEASE') {
             if (invItem && (invItem.quantityReserved || 0) > 0) {
                 invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - (comp.quantity || 0));
                 invItem.lastUpdated = new Date().toISOString();
-                console.log(`[Inventory] Released Stock: ${invItem.name}. New Rsrv: ${invItem.quantityReserved}`);
+                console.log(`[Inventory] Released Stock: ${invItem.description}. New Rsrv: ${invItem.quantityReserved}`);
             }
         }
     };
@@ -1120,10 +1120,50 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const compToReceive = order.items[itemIdx].components[compIdx];
                 updateInventoryItem(db, compToReceive, 'RECEIVE');
 
-                compToReceive.status = 'RESERVED';
+                compToReceive.status = 'RECEIVED';
                 compToReceive.statusUpdatedAt = new Date().toISOString();
-                order.logs.push(createAuditLog(`Component Received & Reserved: ${compToReceive.description}`, order.status, user));
+                order.logs.push(createAuditLog(`Component Received to Stock: ${compToReceive.description}`, order.status, user));
                 break;
+
+            case 'convert-to-stock-order': {
+                // Detach a component from this PO and create/update an inventory entry awaiting delivery
+                const ctsItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (ctsItemIdx === -1) throw new Error("Item not found");
+                const ctsCompIdx = order.items[ctsItemIdx].components?.findIndex(c => c.id === payload.compId);
+                if (ctsCompIdx === -1) throw new Error("Component not found");
+
+                const ctsComp = order.items[ctsItemIdx].components[ctsCompIdx];
+
+                // Create or find matching inventory item - do NOT add quantity to stock yet
+                if (!db.inventory) db.inventory = [];
+                let stockItem = db.inventory.find(i => (i.sku && i.sku === ctsComp.componentNumber) || (i.description === ctsComp.description));
+                if (!stockItem) {
+                    stockItem = {
+                        id: `inv_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                        description: ctsComp.description,
+                        sku: ctsComp.componentNumber || `SKU-${Date.now()}`,
+                        quantityInStock: 0,
+                        quantityReserved: 0,
+                        quantityOnOrder: ctsComp.quantity,
+                        category: 'Uncategorized',
+                        unit: ctsComp.unit || 'Unit',
+                        lastCost: ctsComp.unitCost || 0,
+                        minStockLevel: 0,
+                        lastUpdated: new Date().toISOString()
+                    };
+                    db.inventory.push(stockItem);
+                } else {
+                    stockItem.quantityOnOrder = (stockItem.quantityOnOrder || 0) + ctsComp.quantity;
+                    stockItem.lastUpdated = new Date().toISOString();
+                }
+
+                // Mark the component as converted to stock order
+                ctsComp.status = 'ORDERED_FOR_STOCK';
+                ctsComp.inventoryItemId = stockItem.id;
+                ctsComp.statusUpdatedAt = new Date().toISOString();
+                order.logs.push(createAuditLog(`Component "${ctsComp.description}" converted to stock order (PO: ${ctsComp.poNumber || 'N/A'}) — awaiting supplier delivery`, order.status, user));
+                break;
+            }
 
             case 'cancel-payment':
                 if (!order.payments || !order.payments[payload.index]) throw new Error("Payment index not found");
