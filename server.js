@@ -129,12 +129,62 @@ const writeDb = (data) => {
 // --- HELPERS ---
 const hashPassword = (pass) => crypto.createHash('sha256').update(pass).digest('hex');
 
+// --- AES-256-CBC CIPHER FOR SENSITIVE SETTINGS ---
+const CIPHER_KEY = crypto.createHash('sha256').update(FACTORY_PASS).digest(); // 32 bytes
+const CIPHER_PREFIX = 'ENC:';
+
+const encryptValue = (plainText) => {
+    if (!plainText || plainText.startsWith(CIPHER_PREFIX)) return plainText; // Already encrypted or empty
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', CIPHER_KEY, iv);
+    let encrypted = cipher.update(plainText, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    return CIPHER_PREFIX + iv.toString('hex') + ':' + encrypted;
+};
+
+const decryptValue = (encText) => {
+    if (!encText || !encText.startsWith(CIPHER_PREFIX)) return encText; // Not encrypted
+    try {
+        const raw = encText.slice(CIPHER_PREFIX.length);
+        const [ivHex, encrypted] = raw.split(':');
+        const iv = Buffer.from(ivHex, 'hex');
+        const decipher = crypto.createDecipheriv('aes-256-cbc', CIPHER_KEY, iv);
+        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (e) {
+        console.error('[Cipher] Decryption failed, returning raw value');
+        return encText;
+    }
+};
+
+// Paths within a settings object that contain sensitive values
+const SENSITIVE_PATHS = [
+    ['geminiConfig', 'apiKey'],
+    ['openaiConfig', 'apiKey'],
+    ['emailConfig', 'password']
+];
+
+const transformSensitiveFields = (settings, fn) => {
+    if (!settings) return settings;
+    const copy = JSON.parse(JSON.stringify(settings));
+    SENSITIVE_PATHS.forEach(([parent, key]) => {
+        if (copy[parent] && copy[parent][key]) {
+            copy[parent][key] = fn(copy[parent][key]);
+        }
+    });
+    return copy;
+};
+
+const encryptSettings = (settings) => transformSensitiveFields(settings, encryptValue);
+const decryptSettings = (settings) => transformSensitiveFields(settings, decryptValue);
+
 const resolveSettings = (db) => {
     const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
         ? db.settings[0]
         : (db.settings || {});
 
-    return {
+    const merged = {
         loggingDelayThresholdDays: 1,
         enableNewOrderAlerts: true,
         newOrderAlertGroupIds: [],
@@ -167,6 +217,9 @@ const resolveSettings = (db) => {
         },
         ...dbSettings
     };
+
+    // Decrypt sensitive fields for internal use
+    return decryptSettings(merged);
 };
 
 const getRecipients = (groupIds, db) => {
@@ -848,6 +901,11 @@ const getCollection = (col) => (req, res) => {
         return res.json((db[col] || []).map(o => calculateOrderHealth(o, settings)));
     }
 
+    // Decrypt sensitive settings before sending to frontend
+    if (col === 'settings') {
+        return res.json((db[col] || []).map(s => decryptSettings(s)));
+    }
+
     res.json(db[col] || []);
 };
 
@@ -914,6 +972,11 @@ const updateInCollection = (col) => (req, res) => {
     let updated = { ...oldItem, ...req.body };
 
     if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
+
+    // Encrypt sensitive settings before storing
+    if (col === 'settings') {
+        updated = encryptSettings(updated);
+    }
 
     if (col === 'orders') {
         updated = processedOrderInternal(updated, db, user, false, oldItem);
@@ -1368,7 +1431,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
     }
 });
 
-app.get('/api/v1/backup', (req, res) => res.json(readDb()));
+app.get('/api/v1/backup', (req, res) => {
+    const db = readDb();
+    // Decrypt settings for export so the backup contains usable data
+    if (db.settings && Array.isArray(db.settings)) {
+        db.settings = db.settings.map(s => decryptSettings(s));
+    }
+    res.json(db);
+});
 
 app.get('/api/v1/full-backup', (req, res) => {
     try {
@@ -1403,6 +1473,11 @@ app.post('/api/v1/restore', (req, res) => {
 
     if (missing.length > 0) {
         return res.status(400).json({ error: `Restore failed: Missing collections: [${missing.join(', ')}]` });
+    }
+
+    // Encrypt sensitive settings on restore (in case backup had plain-text keys)
+    if (data.settings && Array.isArray(data.settings)) {
+        data.settings = data.settings.map(s => encryptSettings(s));
     }
 
     if (writeDb(data)) {
