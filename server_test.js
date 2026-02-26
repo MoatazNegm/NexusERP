@@ -649,6 +649,30 @@ const runThresholdAudit = async () => {
             }
         }
 
+        // A6. Delivery Deadline Check
+        if (settings.enableDeliveryAlerts && order.targetDeliveryDate && ![OrderStatus.DELIVERED, OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(order.status)) {
+            const warningDays = settings.deliveryWarningDays ?? 5;
+            const targetTime = new Date(order.targetDeliveryDate).getTime();
+
+            // Use current date but midnight to be fair on day comparison
+            const now = new Date();
+            now.setUTCHours(0, 0, 0, 0);
+
+            const diffDays = Math.ceil((targetTime - now.getTime()) / (1000 * 60 * 60 * 24));
+
+            if (diffDays < 0) {
+                // Deadline Passed
+                await sendAlertForOrder(order, `delivery_passed_${order.id}`, 'delivery_passed', 'deliveryWarningDays', // reuse warning limit config key for groups
+                    `[NEXUS] Delivery Deadline Passed: ${order.internalOrderNumber}`,
+                    `Order ${order.internalOrderNumber} has passed its target delivery date of ${order.targetDeliveryDate}. It is currently ${Math.abs(diffDays)} days overdue.`);
+            } else if (diffDays <= warningDays) {
+                // Approaching Deadline
+                await sendAlertForOrder(order, `delivery_warning_${diffDays}_${order.id}`, 'delivery_warning', 'deliveryWarningDays',
+                    `[NEXUS] Delivery Deadline Approaching: ${order.internalOrderNumber}`,
+                    `Order ${order.internalOrderNumber} is approaching its target delivery date of ${order.targetDeliveryDate}. It is due in ${diffDays} days.`);
+            }
+        }
+
         // B. DYNAMIC: Order-level time-in-status threshold checks
         const thresholdKey = STATUS_TO_THRESHOLD[order.status];
         if (thresholdKey) {

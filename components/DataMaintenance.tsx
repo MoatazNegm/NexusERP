@@ -300,6 +300,14 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     updateSetting('settings', 'rollbackAlertGroupIds', updated);
   };
 
+  const toggleDeliveryGroup = (groupId: string) => {
+    const current = config.settings.deliveryAlertGroupIds || [];
+    const updated = current.includes(groupId)
+      ? current.filter(id => id !== groupId)
+      : [...current, groupId];
+    updateSetting('settings', 'deliveryAlertGroupIds', updated);
+  };
+
   const [activeTooltip, setActiveTooltip] = React.useState<string | null>(null);
 
   const ThresholdInput = ({ label, configKey, helpText }: { label: string, configKey: keyof AppConfig['settings'], helpText?: string }) => {
@@ -865,6 +873,35 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     </button>
                   </div>
                 </div>
+
+                <div className="p-6 bg-amber-50/50 rounded-3xl border border-amber-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-black text-amber-900 uppercase">Delivery Deadline Alerts</h4>
+                    <p className="text-[10px] text-amber-700 font-medium">Notify specific groups when an order approaches or passes its defined Target Delivery Date.</p>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="flex flex-wrap gap-1 max-w-xs">
+                      {groups.map(g => (
+                        <button
+                          key={g.id}
+                          onClick={() => toggleDeliveryGroup(g.id)}
+                          className={`px-3 py-1.5 rounded-xl text-[8px] font-black uppercase transition-all border ${config.settings.deliveryAlertGroupIds?.includes(g.id)
+                            ? 'bg-amber-600 border-amber-600 text-white shadow-md'
+                            : 'bg-white border-amber-200 text-amber-400 hover:border-amber-300'
+                            }`}
+                        >
+                          {g.name}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => updateSetting('settings', 'enableDeliveryAlerts', !config.settings.enableDeliveryAlerts)}
+                      className={`relative w-14 h-8 rounded-full transition-colors duration-300 ${config.settings.enableDeliveryAlerts ? 'bg-amber-600' : 'bg-slate-300'}`}
+                    >
+                      <div className={`absolute top-1.5 w-5 h-5 bg-white rounded-full transition-all duration-300 ${config.settings.enableDeliveryAlerts ? 'left-8 shadow-sm' : 'left-1'}`}></div>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-6">
@@ -872,10 +909,12 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   <i className="fa-solid fa-shield-halved text-blue-500"></i>
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Global Compliance & Audit</h3>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <ThresholdInput label="Delivery Warning (Days)" configKey="deliveryWarningDays" helpText="Orders ending within this many days of the Target Delivery Date trigger a Warning state / notification. Past this limit triggers a Deadline Passed alert." />
                   <ThresholdInput label="Min Margin %" configKey="minimumMarginPct" helpText="Orders with margin % below this value will be flagged as NEGATIVE_MARGIN and an alert will be sent to the assigned groups." />
                   <ThresholdInput label="Logging Delay Threshold (Days)" configKey="loggingDelayThresholdDays" helpText="If the gap between PO date and the data entry date exceeds this many days, a compliance violation alert is triggered." />
                   <ThresholdInput label="Default Payment SLA (d)" configKey="defaultPaymentSlaDays" helpText="Days after invoicing/delivery before a payment overdue alert is sent. Per-order SLA overrides this default." />
+                  <ThresholdInput label="Gov. E-Invoice SLA (h)" configKey="govEInvoiceLimitHrs" helpText="Max hours after a Gov. E-Invoice is requested before it is flagged as overdue." />
                 </div>
               </div>
 

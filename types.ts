@@ -177,6 +177,10 @@ export interface CustomerOrder {
   };
   loggingComplianceViolation?: boolean;
   isOverdue?: boolean;
+  einvoiceRequested?: boolean;
+  einvoiceFile?: string;
+  targetDeliveryDays?: number;
+  targetDeliveryDate?: string;
 }
 
 export interface OpenAIConfig {
@@ -236,6 +240,7 @@ export interface AppConfig {
     invoicedLimitHrs: number;
     hubReleasedLimitHrs: number;
     deliveryLimitHrs: number;
+    govEInvoiceLimitHrs: number;
     deliveredLimitHrs: number;
     defaultPaymentSlaDays: number;
     minimumMarginPct: number;
@@ -245,6 +250,9 @@ export interface AppConfig {
     newOrderAlertGroupIds: string[];
     enableRollbackAlerts: boolean;
     rollbackAlertGroupIds: string[];
+    enableDeliveryAlerts: boolean;
+    deliveryAlertGroupIds: string[];
+    deliveryWarningDays: number;
     chartConfig?: {
       theme: 'neutral' | 'dark' | 'forest' | 'base';
       primaryColor?: string; // Hex code for main elements

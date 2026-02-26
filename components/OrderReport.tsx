@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig } from '../types';
-import { STATUS_CONFIG } from '../constants';
+import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { OrderDetailsModal } from './OrderDetailsModal';
 
 interface OrderReportProps {
@@ -246,9 +246,9 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex flex-col gap-1">
-                    <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border bg-${STATUS_CONFIG[order.status].color}-50 text-${STATUS_CONFIG[order.status].color}-600 border-${STATUS_CONFIG[order.status].color}-100 flex items-center gap-1.5 w-fit`}>
-                      <i className={`fa-solid ${STATUS_CONFIG[order.status].icon} text-[8px]`}></i>
-                      {STATUS_CONFIG[order.status].label}
+                    <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border bg-${getDynamicOrderStatusStyle(order, config).color}-50 text-${getDynamicOrderStatusStyle(order, config).color}-600 border-${getDynamicOrderStatusStyle(order, config).color}-100 flex items-center gap-1.5 w-fit`}>
+                      <i className={`fa-solid ${getDynamicOrderStatusStyle(order, config).icon} text-[8px]`}></i>
+                      {getDynamicOrderStatusStyle(order, config).label}
                     </span>
                     <ThresholdTimer order={order} config={config} />
                   </div>
@@ -273,6 +273,7 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
         <OrderDetailsModal
           order={selectedOrder}
           onClose={() => setSelectedOrder(null)}
+          config={config}
         />
       )}
     </div>

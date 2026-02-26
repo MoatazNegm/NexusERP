@@ -33,6 +33,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [customerReferenceNumber, setCustomerReferenceNumber] = useState('');
   const [orderDate, setOrderDate] = useState(today);
   const [paymentSlaDays, setPaymentSlaDays] = useState(config.settings.defaultPaymentSlaDays);
+  const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
+  const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(0);
+  const [targetDeliveryDate, setTargetDeliveryDate] = useState(today);
   const [items, setItems] = useState<ItemWithTaxStatus[]>([
     { id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, isAccepted: false, taxDetected: true }
   ]);
@@ -110,6 +113,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCustomerReferenceNumber(match.customerReferenceNumber || match.internalOrderNumber);
     setOrderDate(match.orderDate);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
+    setTargetDeliveryDays(match.targetDeliveryDays || 0);
+    setTargetDeliveryDate(match.targetDeliveryDate || match.orderDate);
     setItems(match.items.map(it => ({ ...it, taxDetected: true })));
     setEditingOrderId(match.id);
     setActiveTab('new');
@@ -269,6 +274,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const resetForm = () => {
     setCustomerName(''); setCustomerReferenceNumber(''); setOrderDate(today);
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
+    setTargetDeliveryDays(0);
+    setTargetDeliveryDate(today);
     setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true, logs: [] }]);
     setEditingOrderId(null); setMessage(null); setIsNewCustomerCreated(false);
   };
@@ -295,6 +302,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           customerReferenceNumber,
           orderDate,
           paymentSlaDays,
+          targetDeliveryDays: Number(targetDeliveryDays) || 0,
+          targetDeliveryDate,
           items: items as any
         });
         setMessage({ type: 'success', text: 'Acquisition committed.' });
@@ -486,7 +495,20 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         : 'bg-slate-50 border-slate-100 focus:bg-white focus:border-blue-500'
                         }`}
                       value={orderDate}
-                      onChange={e => setOrderDate(e.target.value)}
+                      onChange={e => {
+                        const newPoDate = e.target.value;
+                        setOrderDate(newPoDate);
+                        if (deliveryInputMode === 'days') {
+                          const d = new Date(newPoDate);
+                          d.setDate(d.getDate() + (Number(targetDeliveryDays) || 0));
+                          setTargetDeliveryDate(d.toISOString().split('T')[0]);
+                        } else {
+                          const start = new Date(newPoDate);
+                          const end = new Date(targetDeliveryDate);
+                          const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                          setTargetDeliveryDays(diff);
+                        }
+                      }}
                       required
                     />
                     {new Date(orderDate) > new Date(new Date().toISOString().split('T')[0]) && (
@@ -506,6 +528,60 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       onChange={e => setPaymentSlaDays(parseInt(e.target.value) || 0)}
                       required
                     />
+                  </div>
+
+                  <div className="space-y-2 col-span-1 md:col-span-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between">
+                      <span>Target Delivery</span>
+                      <div className="flex bg-slate-200 rounded-lg p-0.5 gap-1">
+                        <button type="button" onClick={() => setDeliveryInputMode('days')} className={`px-2 py-0.5 rounded-md text-[8px] transition-all ${deliveryInputMode === 'days' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>DAYS</button>
+                        <button type="button" onClick={() => setDeliveryInputMode('date')} className={`px-2 py-0.5 rounded-md text-[8px] transition-all ${deliveryInputMode === 'date' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>DATE</button>
+                      </div>
+                    </label>
+
+                    {deliveryInputMode === 'days' ? (
+                      <div className="relative">
+                        <input
+                          disabled={editStatus.isFrozen}
+                          type="number"
+                          className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner pr-16"
+                          value={targetDeliveryDays}
+                          onChange={e => {
+                            const val = e.target.value === '' ? '' : parseInt(e.target.value);
+                            setTargetDeliveryDays(val);
+                            if (val !== '' && orderDate) {
+                              const d = new Date(orderDate);
+                              d.setDate(d.getDate() + val);
+                              setTargetDeliveryDate(d.toISOString().split('T')[0]);
+                            }
+                          }}
+                        />
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-300 uppercase">Days</div>
+                      </div>
+                    ) : (
+                      <input
+                        disabled={editStatus.isFrozen}
+                        type="date"
+                        className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                        value={targetDeliveryDate}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setTargetDeliveryDate(val);
+                          if (val && orderDate) {
+                            const start = new Date(orderDate);
+                            const end = new Date(val);
+                            const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                            setTargetDeliveryDays(diff);
+                          }
+                        }}
+                      />
+                    )}
+
+                    <div className="px-2 pt-1 flex justify-between items-center opacity-60">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase">
+                        {deliveryInputMode === 'days' ? `Scheduled: ${targetDeliveryDate}` : `Calculated: ${targetDeliveryDays} Days`}
+                      </span>
+                    </div>
                   </div>
                 </div>
 

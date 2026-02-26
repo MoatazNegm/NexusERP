@@ -175,13 +175,27 @@
           "message": "[SYSTEM] Hub Processing Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "IN_PRODUCT_HUB",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-02-24T18:33:42.165Z",
+          "message": "Gov. E-Invoice requested",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-24T18:34:03.621Z",
+          "message": "Gov. E-Invoice Attached: uploads/einvoices/einvoice-1771958043468-316968893.pdf",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
       "dataEntryTimestamp": "2026-02-15T09:13:29.651Z",
       "status": "IN_PRODUCT_HUB",
       "loggingComplianceViolation": false,
-      "isOverdue": false
+      "isOverdue": false,
+      "einvoiceRequested": true,
+      "einvoiceFile": "uploads/einvoices/einvoice-1771958043468-316968893.pdf"
     },
     {
       "id": "orders_1771147303289",
@@ -1526,6 +1540,9 @@
         ],
         "deliveredLimitHrs": [
           "userGroups_1770925213983"
+        ],
+        "deliveryWarningDays": [
+          "userGroups_1770925213983"
         ]
       },
       "loggingDelayThresholdDays": 1,
@@ -1626,7 +1643,13 @@
         "primaryColor": "#817536",
         "textColor": "#1060e0",
         "backgroundColor": "#363030"
-      }
+      },
+      "govEInvoiceLimitHrs": 3,
+      "enableDeliveryAlerts": true,
+      "deliveryAlertGroupIds": [
+        "userGroups_1770925213983"
+      ],
+      "deliveryWarningDays": 5
     }
   ],
   "modules": [

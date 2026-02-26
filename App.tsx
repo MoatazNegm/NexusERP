@@ -11,6 +11,7 @@ import { ModuleGate } from './components/ModuleGate';
 import { DashboardCard } from './components/DashboardCard';
 import { OrderDetailsModal } from './components/OrderDetailsModal';
 import { FinanceModule } from './components/FinanceModule';
+import { GovEInvoiceModule } from './components/GovEInvoiceModule';
 import { FactoryModule } from './components/FactoryModule';
 import { CRMModule } from './components/CRMModule';
 import { DataMaintenance } from './components/DataMaintenance';
@@ -334,6 +335,7 @@ const App: React.FC = () => {
       case 'crm': return <CRMModule refreshKey={refreshKey} currentUser={currentUser} />;
       case 'reporting': return <ProfitabilityReport orders={orders} config={config} />;
       case 'systemLogs': return <SystemLogs refreshKey={refreshKey} />;
+      case 'govEInvoice': return <GovEInvoiceModule refreshKey={refreshKey} currentUser={currentUser} />;
       case 'settings': return <DataMaintenance config={config} onConfigUpdate={setConfig} onRefresh={() => setRefreshKey(p => p + 1)} currentUser={currentUser} isAdmin={hasRole('admin')} />;
       default: return null;
     }
@@ -500,5 +502,5 @@ const App: React.FC = () => {
   );
 };
 
-export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs';
+export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice';
 export default App;

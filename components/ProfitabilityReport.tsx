@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { CustomerOrder, AppConfig, OrderStatus } from '../types';
-import { STATUS_CONFIG } from '../constants';
+import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 
 interface ProfitabilityReportProps {
   orders: CustomerOrder[];
@@ -40,7 +40,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       const marginAmt = revenue - cost;
       const marginPctOnSales = revenue > 0 ? (marginAmt / revenue) * 100 : 0;
       const markupPct = cost > 0 ? (marginAmt / cost) * 100 : (revenue > 0 ? 100 : 0);
-      
+
       const isBelowThreshold = markupPct < config.settings.minimumMarginPct;
 
       return {
@@ -54,7 +54,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
         marginPctOnSales,
         markupPct,
         hasPendingCosts,
-        isBelowThreshold
+        isBelowThreshold,
+        _originalOrder: order
       };
     });
   };
@@ -112,7 +113,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
         </div>
         <div className="flex gap-2">
           {isPrintPreview ? (
-            <button 
+            <button
               type="button"
               onClick={() => togglePrintMode(false)}
               className="px-6 py-2.5 bg-slate-100 text-slate-600 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-slate-200 shadow-sm transition-all flex items-center gap-2"
@@ -121,7 +122,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
               Exit Print Preview
             </button>
           ) : (
-            <button 
+            <button
               type="button"
               onClick={() => togglePrintMode(true)}
               className="px-6 py-2.5 bg-slate-900 text-white font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-black shadow-xl transition-all flex items-center gap-2"
@@ -134,18 +135,18 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 no-print">
-         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Portfolio Gross Value</div>
-            <div className="text-2xl font-black text-slate-800">{globalTotals.revenue.toLocaleString()} <span className="text-xs font-bold opacity-30">L.E.</span></div>
-         </div>
-         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Realized & Projected Margin</div>
-            <div className="text-2xl font-black text-emerald-600">+{globalTotals.margin.toLocaleString()} <span className="text-xs font-bold opacity-30 text-slate-400">L.E.</span></div>
-         </div>
-         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Average Portfolio Yield</div>
-            <div className="text-2xl font-black text-blue-600">{globalTotals.revenue > 0 ? ((globalTotals.margin / globalTotals.revenue) * 100).toFixed(2) : '0.00'}%</div>
-         </div>
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Portfolio Gross Value</div>
+          <div className="text-2xl font-black text-slate-800">{globalTotals.revenue.toLocaleString()} <span className="text-xs font-bold opacity-30">L.E.</span></div>
+        </div>
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Realized & Projected Margin</div>
+          <div className="text-2xl font-black text-emerald-600">+{globalTotals.margin.toLocaleString()} <span className="text-xs font-bold opacity-30 text-slate-400">L.E.</span></div>
+        </div>
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Average Portfolio Yield</div>
+          <div className="text-2xl font-black text-blue-600">{globalTotals.revenue > 0 ? ((globalTotals.margin / globalTotals.revenue) * 100).toFixed(2) : '0.00'}%</div>
+        </div>
       </div>
 
       {isPrintPreview && (
@@ -176,12 +177,12 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       {/* ACTIVE PO SECTION */}
       <div className="space-y-4">
         <div className="flex items-center gap-3 px-2">
-           <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs shadow-lg shadow-blue-100">
-             <i className="fa-solid fa-chart-line"></i>
-           </div>
-           <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">Active Pipeline (Projected Margins)</h4>
+          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs shadow-lg shadow-blue-100">
+            <i className="fa-solid fa-chart-line"></i>
+          </div>
+          <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">Active Pipeline (Projected Margins)</h4>
         </div>
-        
+
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden print-card">
           <table className="w-full text-left text-sm border-collapse">
             <thead className="bg-slate-50 print-bg-fix text-[9px] font-black uppercase text-slate-400 tracking-widest border-b">
@@ -224,9 +225,9 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                     </div>
                   </td>
                   <td className="px-4 py-4 text-right no-print">
-                     <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border bg-${STATUS_CONFIG[data.status].color}-50 text-${STATUS_CONFIG[data.status].color}-600 border-${STATUS_CONFIG[data.status].color}-100`}>
-                       {STATUS_CONFIG[data.status].label}
-                     </span>
+                    <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border bg-${getDynamicOrderStatusStyle(data._originalOrder as CustomerOrder, config).color}-50 text-${getDynamicOrderStatusStyle(data._originalOrder as CustomerOrder, config).color}-600 border-${getDynamicOrderStatusStyle(data._originalOrder as CustomerOrder, config).color}-100`}>
+                      {getDynamicOrderStatusStyle(data._originalOrder as CustomerOrder, config).label}
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -256,10 +257,10 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       {/* FULFILLED PO SECTION */}
       <div className="space-y-4 page-break">
         <div className="flex items-center gap-3 px-2">
-           <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs shadow-lg shadow-emerald-100">
-             <i className="fa-solid fa-circle-check"></i>
-           </div>
-           <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">Realized Performance (Fulfilled Archive)</h4>
+          <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs shadow-lg shadow-emerald-100">
+            <i className="fa-solid fa-circle-check"></i>
+          </div>
+          <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">Realized Performance (Fulfilled Archive)</h4>
         </div>
 
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden print-card">
@@ -297,9 +298,9 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                     </div>
                   </td>
                   <td className="px-4 py-4 text-right no-print">
-                     <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded border bg-emerald-50 text-emerald-600 border-emerald-100">
-                       FULFILLED
-                     </span>
+                    <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded border bg-emerald-50 text-emerald-600 border-emerald-100">
+                      FULFILLED
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -329,13 +330,13 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100 no-print">
         <div className="flex gap-4">
           <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-             <i className="fa-solid fa-circle-info"></i>
+            <i className="fa-solid fa-circle-info"></i>
           </div>
           <div className="space-y-1">
-             <h4 className="text-xs font-black text-blue-900 uppercase">Calculation Methodology</h4>
-             <p className="text-[11px] text-blue-800 leading-relaxed font-medium">
-               Markup % is calculated as (Revenue - Cost) / Cost. Fulfilled POs represent completed commercial cycles where full revenue has been recognized and all costs are final.
-             </p>
+            <h4 className="text-xs font-black text-blue-900 uppercase">Calculation Methodology</h4>
+            <p className="text-[11px] text-blue-800 leading-relaxed font-medium">
+              Markup % is calculated as (Revenue - Cost) / Cost. Fulfilled POs represent completed commercial cycles where full revenue has been recognized and all costs are final.
+            </p>
           </div>
         </div>
       </div>

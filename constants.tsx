@@ -31,12 +31,17 @@ export const INITIAL_CONFIG: AppConfig = {
     companyName: 'شراكه خدمات التعبئه',
     companyAddress: 'شارع المصانع أوسيم',
     companyLogo: '',
-    orderEditTimeLimitHrs: 1, technicalReviewLimitHrs: 2, pendingOfferLimitHrs: 2, rfpSentLimitHrs: 24, awardedLimitHrs: 8, issuePoLimitHrs: 1, orderedLimitHrs: 72, waitingFactoryLimitHrs: 5, mfgFinishLimitHrs: 1, transitToHubLimitHrs: 2, productHubLimitHrs: 24, invoicedLimitHrs: 1, hubReleasedLimitHrs: 1, deliveryLimitHrs: 3, deliveredLimitHrs: 1080, defaultPaymentSlaDays: 30, minimumMarginPct: 15, loggingDelayThresholdDays: 1,
-    thresholdNotifications: {},
+    orderEditTimeLimitHrs: 1, technicalReviewLimitHrs: 2, pendingOfferLimitHrs: 2, rfpSentLimitHrs: 24, awardedLimitHrs: 8, issuePoLimitHrs: 1, orderedLimitHrs: 72, waitingFactoryLimitHrs: 5, mfgFinishLimitHrs: 1, transitToHubLimitHrs: 2, productHubLimitHrs: 24, invoicedLimitHrs: 1, hubReleasedLimitHrs: 1, deliveryLimitHrs: 3, govEInvoiceLimitHrs: 3, deliveredLimitHrs: 1080, defaultPaymentSlaDays: 30, minimumMarginPct: 15, loggingDelayThresholdDays: 1,
+    thresholdNotifications: {
+      govEInvoiceLimitHrs: ['finance']
+    },
     enableNewOrderAlerts: true,
     newOrderAlertGroupIds: [],
     enableRollbackAlerts: true,
     rollbackAlertGroupIds: [],
+    enableDeliveryAlerts: false,
+    deliveryAlertGroupIds: [],
+    deliveryWarningDays: 5,
     availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice'],
     roleMappings: {
       dashboard: ['management'],
@@ -106,6 +111,27 @@ export const STATUS_CONFIG: Record<OrderStatus, { label: string, color: string, 
   [OrderStatus.DELIVERED]: { label: 'Delivered', color: 'rose', icon: 'fa-handshake' },
   [OrderStatus.PARTIAL_PAYMENT]: { label: 'Partial Payment', color: 'yellow', icon: 'fa-money-bill-transfer' },
   [OrderStatus.FULFILLED]: { label: 'Fulfilled', color: 'green', icon: 'fa-circle-check' }
+};
+
+export const getDynamicOrderStatusStyle = (order: CustomerOrder, config: AppConfig): { label: string, color: string, icon: string } => {
+  const base = STATUS_CONFIG[order.status || OrderStatus.LOGGED];
+  if (!order.targetDeliveryDate || !base) return base || STATUS_CONFIG[OrderStatus.LOGGED];
+  if (order.status === OrderStatus.FULFILLED || order.status === OrderStatus.REJECTED || order.status === OrderStatus.DELIVERED) return base;
+
+  const warningDays = config.settings.deliveryWarningDays ?? 5;
+  const targetTime = new Date(order.targetDeliveryDate).getTime();
+
+  // Use current date but midnight to be fair on day comparison
+  const now = new Date();
+  now.setUTCHours(0, 0, 0, 0);
+  const diffDays = Math.ceil((targetTime - now.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0) {
+    return { ...base, color: 'rose' }; // Deadline Passed
+  } else if (diffDays <= warningDays) {
+    return { ...base, color: 'amber' }; // Approaching Deadline
+  }
+  return base;
 };
 
 // --- DATA GENERATION UTILS ---

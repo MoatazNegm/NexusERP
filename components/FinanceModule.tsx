@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User } from '../types';
-import { STATUS_CONFIG } from '../constants';
+import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 
 interface FinanceModuleProps {
   config: AppConfig;
@@ -384,8 +384,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                     <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">Target: {config.settings.minimumMarginPct}%</div>
                   </td>
                   <td className="px-8 py-6">
-                    <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${STATUS_CONFIG[o.status].color}-50 text-${STATUS_CONFIG[o.status].color}-600 border-${STATUS_CONFIG[o.status].color}-100`}>
-                      {STATUS_CONFIG[o.status].label}
+                    <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
+                      {getDynamicOrderStatusStyle(o, config).label}
                     </div>
                     <ThresholdSentinel order={o} config={config} />
                   </td>
@@ -423,6 +423,25 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                         <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Collect Payment</button>
                       )}
                       <div className="flex gap-1">
+                        {!o.einvoiceRequested && (
+                          <button
+                            onClick={async () => {
+                              if (window.confirm(`Request official Gov. E-Invoice for ${o.internalOrderNumber}?`)) {
+                                await dataService.requestEInvoice(o.id);
+                                fetchData();
+                              }
+                            }}
+                            className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
+                            title="Request Gov. E-Invoice"
+                          >
+                            <i className="fa-solid fa-file-invoice mr-1"></i> Gov. E-Invoice
+                          </button>
+                        )}
+                        {o.einvoiceRequested && !o.einvoiceFile && (
+                          <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center">
+                            <i className="fa-solid fa-clock mr-1"></i> E-Invoice Pending
+                          </span>
+                        )}
                         <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-2 text-slate-300 hover:text-amber-500 transition-colors" title="Toggle Hold"><i className="fa-solid fa-hand"></i></button>
                         <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-2 text-slate-300 hover:text-rose-500 transition-colors" title="Reject Order"><i className="fa-solid fa-ban"></i></button>
                       </div>

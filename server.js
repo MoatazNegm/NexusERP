@@ -17,12 +17,10 @@ const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
 
 // --- MULTER CONFIG ---
-const storage = multer.diskStorage({
+const podStorage = multer.diskStorage({
     destination: function (req, file, cb) {
         const dir = path.join(__dirname, 'uploads', 'pod');
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
     },
     filename: function (req, file, cb) {
@@ -30,7 +28,20 @@ const storage = multer.diskStorage({
         cb(null, 'pod-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
-const upload = multer({ storage: storage });
+const uploadPod = multer({ storage: podStorage });
+
+const einvoiceStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const dir = path.join(__dirname, 'uploads', 'einvoices');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'einvoice-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const uploadEInvoice = multer({ storage: einvoiceStorage });
 
 const OrderStatus = {
     LOGGED: 'LOGGED',
@@ -536,6 +547,7 @@ const THRESHOLD_LABELS = {
     invoicedLimitHrs: 'Invoice Generation',
     hubReleasedLimitHrs: 'Hub Release Sync',
     deliveryLimitHrs: 'Delivery Transit',
+    govEInvoiceLimitHrs: 'Gov. E-Invoice Request',
     deliveredLimitHrs: 'Post-Delivery Archiving',
     loggingDelayThresholdDays: 'Logging Delay (Compliance)',
     minimumMarginPct: 'Negative Margin',
@@ -593,6 +605,20 @@ const runThresholdAudit = async () => {
     // --- Process each order ---
     for (const order of orders) {
         if (order.status === 'FULFILLED' || order.status === 'REJECTED') continue;
+
+        // A0. Gov. E-Invoice SLA (3-hr threshold)
+        if (order.einvoiceRequested && !order.einvoiceFile) {
+            const limitHrs = settings.govEInvoiceLimitHrs || 3;
+            const requestLog = [...(order.logs || [])].reverse().find(l => l.message === 'Gov. E-Invoice requested');
+            if (requestLog) {
+                const elapsedHrs = (Date.now() - new Date(requestLog.timestamp).getTime()) / (1000 * 60 * 60);
+                if (elapsedHrs > limitHrs) {
+                    await sendAlertForOrder(order, `einvoice_sla_${order.id}`, 'einvoice_sla', 'govEInvoiceLimitHrs',
+                        `[NEXUS] E-Invoice SLA Overdue: ${order.internalOrderNumber}`,
+                        `Order ${order.internalOrderNumber} has a pending Gov. E-Invoice request for ${elapsedHrs.toFixed(1)} hours, exceeding the ${limitHrs}h threshold.`);
+                }
+            }
+        }
 
         // A1. Logging Delay (PO date vs data entry date, in days) - Only for LOGGED orders
         if (order.status === OrderStatus.LOGGED) {
@@ -672,6 +698,30 @@ const runThresholdAudit = async () => {
                         `[NEXUS] Payment Overdue: ${order.internalOrderNumber}`,
                         `Order ${order.internalOrderNumber} is ${daysSince.toFixed(0)} days since invoice, exceeding the SLA of ${slaDays} days.`);
                 }
+            }
+        }
+
+        // A6. Delivery Deadline Check
+        if (settings.enableDeliveryAlerts && order.targetDeliveryDate && ![OrderStatus.DELIVERED, OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(order.status)) {
+            const warningDays = settings.deliveryWarningDays ?? 5;
+            const targetTime = new Date(order.targetDeliveryDate).getTime();
+
+            // Use current date but midnight to be fair on day comparison
+            const now = new Date();
+            now.setUTCHours(0, 0, 0, 0);
+
+            const diffDays = Math.ceil((targetTime - now.getTime()) / (1000 * 60 * 60 * 24));
+
+            if (diffDays < 0) {
+                // Deadline Passed
+                await sendAlertForOrder(order, `delivery_passed_${order.id}`, 'delivery_passed', 'deliveryWarningDays', // reuse warning limit config key for groups
+                    `[NEXUS] Delivery Deadline Passed: ${order.internalOrderNumber}`,
+                    `Order ${order.internalOrderNumber} has passed its target delivery date of ${order.targetDeliveryDate}. It is currently ${Math.abs(diffDays)} days overdue.`);
+            } else if (diffDays <= warningDays) {
+                // Approaching Deadline
+                await sendAlertForOrder(order, `delivery_warning_${diffDays}_${order.id}`, 'delivery_warning', 'deliveryWarningDays',
+                    `[NEXUS] Delivery Deadline Approaching: ${order.internalOrderNumber}`,
+                    `Order ${order.internalOrderNumber} is approaching its target delivery date of ${order.targetDeliveryDate}. It is due in ${diffDays} days.`);
             }
         }
 
@@ -899,6 +949,42 @@ const deleteFromCollection = (col) => (req, res) => {
 };
 
 // --- ROUTES ---
+app.get('/api/v1/procurement/history', (req, res) => {
+    const { description, partNumber } = req.query;
+    if (!description && !partNumber) return res.status(400).json({ error: "Search criteria required" });
+
+    const db = readDb();
+    const history = [];
+
+    (db.orders || []).forEach(order => {
+        (order.items || []).forEach(item => {
+            (item.components || []).forEach(comp => {
+                // Focus on ordered/fulfilled components
+                if (!['ORDERED', 'RECEIVED', 'RESERVED', 'CONSUMED', 'Manufactured'].includes(comp.status)) return;
+
+                const matchDesc = description && comp.description?.toLowerCase().includes(description.toLowerCase());
+                const matchPart = partNumber && comp.componentNumber?.toLowerCase().includes(partNumber.toLowerCase());
+
+                if (matchDesc || matchPart) {
+                    const supplier = (db.suppliers || []).find(s => s.id === comp.supplierId);
+                    history.push({
+                        date: comp.statusUpdatedAt || order.orderDate,
+                        price: comp.unitCost,
+                        quantity: comp.quantity,
+                        supplierName: supplier ? supplier.name : (comp.supplierName || 'Unknown'),
+                        orderNumber: order.internalOrderNumber,
+                        poNumber: comp.poNumber
+                    });
+                }
+            });
+        });
+    });
+
+    // Sort by date descending
+    history.sort((a, b) => new Date(b.date) - new Date(a.date));
+    res.json(history.slice(0, 20)); // Limit to last 20 records
+});
+
 const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules'];
 COLLECTIONS.forEach(col => {
     app.get(`/api/v1/${col}`, getCollection(col));
@@ -908,11 +994,6 @@ COLLECTIONS.forEach(col => {
     app.delete(`/api/v1/${col}/:id`, deleteFromCollection(col));
 });
 
-// SPA Catch-all: Redirect all non-API requests to index.html
-app.get('{*path}', (req, res) => {
-    if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-});
 
 app.post('/api/v1/wipe', (req, res) => {
     const db = readDb();
@@ -1136,6 +1217,17 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.logs.push(createAuditLog(`Customer Delivery Confirmed & POD Filed: ${payload.podFilePath}`, order.status, user));
                 break;
 
+            case 'request-einvoice':
+                order.einvoiceRequested = true;
+                order.logs.push(createAuditLog('Gov. E-Invoice requested', order.status, user));
+                break;
+
+            case 'attach-einvoice':
+                if (!payload.einvoiceFile) throw new Error("E-Invoice file is required.");
+                order.einvoiceFile = payload.einvoiceFile;
+                order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}`, order.status, user));
+                break;
+
             default:
                 throw new Error(`Unknown action: ${action}`);
         }
@@ -1256,18 +1348,30 @@ app.post('/api/v1/init-defaults', (req, res) => {
 });
 
 // --- FILE UPLOAD ENDPOINT ---
-app.post('/api/upload-pod', upload.single('podFile'), (req, res) => {
+app.post('/api/upload-pod', uploadPod.single('podFile'), (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ success: false, error: "No file uploaded" });
-        }
+        if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
-        // Return relative path like "uploads/pod/filename.ext"
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
-        console.error("Upload error:", err);
         res.status(500).json({ success: false, error: "Upload failed" });
     }
+});
+
+app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, error: "No file" });
+        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        res.json({ success: true, filePath: relativePath });
+    } catch (err) {
+        res.status(500).json({ success: false, error: "Upload failed" });
+    }
+});
+
+// SPA Catch-all: Redirect all non-API requests to index.html
+app.get('{*path}', (req, res) => {
+    if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 app.listen(PORT, '0.0.0.0', () => {

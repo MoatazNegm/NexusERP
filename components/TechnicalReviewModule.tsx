@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User } from '../types';
@@ -67,6 +66,10 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   // Rollback state
   const [rollbackReason, setRollbackReason] = useState<string | null>(null);
 
+  // History state
+  const [compHistory, setCompHistory] = useState<any[] | null>(null);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+
   useEffect(() => {
     fetchData();
   }, [refreshKey]);
@@ -129,6 +132,18 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     });
     return results;
   }, [compSearch, suppliers]);
+
+  const openHistory = async (name: string, sku?: string) => {
+    setIsHistoryLoading(true);
+    try {
+      const history = await dataService.getComponentHistory(name, sku);
+      setCompHistory(history);
+    } catch (e) {
+      alert("Failed to load history.");
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
 
   const handleAddComponent = async (inv: InventoryItem) => {
     if (!selectedOrder || !selectedItem) return;
@@ -460,7 +475,10 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                           <span className="text-emerald-600 font-black">Stock: {i.quantityInStock - (i.quantityReserved || 0)}</span>
                                         </div>
                                       </div>
-                                      <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">In-Stock Catalog</span>
+                                      <div className="flex flex-col items-end gap-1">
+                                        <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">In-Stock Catalog</span>
+                                        <div className="text-[9px] font-black text-slate-800">L.E. {i.lastCost?.toLocaleString()}</div>
+                                      </div>
                                     </button>
                                   ))}
                                   {supplierResults.map(({ supplier, part }) => (
@@ -469,10 +487,18 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                         <div className="font-black text-slate-800 group-hover:text-amber-700 text-xs">{part.description}</div>
                                         <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4">
                                           <span>Vendor: {supplier.name}</span>
-                                          <span className="text-amber-600 font-black">L.E. {part.price}</span>
+                                          <span className="text-amber-600 font-black">L.E. {part.price?.toLocaleString()}</span>
                                         </div>
                                       </div>
-                                      <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Procurement Market</span>
+                                      <div className="flex flex-col items-end gap-1">
+                                        <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Procurement Market</span>
+                                        <button
+                                          onMouseDown={(e) => { e.stopPropagation(); openHistory(part.description, part.partNumber); }}
+                                          className="text-[9px] font-black text-blue-600 hover:underline"
+                                        >
+                                          View History
+                                        </button>
+                                      </div>
                                     </button>
                                   ))}
                                   <button
@@ -646,6 +672,69 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {compHistory && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[300] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl p-10 animate-in zoom-in-95 duration-300">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Component Purchase History</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Found {compHistory.length} previous instances</p>
+              </div>
+              <button onClick={() => setCompHistory(null)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-all">
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <div className="overflow-hidden border border-slate-100 rounded-3xl">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
+                  <tr>
+                    <th className="px-6 py-4">Date</th>
+                    <th className="px-6 py-4">Supplier</th>
+                    <th className="px-6 py-4">Qty</th>
+                    <th className="px-6 py-4 text-right">Unit Price</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {compHistory.map((h, idx) => (
+                    <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="text-[10px] font-bold text-slate-500">{new Date(h.date).toLocaleDateString()}</div>
+                        <div className="text-[8px] font-black text-blue-600 uppercase mt-0.5">{h.orderNumber}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="text-xs font-black text-slate-800 uppercase tracking-tight">{h.supplierName}</div>
+                        <div className="text-[8px] font-bold text-slate-400 uppercase mt-0.5">PO: {h.poNumber}</div>
+                      </td>
+                      <td className="px-6 py-4 text-xs font-bold text-slate-600">{h.quantity}</td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="text-sm font-black text-slate-800">{h.price.toLocaleString()} <span className="text-[9px] text-slate-400">L.E.</span></div>
+                      </td>
+                    </tr>
+                  ))}
+                  {compHistory.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-12 text-center text-[10px] font-black uppercase text-slate-300 italic tracking-[0.2em]">
+                        No historical records found for this component
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-8 flex justify-end">
+              <button onClick={() => setCompHistory(null)} className="px-8 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg shadow-slate-200">Close History</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isHistoryLoading && (
+        <div className="fixed inset-0 z-[350] bg-white/50 backdrop-blur-[2px] flex items-center justify-center">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
         </div>
       )}
     </div>

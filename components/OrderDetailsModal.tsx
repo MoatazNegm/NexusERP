@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { CustomerOrder, LogEntry, ManufacturingComponent, OrderStatus } from '../types';
-import { STATUS_CONFIG } from '../constants';
+import { CustomerOrder, LogEntry, ManufacturingComponent, OrderStatus, AppConfig } from '../types';
+import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 
 const LogTimeline: React.FC<{ logs: LogEntry[], title?: string }> = ({ logs, title }) => (
@@ -103,9 +103,10 @@ interface OrderDetailsModalProps {
   order: CustomerOrder;
   onClose: () => void;
   delayReason?: string | null;
+  config: AppConfig;
 }
 
-export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: initialOrder, onClose, delayReason }) => {
+export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: initialOrder, onClose, delayReason, config }) => {
   const [order, setOrder] = useState<CustomerOrder>(initialOrder);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [expandedTab, setExpandedTab] = useState<'bom' | 'logs'>('bom');
@@ -230,15 +231,15 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
             </div>
             <div>
               <h4 className="text-xs font-black text-rose-900 uppercase tracking-widest">Process Latency Alert</h4>
-              <p className="text-sm font-bold text-rose-600">This PO has been in the status of '<span className="uppercase">{STATUS_CONFIG[order.status].label}</span>' for <span className="underline decoration-rose-300 underline-offset-4">{delayReason}</span>.</p>
+              <p className="text-sm font-bold text-rose-600">This PO has been in the status of '<span className="uppercase">{getDynamicOrderStatusStyle(order, config).label}</span>' for <span className="underline decoration-rose-300 underline-offset-4">{delayReason}</span>.</p>
             </div>
           </div>
         )}
 
         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
           <div className="flex items-center gap-5">
-            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-inner bg-${STATUS_CONFIG[order.status].color}-50 text-${STATUS_CONFIG[order.status].color}-600`}>
-              <i className={`fa-solid ${STATUS_CONFIG[order.status].icon}`}></i>
+            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-inner bg-${getDynamicOrderStatusStyle(order, config).color}-50 text-${getDynamicOrderStatusStyle(order, config).color}-600`}>
+              <i className={`fa-solid ${getDynamicOrderStatusStyle(order, config).icon}`}></i>
             </div>
             <div>
               <div className="flex items-center gap-3">
@@ -251,8 +252,8 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                 )}
               </div>
               <div className="flex items-center gap-4 mt-1">
-                <div className={`text-xs font-bold uppercase tracking-widest text-${STATUS_CONFIG[order.status].color}-600`}>
-                  {STATUS_CONFIG[order.status].label} Stage
+                <div className={`text-xs font-bold uppercase tracking-widest text-${getDynamicOrderStatusStyle(order, config).color}-600`}>
+                  {getDynamicOrderStatusStyle(order, config).label} Stage
                 </div>
                 <div className="w-1 h-1 bg-slate-300 rounded-full"></div>
                 <div className="text-xs text-slate-400 font-medium">Ref: {order.customerReferenceNumber}</div>

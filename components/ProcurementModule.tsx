@@ -75,6 +75,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [awardTaxPercent, setAwardTaxPercent] = useState<number>(14);
   const [poNumberInput, setPoNumberInput] = useState<string>('');
   const [resetReason, setResetReason] = useState<string>('');
+  const [compHistory, setCompHistory] = useState<any[] | null>(null);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
   useEffect(() => { fetchData(); }, [refreshKey]);
 
@@ -202,6 +204,18 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setAwardTaxPercent(14);
     setPoNumberInput('');
     setResetReason('');
+  };
+
+  const openHistory = async (comp: ManufacturingComponent) => {
+    setIsHistoryLoading(true);
+    try {
+      const history = await dataService.getComponentHistory(comp.description, comp.componentNumber);
+      setCompHistory(history);
+    } catch (e) {
+      alert("Failed to load history.");
+    } finally {
+      setIsHistoryLoading(false);
+    }
   };
 
   const awardCalculations = useMemo(() => {
@@ -361,7 +375,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
             <div key={c.id} className="flex flex-col lg:flex-row justify-between items-center p-6 bg-slate-50 rounded-[2rem] border border-slate-100 hover:border-blue-200 transition-all group">
               <div className="flex gap-6 items-center w-full lg:w-auto">
                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-xl shadow-inner ${c.status === 'ORDERED' ? 'bg-emerald-50 text-emerald-600' :
-                    c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
+                  c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
                   }`}>
                   <i className={`fa-solid ${c.status === 'ORDERED' ? 'fa-truck-fast' : c.status === 'AWARDED' ? 'fa-file-signature' : 'fa-diagram-project'}`}></i>
                 </div>
@@ -369,7 +383,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
                     <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${c.status === 'ORDERED' ? 'bg-emerald-600 text-white' :
-                        c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
+                      c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
                       }`}>{c.status.replace('_', ' ')}</span>
                     {c.poNumber && <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-2 rounded">PO: {c.poNumber}</span>}
                   </div>
@@ -397,6 +411,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       <i className="fa-solid fa-rotate-left"></i>
                     </button>
                   )}
+
+                  <button
+                    onClick={() => openHistory(c)}
+                    className="p-3 text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
+                    title="View Price History"
+                  >
+                    <i className="fa-solid fa-clock-rotate-left"></i>
+                  </button>
                 </div>
 
                 {c.status === 'PENDING_OFFER' && <button onClick={() => { setActiveAction({ type: 'RFP', order: o, item: i, comp: c }); setRfpSelection(c.rfpSupplierIds || []); }} className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-black transition-all">Send RFP</button>}
@@ -446,13 +468,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-xl p-10 my-8 animate-in zoom-in-95 duration-300 border border-slate-100">
             <div className="flex items-center gap-6 mb-8">
               <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-inner ${activeAction.type === 'RFP' ? 'bg-blue-50 text-blue-600' :
-                  activeAction.type === 'AWARD' ? 'bg-amber-50 text-amber-600' :
-                    activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
+                activeAction.type === 'AWARD' ? 'bg-amber-50 text-amber-600' :
+                  activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
                 }`}>
                 <i className={`fa-solid ${activeAction.type === 'RFP' ? 'fa-paper-plane' :
-                    activeAction.type === 'AWARD' ? 'fa-award' :
-                      activeAction.type === 'RESET' ? 'fa-rotate-left' :
-                        activeAction.type === 'ORDER_ROLLBACK' ? 'fa-file-export fa-flip-horizontal' : 'fa-file-invoice'
+                  activeAction.type === 'AWARD' ? 'fa-award' :
+                    activeAction.type === 'RESET' ? 'fa-rotate-left' :
+                      activeAction.type === 'ORDER_ROLLBACK' ? 'fa-file-export fa-flip-horizontal' : 'fa-file-invoice'
                   }`}></i>
               </div>
               <div>

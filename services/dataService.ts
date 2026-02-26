@@ -281,6 +281,34 @@ class DataService {
     return this.dispatchAction(id, 'confirm-delivery', { podFilePath });
   }
 
+  async uploadEInvoice(file: File) {
+    const formData = new FormData();
+    formData.append('einvoiceFile', file);
+
+    const response = await fetch(`${BACKEND_URL}/api/upload-einvoice`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error("File upload failed");
+    }
+    return await response.json();
+  }
+
+  async attachEInvoice(id: string, einvoiceFile: string) {
+    return this.dispatchAction(id, 'attach-einvoice', { einvoiceFile });
+  }
+
+  async getComponentHistory(description?: string, partNumber?: string) {
+    const params = new URLSearchParams();
+    if (description) params.append('description', description);
+    if (partNumber) params.append('partNumber', partNumber);
+    const response = await fetch(`${BACKEND_URL}/api/v1/procurement/history?${params.toString()}`);
+    if (!response.ok) throw new Error("Failed to fetch component history");
+    return await response.json();
+  }
+
   async recordPayment(id: string, amount: number, memo: string) {
     return this.dispatchAction(id, 'record-payment', { amount, memo });
   }
@@ -307,6 +335,10 @@ class DataService {
 
   async revertInvoicedOrderToSourcing(id: string, reason: string) {
     return this.dispatchAction(id, 'rollback-to-logged', { reason });
+  }
+
+  async requestEInvoice(id: string) {
+    return this.dispatchAction(id, 'request-einvoice');
   }
 
   async getReport(params: any) {
