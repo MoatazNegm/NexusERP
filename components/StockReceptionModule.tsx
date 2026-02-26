@@ -58,7 +58,7 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
     allOrders.forEach(order => {
       order.items.forEach(item => {
         item.components?.forEach(comp => {
-          if (comp.status === 'ORDERED') {
+          if (comp.status === 'ORDERED' || comp.status === 'ORDERED_FOR_STOCK') {
             if (selectedSupplierId === 'all' || comp.supplierId === selectedSupplierId) {
               list.push({ order, item, comp });
             }
@@ -190,11 +190,18 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
                     <td className="px-6 py-4">
                       <div className="font-black text-slate-800">{comp.description}</div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Quantity Expected: {comp.quantity} {comp.unit}</div>
+                      {comp.status === 'ORDERED_FOR_STOCK' && (
+                        <span className="inline-block mt-1 text-[8px] font-black uppercase px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Stock Replenishment</span>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-xs font-bold text-slate-600 flex items-center gap-2">
                         {orderLocked && <i className="fa-solid fa-lock text-amber-600 text-[10px]"></i>}
-                        {order.customerName}
+                        {comp.status === 'ORDERED_FOR_STOCK' ? (
+                          <span className="text-amber-600">Stock Order (Detached from PO)</span>
+                        ) : (
+                          <>{order.customerName}</>
+                        )}
                       </div>
                       <div className="text-[10px] font-mono font-black text-blue-500">{item.orderNumber}</div>
                     </td>
@@ -206,6 +213,8 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
                       >
                         {orderLocked ? (
                           <><i className="fa-solid fa-lock"></i> Order on Hold</>
+                        ) : comp.status === 'ORDERED_FOR_STOCK' ? (
+                          <><i className="fa-solid fa-box-open"></i> Receive to Stock</>
                         ) : (
                           <><i className="fa-solid fa-check-double"></i> Receive & Reserve</>
                         )}

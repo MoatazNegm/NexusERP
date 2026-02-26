@@ -1131,9 +1131,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             case 'rollback-to-logged':
                 const rollbackOld = JSON.parse(JSON.stringify(order));
                 order.status = OrderStatus.LOGGED;
-                // Clear components and reset item approvals as requested
+                // Clear components and reset item approvals, but PRESERVE ORDERED_FOR_STOCK components
+                // (these are in-transit to stock and will be received via Reception)
                 order.items.forEach(item => {
-                    item.components = [];
+                    item.components = (item.components || []).filter(c => c.status === 'ORDERED_FOR_STOCK');
                     item.isAccepted = false;
                 });
                 reconcileInventory(rollbackOld, order, db);
@@ -1189,42 +1190,17 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
 
             case 'convert-to-stock-order': {
-                // Detach a component from this PO and create/update an inventory entry awaiting delivery
+                // Mark a component as ordered for stock — no inventory entry yet
+                // The inventory entry will be created when the part is physically received via Reception
                 const ctsItemIdx = order.items.findIndex(i => i.id === payload.itemId);
                 if (ctsItemIdx === -1) throw new Error("Item not found");
                 const ctsCompIdx = order.items[ctsItemIdx].components?.findIndex(c => c.id === payload.compId);
                 if (ctsCompIdx === -1) throw new Error("Component not found");
 
                 const ctsComp = order.items[ctsItemIdx].components[ctsCompIdx];
-
-                // Create or find matching inventory item - do NOT add quantity to stock yet
-                if (!db.inventory) db.inventory = [];
-                let stockItem = db.inventory.find(i => (i.sku && i.sku === ctsComp.componentNumber) || (i.description === ctsComp.description));
-                if (!stockItem) {
-                    stockItem = {
-                        id: `inv_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-                        description: ctsComp.description,
-                        sku: ctsComp.componentNumber || `SKU-${Date.now()}`,
-                        quantityInStock: 0,
-                        quantityReserved: 0,
-                        quantityOnOrder: ctsComp.quantity,
-                        category: 'Uncategorized',
-                        unit: ctsComp.unit || 'Unit',
-                        lastCost: ctsComp.unitCost || 0,
-                        minStockLevel: 0,
-                        lastUpdated: new Date().toISOString()
-                    };
-                    db.inventory.push(stockItem);
-                } else {
-                    stockItem.quantityOnOrder = (stockItem.quantityOnOrder || 0) + ctsComp.quantity;
-                    stockItem.lastUpdated = new Date().toISOString();
-                }
-
-                // Mark the component as converted to stock order
                 ctsComp.status = 'ORDERED_FOR_STOCK';
-                ctsComp.inventoryItemId = stockItem.id;
                 ctsComp.statusUpdatedAt = new Date().toISOString();
-                order.logs.push(createAuditLog(`Component "${ctsComp.description}" converted to stock order (PO: ${ctsComp.poNumber || 'N/A'}) — awaiting supplier delivery`, order.status, user));
+                order.logs.push(createAuditLog(`Component "${ctsComp.description}" converted to stock order (PO: ${ctsComp.poNumber || 'N/A'}) — awaiting supplier delivery via Reception`, order.status, user));
                 break;
             }
 

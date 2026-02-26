@@ -98,7 +98,7 @@ export interface Supplier {
   logs?: LogEntry[];
 }
 
-export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' | 'ORDERED' | 'RECEIVED' | 'RESERVED' | 'IN_MANUFACTURING' | 'MANUFACTURED';
+export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' | 'ORDERED' | 'ORDERED_FOR_STOCK' | 'RECEIVED' | 'RESERVED' | 'IN_MANUFACTURING' | 'MANUFACTURED' | 'CANCELLED';
 
 export interface ManufacturingComponent {
   id?: string;
