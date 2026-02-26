@@ -103,19 +103,23 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setSuppliers(s);
   };
 
-  const componentsToProcure = useMemo(() => {
-    const list: { o: CustomerOrder, i: CustomerOrderItem, c: ManufacturingComponent }[] = [];
+  // Group procurement components by order
+  const orderGroups = useMemo(() => {
+    const map = new Map<string, { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }>();
     orders.forEach(o => {
       o.items.forEach(i => {
         i.components?.forEach(c => {
-          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(c.status)) {
-            list.push({ o, i, c });
+          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(c.status || '')) {
+            if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
+            map.get(o.id)!.comps.push({ item: i, comp: c });
           }
         });
       });
     });
-    return list.sort((a, b) => a.c.statusUpdatedAt.localeCompare(b.c.statusUpdatedAt));
+    return Array.from(map.values());
   }, [orders]);
+
+  const totalComponents = orderGroups.reduce((sum, g) => sum + g.comps.length, 0);
 
   const awardSuppliersList = useMemo(() => {
     if (activeAction?.type === 'AWARD' && activeAction.comp?.rfpSupplierIds?.length) {
@@ -443,95 +447,190 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         <div className="flex justify-between items-center mb-10">
           <div>
             <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Procurement & Sourcing Control</h2>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Strategic Supply Chain Orchestration • {componentsToProcure.length} Items</p>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Strategic Supply Chain Orchestration • {totalComponents} Items across {orderGroups.length} Orders</p>
           </div>
         </div>
 
-        <div className="space-y-4">
-          {componentsToProcure.map(({ o, i, c }) => (
-            <div key={c.id} className="flex flex-col lg:flex-row justify-between items-center p-6 bg-slate-50 rounded-[2rem] border border-slate-100 hover:border-blue-200 transition-all group">
-              <div className="flex gap-6 items-center w-full lg:w-auto">
-                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-xl shadow-inner ${c.status === 'ORDERED' ? 'bg-emerald-50 text-emerald-600' :
-                  c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
-                  }`}>
-                  <i className={`fa-solid ${c.status === 'ORDERED' ? 'fa-truck-fast' : c.status === 'AWARDED' ? 'fa-file-signature' : 'fa-diagram-project'}`}></i>
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
-                    <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${c.status === 'ORDERED' ? 'bg-emerald-600 text-white' :
-                      c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
-                      }`}>{c.status.replace('_', ' ')}</span>
-                    {c.poNumber && <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-2 rounded">PO: {c.poNumber}</span>}
+        <div className="space-y-8">
+          {orderGroups.map(({ order: o, comps }) => {
+            const allAwarded = comps.every(({ comp: cc }) => cc.status === 'AWARDED');
+            const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED');
+            const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED');
+            const readyForPo = allAwarded && comps.length > 0;
+
+            return (
+              <div key={o.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden">
+                {/* Order Header */}
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 bg-slate-100/80 border-b border-slate-200">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center text-blue-600 text-lg">
+                      <i className="fa-solid fa-file-lines"></i>
+                    </div>
+                    <div>
+                      <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest">{o.internalOrderNumber}</div>
+                      <div className="font-black text-slate-800">{o.customerName}</div>
+                      <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} components to procure</div>
+                    </div>
                   </div>
-                  <div className="font-black text-slate-800 text-base tracking-tight">{c.description}</div>
-                  <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">Order: {o.internalOrderNumber} • {o.customerName}</div>
-                  <CompThreshold component={c} config={config} />
-                </div>
-              </div>
-              <div className="flex items-center gap-4 mt-4 lg:mt-0">
-                <div className="flex items-center">
-                  <button
-                    onClick={() => handleInitiateRollback(o)}
-                    className="p-3 text-slate-300 hover:text-orange-500 transition-colors opacity-0 group-hover:opacity-100"
-                    title="Rollback Entire Order to Logged Registry"
-                  >
-                    <i className="fa-solid fa-file-export fa-flip-horizontal"></i>
-                  </button>
-
-                  {c.status === 'RFP_SENT' && (
+                  <div className="flex items-center gap-3">
+                    {/* Rollback button - blocked if any component has PO */}
                     <button
-                      onClick={() => setActiveAction({ type: 'RESET', order: o, item: i, comp: c })}
-                      className="p-3 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Resend RFP / Reset Component Sourcing"
+                      onClick={() => {
+                        if (anyOrdered) {
+                          alert('Cannot rollback: There are active Purchase Orders on this order. Cancel all POs first using the Cancel PO button on each component.');
+                          return;
+                        }
+                        handleInitiateRollback(o);
+                      }}
+                      className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 transition-all ${anyOrdered ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border border-orange-200 text-orange-500 hover:bg-orange-50'
+                        }`}
+                      title={anyOrdered ? 'Cancel all POs first' : 'Rollback to Logged Registry'}
                     >
-                      <i className="fa-solid fa-rotate-left"></i>
+                      <i className="fa-solid fa-file-export fa-flip-horizontal"></i>
+                      {anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback Order'}
                     </button>
-                  )}
 
-                  <button
-                    onClick={() => openHistory(c)}
-                    className="p-3 text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
-                    title="View Price History"
-                  >
-                    <i className="fa-solid fa-clock-rotate-left"></i>
-                  </button>
-                </div>
-
-                {c.status === 'PENDING_OFFER' && <button onClick={() => { setActiveAction({ type: 'RFP', order: o, item: i, comp: c }); setRfpSelection(c.rfpSupplierIds || []); }} className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-black transition-all">Send RFP</button>}
-                {c.status === 'RFP_SENT' && <button onClick={() => { setActiveAction({ type: 'AWARD', order: o, item: i, comp: c }); setAwardCost(c.unitCost); setAwardTaxPercent(c.taxPercent || 14); }} className="px-6 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all">Award Tender</button>}
-                {c.status === 'AWARDED' && (
-                  <div className="flex flex-col items-end gap-1.5">
-                    <button
-                      disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
-                      onClick={async () => { const po = await dataService.getUniquePoNumber(); setPoNumberInput(po); setActiveAction({ type: 'PO', order: o, item: i, comp: c }); }}
-                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-                    >
-                      Issue PO
-                    </button>
-                    {o.status === OrderStatus.NEGATIVE_MARGIN && (
-                      <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-500 uppercase animate-pulse">
-                        <i className="fa-solid fa-triangle-exclamation"></i>
-                        Financial Breach: PO Blocked
+                    {/* Global Issue PO for all awarded comps */}
+                    {readyForPo && (
+                      <button
+                        disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
+                        onClick={async () => {
+                          const po = await dataService.getUniquePoNumber();
+                          setPoNumberInput(po);
+                          // Issue PO for the first awarded comp; user can iterate
+                          const firstAwarded = comps.find(({ comp: cc }) => cc.status === 'AWARDED');
+                          if (firstAwarded) setActiveAction({ type: 'PO', order: o, item: firstAwarded.item, comp: firstAwarded.comp });
+                        }}
+                        className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg flex items-center gap-2 transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-100'
+                          }`}
+                      >
+                        <i className="fa-solid fa-file-invoice"></i> Issue PO for All
+                      </button>
+                    )}
+                    {!allAwarded && !allOrderedOrHigher && comps.some(({ comp: cc }) => cc.status !== 'ORDERED') && (
+                      <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
+                        <i className="fa-solid fa-hourglass-half"></i>
+                        Awaiting all awards for PO
                       </div>
                     )}
                   </div>
-                )}
-                {c.status === 'ORDERED' && (
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => handleDownloadPO(o, c)}
-                      className="px-6 py-3 bg-white border-2 border-blue-600 text-blue-600 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-2"
-                    >
-                      <i className="fa-solid fa-file-pdf"></i> Download PO
-                    </button>
-                    <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em] px-2 animate-pulse"><i className="fa-solid fa-truck-fast mr-2"></i>In Transit</span>
-                  </div>
-                )}
+                </div>
+
+                {/* Components List */}
+                <div className="divide-y divide-slate-100">
+                  {comps.map(({ item: i, comp: c }) => (
+                    <div key={c.id} className="flex flex-col lg:flex-row justify-between items-center p-6 hover:bg-blue-50/30 transition-all group">
+                      <div className="flex gap-6 items-center w-full lg:w-auto">
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${c.status === 'ORDERED' ? 'bg-emerald-50 text-emerald-600' :
+                            c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
+                          }`}>
+                          <i className={`fa-solid ${c.status === 'ORDERED' ? 'fa-truck-fast' : c.status === 'AWARDED' ? 'fa-file-signature' : 'fa-diagram-project'}`}></i>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
+                            <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${c.status === 'ORDERED' ? 'bg-emerald-600 text-white' :
+                                c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
+                              }`}>{(c.status || '').replace('_', ' ')}</span>
+                            {c.poNumber && <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-2 rounded">PO: {c.poNumber}</span>}
+                          </div>
+                          <div className="font-black text-slate-800 text-base tracking-tight">{c.description}</div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">Item: {i.orderNumber} • Qty: {c.quantity} {c.unit} • Cost: {(c.unitCost || 0).toLocaleString()} L.E.</div>
+                          <CompThreshold component={c} config={config} />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 mt-4 lg:mt-0">
+                        <div className="flex items-center">
+                          {c.status === 'RFP_SENT' && (
+                            <button
+                              onClick={() => setActiveAction({ type: 'RESET', order: o, item: i, comp: c })}
+                              className="p-3 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
+                              title="Resend RFP / Reset Component Sourcing"
+                            >
+                              <i className="fa-solid fa-rotate-left"></i>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => openHistory(c)}
+                            className="p-3 text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
+                            title="View Price History"
+                          >
+                            <i className="fa-solid fa-clock-rotate-left"></i>
+                          </button>
+                        </div>
+
+                        {c.status === 'PENDING_OFFER' && (
+                          <button onClick={() => { setActiveAction({ type: 'RFP', order: o, item: i, comp: c }); setRfpSelection(c.rfpSupplierIds || []); }}
+                            className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-black transition-all"
+                          >Send RFP</button>
+                        )}
+                        {c.status === 'RFP_SENT' && (
+                          <button onClick={() => { setActiveAction({ type: 'AWARD', order: o, item: i, comp: c }); setAwardCost(c.unitCost); setAwardTaxPercent(c.taxPercent || 14); }}
+                            className="px-6 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
+                          >Award Tender</button>
+                        )}
+                        {c.status === 'AWARDED' && (
+                          <div className="flex flex-col items-end gap-1.5">
+                            {!allAwarded && (
+                              <span className="text-[8px] font-black text-slate-400 uppercase">Waiting for other awards</span>
+                            )}
+                            {allAwarded && (
+                              <button
+                                disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
+                                onClick={async () => { const po = await dataService.getUniquePoNumber(); setPoNumberInput(po); setActiveAction({ type: 'PO', order: o, item: i, comp: c }); }}
+                                className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                              >
+                                Issue PO
+                              </button>
+                            )}
+                            {o.status === OrderStatus.NEGATIVE_MARGIN && (
+                              <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-500 uppercase animate-pulse">
+                                <i className="fa-solid fa-triangle-exclamation"></i>
+                                Financial Breach: PO Blocked
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {c.status === 'ORDERED' && (
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => handleDownloadPO(o, c)}
+                              className="px-5 py-2.5 bg-white border-2 border-blue-600 text-blue-600 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-2"
+                            >
+                              <i className="fa-solid fa-file-pdf"></i> Download PO
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`Cancel PO ${c.poNumber || ''} for "${c.description}"?`)) return;
+                                setIsActionLoading(c.id || null);
+                                try {
+                                  await dataService.cancelComponentPo(o.id, i.id, c.id!);
+                                  await fetchData();
+                                } catch (e: any) {
+                                  alert(e.message || 'Failed to cancel PO');
+                                } finally {
+                                  setIsActionLoading(null);
+                                }
+                              }}
+                              disabled={isActionLoading === c.id}
+                              className="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-rose-700 transition-all flex items-center gap-2"
+                            >
+                              <i className="fa-solid fa-ban"></i> Cancel PO
+                            </button>
+                            <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
+                              <i className="fa-solid fa-truck-fast mr-1"></i>In Transit
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-          {componentsToProcure.length === 0 && (
+            );
+          })}
+          {orderGroups.length === 0 && (
             <div className="p-24 text-center text-slate-300 italic uppercase text-xs font-black tracking-widest flex flex-col items-center gap-4">
               <i className="fa-solid fa-clipboard-check text-5xl opacity-10"></i>
               Global procurement pipeline is empty.
