@@ -1165,6 +1165,86 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
             }
 
+            case 'add-component': {
+                // Atomically add a component to an item with optional stock reservation
+                const acItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (acItemIdx === -1) throw new Error("Item not found");
+                const acItem = order.items[acItemIdx];
+                if (!acItem.components) acItem.components = [];
+
+                const newComp = {
+                    id: `comp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                    ...payload.component,
+                    statusUpdatedAt: new Date().toISOString()
+                };
+
+                // Generate component number
+                const compCount = acItem.components.length;
+                newComp.componentNumber = `CMP-${order.internalOrderNumber}-${acItemIdx}-${compCount}`;
+
+                // If STOCK source, check availability and reserve
+                if (newComp.source === 'STOCK' && newComp.inventoryItemId) {
+                    const invItem = (db.inventory || []).find(i => i.id === newComp.inventoryItemId);
+                    if (invItem) {
+                        const available = (invItem.quantityInStock || 0) - (invItem.quantityReserved || 0);
+                        if (newComp.quantity > available) {
+                            throw new Error(`Insufficient stock: only ${available} ${invItem.unit} available (${invItem.quantityInStock} in stock, ${invItem.quantityReserved || 0} reserved)`);
+                        }
+                        invItem.quantityReserved = (invItem.quantityReserved || 0) + newComp.quantity;
+                        invItem.lastUpdated = new Date().toISOString();
+                    }
+                }
+
+                acItem.components.push(newComp);
+                order.logs.push(createAuditLog(`Component added: ${newComp.description} (${newComp.source})`, order.status, user));
+                break;
+            }
+
+            case 'remove-component': {
+                // Atomically remove a component and release any stock reservation
+                const rcItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (rcItemIdx === -1) throw new Error("Item not found");
+                const rcItem = order.items[rcItemIdx];
+                const rcComp = rcItem.components?.find(c => c.id === payload.compId);
+                if (!rcComp) throw new Error("Component not found");
+
+                // Release reservation if STOCK component
+                if (rcComp.source === 'STOCK' && rcComp.inventoryItemId && ['RESERVED', 'AVAILABLE'].includes(rcComp.status)) {
+                    const invItem = (db.inventory || []).find(i => i.id === rcComp.inventoryItemId);
+                    if (invItem) {
+                        invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - rcComp.quantity);
+                        invItem.lastUpdated = new Date().toISOString();
+                    }
+                }
+
+                rcItem.components = rcItem.components?.filter(c => c.id !== payload.compId);
+                order.logs.push(createAuditLog(`Component removed: ${rcComp.description}`, order.status, user));
+                break;
+            }
+
+            case 'update-component': {
+                // Atomically update component fields
+                const ucItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (ucItemIdx === -1) throw new Error("Item not found");
+                const ucComp = order.items[ucItemIdx].components?.find(c => c.id === payload.compId);
+                if (!ucComp) throw new Error("Component not found");
+                Object.assign(ucComp, payload.updates);
+                order.logs.push(createAuditLog(`Component updated: ${ucComp.description}`, order.status, user));
+                break;
+            }
+
+            case 'cancel-component-po': {
+                // Cancel a supplier PO for a specific component
+                const ccItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (ccItemIdx === -1) throw new Error("Item not found");
+                const ccComp = order.items[ccItemIdx].components?.find(c => c.id === payload.compId);
+                if (!ccComp) throw new Error("Component not found");
+                ccComp.status = 'CANCELLED';
+                ccComp.statusUpdatedAt = new Date().toISOString();
+                order.logs.push(createAuditLog(`Supplier PO cancelled for: ${ccComp.description} (PO: ${ccComp.poNumber || 'N/A'})`, order.status, user));
+                break;
+            }
+
             case 'cancel-payment':
                 if (!order.payments || !order.payments[payload.index]) throw new Error("Payment index not found");
                 const [removed] = order.payments.splice(payload.index, 1);
