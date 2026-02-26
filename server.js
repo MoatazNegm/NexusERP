@@ -1121,6 +1121,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
     };
 
     try {
+        // Save a copy of the order BEFORE any modifications for proper reconciliation
+        const oldOrder = JSON.parse(JSON.stringify(order));
+
         switch (action) {
             case 'finalize-study':
                 if (order.items.some(it => !it.isAccepted)) throw new Error("All items must be accepted before finalizing study");
@@ -1174,6 +1177,15 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 });
                 order.logs.push(createAuditLog(`ORDER REJECTED: ${payload?.reason || 'Business decision'}`, order.status, user));
                 break;
+
+            case 'toggle-acceptance': {
+                const taItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (taItemIdx === -1) throw new Error("Item not found");
+                const taItem = order.items[taItemIdx];
+                taItem.isAccepted = !taItem.isAccepted;
+                order.logs.push(createAuditLog(`Item ${taItem.orderNumber}: ${taItem.isAccepted ? 'Accepted' : 'Acceptance Revoked'}`, order.status, user));
+                break;
+            }
 
             case 'receive-component':
                 const itemIdx = order.items.findIndex(i => i.id === payload.itemId);
@@ -1394,7 +1406,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         // Run through status processor (handles margin evaluation etc)
         // Skip status eval for rollback-to-logged to prevent auto-advancement
         const skipStatusEval = action === 'rollback-to-logged';
-        order = processedOrderInternal(order, db, user, false, null, skipStatusEval);
+        order = processedOrderInternal(order, db, user, false, oldOrder, skipStatusEval);
 
         db.orders[index] = order;
         if (writeDb(db)) {

@@ -37,11 +37,30 @@
           "user": "System"
         }
       ]
+    },
+    {
+      "id": "customers_1772116765845",
+      "name": "Unilever",
+      "email": "",
+      "phone": "",
+      "address": "",
+      "paymentTermDays": 30,
+      "contactName": "",
+      "contactPhone": "",
+      "contactEmail": "",
+      "contactAddress": "",
+      "logs": [
+        {
+          "timestamp": "2026-02-26T14:39:25.845Z",
+          "message": "Entity registered",
+          "user": "System"
+        }
+      ]
     }
   ],
   "orders": [
     {
-      "id": "orders_1772116148158",
+      "id": "orders_1772116961079",
       "customerName": "Unilever Mashreq for Import and Export (LLC)",
       "customerReferenceNumber": "PO16948286",
       "orderDate": "2025-08-31",
@@ -50,7 +69,7 @@
       "targetDeliveryDate": "2026-02-26",
       "items": [
         {
-          "id": "temp_1772116144771_0",
+          "id": "temp_1772116959206_0",
           "description": "64886429-VASELINE@20% POFF STKR N",
           "quantity": 16000,
           "unit": "Pieces",
@@ -58,166 +77,60 @@
           "taxPercent": 14,
           "taxDetected": true,
           "logs": [],
-          "components": [],
-          "isAccepted": false
+          "components": []
         }
       ],
       "logs": [
         {
-          "timestamp": "2026-02-26T14:29:08.159Z",
+          "timestamp": "2026-02-26T14:42:41.079Z",
           "message": "Order acquisition recorded",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T14:29:08.159Z",
+          "timestamp": "2026-02-26T14:42:41.079Z",
           "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T14:29:15.799Z",
-          "message": "Component added: part 1 (PROCUREMENT)",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:15.799Z",
-          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
-          "status": "TECHNICAL_REVIEW",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:19.363Z",
-          "message": "Component added: part 2 (PROCUREMENT)",
-          "status": "TECHNICAL_REVIEW",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:22.957Z",
-          "message": "Technical study finalized and pushed to Procurement",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:27.718Z",
-          "message": "Component updated: part 1",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:29.997Z",
-          "message": "Component updated: part 2",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:40.341Z",
-          "message": "Component updated: part 1",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:42.919Z",
-          "message": "Component updated: part 1",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:51.139Z",
-          "message": "Component updated: part 2",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:29:51.139Z",
-          "message": "[AUTO] Margin Protection: Status moved from WAITING_SUPPLIERS to NEGATIVE_MARGIN",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:30:11.614Z",
-          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:30:11.614Z",
-          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:30:15.279Z",
-          "message": "[SYSTEM] Negative Margin Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:30:19.639Z",
-          "message": "[SYSTEM] deliveryWarningDays Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:30:29.652Z",
-          "message": "Component \"part 1\" converted to stock order (PO: PO-181928) — awaiting supplier delivery",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:30:29.676Z",
-          "message": "Supplier PO cancelled for: part 2 (PO: N/A)",
-          "status": "NEGATIVE_MARGIN",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:30:29.691Z",
-          "message": "Rollback to Registry: ddsdfgdds (BoM cleared & stock released)",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:30:33.697Z",
-          "message": "[SYSTEM] Rollback Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "LOGGED",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-02-26T14:31:10.849Z",
+          "timestamp": "2026-02-26T14:42:53.092Z",
           "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         },
         {
-          "timestamp": "2026-02-26T14:31:10.849Z",
+          "timestamp": "2026-02-26T14:42:53.092Z",
           "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-26T14:42:57.158Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-26T14:42:57.158Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-02-26T14:43:01.285Z",
+          "message": "[SYSTEM] deliveryWarningDays Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "LOGGED",
           "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
-      "dataEntryTimestamp": "2026-02-26T14:29:08.159Z",
+      "dataEntryTimestamp": "2026-02-26T14:42:41.079Z",
       "status": "LOGGED",
-      "loggingComplianceViolation": true,
-      "isOverdue": false
+      "loggingComplianceViolation": true
     }
   ],
-  "inventory": [
-    {
-      "id": "inv_1772116229652_ppvwl",
-      "description": "part 1",
-      "sku": "CMP-INT-2024-0001-0-0",
-      "quantityInStock": 0,
-      "quantityReserved": 0,
-      "quantityOnOrder": 1,
-      "category": "Uncategorized",
-      "unit": "pcs",
-      "lastCost": 23,
-      "minStockLevel": 0,
-      "lastUpdated": "2026-02-26T14:30:29.652Z"
-    }
-  ],
+  "inventory": [],
   "suppliers": [
     {
       "id": "suppliers_1771146837526",
@@ -412,45 +325,35 @@
   ],
   "notifications": [
     {
-      "id": "nt_n_1772116211614",
-      "journalKey": "new_order_orders_1772116148158",
-      "orderId": "orders_1772116148158",
-      "type": "new_order",
-      "sentAt": "2026-02-26T14:30:11.614Z",
-      "recipients": [
-        "erpalerts@quickstor.net",
-        "Mohamed.allam@psp-co.org"
-      ]
-    },
-    {
-      "id": "nt_1772116215279_6p0w",
-      "journalKey": "margin_orders_1772116148158",
-      "orderId": "orders_1772116148158",
-      "type": "negative_margin",
-      "sentAt": "2026-02-26T14:30:15.279Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1772116219639_kyx7",
-      "journalKey": "delivery_warning_0_orders_1772116148158",
-      "orderId": "orders_1772116148158",
-      "type": "delivery_warning",
-      "sentAt": "2026-02-26T14:30:19.639Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1772116270849_9wo9",
-      "journalKey": "delay_orders_1772116148158",
-      "orderId": "orders_1772116148158",
+      "id": "nt_1772116973092_kr34",
+      "journalKey": "delay_orders_1772116961079",
+      "orderId": "orders_1772116961079",
       "type": "logging_delay",
-      "sentAt": "2026-02-26T14:31:10.849Z",
+      "sentAt": "2026-02-26T14:42:53.092Z",
       "recipients": [
         "erpalerts@quickstor.net",
         "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1772116977158",
+      "journalKey": "new_order_orders_1772116961079",
+      "orderId": "orders_1772116961079",
+      "type": "new_order",
+      "sentAt": "2026-02-26T14:42:57.158Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "Mohamed.allam@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1772116981285_tgrf",
+      "journalKey": "delivery_warning_0_orders_1772116961079",
+      "orderId": "orders_1772116961079",
+      "type": "delivery_warning",
+      "sentAt": "2026-02-26T14:43:01.285Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
       ]
     }
   ],
@@ -531,7 +434,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:7f12097a12b2e9a33d2577caf0a30232:cbf4bb55da5807cd9c23d2d8294ec4e7d5810ff8e178cfd8144dba8ad1280f78",
+        "password": "ENC:343457a77ed721fd72f917e04e142195:f68027cdd6494567ffa0399f577e6339cde38df33d60bc5b4c77958637cfeb91",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -587,7 +490,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:70bdd2288f85d6f50e23d2dca709e3ab:47b96ee88f547db10f0886b619cafd5ade83231d7dd6358523eb00c2ec76703841f1aa2a62aaaf1f5180b0d8bc30eb68",
+        "apiKey": "ENC:032a74a96d32941210ae5720afdeca21:17394b7cdf8fb5ff1e6e35833d189f8dbc43761c44f49c01a0a11ed686faba68ee966c6852a30bfff6aa0a4556bda1db",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -612,7 +515,7 @@
         "userGroups_1770925213983"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:e68abfdc1e19ac42ec68716318f87960:bf1ef2392f1a5e098dae21b9a18e6c8a98b97dcd00f3c796e5d87552a89535e1f55f65476cf459e4065a5bde43c0e33e",
+        "apiKey": "ENC:e0e3130043576c756d885fb67ecadda7:d35fe9185c5d96d09936516354f16dd19e7221784431053fbdc1de6f52be16e3d9090dbfa731df11f6fb90448dd75a22",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

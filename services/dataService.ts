@@ -183,15 +183,7 @@ class DataService {
   }
 
   async toggleItemAcceptance(orderId: string, itemId: string) {
-    const order = await this.getOrderOrThrow(orderId);
-    const item = order.items.find(i => i.id === itemId);
-    if (!item) throw new Error('Item not found');
-
-    // We still have toggle locally because it's a simple property, 
-    // but we'll move it to backend soon if needed. For now, 
-    // since acceptance affects Study Finalization, we keep it as a PUT of the partial order.
-    item.isAccepted = !item.isAccepted;
-    return this.put<CustomerOrder>('orders', orderId, order);
+    return this.dispatchAction(orderId, 'toggle-acceptance', { itemId });
   }
 
   async addComponentToItem(orderId: string, itemId: string, comp: Omit<ManufacturingComponent, 'id' | 'statusUpdatedAt' | 'componentNumber'>) {
