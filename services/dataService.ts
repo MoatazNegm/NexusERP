@@ -242,6 +242,17 @@ class DataService {
     return this.dispatchAction(orderId, 'receive-component', { itemId, compId });
   }
 
+  async cancelComponentPo(orderId: string, itemId: string, compId: string) {
+    const order = await this.getOrderOrThrow(orderId);
+    const item = order.items.find(i => i.id === itemId);
+    if (!item) throw new Error('Item not found');
+    const comp = item.components?.find(c => c.id === compId);
+    if (!comp) throw new Error('Component not found');
+    comp.status = 'CANCELLED' as any;
+    comp.statusUpdatedAt = new Date().toISOString();
+    return this.put<CustomerOrder>('orders', orderId, order);
+  }
+
   async startProduction(id: string) {
     return this.dispatchAction(id, 'start-production');
   }

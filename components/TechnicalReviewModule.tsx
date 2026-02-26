@@ -66,6 +66,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   // Rollback state
   const [rollbackReason, setRollbackReason] = useState<string | null>(null);
 
+  // Procurement resolution state (for ordered components during rollback)
+  type CompResolution = 'CANCEL_PO' | 'RECEIVE_TO_STOCK';
+  interface OrderedCompRecord {
+    itemId: string;
+    itemDesc: string;
+    compId: string;
+    compDesc: string;
+    componentNumber?: string;
+    supplierName?: string;
+    quantity: number;
+    status: string;
+  }
+  const [orderedComponents, setOrderedComponents] = useState<OrderedCompRecord[] | null>(null);
+  const [componentResolutions, setComponentResolutions] = useState<Record<string, CompResolution>>({});
+
   // History state
   const [compHistory, setCompHistory] = useState<any[] | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -206,10 +221,18 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     if (!selectedOrder) return;
     setIsProcessing(true);
     const updated = await dataService.toggleItemAcceptance(selectedOrder.id, item.id);
-    setSelectedOrder(updated);
-    if (selectedItem?.id === item.id) {
-      setSelectedItem(updated.items.find(i => i.id === item.id)!);
+
+    const updatedItem = updated.items.find(i => i.id === item.id);
+    if (updatedItem && updatedItem.isAccepted) {
+      setSelectedOrder(null);
+      setSelectedItem(null);
+    } else {
+      setSelectedOrder(updated);
+      if (selectedItem?.id === item.id) {
+        setSelectedItem(updatedItem!);
+      }
     }
+
     fetchData();
     setIsProcessing(false);
   };
@@ -229,6 +252,67 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     }
   };
 
+  // Step 1: Check for outstanding ORDERED components before rollback
+  const handleInitiateRollback = () => {
+    if (!selectedOrder) return;
+    const found: OrderedCompRecord[] = [];
+    selectedOrder.items.forEach(item => {
+      (item.components || []).forEach(comp => {
+        if (comp.status === 'ORDERED') {
+          const supplier = suppliers.find(s => s.id === comp.supplierId);
+          found.push({
+            itemId: item.id,
+            itemDesc: item.description,
+            compId: comp.id,
+            compDesc: comp.description,
+            componentNumber: comp.componentNumber,
+            supplierName: supplier?.name || 'Unknown Supplier',
+            quantity: comp.quantity,
+            status: comp.status
+          });
+        }
+      });
+    });
+
+    if (found.length > 0) {
+      // Show resolution dialog first
+      const defaultResolutions: Record<string, CompResolution> = {};
+      found.forEach(c => { defaultResolutions[c.compId] = 'CANCEL_PO'; });
+      setOrderedComponents(found);
+      setComponentResolutions(defaultResolutions);
+    } else {
+      // No outstanding POs, go straight to rollback reason
+      setRollbackReason('');
+    }
+  };
+
+  // Step 2: Confirm resolutions & proceed to rollback reason dialog
+  const handleConfirmResolutions = async () => {
+    if (!selectedOrder || !orderedComponents) return;
+    setIsProcessing(true);
+    try {
+      // Apply each resolution via dispatch actions
+      for (const rec of orderedComponents) {
+        const resolution = componentResolutions[rec.compId];
+        if (resolution === 'RECEIVE_TO_STOCK') {
+          await dataService.dispatchAction(selectedOrder.id, 'receive-component', { itemId: rec.itemId, compId: rec.compId });
+        } else {
+          // CANCEL_PO: just update component status to CANCELLED via a PUT on the order
+          // We'll update the component's status gracefully by sending a patch
+          await dataService.cancelComponentPo(selectedOrder.id, rec.itemId, rec.compId);
+        }
+      }
+      setOrderedComponents(null);
+      // Advance to rollback reason
+      setRollbackReason('');
+    } catch (e: any) {
+      alert(`Failed to apply resolutions: ${e.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Step 3: Execute the actual rollback
   const handleRollback = async () => {
     if (!selectedOrder || !rollbackReason) return;
     setIsProcessing(true);
@@ -370,7 +454,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setRollbackReason('')}
+                  onClick={handleInitiateRollback}
                   className="px-4 py-2 bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-rose-700 transition-all flex items-center gap-2"
                 >
                   <i className="fa-solid fa-rotate-left"></i> Rollback to Logged Registry
@@ -639,6 +723,85 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
         </div>
       )}
 
+      {/* --- STEP 1: Procurement Resolution Modal (ORDERED components) --- */}
+      {orderedComponents && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl p-10 animate-in zoom-in-95 duration-200 border border-slate-100">
+            <div className="flex items-center gap-6 mb-8">
+              <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center text-3xl shadow-inner">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Outstanding Supplier POs Detected</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                  {orderedComponents.length} Component{orderedComponents.length > 1 ? 's' : ''} — Resolve before rollback
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
+              The following components already have issued supplier POs. You must decide the fate of each before rolling back this order:
+            </p>
+
+            <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-2">
+              {orderedComponents.map(rec => (
+                <div key={rec.compId} className="bg-slate-50 border border-slate-100 rounded-2xl p-5">
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <div className="font-black text-slate-800 text-sm">{rec.compDesc}</div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5 flex gap-3">
+                        <span>Ref: {rec.componentNumber || 'N/A'}</span>
+                        <span>Supplier: {rec.supplierName}</span>
+                        <span>Qty: {rec.quantity}</span>
+                      </div>
+                      <div className="text-[9px] font-bold text-amber-600 uppercase bg-amber-50 px-2 py-0.5 rounded mt-1.5 w-fit border border-amber-100">Awaiting Delivery</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setComponentResolutions(prev => ({ ...prev, [rec.compId]: 'CANCEL_PO' }))}
+                      className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${componentResolutions[rec.compId] === 'CANCEL_PO'
+                        ? 'bg-rose-600 text-white border-rose-600 shadow-lg'
+                        : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'
+                        }`}
+                    >
+                      <i className="fa-solid fa-ban"></i> Cancel Supplier PO
+                    </button>
+                    <button
+                      onClick={() => setComponentResolutions(prev => ({ ...prev, [rec.compId]: 'RECEIVE_TO_STOCK' }))}
+                      className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${componentResolutions[rec.compId] === 'RECEIVE_TO_STOCK'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg'
+                        : 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400'
+                        }`}
+                    >
+                      <i className="fa-solid fa-boxes-stacked"></i> Receive to Stock
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-8 flex gap-3">
+              <button
+                onClick={() => { setOrderedComponents(null); setComponentResolutions({}); }}
+                className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200"
+              >
+                Abort
+              </button>
+              <button
+                disabled={isProcessing}
+                onClick={handleConfirmResolutions}
+                className="flex-[2] py-4 bg-amber-500 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-xl shadow-amber-200 hover:bg-amber-600 transition-all flex items-center justify-center gap-2"
+              >
+                {isProcessing ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-arrow-right"></i>}
+                Confirm Resolutions & Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- STEP 2: Rollback Reason Modal --- */}
       {rollbackReason !== null && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-lg p-10 animate-in zoom-in-95 duration-200 border border-slate-100">
