@@ -128,6 +128,55 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     return filtered.sort((a, b) => (a.orderDate || a.dataEntryTimestamp || '').localeCompare(b.orderDate || b.dataEntryTimestamp || ''));
   }, [searchQuery, orders]);
 
+  const historyData = useMemo(() => {
+    const history: Record<string, {
+      description: string;
+      componentNumber?: string;
+      prices: { price: number; date: string; supplierId?: string; supplierName?: string }[];
+      orders: { id: string; orderNo: string; orderDate: string; receivedDate?: string }[];
+    }> = {};
+
+    orders.forEach(o => {
+      o.items.forEach(it => {
+        it.components?.forEach(c => {
+          const key = (c.description || '').toLowerCase().trim();
+          if (!key) return;
+          if (!history[key]) {
+            history[key] = {
+              description: c.description,
+              componentNumber: c.componentNumber,
+              prices: [],
+              orders: []
+            };
+          }
+          const supp = suppliers.find(s => s.id === c.supplierId);
+          history[key].prices.push({
+            price: c.unitCost,
+            date: o.orderDate || o.dataEntryTimestamp || '',
+            supplierId: c.supplierId,
+            supplierName: supp?.name
+          });
+          history[key].orders.push({
+            id: o.id,
+            orderNo: o.internalOrderNumber || '',
+            orderDate: o.orderDate || '',
+            receivedDate: c.status === 'RECEIVED' ? c.statusUpdatedAt : undefined
+          });
+        });
+      });
+    });
+    return history;
+  }, [orders, suppliers]);
+
+  const historyResults = useMemo(() => {
+    const q = compSearch.toLowerCase().trim();
+    if (!q) return [];
+    return Object.values(historyData).filter(h =>
+      h.description.toLowerCase().includes(q) ||
+      (h.componentNumber || '').toLowerCase().includes(q)
+    );
+  }, [compSearch, historyData]);
+
   const invResults = useMemo(() => {
     const q = compSearch.toLowerCase();
     if (!q) return [];
@@ -163,23 +212,56 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const handleAddComponent = async (inv: InventoryItem) => {
     if (!selectedOrder || !selectedItem) return;
     const available = inv.quantityInStock - (inv.quantityReserved || 0);
-    if (compQty > available) {
-      alert(`Insufficient stock for "${inv.description}": only ${available} ${inv.unit} available (${inv.quantityInStock} total, ${inv.quantityReserved || 0} reserved).`);
-      return;
-    }
+
     try {
-      const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-        description: inv.description,
-        quantity: compQty,
-        unit: inv.unit,
-        unitCost: inv.lastCost,
-        taxPercent: 14,
-        source: 'STOCK',
-        inventoryItemId: inv.id,
-        status: 'RESERVED'
-      });
-      setSelectedOrder(updated);
-      setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
+      if (compQty <= available) {
+        // Full stock availability
+        const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
+          description: inv.description,
+          quantity: compQty,
+          unit: inv.unit,
+          unitCost: inv.lastCost,
+          taxPercent: 14,
+          source: 'STOCK',
+          inventoryItemId: inv.id,
+          status: 'RESERVED'
+        });
+        setSelectedOrder(updated);
+        setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
+      } else {
+        // Partial stock or Out of stock
+        let currentOrder = selectedOrder;
+
+        // 1. Reserve what's available
+        if (available > 0) {
+          currentOrder = await dataService.addComponentToItem(currentOrder.id, selectedItem.id, {
+            description: inv.description,
+            quantity: available,
+            unit: inv.unit,
+            unitCost: inv.lastCost,
+            taxPercent: 14,
+            source: 'STOCK',
+            inventoryItemId: inv.id,
+            status: 'RESERVED'
+          });
+        }
+
+        // 2. Procure the rest
+        const remainder = compQty - (available > 0 ? available : 0);
+        const finalOrder = await dataService.addComponentToItem(currentOrder.id, selectedItem.id, {
+          description: inv.description,
+          quantity: remainder,
+          unit: inv.unit,
+          unitCost: inv.lastCost,
+          taxPercent: 14,
+          source: 'PROCUREMENT',
+          status: 'PENDING_OFFER'
+        });
+
+        setSelectedOrder(finalOrder);
+        setSelectedItem(finalOrder.items.find(i => i.id === selectedItem.id)!);
+      }
+
       setCompSearch('');
       setShowCompSuggestions(false);
       fetchData();
@@ -582,6 +664,34 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                             {isOut ? 'Out of Stock' : 'In-Stock Catalog'}
                                           </span>
                                           <div className="text-[9px] font-black text-slate-800">L.E. {i.lastCost?.toLocaleString()}</div>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                  {historyResults.map(h => {
+                                    const lastPrice = h.prices[h.prices.length - 1];
+                                    const lastOrder = h.orders[h.orders.length - 1];
+                                    return (
+                                      <button
+                                        key={h.description + lastOrder?.orderNo}
+                                        onMouseDown={() => {
+                                          // Extract info from history to assist input, or just set search to use it
+                                          setCompSearch(h.description);
+                                          setShowCompSuggestions(false);
+                                        }}
+                                        className="w-full text-left p-5 hover:bg-slate-50 flex justify-between items-center group transition-colors border-l-4 border-slate-300"
+                                      >
+                                        <div>
+                                          <div className="font-black text-slate-800 group-hover:text-blue-600 text-xs">{h.description}</div>
+                                          <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4 flex-wrap">
+                                            <span>Part: {h.componentNumber || 'N/A'}</span>
+                                            <span className="text-blue-600">Last Price: L.E. {lastPrice?.price?.toLocaleString()} ({lastPrice?.supplierName || 'N/A'})</span>
+                                            <span>History: Ordered {lastOrder?.orderDate || 'N/A'}{lastOrder?.receivedDate ? ` • Received ${new Date(lastOrder.receivedDate).toLocaleDateString()}` : ''}</span>
+                                          </div>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-1">
+                                          <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">Historical Library</span>
+                                          <div className="text-[9px] font-bold text-slate-400 italic">Found in {h.orders.length} past orders</div>
                                         </div>
                                       </button>
                                     );

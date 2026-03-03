@@ -277,7 +277,7 @@ const reconcileInventory = (oldOrder, newOrder, db) => {
         if (!order) return map;
         (order.items || []).forEach(item => {
             (item.components || []).forEach(comp => {
-                if (comp.inventoryItemId && (comp.source === 'STOCK' || comp.source === 'CONSUMED')) {
+                if (comp.inventoryItemId && (comp.source === 'STOCK' || comp.source === 'CONSUMED' || comp.status === 'RECEIVED' || comp.status === 'RESERVED')) {
                     const current = map.get(comp.inventoryItemId) || 0;
                     map.set(comp.inventoryItemId, current + (comp.quantity || 0));
                 }
@@ -1080,7 +1080,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
     const settings = resolveSettings(db);
 
     // --- LOCAL HELPER TO FIX SCOPE ISSUES ---
-    const updateInventoryItem = (db, comp, action) => {
+    const updateInventoryItem = (db, comp, action, order) => {
         if (!db.inventory) db.inventory = [];
         // Try to find existing inventory item by ID (if linked) or Description/PartNumber
         let invItem = db.inventory.find(i => i.id === comp.inventoryItemId);
@@ -1110,6 +1110,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             if (invItem.quantity !== undefined) delete invItem.quantity;
             invItem.lastCost = comp.unitCost || invItem.lastCost || 0;
             invItem.lastUpdated = new Date().toISOString();
+            invItem.poNumber = comp.poNumber;
+            invItem.orderRef = order.internalOrderNumber;
             console.log(`[Inventory] Received: ${invItem.description}. Stock: ${invItem.quantityInStock}, Rsrv: ${invItem.quantityReserved}`);
         } else if (action === 'RELEASE') {
             if (invItem && (invItem.quantityReserved || 0) > 0) {
@@ -1170,7 +1172,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.items.forEach(item => {
                     (item.components || []).forEach(comp => {
                         if (['RESERVED', 'RECEIVED'].includes(comp.status)) {
-                            updateInventoryItem(db, comp, 'RELEASE');
+                            updateInventoryItem(db, comp, 'RELEASE', order);
                             comp.status = 'IN_STOCK'; // Or specific status indicating released
                         }
                     });
@@ -1194,11 +1196,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (compIdx === -1) throw new Error("Component not found");
 
                 const compToReceive = order.items[itemIdx].components[compIdx];
-                updateInventoryItem(db, compToReceive, 'RECEIVE');
+                updateInventoryItem(db, compToReceive, 'RECEIVE', order);
 
-                compToReceive.status = 'RECEIVED';
+                compToReceive.status = order.customerName === 'Internal Stock' ? 'RECEIVED' : 'RESERVED';
                 compToReceive.statusUpdatedAt = new Date().toISOString();
-                order.logs.push(createAuditLog(`Component Received to Stock: ${compToReceive.description}`, order.status, user));
+                order.logs.push(createAuditLog(`Component Received to Stock${order.customerName !== 'Internal Stock' ? ' & Reserved for Factory' : ''}: ${compToReceive.description}`, order.status, user));
                 break;
 
             case 'convert-to-stock-order': {
@@ -1323,11 +1325,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             case 'record-payment':
                 if (!order.payments) order.payments = [];
+                const paymentIndex = order.payments.length + 1;
+                const receiptNumber = `RCV-${String(paymentIndex).padStart(3, '0')}`;
                 order.payments.push({
                     amount: payload.amount,
                     date: new Date().toISOString(),
                     user,
-                    memo: payload.memo || 'Regular payment'
+                    memo: payload.memo || 'Regular payment',
+                    receiptNumber
                 });
                 const totalPaid = order.payments.reduce((s, p) => s + p.amount, 0);
                 // Calculate gross revenue to see if fully paid
@@ -1414,6 +1419,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         // Skip status eval for rollback-to-logged to prevent auto-advancement
         const skipStatusEval = action === 'rollback-to-logged';
         order = processedOrderInternal(order, db, user, false, oldOrder, skipStatusEval);
+        reconcileInventory(oldOrder, order, db);
 
         db.orders[index] = order;
         if (writeDb(db)) {

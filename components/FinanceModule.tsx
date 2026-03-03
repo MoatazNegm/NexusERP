@@ -94,6 +94,16 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Payment Invoice PDF state
+  const [paymentInvoiceData, setPaymentInvoiceData] = useState<{
+    order: CustomerOrder;
+    paymentAmount: number;
+    receiptNumber: string;
+    isFinal: boolean;
+    previousPayments: { amount: number; date: string; receiptNumber?: string }[];
+  } | null>(null);
+  const paymentInvoiceRef = React.useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     fetchData();
   }, [refreshKey]);
@@ -157,11 +167,25 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
           break;
         case 'marginRelease': await dataService.releaseMarginBlock(decisionModal.entityId, comment); break;
         case 'billing': await dataService.issueInvoice(decisionModal.entityId); break;
-        case 'payment':
+        case 'payment': {
           const amt = parseFloat(paymentAmount) || 0;
           if (amt <= 0) throw new Error("Amount must be greater than zero");
-          await dataService.recordPayment(decisionModal.entityId, amt, comment);
+          const updatedOrder = await dataService.recordPayment(decisionModal.entityId, amt, comment);
+          // Calculate if this is a final payment
+          let grossRev = 0;
+          updatedOrder.items.forEach((it: any) => grossRev += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+          const totalPaidNow = (updatedOrder.payments || []).reduce((s: number, p: any) => s + p.amount, 0);
+          const lastPayment = updatedOrder.payments[updatedOrder.payments.length - 1];
+          const previousPayments = updatedOrder.payments.slice(0, -1);
+          setPaymentInvoiceData({
+            order: updatedOrder,
+            paymentAmount: amt,
+            receiptNumber: lastPayment?.receiptNumber || `RCV-${String(updatedOrder.payments.length).padStart(3, '0')}`,
+            isFinal: totalPaidNow >= grossRev,
+            previousPayments
+          });
           break;
+        }
         case 'cancelInvoice': await dataService.cancelInvoice(decisionModal.entityId, comment); break;
         case 'cancelPayment': await dataService.cancelPayment(decisionModal.entityId, decisionModal.extraData.index, comment); break;
         case 'revertToSourcing': await dataService.revertInvoicedOrderToSourcing(decisionModal.entityId, comment); break;
@@ -211,17 +235,54 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
     return printOrder.items.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
   };
 
+  // Auto-trigger payment invoice PDF download when paymentInvoiceData is set
+  React.useEffect(() => {
+    if (!paymentInvoiceData) return;
+    const timer = setTimeout(async () => {
+      if (!paymentInvoiceRef.current) return;
+      try {
+        const h2c = (await import('html2canvas')).default;
+        const canvas = await h2c(paymentInvoiceRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = await import('jspdf');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const imgWidth = pdf.internal.pageSize.getWidth();
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        // Handle multi-page if content is tall
+        if (imgHeight > pdf.internal.pageSize.getHeight()) {
+          let y = 0;
+          const pageHeight = pdf.internal.pageSize.getHeight();
+          while (y < imgHeight) {
+            if (y > 0) pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 0, -y, imgWidth, imgHeight);
+            y += pageHeight;
+          }
+        } else {
+          pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+        }
+        pdf.save(`Receipt-${paymentInvoiceData.order.internalOrderNumber}-${paymentInvoiceData.receiptNumber}.pdf`);
+      } catch (e) {
+        console.error('Payment Invoice PDF failed:', e);
+      } finally {
+        setPaymentInvoiceData(null);
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [paymentInvoiceData]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Hidden Invoice Template - Shared Logic */}
+      {/* Hidden Full Invoice Template */}
       <div className="fixed -left-[3000px] top-0 overflow-visible">
         {printOrder && (
           <div ref={printOrderRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
             <div className="flex justify-between items-start mb-10">
-              <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">LOGO</div>
+              <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">
+                {config.settings.companyLogo ? <img src={config.settings.companyLogo} className="w-full h-full object-contain" /> : 'LOGO'}
+              </div>
               <div className="text-right">
-                <h1 className="text-3xl font-black mb-1">Nexus ERP</h1>
-                <p className="text-xl font-bold text-slate-600">Cairo, Egypt</p>
+                <h1 className="text-3xl font-black mb-1">{config.settings.companyName || 'Nexus ERP'}</h1>
+                <p className="text-xl font-bold text-slate-600">{config.settings.companyAddress || 'Cairo, Egypt'}</p>
               </div>
             </div>
             <div className="border-t-2 border-b-2 border-slate-200 py-3 mb-8 flex justify-center items-center">
@@ -266,6 +327,133 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             </div>
           </div>
         )}
+      </div>
+
+      {/* Hidden Payment Receipt/Invoice Template */}
+      <div className="fixed -left-[3000px] top-0 overflow-visible">
+        {paymentInvoiceData && (() => {
+          const { order: pOrder, paymentAmount: pAmt, receiptNumber: pReceipt, isFinal, previousPayments: prevPay } = paymentInvoiceData;
+          // Calculate gross total for proration
+          let grossTotal = 0;
+          pOrder.items.forEach((it: any) => grossTotal += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+          const ratio = grossTotal > 0 ? pAmt / grossTotal : 0;
+          // Prorate each line item
+          const proratedItems = pOrder.items.map((it: any) => {
+            const lineGross = it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100));
+            const proratedGross = lineGross * ratio;
+            const proratedNet = proratedGross / (1 + (it.taxPercent / 100));
+            const proratedTax = proratedGross - proratedNet;
+            const proratedQty = it.quantity * ratio;
+            return { ...it, proratedQty, proratedNet, proratedTax, proratedGross };
+          });
+          const subtotal = proratedItems.reduce((s: number, it: any) => s + it.proratedNet, 0);
+          const totalTax = proratedItems.reduce((s: number, it: any) => s + it.proratedTax, 0);
+          const totalPaidBefore = prevPay.reduce((s: number, p: any) => s + p.amount, 0);
+
+          return (
+            <div ref={paymentInvoiceRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
+              {/* Header */}
+              <div className="flex justify-between items-start mb-10">
+                <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">
+                  {config.settings.companyLogo ? <img src={config.settings.companyLogo} className="w-full h-full object-contain" /> : 'LOGO'}
+                </div>
+                <div className="text-right">
+                  <h1 className="text-3xl font-black mb-1">{config.settings.companyName || 'Nexus ERP'}</h1>
+                  <p className="text-xl font-bold text-slate-600">{config.settings.companyAddress || 'Cairo, Egypt'}</p>
+                </div>
+              </div>
+
+              {/* Title Bar */}
+              <div className={`border-t-2 border-b-2 py-3 mb-8 flex justify-center items-center ${isFinal ? 'border-emerald-400 bg-emerald-50' : 'border-blue-400 bg-blue-50'}`}>
+                <h2 className={`text-xl font-black uppercase flex items-center gap-6 ${isFinal ? 'text-emerald-800' : 'text-blue-800'}`}>
+                  <span>{isFinal ? 'FINAL PAYMENT RECEIPT / إيصال سداد نهائي' : 'PARTIAL PAYMENT RECEIPT / إيصال سداد جزئي'}</span>
+                </h2>
+              </div>
+
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 gap-8 mb-10">
+                <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
+                  <div className="grid grid-cols-3"><div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">Customer:</div><div className="col-span-2 p-3 font-black text-sm uppercase">{pOrder.customerName}</div></div>
+                  <div className="grid grid-cols-3"><div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">Invoice No:</div><div className="col-span-2 p-3 font-mono font-black text-blue-600 text-xs">{pOrder.invoiceNumber || 'N/A'}</div></div>
+                  <div className="grid grid-cols-3"><div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">Receipt No:</div><div className="col-span-2 p-3 font-mono font-black text-emerald-600 text-xs">{pReceipt}</div></div>
+                </div>
+                <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
+                  <div className="grid grid-cols-3"><div className="col-span-2 p-3 font-black text-sm text-center tracking-widest">{new Date().toLocaleDateString()}</div><div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-xs">Date:</div></div>
+                  <div className="grid grid-cols-3"><div className="col-span-2 p-3 font-mono font-black text-xs text-center">{pOrder.internalOrderNumber}</div><div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">Order Ref:</div></div>
+                  <div className="grid grid-cols-3"><div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">522 803 435</div><div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">Tax ID:</div></div>
+                </div>
+              </div>
+
+              {/* Line Items Table */}
+              <div className="border-2 border-slate-900 mb-8 flex flex-col">
+                <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
+                  <div className="col-span-5 p-3 border-r-2 border-slate-900">Description</div>
+                  <div className="col-span-1 p-3 border-r-2 border-slate-900">Unit Price</div>
+                  <div className="col-span-1 p-3 border-r-2 border-slate-900">Qty (Pro-Rata)</div>
+                  <div className="col-span-1 p-3 border-r-2 border-slate-900">Tax %</div>
+                  <div className="col-span-2 p-3 border-r-2 border-slate-900">Tax Amount</div>
+                  <div className="col-span-2 p-3">Line Total</div>
+                </div>
+                {proratedItems.map((item: any) => (
+                  <div key={item.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm">
+                    <div className="col-span-5 p-3 border-r-2 border-slate-900 text-left font-bold text-xs">{item.description}</div>
+                    <div className="col-span-1 p-3 border-r-2 border-slate-900 font-black">{item.pricePerUnit.toLocaleString()}</div>
+                    <div className="col-span-1 p-3 border-r-2 border-slate-900 font-black">{item.proratedQty.toFixed(2)}</div>
+                    <div className="col-span-1 p-3 border-r-2 border-slate-900 font-bold text-slate-500">{item.taxPercent}%</div>
+                    <div className="col-span-2 p-3 border-r-2 border-slate-900 font-black text-amber-700">{item.proratedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="col-span-2 p-3 font-black">{item.proratedGross.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Totals */}
+              <div className="flex justify-end mb-8">
+                <div className="w-80 border-2 border-slate-900 divide-y-2 divide-slate-900 font-black">
+                  <div className="grid grid-cols-2">
+                    <div className="p-3 border-r-2 border-slate-900 text-xs uppercase bg-slate-50">Subtotal (Excl. Tax)</div>
+                    <div className="p-3 text-right text-sm">{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                  </div>
+                  <div className="grid grid-cols-2">
+                    <div className="p-3 border-r-2 border-slate-900 text-xs uppercase bg-slate-50">Total Tax</div>
+                    <div className="p-3 text-right text-sm text-amber-700">{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                  </div>
+                  <div className={`grid grid-cols-2 ${isFinal ? 'bg-emerald-50' : 'bg-blue-50'}`}>
+                    <div className="p-3 border-r-2 border-slate-900 text-sm uppercase">AMOUNT PAID</div>
+                    <div className={`p-3 text-right text-xl ${isFinal ? 'text-emerald-700' : 'text-blue-700'}`}>{pAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment History */}
+              {prevPay.length > 0 && (
+                <div className="border-t-2 border-slate-200 pt-6 mb-6">
+                  <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-3">Previous Payments on this Order</div>
+                  <div className="border border-slate-200 rounded">
+                    {prevPay.map((p: any, idx: number) => (
+                      <div key={idx} className="flex justify-between px-4 py-2 text-xs font-bold border-b border-slate-100 last:border-0">
+                        <span className="text-slate-500">{p.receiptNumber || `#${idx + 1}`} — {new Date(p.date).toLocaleDateString()}</span>
+                        <span className="text-slate-800">{p.amount.toLocaleString()} L.E.</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between px-4 py-2 text-xs font-black bg-slate-50 border-t border-slate-200">
+                      <span>Total Previously Paid</span>
+                      <span>{totalPaidBefore.toLocaleString()} L.E.</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Balance Summary */}
+              <div className="flex justify-between items-center p-4 bg-slate-50 border-2 border-slate-200 rounded mt-4">
+                <div className="text-xs font-black uppercase text-slate-500">Order Total: {grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.</div>
+                <div className="text-xs font-black uppercase text-slate-500">Total Paid: {(totalPaidBefore + pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.</div>
+                <div className={`text-sm font-black uppercase ${isFinal ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {isFinal ? 'FULLY SETTLED ✓' : `Outstanding: ${Math.max(0, grossTotal - totalPaidBefore - pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.`}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">

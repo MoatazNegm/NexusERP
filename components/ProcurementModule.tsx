@@ -512,10 +512,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
         <div className="space-y-8">
           {orderGroups.map(({ order: o, comps }) => {
-            const allAwarded = comps.every(({ comp: cc }) => cc.status === 'AWARDED');
-            const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED');
-            const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED');
-            const readyForPo = allAwarded && comps.length > 0;
+            const allAwardedOrOrdered = comps.every(({ comp: cc }) => ['AWARDED', 'ORDERED', 'RECEIVED'].includes(cc.status || ''));
+            const anyReadyToOrder = comps.some(({ comp: cc }) => cc.status === 'AWARDED');
+            const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
+            const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
+            const readyForPo = allAwardedOrOrdered && anyReadyToOrder;
 
             return (
               <div key={o.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden">
@@ -573,7 +574,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         <i className="fa-solid fa-file-invoice"></i> Issue PO for All
                       </button>
                     )}
-                    {!allAwarded && !allOrderedOrHigher && comps.some(({ comp: cc }) => cc.status === 'AWARDED') && (
+                    {!allAwardedOrOrdered && !allOrderedOrHigher && (
                       <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
                         <i className="fa-solid fa-hourglass-half"></i>
                         Awaiting all awards for PO
@@ -645,10 +646,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         )}
                         {c.status === 'AWARDED' && (
                           <div className="flex flex-col items-end gap-1.5">
-                            {!allAwarded && (
+                            {!allAwardedOrOrdered && (
                               <span className="text-[8px] font-black text-slate-400 uppercase">Waiting for other awards</span>
                             )}
-                            {allAwarded && (
+                            {allAwardedOrOrdered && (
                               <button
                                 disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
                                 onClick={async () => {

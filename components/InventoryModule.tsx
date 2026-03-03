@@ -370,6 +370,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
             <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b">
               <tr>
                 <th className="px-8 py-4">SKU / Description</th>
+                <th className="px-8 py-4">PO / Order Ref</th>
                 <th className="px-8 py-4">In Stock</th>
                 <th className="px-8 py-4">Reserved</th>
                 <th className="px-8 py-4">Available</th>
@@ -382,6 +383,10 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                   <td className="px-8 py-6">
                     <div className="font-mono text-[10px] font-black text-blue-600">{item.sku}</div>
                     <div className="font-bold text-slate-800">{item.description}</div>
+                  </td>
+                  <td className="px-8 py-6">
+                    <div className="text-[10px] font-black text-slate-900 uppercase">#{item.poNumber || 'N/A'}</div>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase">{item.orderRef || 'STOCK'}</div>
                   </td>
                   <td className="px-8 py-6 font-bold">{item.quantityInStock} {item.unit}</td>
                   <td className="px-8 py-6 text-amber-600 font-bold">{item.quantityReserved || 0}</td>

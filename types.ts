@@ -136,11 +136,14 @@ export interface InventoryItem {
   id: string;
   sku: string;
   description: string;
+  category: string;
   quantityInStock: number;
-  quantityReserved: number;
+  quantityReserved?: number;
   unit: string;
   lastCost: number;
-  category: string;
+  location?: string;
+  poNumber?: string;
+  orderRef?: string;
 }
 
 export interface ProcurementLine {
