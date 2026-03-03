@@ -52,8 +52,10 @@ export interface LogEntry {
 
 export interface Payment {
   amount: number;
-  timestamp: string;
-  comment?: string;
+  date: string;
+  user: string;
+  memo: string;
+  receiptNumber: string;
 }
 
 export interface Customer {
@@ -113,6 +115,7 @@ export interface ManufacturingComponent {
   inventoryItemId?: string;
   supplierId?: string;
   supplierPartId?: string;
+  supplierPartNumber?: string;
   rfpSupplierIds?: string[];
   status?: CompStatus;
   statusUpdatedAt?: string;

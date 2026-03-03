@@ -1026,7 +1026,10 @@ app.get('/api/v1/procurement/history', (req, res) => {
                 if (!['ORDERED', 'RECEIVED', 'RESERVED', 'CONSUMED', 'Manufactured'].includes(comp.status)) return;
 
                 const matchDesc = description && comp.description?.toLowerCase().includes(description.toLowerCase());
-                const matchPart = partNumber && comp.componentNumber?.toLowerCase().includes(partNumber.toLowerCase());
+                const matchPart = partNumber && (
+                    comp.componentNumber?.toLowerCase().includes(partNumber.toLowerCase()) ||
+                    comp.supplierPartNumber?.toLowerCase().includes(partNumber.toLowerCase())
+                );
 
                 if (matchDesc || matchPart) {
                     const supplier = (db.suppliers || []).find(s => s.id === comp.supplierId);

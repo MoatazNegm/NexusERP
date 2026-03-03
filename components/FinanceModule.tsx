@@ -103,6 +103,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
     previousPayments: { amount: number; date: string; receiptNumber?: string }[];
   } | null>(null);
   const paymentInvoiceRef = React.useRef<HTMLDivElement>(null);
+  const [viewPaymentsOrder, setViewPaymentsOrder] = useState<CustomerOrder | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -610,6 +611,15 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                       {![OrderStatus.REJECTED, OrderStatus.FULFILLED].includes(o.status) && (
                         <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Collect Payment</button>
                       )}
+                      {o.payments && o.payments.length > 0 && (
+                        <button
+                          onClick={() => setViewPaymentsOrder(o)}
+                          className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center hover:bg-emerald-100 transition-all border border-emerald-200"
+                          title="View Payment Receipts"
+                        >
+                          <i className="fa-solid fa-receipt text-xs"></i>
+                        </button>
+                      )}
                       <div className="flex gap-1">
                         {!o.einvoiceRequested && (
                           <button
@@ -721,6 +731,82 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                 {decisionModal.type === 'cancelInvoice' ? 'Void & Re-Issue' :
                   decisionModal.type === 'revertToSourcing' ? 'Commit Revert' : 'Commit Authorization'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment History / Receipts Modal */}
+      {viewPaymentsOrder && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[110] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl p-10 animate-in zoom-in-95 border border-slate-100 flex flex-col max-h-[90vh]">
+            <div className="flex justify-between items-start mb-8">
+              <div className="flex items-center gap-6">
+                <div className="w-16 h-16 rounded-3xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-3xl shadow-inner">
+                  <i className="fa-solid fa-receipt"></i>
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Payment Receipts</h3>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order: {viewPaymentsOrder.internalOrderNumber}</p>
+                </div>
+              </div>
+              <button onClick={() => setViewPaymentsOrder(null)} className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all flex items-center justify-center">
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 bg-white z-10 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
+                  <tr>
+                    <th className="px-4 py-4">Receipt #</th>
+                    <th className="px-4 py-4">Date</th>
+                    <th className="px-4 py-4">Amount</th>
+                    <th className="px-4 py-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {(viewPaymentsOrder.payments || []).map((p, idx) => {
+                    const totalPaidAtThisPoint = viewPaymentsOrder.payments?.slice(0, idx + 1).reduce((s, pay) => s + pay.amount, 0) || 0;
+                    let grossSum = 0;
+                    viewPaymentsOrder.items.forEach(it => grossSum += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+                    const isClosingPayment = totalPaidAtThisPoint >= grossSum;
+
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-5 font-mono text-xs font-black text-blue-600 uppercase">{p.receiptNumber || `RCV-${String(idx + 1).padStart(3, '0')}`}</td>
+                        <td className="px-4 py-5 font-bold text-slate-500 text-xs">{new Date(p.date).toLocaleDateString()}</td>
+                        <td className="px-4 py-5 font-black text-slate-800">{p.amount.toLocaleString()} L.E.</td>
+                        <td className="px-4 py-5 text-right">
+                          <button
+                            onClick={() => {
+                              setPaymentInvoiceData({
+                                order: viewPaymentsOrder,
+                                paymentAmount: p.amount,
+                                receiptNumber: p.receiptNumber || `RCV-${String(idx + 1).padStart(3, '0')}`,
+                                isFinal: isClosingPayment,
+                                previousPayments: viewPaymentsOrder.payments?.slice(0, idx) || []
+                              });
+                            }}
+                            className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 inline-flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all border border-blue-100"
+                            title="Download PDF Receipt"
+                          >
+                            <i className="fa-solid fa-file-arrow-down text-xs"></i>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-8 pt-8 border-t border-slate-100 flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                Total Received: {(viewPaymentsOrder.payments || []).reduce((s, p) => s + p.amount, 0).toLocaleString()} L.E.
+              </div>
+              <button onClick={() => setViewPaymentsOrder(null)} className="px-8 py-3 bg-slate-900 text-white rounded-xl hover:bg-black transition-all">Close</button>
             </div>
           </div>
         </div>

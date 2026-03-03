@@ -59,6 +59,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
   const [selectedItem, setSelectedItem] = useState<CustomerOrderItem | null>(null);
   const [compSearch, setCompSearch] = useState('');
+  const [partNumSearch, setPartNumSearch] = useState('');
   const [compQty, setCompQty] = useState(1);
   const [showCompSuggestions, setShowCompSuggestions] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -169,33 +170,45 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   }, [orders, suppliers]);
 
   const historyResults = useMemo(() => {
-    const q = compSearch.toLowerCase().trim();
-    if (!q) return [];
-    return Object.values(historyData).filter(h =>
-      h.description.toLowerCase().includes(q) ||
-      (h.componentNumber || '').toLowerCase().includes(q)
-    );
-  }, [compSearch, historyData]);
+    const descQuery = compSearch.toLowerCase().trim();
+    const partQuery = partNumSearch.toLowerCase().trim();
+    if (!descQuery && !partQuery) return [];
+
+    return Object.values(historyData).filter(h => {
+      const descMatch = descQuery ? h.description.toLowerCase().includes(descQuery) : true;
+      const partMatch = partQuery ? (h.componentNumber || '').toLowerCase().includes(partQuery) : true;
+      return descMatch && partMatch;
+    });
+  }, [compSearch, partNumSearch, historyData]);
 
   const invResults = useMemo(() => {
-    const q = compSearch.toLowerCase();
-    if (!q) return [];
-    return inventory.filter(i => (i.description || '').toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q));
-  }, [compSearch, inventory]);
+    const descQuery = compSearch.toLowerCase();
+    const partQuery = partNumSearch.toLowerCase();
+    if (!descQuery && !partQuery) return [];
+    return inventory.filter(i => {
+      const descMatch = descQuery ? (i.description || '').toLowerCase().includes(descQuery) : true;
+      const partMatch = partQuery ? (i.sku || '').toLowerCase().includes(partQuery) : true;
+      return descMatch && partMatch;
+    });
+  }, [compSearch, partNumSearch, inventory]);
 
   const supplierResults = useMemo(() => {
-    const q = compSearch.toLowerCase();
-    if (!q) return [];
+    const descQuery = compSearch.toLowerCase();
+    const partQuery = partNumSearch.toLowerCase();
+    if (!descQuery && !partQuery) return [];
+
     const results: { supplier: Supplier, part: SupplierPart }[] = [];
     suppliers.forEach(supp => {
       supp.priceList.forEach(part => {
-        if ((part.description || '').toLowerCase().includes(q) || (part.partNumber || '').toLowerCase().includes(q)) {
+        const descMatch = descQuery ? (part.description || '').toLowerCase().includes(descQuery) : true;
+        const partMatch = partQuery ? (part.partNumber || '').toLowerCase().includes(partQuery) : true;
+        if (descMatch && partMatch) {
           results.push({ supplier: supp, part });
         }
       });
     });
     return results;
-  }, [compSearch, suppliers]);
+  }, [compSearch, partNumSearch, suppliers]);
 
   const openHistory = async (name: string, sku?: string) => {
     setIsHistoryLoading(true);
@@ -263,6 +276,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       }
 
       setCompSearch('');
+      setPartNumSearch('');
       setShowCompSuggestions(false);
       fetchData();
     } catch (e: any) {
@@ -281,29 +295,33 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       source: 'PROCUREMENT',
       supplierId: supp.id,
       supplierPartId: part.id,
+      supplierPartNumber: part.partNumber,
       status: 'PENDING_OFFER'
     });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setCompSearch('');
+    setPartNumSearch('');
     setShowCompSuggestions(false);
     fetchData();
   };
 
   const handleAddCustomProcurement = async () => {
-    if (!selectedOrder || !selectedItem || !compSearch.trim()) return;
+    if (!selectedOrder || !selectedItem || (!compSearch.trim() && !partNumSearch.trim())) return;
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-      description: compSearch,
+      description: compSearch.trim() || 'Custom Part',
       quantity: compQty,
       unit: 'pcs',
       unitCost: 0,
       taxPercent: 14,
       source: 'PROCUREMENT',
-      status: 'PENDING_OFFER'
+      status: 'PENDING_OFFER',
+      supplierPartNumber: partNumSearch.trim() || undefined
     });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setCompSearch('');
+    setPartNumSearch('');
     setShowCompSuggestions(false);
     fetchData();
   };
@@ -626,21 +644,31 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               onChange={e => setCompQty(parseInt(e.target.value) || 1)}
                             />
                           </div>
-                          <div className="flex-1 relative space-y-1.5">
+                          <div className="flex-1 space-y-1.5">
                             <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Search Sourcing Catalogs (Stock or Market)</label>
-                            <div className="relative">
+                            <div className="flex gap-2 relative">
                               <input
                                 type="text"
-                                placeholder="Enter component SKU, Name or Vendor Part ID..."
-                                className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all"
-                                value={compSearch}
-                                onChange={e => { setCompSearch(e.target.value); setShowCompSuggestions(true); }}
+                                placeholder="Mfr. Part Number..."
+                                className="w-1/3 p-4 border-2 text-blue-800 border-blue-50 rounded-2xl text-sm font-mono outline-none focus:border-blue-500 transition-all placeholder:font-sans placeholder:text-slate-300"
+                                value={partNumSearch}
+                                onChange={e => { setPartNumSearch(e.target.value); setShowCompSuggestions(true); }}
                                 onFocus={() => setShowCompSuggestions(true)}
                               />
-                              <i className="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i>
+                              <div className="relative flex-1">
+                                <input
+                                  type="text"
+                                  placeholder="Enter component SKU or Name..."
+                                  className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all"
+                                  value={compSearch}
+                                  onChange={e => { setCompSearch(e.target.value); setShowCompSuggestions(true); }}
+                                  onFocus={() => setShowCompSuggestions(true)}
+                                />
+                                <i className="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i>
+                              </div>
 
-                              {showCompSuggestions && compSearch.length > 0 && (
-                                <div className="absolute top-full left-0 right-0 mt-3 bg-white border border-slate-200 rounded-[2rem] shadow-2xl z-[110] overflow-hidden divide-y divide-slate-50 max-h-80 overflow-y-auto animate-in slide-in-from-top-2 duration-300">
+                              {showCompSuggestions && (invResults.length > 0 || historyResults.length > 0 || supplierResults.length > 0 || (compSearch || partNumSearch)) && (
+                                <div className="absolute top-14 left-0 right-0 mt-3 bg-white border border-slate-200 rounded-[2rem] shadow-2xl z-[110] overflow-hidden divide-y divide-slate-50 max-h-80 overflow-y-auto animate-in slide-in-from-top-2 duration-300">
                                   {invResults.map(i => {
                                     const available = i.quantityInStock - (i.quantityReserved || 0);
                                     const isLow = available > 0 && available <= compQty;
@@ -677,6 +705,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                         onMouseDown={() => {
                                           // Extract info from history to assist input, or just set search to use it
                                           setCompSearch(h.description);
+                                          if (h.componentNumber) setPartNumSearch(h.componentNumber);
                                           setShowCompSuggestions(false);
                                         }}
                                         className="w-full text-left p-5 hover:bg-slate-50 flex justify-between items-center group transition-colors border-l-4 border-slate-300"
@@ -718,10 +747,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                   ))}
                                   <button
                                     onMouseDown={handleAddCustomProcurement}
-                                    className="w-full text-left p-5 bg-slate-900 hover:bg-black text-white flex justify-between items-center transition-all"
+                                    disabled={!compSearch.trim() && !partNumSearch.trim()}
+                                    className="w-full text-left p-5 bg-slate-900 hover:bg-black text-white flex justify-between items-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     <div>
-                                      <div className="font-black text-xs">Request custom component: "{compSearch}"</div>
+                                      <div className="font-black text-xs">Request custom component: "{compSearch || 'Custom Part'}"</div>
                                       <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Initialize new sourcing workflow</div>
                                     </div>
                                     <i className="fa-solid fa-plus-circle text-blue-400 text-xl"></i>
@@ -755,7 +785,10 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                             <tr key={c.id} className="group hover:bg-slate-50/50 transition-colors">
                               <td className="px-6 py-4">
                                 <div className="font-black text-slate-800 text-xs">{c.description}</div>
-                                <div className="font-mono text-[9px] text-blue-500 mt-0.5">{c.componentNumber}</div>
+                                <div className="flex flex-col gap-0.5 mt-1">
+                                  <div className="font-mono text-[9px] text-blue-500">{c.componentNumber}</div>
+                                  {c.supplierPartNumber && <div className="font-mono text-[9px] text-amber-600 font-bold uppercase tracking-widest">MFR P/N: {c.supplierPartNumber}</div>}
+                                </div>
                               </td>
                               <td className="px-6 py-4">
                                 <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${c.source === 'STOCK' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>{c.source}</span>

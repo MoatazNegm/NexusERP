@@ -13,6 +13,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
   const [selectedItem, setSelectedItem] = useState<CustomerOrderItem | null>(null);
   const [invSearch, setInvSearch] = useState('');
+  const [partNumSearch, setPartNumSearch] = useState('');
   const [compQty, setCompQty] = useState(1);
 
   const [showOrderSuggestions, setShowOrderSuggestions] = useState(false);
@@ -42,22 +43,33 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
   }, [searchQuery, allOrders]);
 
   const invResults = useMemo(() => {
-    const q = invSearch.toLowerCase();
-    return inventory.filter(i => (i.description || '').toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q));
-  }, [invSearch, inventory]);
+    const descQuery = invSearch.toLowerCase();
+    const partQuery = partNumSearch.toLowerCase();
+    if (!descQuery && !partQuery) return [];
+    return inventory.filter(i => {
+      const descMatch = descQuery ? (i.description || '').toLowerCase().includes(descQuery) : true;
+      const partMatch = partQuery ? (i.sku || '').toLowerCase().includes(partQuery) : true;
+      return descMatch && partMatch;
+    });
+  }, [invSearch, partNumSearch, inventory]);
 
   const supplierResults = useMemo(() => {
-    const q = invSearch.toLowerCase();
+    const descQuery = invSearch.toLowerCase();
+    const partQuery = partNumSearch.toLowerCase();
+    if (!descQuery && !partQuery) return [];
+
     const results: { supplier: Supplier, part: SupplierPart }[] = [];
     suppliers.forEach(supp => {
       supp.priceList.forEach(part => {
-        if ((part.description || '').toLowerCase().includes(q) || (part.partNumber || '').toLowerCase().includes(q)) {
+        const descMatch = descQuery ? (part.description || '').toLowerCase().includes(descQuery) : true;
+        const partMatch = partQuery ? (part.partNumber || '').toLowerCase().includes(partQuery) : true;
+        if (descMatch && partMatch) {
           results.push({ supplier: supp, part });
         }
       });
     });
     return results;
-  }, [invSearch, suppliers]);
+  }, [invSearch, partNumSearch, suppliers]);
 
   const handleAddComponent = async (inv: InventoryItem) => {
     if (!selectedOrder || !selectedItem) return;
@@ -81,6 +93,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setInvSearch('');
+    setPartNumSearch('');
     setShowInvSuggestions(false);
   };
 
@@ -95,28 +108,32 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
       source: 'PROCUREMENT',
       supplierId: supp.id,
       supplierPartId: part.id,
+      supplierPartNumber: part.partNumber,
       status: 'ORDERED'
     });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setInvSearch('');
+    setPartNumSearch('');
     setShowInvSuggestions(false);
   };
 
   const handleAddProcurementComp = async () => {
-    if (!selectedOrder || !selectedItem || !invSearch) return;
+    if (!selectedOrder || !selectedItem || (!invSearch && !partNumSearch)) return;
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-      description: invSearch,
+      description: invSearch || 'Custom Part',
       quantity: compQty,
       unit: 'pcs',
       unitCost: 0,
       taxPercent: 14,
       source: 'PROCUREMENT',
+      supplierPartNumber: partNumSearch || undefined,
       status: 'PENDING_OFFER'
     });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setInvSearch('');
+    setPartNumSearch('');
     setShowInvSuggestions(false);
   };
 
@@ -229,76 +246,87 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-6 rounded-2xl border border-slate-100">
                   <div className="md:col-span-2 space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Global Sourcing Engine</label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 relative">
                       <input
                         type="number"
-                        className="w-16 px-3 py-2 border rounded-lg text-sm font-bold shadow-sm bg-white text-slate-900"
+                        className="w-16 px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold shadow-sm bg-white text-slate-900 outline-none focus:border-blue-300"
+                        title="Quantity"
                         value={compQty}
                         onChange={e => setCompQty(parseInt(e.target.value) || 1)}
                       />
-                      <div className="flex-1 relative">
-                        <input
-                          type="text"
-                          onFocus={() => setShowInvSuggestions(true)}
-                          onBlur={() => setTimeout(() => setShowInvSuggestions(false), 200)}
-                          className="w-full px-4 py-2 border-2 border-blue-100 rounded-lg bg-white outline-none focus:ring-4 focus:ring-blue-50 text-sm transition-all text-slate-900"
-                          placeholder="Search inventory SKU or Supplier Price Lists..."
-                          value={invSearch}
-                          onChange={(e) => setInvSearch(e.target.value)}
-                        />
-                        {showInvSuggestions && (invResults.length > 0 || supplierResults.length > 0) && (
-                          <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl z-20 overflow-hidden divide-y animate-in slide-in-from-top-1 max-h-[300px] overflow-y-auto">
-                            {invResults.map(i => {
-                              const netAvailable = i.quantityInStock - (i.quantityReserved || 0);
-                              return (
-                                <button
-                                  key={i.id}
-                                  type="button"
-                                  onMouseDown={() => handleAddComponent(i)}
-                                  className="w-full text-left p-4 hover:bg-blue-50 flex justify-between items-center group transition-colors"
-                                >
-                                  <div>
-                                    <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700">
-                                      <i className="fa-solid fa-box-open mr-2 opacity-50"></i>{i.description}
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 flex gap-2 items-center">
-                                      <span className="font-mono bg-slate-100 px-1 rounded">{i.sku}</span>
-                                      <span className={`${netAvailable <= 0 ? 'text-red-500 font-bold' : ''}`}>Available: {netAvailable} {i.unit}</span>
-                                      <span className="text-slate-300">|</span>
-                                      <span>Stock: {i.quantityInStock}</span>
-                                      <span className="text-green-600 font-bold">Cost: {i.lastCost} L.E.</span>
-                                    </div>
-                                  </div>
-                                  <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">IN-STOCK</span>
-                                </button>
-                              );
-                            })}
-                            {supplierResults.map(({ supplier, part }) => (
+                      <input
+                        type="text"
+                        onFocus={() => setShowInvSuggestions(true)}
+                        onBlur={() => setTimeout(() => setShowInvSuggestions(false), 200)}
+                        className="w-1/3 px-4 py-2 border-2 text-blue-800 border-blue-50 rounded-lg bg-white outline-none focus:border-blue-300 text-sm transition-all font-mono placeholder:font-sans placeholder:text-slate-300"
+                        placeholder="Mfr. Part Number..."
+                        value={partNumSearch}
+                        onChange={(e) => setPartNumSearch(e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        onFocus={() => setShowInvSuggestions(true)}
+                        onBlur={() => setTimeout(() => setShowInvSuggestions(false), 200)}
+                        className="flex-1 px-4 py-2 border-2 border-blue-100 rounded-lg bg-white outline-none focus:ring-4 focus:ring-blue-50 focus:border-blue-300 text-sm transition-all text-slate-900 placeholder:text-slate-300"
+                        placeholder="Component Description..."
+                        value={invSearch}
+                        onChange={(e) => setInvSearch(e.target.value)}
+                      />
+
+                      {showInvSuggestions && (invResults.length > 0 || supplierResults.length > 0) && (
+                        <div className="absolute top-full left-16 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl z-20 overflow-hidden divide-y animate-in slide-in-from-top-1 max-h-[300px] overflow-y-auto">
+                          {invResults.map(i => {
+                            const netAvailable = i.quantityInStock - (i.quantityReserved || 0);
+                            return (
                               <button
-                                key={part.id}
+                                key={i.id}
                                 type="button"
-                                onMouseDown={() => handleAddSupplierPart(supplier, part)}
-                                className="w-full text-left p-4 hover:bg-amber-50 flex justify-between items-center group transition-colors"
+                                onMouseDown={() => handleAddComponent(i)}
+                                className="w-full text-left p-4 hover:bg-blue-50 flex justify-between items-center group transition-colors"
                               >
                                 <div>
-                                  <div className="text-xs font-bold text-slate-800 group-hover:text-amber-700">
-                                    <i className="fa-solid fa-truck-field mr-2 opacity-50"></i>{part.description}
+                                  <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700">
+                                    <i className="fa-solid fa-box-open mr-2 opacity-50"></i>{i.description}
                                   </div>
                                   <div className="text-[10px] text-slate-400 flex gap-2 items-center">
-                                    <span className="font-mono bg-slate-100 px-1 rounded">{part.partNumber}</span>
-                                    <span>Supplier: {supplier.name}</span>
-                                    <span className="text-amber-600 font-black">Offer: {part.price} L.E.</span>
+                                    <span className="font-mono bg-slate-100 px-1 rounded text-blue-800">{i.sku}</span>
+                                    <span className={`${netAvailable <= 0 ? 'text-red-500 font-bold' : ''}`}>Available: {netAvailable} {i.unit}</span>
+                                    <span className="text-slate-300">|</span>
+                                    <span>Stock: {i.quantityInStock}</span>
+                                    <span className="text-green-600 font-bold">Cost: {i.lastCost} L.E.</span>
                                   </div>
                                 </div>
-                                <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-2 py-0.5 rounded">EXTERNAL</span>
+                                <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">IN-STOCK</span>
                               </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                            );
+                          })}
+                          {supplierResults.map(({ supplier, part }, idx) => (
+                            <button
+                              key={`${part.id}-${idx}`}
+                              type="button"
+                              onMouseDown={() => handleAddSupplierPart(supplier, part)}
+                              className="w-full text-left p-4 hover:bg-amber-50 flex justify-between items-center group transition-colors"
+                            >
+                              <div>
+                                <div className="text-xs font-bold text-slate-800 group-hover:text-amber-700">
+                                  <i className="fa-solid fa-truck-field mr-2 opacity-50"></i>{part.description}
+                                </div>
+                                <div className="text-[10px] text-slate-400 flex gap-2 items-center">
+                                  <span className="font-mono bg-slate-100 px-1 rounded text-blue-800">{part.partNumber}</span>
+                                  <span>Supplier: {supplier.name}</span>
+                                  <span className="text-amber-600 font-black">Offer: {part.price} L.E.</span>
+                                </div>
+                              </div>
+                              <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-2 py-0.5 rounded">EXTERNAL</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
                       <button
                         onClick={handleAddProcurementComp}
-                        className="px-4 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-black transition-colors shadow-lg flex items-center gap-2 whitespace-nowrap"
+                        disabled={!invSearch && !partNumSearch}
+                        className="px-4 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg flex items-center gap-2 whitespace-nowrap"
                       >
                         <i className="fa-solid fa-plus"></i>
                         Custom External
@@ -330,7 +358,8 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                           <td className="px-4 py-4">
                             <div className="font-bold text-slate-800">{c.description}</div>
                             {c.inventoryItemId && <div className="text-[10px] text-slate-400 font-mono italic">RESERVED IN-STOCK #{c.inventoryItemId}</div>}
-                            {c.supplierId && <div className="text-[10px] text-amber-600 font-mono italic">SUPPLIER-OFFER REF</div>}
+                            {c.supplierPartNumber && <div className="text-[10px] text-amber-600 font-mono font-bold tracking-widest mt-0.5">MFR P/N: {c.supplierPartNumber}</div>}
+                            {c.supplierId && !c.supplierPartNumber && <div className="text-[10px] text-amber-600 font-mono italic">SUPPLIER-OFFER REF</div>}
                           </td>
                           <td className="px-4 py-4 font-bold">{c.quantity} <span className="text-[10px] font-normal text-slate-400 uppercase">{c.unit}</span></td>
                           <td className="px-4 py-4">
