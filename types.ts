@@ -133,6 +133,8 @@ export interface CustomerOrderItem {
   logs: LogEntry[];
   isAccepted?: boolean;
   components?: ManufacturingComponent[];
+  manufacturedQty?: number;
+  hubReceivedQty?: number;
 }
 
 export interface InventoryItem {

@@ -235,6 +235,14 @@ class DataService {
     return this.dispatchAction(id, 'receive-hub');
   }
 
+  async registerManufacturing(orderId: string, itemId: string, qty: number) {
+    return this.dispatchAction(orderId, 'register-manufacturing', { itemId, qty });
+  }
+
+  async receivePartialHub(orderId: string, receipts: { itemId: string, qty: number }[]) {
+    return this.dispatchAction(orderId, 'receive-hub-partial', { receipts });
+  }
+
   async issueInvoice(id: string) {
     return this.dispatchAction(id, 'issue-invoice');
   }

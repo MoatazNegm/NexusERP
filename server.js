@@ -1364,6 +1364,20 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.logs.push(createAuditLog(`Production Started: Released to Floor`, order.status, user));
                 break;
 
+            case 'register-manufacturing':
+                if (!payload.itemId || payload.qty === undefined) throw new Error("Item ID and quantity required");
+                const mItem = order.items.find(i => i.id === payload.itemId);
+                if (!mItem) throw new Error("Item not found");
+                mItem.manufacturedQty = (mItem.manufacturedQty || 0) + payload.qty;
+                order.logs.push(createAuditLog(`Manufactured ${payload.qty} ${mItem.unit} of ${mItem.description}`, order.status, user));
+
+                // Auto-transition if all items are fully manufactured
+                if (order.items.every(i => (i.manufacturedQty || 0) >= i.quantity)) {
+                    order.status = OrderStatus.MANUFACTURING_COMPLETED;
+                    order.logs.push(createAuditLog(`All items manufactured. Auto-transitioned to Ready for QC/Hub`, order.status, user));
+                }
+                break;
+
             case 'finish-production':
                 order.status = OrderStatus.MANUFACTURING_COMPLETED;
                 order.logs.push(createAuditLog(`Production Finished: Ready for QC/Hub`, order.status, user));
@@ -1372,6 +1386,28 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             case 'receive-hub':
                 order.status = OrderStatus.IN_PRODUCT_HUB;
                 order.logs.push(createAuditLog(`PO Received at Product Hub: Ready for Invoicing`, order.status, user));
+                break;
+
+            case 'receive-hub-partial':
+                if (!payload.receipts || !Array.isArray(payload.receipts)) throw new Error("Receipts array required");
+
+                let intakeDetails = [];
+                for (const rcpt of payload.receipts) {
+                    const hItem = order.items.find(i => i.id === rcpt.itemId);
+                    if (hItem && rcpt.qty > 0) {
+                        hItem.hubReceivedQty = (hItem.hubReceivedQty || 0) + rcpt.qty;
+                        intakeDetails.push(`${rcpt.qty} ${hItem.unit} of ${hItem.description}`);
+                    }
+                }
+                if (intakeDetails.length > 0) {
+                    order.logs.push(createAuditLog(`Hub Intake: ${intakeDetails.join(', ')}`, order.status, user));
+                }
+
+                // Auto-transition if all items are fully received by hub
+                if (order.items.every(i => (i.hubReceivedQty || 0) >= i.quantity)) {
+                    order.status = OrderStatus.IN_PRODUCT_HUB;
+                    order.logs.push(createAuditLog(`All items received at Hub. Auto-transitioned to Ready for Invoicing`, order.status, user));
+                }
                 break;
 
             case 'issue-invoice':

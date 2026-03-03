@@ -83,16 +83,22 @@
               "description": "deslk eslekelkeo sol",
               "quantity": 1,
               "unit": "pcs",
-              "unitCost": 0,
+              "unitCost": 234,
               "taxPercent": 14,
-              "source": "PROCUREMENT",
-              "status": "PENDING_OFFER",
+              "source": "CONSUMED",
+              "status": "Manufactured",
               "supplierPartNumber": "sadkd-3243202",
-              "statusUpdatedAt": "2026-03-03T19:07:44.179Z",
-              "componentNumber": "CMP-INT-2024-0001-0-0"
+              "statusUpdatedAt": "2026-03-03T19:13:08.029Z",
+              "componentNumber": "CMP-INT-2024-0001-0-0",
+              "rfpSupplierIds": [],
+              "supplierId": "suppliers_1771146837526",
+              "poNumber": "PO-056799",
+              "procurementStartedAt": "2026-03-03T19:11:06.086Z",
+              "inventoryItemId": "inv_1772565178893_e3own"
             }
           ],
-          "isAccepted": true
+          "isAccepted": false,
+          "status": "Manufactured"
         }
       ],
       "logs": [
@@ -461,11 +467,77 @@
           "message": "Technical study finalized and pushed to Procurement",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:10:39.885Z",
+          "message": "Component updated: deslk eslekelkeo sol",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:10:39.885Z",
+          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:10:50.422Z",
+          "message": "Component updated: deslk eslekelkeo sol",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:11:06.096Z",
+          "message": "Component updated: deslk eslekelkeo sol",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:12:58.893Z",
+          "message": "Component Received to Stock & Reserved for Factory: deslk eslekelkeo sol",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:12:58.894Z",
+          "message": "[AUTO] Procurement Complete: All components reserved. Status moved from WAITING_SUPPLIERS to WAITING_FACTORY",
+          "status": "WAITING_FACTORY",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:13:07.250Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:13:07.250Z",
+          "message": "[Inventory] Released 1 units of CMP-INT-2024-0001-0-0 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:13:08.028Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:13:50.420Z",
+          "message": "PO Received at Product Hub: Ready for Invoicing",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-03T19:20:06.724Z",
+          "message": "[SYSTEM] Hub Processing Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
       "dataEntryTimestamp": "2026-02-26T19:17:32.187Z",
-      "status": "WAITING_SUPPLIERS",
+      "status": "IN_PRODUCT_HUB",
       "loggingComplianceViolation": false,
       "payments": [
         {
@@ -483,7 +555,22 @@
       ]
     }
   ],
-  "inventory": [],
+  "inventory": [
+    {
+      "id": "inv_1772565178893_e3own",
+      "description": "deslk eslekelkeo sol",
+      "sku": "CMP-INT-2024-0001-0-0",
+      "quantityInStock": 0,
+      "quantityReserved": 0,
+      "category": "Uncategorized",
+      "unit": "pcs",
+      "lastCost": 234,
+      "minStockLevel": 0,
+      "lastUpdated": "2026-03-03T19:12:58.893Z",
+      "poNumber": "PO-056799",
+      "orderRef": "INT-2024-0001"
+    }
+  ],
   "suppliers": [
     {
       "id": "suppliers_1771146837526",
@@ -798,6 +885,16 @@
       "recipients": [
         "erpalerts@quickstor.net"
       ]
+    },
+    {
+      "id": "nt_1772565606724_1y3z",
+      "journalKey": "threshold_productHubLimitHrs_orders_1772133452187",
+      "orderId": "orders_1772133452187",
+      "type": "threshold_productHubLimitHrs",
+      "sentAt": "2026-03-03T19:20:06.724Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
     }
   ],
   "settings": [
@@ -877,7 +974,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:e5c83a0ee90821a045e54179d8fadd02:bfb2a68958bcf332667e4df6f8a8704833264b424bf49120c90449b4a1f968d7",
+        "password": "ENC:3743ff8e518530102a481f9e54c02c75:41423ec108c9e807c153c82d47d34238a5b4483b7600a86b98bb344655c41897",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -933,7 +1030,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:0e115d7db5aa6dfae32d8abec0cd3bd0:c3e04f783e85b4d2925c68512b71c4a84975c606dbe199c32979bad30b9385d63df7f6c7bda5b237b1056c261547dd57",
+        "apiKey": "ENC:9d286cbfbc4f8f2058e8f11b4cd64b00:82f833a7e13493f2fbe7a814c6352b5662af36e4723623fb4af42844143620bc01abbac44e99d56eaad9e125ec44af05",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -958,7 +1055,7 @@
         "userGroups_1770925213983"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:367f3fa4a7852bd42995c58c0d28d17e:e3d2a0e916917f4e44cca1c86c872cf41e0b18f68016fa685ba8a27520391f1d227d62c02e35df1f381f27ef70f34d20",
+        "apiKey": "ENC:01654ad2dd409730a0f627f3e4b7197e:140f4195e230816b0495c2b9f98bf2a68210be6e10b53e51f0bf42b315c45ed1641217ecf8c7f2556229b64649b2318b",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

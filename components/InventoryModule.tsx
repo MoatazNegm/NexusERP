@@ -61,6 +61,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmState | null>(null);
   const [receivedQtyInput, setReceivedQtyInput] = useState<string>('');
+  const [hubInputs, setHubInputs] = useState<Record<string, string>>({});
 
   // Delivery Note PDF State
   const deliveryNoteRef = React.useRef<HTMLDivElement>(null);
@@ -154,7 +155,10 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
   }, [allOrders, selectedSupplierId]);
 
   const finishedGoodsAwaitingHub = useMemo(() => {
-    return allOrders.filter(o => o.status === OrderStatus.MANUFACTURING_COMPLETED);
+    return allOrders.filter(o =>
+      o.status === OrderStatus.MANUFACTURING_COMPLETED ||
+      (o.status === OrderStatus.MANUFACTURING && o.items.some(i => (i.manufacturedQty || 0) > (i.hubReceivedQty || 0)))
+    );
   }, [allOrders]);
 
   const invoicedAwaitingDispatch = useMemo(() => {
@@ -207,6 +211,33 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
       await loadData();
     } catch (e: any) {
       alert(e.message || "Failed to receive PO at Hub.");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const executePartialHubReception = async () => {
+    if (!pendingConfirm || pendingConfirm.type !== 'hub') return;
+    const orderId = pendingConfirm.order.id;
+
+    const receipts = pendingConfirm.order.items.map(item => ({
+      itemId: item.id,
+      qty: parseFloat(hubInputs[item.id] || '0')
+    })).filter(r => !isNaN(r.qty) && r.qty > 0);
+
+    if (receipts.length === 0) {
+      alert("No quantities entered for intake.");
+      return;
+    }
+
+    setProcessingId(orderId);
+    try {
+      await dataService.receivePartialHub(orderId, receipts);
+      await loadData();
+      setPendingConfirm(null);
+      setHubInputs({});
+    } catch (e: any) {
+      alert(e.message || "Failed to receive at Hub.");
     } finally {
       setProcessingId(null);
     }
@@ -480,7 +511,24 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                     <td className="px-8 py-6 text-right">
                       <button
                         disabled={processingId === order.id}
-                        onClick={() => executeHubReception(order.id)}
+                        onClick={() => {
+                          const initialInputs: Record<string, string> = {};
+                          let hasReceivable = false;
+                          order.items.forEach(i => {
+                            const max = (i.manufacturedQty || 0) - (i.hubReceivedQty || 0);
+                            if (max > 0) {
+                              initialInputs[i.id] = String(max);
+                              hasReceivable = true;
+                            }
+                          });
+                          if (!hasReceivable && order.status === OrderStatus.MANUFACTURING_COMPLETED) {
+                            // Fallback for orders that completed before item-tracking
+                            executeHubReception(order.id);
+                          } else {
+                            setHubInputs(initialInputs);
+                            setPendingConfirm({ type: 'hub', order });
+                          }
+                        }}
                         className="px-6 py-3 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-blue-700 transition-all flex items-center gap-2 ml-auto shadow-lg shadow-blue-100"
                       >
                         {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-warehouse"></i>}
@@ -645,34 +693,79 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
         pendingConfirm && (
           <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
             <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md p-8 animate-in zoom-in-95">
-              <div className="flex items-center gap-4 mb-6">
-                <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shadow-inner"><i className="fa-solid fa-truck-ramp-box"></i></div>
-                <div><h3 className="text-xl font-black text-slate-800">Verification Gate</h3><p className="text-[10px] font-black text-slate-400 uppercase">Input exact received quantity</p></div>
-              </div>
-              <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 mb-8 space-y-6">
-                <div className="text-center">
-                  <div className="text-[10px] font-black text-slate-400 uppercase mb-2">Expected Quantity</div>
-                  <div className="text-3xl font-black text-slate-800">{pendingConfirm.comp?.quantity} <span className="text-sm font-bold text-slate-400">{pendingConfirm.comp?.unit}</span></div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[9px] font-black text-blue-600 uppercase ml-1">Physical Count Input</label>
-                  <input
-                    type="number" step="any" autoFocus
-                    className="w-full p-4 border-2 border-white bg-white rounded-2xl text-center text-2xl font-black focus:border-blue-500 outline-none shadow-sm"
-                    placeholder="0.00" value={receivedQtyInput} onChange={e => setReceivedQtyInput(e.target.value)}
-                  />
-                  {receivedQtyInput && parseFloat(receivedQtyInput) !== pendingConfirm.comp?.quantity && (
-                    <div className="text-[9px] font-black text-rose-500 uppercase mt-2 text-center flex items-center justify-center gap-2 animate-pulse"><i className="fa-solid fa-triangle-exclamation"></i> Mismatch Detected</div>
-                  )}
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setPendingConfirm(null)} className="flex-1 py-4 bg-slate-100 text-slate-400 font-black rounded-2xl text-[10px] uppercase">Cancel</button>
-                <button
-                  onClick={executeMaterialReception} disabled={!isConfirmationAllowed}
-                  className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all ${isConfirmationAllowed ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale'}`}
-                >Confirm Receipt</button>
-              </div>
+              {pendingConfirm.type === 'material' && (
+                <>
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shadow-inner"><i className="fa-solid fa-truck-ramp-box"></i></div>
+                    <div><h3 className="text-xl font-black text-slate-800">Verification Gate</h3><p className="text-[10px] font-black text-slate-400 uppercase">Input exact received quantity</p></div>
+                  </div>
+                  <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 mb-8 space-y-6">
+                    <div className="text-center">
+                      <div className="text-[10px] font-black text-slate-400 uppercase mb-2">Expected Quantity</div>
+                      <div className="text-3xl font-black text-slate-800">{pendingConfirm.comp?.quantity} <span className="text-sm font-bold text-slate-400">{pendingConfirm.comp?.unit}</span></div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-blue-600 uppercase ml-1">Physical Count Input</label>
+                      <input
+                        type="number" step="any" autoFocus
+                        className="w-full p-4 border-2 border-white bg-white rounded-2xl text-center text-2xl font-black focus:border-blue-500 outline-none shadow-sm"
+                        placeholder="0.00" value={receivedQtyInput} onChange={e => setReceivedQtyInput(e.target.value)}
+                      />
+                      {receivedQtyInput && parseFloat(receivedQtyInput) !== pendingConfirm.comp?.quantity && (
+                        <div className="text-[9px] font-black text-rose-500 uppercase mt-2 text-center flex items-center justify-center gap-2 animate-pulse"><i className="fa-solid fa-triangle-exclamation"></i> Mismatch Detected</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setPendingConfirm(null)} className="flex-1 py-4 bg-slate-100 text-slate-400 font-black rounded-2xl text-[10px] uppercase">Cancel</button>
+                    <button
+                      onClick={executeMaterialReception} disabled={!isConfirmationAllowed}
+                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all ${isConfirmationAllowed ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale'}`}
+                    >Confirm Receipt</button>
+                  </div>
+                </>
+              )}
+              {pendingConfirm.type === 'hub' && (
+                <>
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl shadow-inner"><i className="fa-solid fa-boxes-packing"></i></div>
+                    <div><h3 className="text-xl font-black text-slate-800">Hub Intake Validation</h3><p className="text-[10px] font-black text-slate-400 uppercase">Confirm items received from plant</p></div>
+                  </div>
+                  <div className="max-h-[50vh] overflow-y-auto mb-8 pr-2 space-y-3 custom-scrollbar">
+                    {pendingConfirm.order.items.map(item => {
+                      const mfd = item.manufacturedQty || 0;
+                      const hub = item.hubReceivedQty || 0;
+                      const max = mfd - hub;
+                      if (max <= 0) return null;
+
+                      return (
+                        <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center gap-4">
+                          <div className="flex-1">
+                            <div className="font-bold text-slate-700 text-sm mb-1">{item.description}</div>
+                            <div className="text-[9px] font-black uppercase text-amber-600">Receivable: {max} {item.unit}</div>
+                          </div>
+                          <div className="w-24">
+                            <input
+                              type="number"
+                              value={hubInputs[item.id] !== undefined ? hubInputs[item.id] : ''}
+                              onChange={e => setHubInputs(p => ({ ...p, [item.id]: e.target.value }))}
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-black text-center focus:border-amber-500 outline-none"
+                              placeholder="0"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setPendingConfirm(null)} className="flex-1 py-4 bg-slate-100 text-slate-400 font-black rounded-2xl text-[10px] uppercase">Cancel</button>
+                    <button
+                      onClick={executePartialHubReception}
+                      className="flex-[2] py-4 bg-amber-500 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-amber-600 transition-all"
+                    >Confirm Intake</button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )
