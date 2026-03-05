@@ -71,10 +71,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
   const [rfpSelection, setRfpSelection] = useState<string[]>([]);
   const [rfpCompSelection, setRfpCompSelection] = useState<string[]>([]); // For multi-component RFP PDF
-  const rfpTemplateRef = useRef<HTMLDivElement>(null);
+  const [rfpTemplateRef, rfpPrintData, setRfpPrintData] = [useRef<HTMLDivElement>(null), ...useState<{ order: CustomerOrder, comps: ManufacturingComponent[] } | null>(null)];
   const [isDownloadingRfp, setIsDownloadingRfp] = useState(false);
   const [awardSupplierId, setAwardSupplierId] = useState<string>('');
-  const [awardCost, setAwardCost] = useState<number>(0);
+  const [awardCosts, setAwardCosts] = useState<Record<string, number>>({});
   const [awardTaxPercent, setAwardTaxPercent] = useState<number>(14);
   const [poNumberInput, setPoNumberInput] = useState<string>('');
   const [resetReason, setResetReason] = useState<string>('');
@@ -186,6 +186,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   };
 
   const handleDownloadRfp = async () => {
+    // This handles download from the Send RFP wizard
     if (!activeAction?.order || rfpCompSelection.length === 0 || !rfpTemplateRef.current) return;
     setIsDownloadingRfp(true);
     try {
@@ -207,6 +208,42 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     } finally {
       setIsDownloadingRfp(false);
     }
+  };
+
+  const handleDownloadExistingRfp = async (order: CustomerOrder, comp: ManufacturingComponent, compsInOrder: { item: CustomerOrderItem, comp: ManufacturingComponent }[]) => {
+    // find all components in this order sharing the same rfpId
+    const sameRfpGroup = compsInOrder.filter(x => x.comp.rfpId && x.comp.rfpId === comp.rfpId).map(x => x.comp);
+    if (sameRfpGroup.length === 0) {
+      // Fallback to just this component if no rfpId (though unlikely for RFP_SENT)
+      sameRfpGroup.push(comp);
+    }
+
+    setRfpPrintData({ order, comps: sameRfpGroup });
+
+    setTimeout(async () => {
+      if (!rfpTemplateRef.current) return;
+      setIsDownloadingRfp(true);
+      try {
+        const h2c = (await import('html2canvas')).default;
+        const canvas = await h2c(rfpTemplateRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = await import('jspdf');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+
+        const imgProps = pdf.getImageProperties(imgData);
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(`RFP-${order.internalOrderNumber}-${new Date().toISOString().split('T')[0]}.pdf`);
+      } catch (e) {
+        console.error("RFP PDF Generation Failed", e);
+        alert("Failed to generate RFP Request Document.");
+      } finally {
+        setIsDownloadingRfp(false);
+        setRfpPrintData(null);
+      }
+    }, 500);
   };
 
   const handleExecuteAction = async () => {
@@ -250,64 +287,50 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         if (selectedCompIds.length === 0) throw new Error("At least one component must be selected");
 
         setIsActionLoading('bulk-po');
-        for (const targetId of selectedCompIds) {
-          const target = multiComps.find(m => m.comp.id === targetId);
-          if (!target) continue;
-          await dataService.updateComponent(order.id, target.item.id, target.comp.id!, {
-            status: 'ORDERED',
-            poNumber: poNumberInput,
-            procurementStartedAt: new Date().toISOString(),
-            statusUpdatedAt: new Date().toISOString()
-          });
-        }
+        const componentsToDispatch = selectedCompIds;
+
+        await dataService.dispatchAction(order.id, 'issue-po-batch', {
+          components: componentsToDispatch,
+          poNumber: poNumberInput
+        });
       } else if (type === 'CANCEL_PO_BATCH') {
         if (!resetReason.trim()) throw new Error("Cancellation reason is required");
 
         setIsActionLoading('bulk-cancel');
-        for (const targetId of selectedCompIds) {
-          const target = multiComps.find(m => m.comp.id === targetId);
-          if (!target) continue;
-
-          await dataService.updateComponent(order.id, target.item.id, target.comp.id!, {
-            status: 'PENDING_OFFER',
-            poNumber: null,
-            supplierId: null,
-            statusUpdatedAt: new Date().toISOString()
-          });
-        }
-        // Log the batch cancellation
-        await dataService.dispatchAction(order.id, 'void-action', {
-          message: `Batch PO Cancellation for PO ${comp?.poNumber || 'N/A'}: ${resetReason}`
+        await dataService.dispatchAction(order.id, 'cancel-po-batch', {
+          sendPoId: comp?.sendPoId
         });
       } else {
         let updates: Partial<ManufacturingComponent> = { statusUpdatedAt: new Date().toISOString() };
 
         if (type === 'RFP') {
-          updates.status = 'RFP_SENT';
-          updates.rfpSupplierIds = rfpSelection;
           setIsActionLoading('bulk-rfp');
           const compsToProcess = rfpCompSelection.length > 0 ? rfpCompSelection : [comp.id!];
-          for (const compId of compsToProcess) {
-            const nestedItem = order.items.find(i => i.components?.some(c => c.id === compId));
-            if (nestedItem) {
-              await dataService.updateComponent(order.id, nestedItem.id, compId, updates);
-            }
-          }
+          const componentsToDispatch = compsToProcess.map(compId => compId);
+
+          await dataService.dispatchAction(order.id, 'send-rfp-batch', {
+            components: componentsToDispatch,
+            rfpSupplierIds: rfpSelection,
+          });
         } else if (type === 'AWARD') {
-          if (!awardSupplierId || awardCost < 0) throw new Error("Select vendor and negotiated cost");
-          updates.status = 'AWARDED';
-          updates.supplierId = awardSupplierId;
-          updates.unitCost = awardCost;
-          updates.taxPercent = awardTaxPercent;
+          if (!awardSupplierId) throw new Error("Select vendor");
 
           setIsActionLoading('bulk-award');
           const targetIds = selectedCompIds.length > 0 ? selectedCompIds : [comp.id!];
-          for (const compId of targetIds) {
-            const nestedItem = order.items.find(i => i.components?.some(c => c.id === compId));
-            if (nestedItem) {
-              await dataService.updateComponent(order.id, nestedItem.id, compId, updates);
-            }
-          }
+          const componentsToDispatch = targetIds.map(compId => ({
+            id: compId,
+            unitCost: awardCosts[compId] || 0
+          }));
+
+          const supplier = suppliers.find(s => s.id === awardSupplierId);
+          if (!supplier) throw new Error("Selected supplier not found.");
+
+          await dataService.dispatchAction(order.id, 'award-tender-batch', {
+            components: componentsToDispatch,
+            supplierId: awardSupplierId,
+            supplierName: supplier.name,
+            taxPercent: awardTaxPercent,
+          });
         } else if (type === 'RESET') {
           updates.status = 'PENDING_OFFER';
           updates.supplierId = undefined;
@@ -329,7 +352,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setActiveAction(null);
     setRfpSelection([]);
     setAwardSupplierId('');
-    setAwardCost(0);
+    setAwardCosts({});
     setAwardTaxPercent(14);
     setPoNumberInput('');
     setResetReason('');
@@ -393,24 +416,36 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   };
 
   const awardCalculations = useMemo(() => {
-    if (activeAction?.type !== 'AWARD' || !activeAction.comp) return { totalExclTax: 0, taxAmount: 0, totalInclTax: 0 };
+    let totalExclTax = 0;
 
-    const selectedQty = selectedCompIds.length > 0
-      ? multiComps.filter(m => selectedCompIds.includes(m.comp.id!)).reduce((sum, m) => sum + (m.comp.quantity || 0), 0)
-      : activeAction.comp.quantity;
+    // Sum the individual costs (Quantity * UnitCost) for all selected components
+    const selectedComps = multiComps.filter(m => selectedCompIds.includes(m.comp.id!));
+    if (selectedComps.length > 0) {
+      selectedComps.forEach(m => {
+        const qty = m.comp.quantity || 0;
+        const unitCost = awardCosts[m.comp.id!] || 0;
+        totalExclTax += (qty * unitCost);
+      });
+    } else if (activeAction?.comp) {
+      const qty = activeAction.comp.quantity || 0;
+      const unitCost = awardCosts[activeAction.comp.id!] || 0;
+      totalExclTax += (qty * unitCost);
+    }
 
-    const totalExclTax = awardCost * selectedQty;
     const taxAmount = totalExclTax * (awardTaxPercent / 100);
-    const totalInclTax = totalExclTax + taxAmount;
-    return { totalExclTax, taxAmount, totalInclTax };
-  }, [activeAction, awardCost, awardTaxPercent, selectedCompIds, multiComps]);
+    return {
+      totalExclTax,
+      taxAmount,
+      totalInclTax: totalExclTax + taxAmount
+    };
+  }, [multiComps, selectedCompIds, activeAction, awardCosts, awardTaxPercent]);
 
   return (
     <div className="space-y-6">
       {/* Hidden PDF Templates */}
       <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
         {/* RFP PDF Template */}
-        {activeAction?.type === 'RFP' && activeAction.order && rfpCompSelection.length > 0 && (
+        {(rfpPrintData || (activeAction?.type === 'RFP' && activeAction.order && rfpCompSelection.length > 0)) && (
           <div ref={rfpTemplateRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
             <div className="flex justify-between items-start mb-12">
               <div className="flex flex-col gap-2">
@@ -431,7 +466,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Ref</div>
-                  <div className="font-mono text-sm font-black text-blue-700">RFP-{activeAction.order.internalOrderNumber}</div>
+                  <div className="font-mono text-sm font-black text-blue-700">RFP-{rfpPrintData ? rfpPrintData.order.internalOrderNumber : activeAction!.order.internalOrderNumber}</div>
                 </div>
               </div>
             </div>
@@ -448,9 +483,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 <div className="col-span-2 p-3">Quantity</div>
               </div>
 
-              {activeAction.order.items.flatMap(ci => (ci.components || []))
-                .filter(comp => rfpCompSelection.includes(comp.id || ''))
-                .map((comp, idx) => {
+              {rfpPrintData ? (
+                rfpPrintData.comps.map((comp, idx) => {
                   const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
                   return (
                     <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
@@ -465,7 +499,27 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       </div>
                     </div>
                   );
-                })}
+                })
+              ) : (
+                activeAction!.order.items.flatMap(ci => (ci.components || []))
+                  .filter(comp => rfpCompSelection.includes(comp.id || ''))
+                  .map((comp, idx) => {
+                    const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
+                    return (
+                      <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
+                        <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
+                        <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
+                          <div className="font-black text-xs leading-relaxed">{comp.description}</div>
+                          {comp.componentNumber && <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>}
+                        </div>
+                        <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">{externalPartNum}</div>
+                        <div className="col-span-2 p-4 font-black">
+                          {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
             </div>
 
             <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 text-center mt-20 pt-8 border-t-2 border-slate-900">
@@ -534,7 +588,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
             <div className="border-2 border-slate-900 mb-10 min-h-[400px] flex flex-col">
               <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
-                <div className="col-span-6 p-3 border-r-2 border-slate-900">Description (الوصف)</div>
+                <div className="col-span-4 p-3 border-r-2 border-slate-900">Description (الوصف)</div>
+                <div className="col-span-2 p-3 border-r-2 border-slate-900">Part No.<br />رقم القطعة</div>
                 <div className="col-span-1 p-3 border-r-2 border-slate-900">Price LE<br />السعر</div>
                 <div className="col-span-1 p-3 border-r-2 border-slate-900">quantities<br />الكميه</div>
                 <div className="col-span-2 p-3 border-r-2 border-slate-900">unit<br />الوحده</div>
@@ -543,8 +598,12 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
               {poPrintData.items.map(({ comp }, idx) => (
                 <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 text-center font-black">
-                  <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left text-sm flex items-center">
-                    {comp.description}
+                  <div className="col-span-4 p-4 border-r-2 border-slate-900 text-left text-sm flex flex-col justify-center">
+                    <span>{comp.description}</span>
+                    {comp.componentNumber && <span className="text-[8px] text-slate-400 font-bold mt-0.5">(Internal P#: {comp.componentNumber})</span>}
+                  </div>
+                  <div className="col-span-2 p-4 border-r-2 border-slate-900 flex items-center justify-center font-mono text-xs text-blue-800 break-all">
+                    {comp.supplierPartNumber || ''}
                   </div>
                   <div className="col-span-1 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
                     {comp.unitCost.toLocaleString()}
@@ -563,7 +622,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
               {Array.from({ length: Math.max(0, 8 - poPrintData.items.length) }).map((_, idx) => (
                 <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 h-10">
-                  <div className="col-span-6 border-r-2 border-slate-900"></div>
+                  <div className="col-span-4 border-r-2 border-slate-900"></div>
+                  <div className="col-span-2 border-r-2 border-slate-900"></div>
                   <div className="col-span-1 border-r-2 border-slate-900"></div>
                   <div className="col-span-1 border-r-2 border-slate-900"></div>
                   <div className="col-span-2 border-r-2 border-slate-900"></div>
@@ -653,7 +713,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       }}
                       className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 transition-all ${anyOrdered ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border border-orange-200 text-orange-500 hover:bg-orange-50'
                         }`}
-                      title={anyOrdered ? 'Cancel all POs first' : 'Rollback to Logged Registry'}
+                      title={anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback to Logged Registry'}
                     >
                       <i className="fa-solid fa-file-export fa-flip-horizontal"></i>
                       {anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback Order'}
@@ -709,6 +769,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${c.status === 'ORDERED' ? 'bg-emerald-600 text-white' :
                               c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
                               }`}>{(c.status || '').replace('_', ' ')}</span>
+                            {c.rfpId && ['RFP_SENT', 'AWARDED'].includes(c.status || '') && (
+                              <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
+                                BATCH: {c.rfpId.substring(0, 6)}
+                              </span>
+                            )}
                             {c.poNumber && <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-2 rounded">PO: {c.poNumber}</span>}
                           </div>
                           <div className="font-black text-slate-800 text-base tracking-tight">{c.description}</div>
@@ -745,21 +810,36 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         </div>
 
                         {c.status === 'PENDING_OFFER' && (
-                          <button onClick={() => { setActiveAction({ type: 'RFP', order: o, item: i, comp: c }); setRfpSelection(c.rfpSupplierIds || []); setRfpCompSelection([c.id || '']); }}
+                          <button onClick={() => {
+                            setActiveAction({ type: 'RFP', order: o, item: i, comp: c });
+                            setRfpSelection(c.rfpSupplierIds || []);
+                            // Auto-select other components with the same rfpId if it exists
+                            const sameRfpIds = c.rfpId ? comps.filter(x => x.comp.rfpId === c.rfpId).map(x => x.comp.id!) : [c.id!];
+                            setRfpCompSelection(sameRfpIds);
+                          }}
                             className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-black transition-all"
                           >Send RFP</button>
                         )}
                         {c.status === 'RFP_SENT' && (
-                          <button onClick={() => {
-                            const sameRfp = comps.filter(x => x.comp.status === 'RFP_SENT' && (x.comp.componentNumber === c.componentNumber || x.comp.description === c.description));
-                            setMultiComps(sameRfp);
-                            setSelectedCompIds(sameRfp.map(m => m.comp.id!));
-                            setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
-                            setAwardCost(c.unitCost || 0);
-                            setAwardTaxPercent(c.taxPercent || 14);
-                          }}
-                            className="px-6 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
-                          >Award Tender</button>
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => handleDownloadExistingRfp(o, c, comps)}
+                              className="px-5 py-2.5 bg-white border-2 border-slate-900 text-slate-900 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-slate-50 transition-all flex items-center gap-2"
+                            >
+                              <i className="fa-solid fa-file-pdf"></i> Download RFP
+                            </button>
+                            <button onClick={() => {
+                              const sameRfp = comps.filter(x => x.comp.status === 'RFP_SENT' && c.rfpId && x.comp.rfpId === c.rfpId);
+                              const displayComps = sameRfp.length > 0 ? sameRfp : [comps.find(x => x.comp.id === c.id)!];
+                              setMultiComps(displayComps);
+                              setSelectedCompIds([c.id!]); // Default to only current one selected
+                              setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
+                              setAwardCosts({ [c.id!]: c.unitCost || 0 });
+                              setAwardTaxPercent(c.taxPercent || 14);
+                            }}
+                              className="px-6 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
+                            >Award Tender</button>
+                          </div>
                         )}
                         {c.status === 'AWARDED' && (
                           <div className="flex flex-col items-end gap-1.5">
@@ -772,10 +852,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                 onClick={async () => {
                                   const po = await dataService.getUniquePoNumber();
                                   setPoNumberInput(po);
-                                  // Find all awarded components for THIS supplier in THIS order
-                                  const sameSupplierAwarded = comps.filter(x => x.comp.status === 'AWARDED' && x.comp.supplierId === c.supplierId);
-                                  setMultiComps(sameSupplierAwarded);
-                                  setSelectedCompIds(sameSupplierAwarded.map(m => m.comp.id!));
+                                  // Find all awarded components sharing the same Award ID (and supplier) in THIS order
+                                  const sameAwardGroup = comps.filter(x =>
+                                    x.comp.status === 'AWARDED' &&
+                                    x.comp.supplierId === c.supplierId &&
+                                    (c.awardId ? x.comp.awardId === c.awardId : true)
+                                  );
+                                  setMultiComps(sameAwardGroup);
+                                  setSelectedCompIds([c.id!]); // Default to only current
                                   setActiveAction({ type: 'PO', order: o, item: i, comp: c });
                                 }}
                                 className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
@@ -801,10 +885,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             </button>
                             <button
                               onClick={() => {
-                                // Find all components sharing this PO number
-                                const samePo = comps.filter(x => x.comp.poNumber === c.poNumber && x.comp.status === 'ORDERED');
-                                setMultiComps(samePo);
-                                setSelectedCompIds(samePo.map(m => m.comp.id!));
+                                // Find all components sharing this PO number and sendPoId
+                                const samePoBatch = comps.filter(x =>
+                                  x.comp.poNumber === c.poNumber &&
+                                  x.comp.status === 'ORDERED' &&
+                                  (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
+                                );
+                                setMultiComps(samePoBatch);
+                                setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
                                 setResetReason('');
                                 setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
                               }}
@@ -872,21 +960,29 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1">Select other components from this order to group into a single request.</p>
                         </div>
                       </div>
-                      <div className="border border-slate-100 rounded-2xl p-2 max-h-40 overflow-y-auto custom-scrollbar space-y-1">
-                        {activeAction.order.items.flatMap(ci => (ci.components || []).filter(cc => cc.source === 'PROCUREMENT')).map(comp => (
-                          <label key={comp.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100 hover:border-slate-300'}`}>
+                      <div className="border border-slate-100 rounded-2xl p-2 max-h-48 overflow-y-auto custom-scrollbar space-y-1">
+                        {activeAction.order.items.flatMap(ci => (ci.components || []).filter(cc =>
+                          cc.source === 'PROCUREMENT' &&
+                          (['PENDING_OFFER', 'RFP_SENT'].includes(cc.status || ''))
+                        )).map(comp => (
+                          <label key={comp.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-slate-50 border-slate-100 hover:border-slate-300'}`}>
                             <input
                               type="checkbox"
-                              className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                              className="hidden"
                               checked={rfpCompSelection.includes(comp.id || '')}
                               onChange={(e) => {
                                 if (e.target.checked) setRfpCompSelection(prev => [...prev, comp.id || '']);
                                 else setRfpCompSelection(prev => prev.filter(id => id !== comp.id));
                               }}
                             />
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-white border-white text-blue-600' : 'bg-white border-slate-200'}`}>
+                              {rfpCompSelection.includes(comp.id || '') && <i className="fa-solid fa-check text-[10px]"></i>}
+                            </div>
                             <div className="flex-1">
-                              <div className="text-xs font-bold text-slate-800">{comp.description}</div>
-                              <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Qty: {comp.quantity} {comp.unit} | P/N: {comp.componentNumber || 'N/A'}</div>
+                              <div className={`text-xs font-black ${rfpCompSelection.includes(comp.id || '') ? 'text-white' : 'text-slate-800'}`}>{comp.description}</div>
+                              <div className={`text-[9px] font-bold uppercase tracking-widest ${rfpCompSelection.includes(comp.id || '') ? 'text-blue-100' : 'text-slate-400'}`}>
+                                Qty: {comp.quantity} {comp.unit} | {comp.status?.replace('_', ' ')}
+                              </div>
                             </div>
                           </label>
                         ))}
@@ -940,23 +1036,43 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       </div>
                     </div>
 
-                    {multiComps.length > 1 && (
+                    {multiComps.length > 0 && (
                       <div className="space-y-3 mb-4">
                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Matching Components in RFP</label>
-                        <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1 custom-scrollbar">
-                          {multiComps.map(({ comp: mc, item: mi }) => (
-                            <button
-                              key={mc.id}
-                              onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])}
-                              className={`p-3 rounded-2xl border text-left transition-all flex items-center justify-between ${selectedCompIds.includes(mc.id!) ? 'bg-amber-50 border-amber-200 shadow-sm' : 'bg-white border-slate-100 hover:border-amber-200'}`}
-                            >
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-black uppercase text-slate-700">{mc.description}</span>
-                                <span className="text-[9px] font-bold text-slate-400">Qty: {mc.quantity} • Item: {mi.orderNumber}</span>
+                        <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-1 custom-scrollbar">
+                          {multiComps.map(({ comp: mc, item: mi }) => {
+                            const isSelected = selectedCompIds.includes(mc.id!);
+                            return (
+                              <div
+                                key={mc.id}
+                                className={`p-3 rounded-2xl border transition-all ${isSelected ? 'bg-amber-50 border-amber-200 shadow-sm' : 'bg-white border-slate-100'}`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex flex-col cursor-pointer flex-1" onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])}>
+                                    <span className="text-[10px] font-black uppercase text-slate-700">{mc.description}</span>
+                                    <span className="text-[9px] font-bold text-slate-400">Qty: {mc.quantity} • Item: {mi.orderNumber}</span>
+                                  </div>
+                                  <button onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])} className="p-2">
+                                    {isSelected ? <i className="fa-solid fa-circle-check text-amber-500 text-lg"></i> : <i className="fa-regular fa-circle text-slate-300 text-lg"></i>}
+                                  </button>
+                                </div>
+                                {isSelected && (
+                                  <div className="mt-2 pt-2 border-t border-amber-200/50 flex items-center justify-between animate-in slide-in-from-top-2">
+                                    <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Price per {mc.unit || 'Item'}</span>
+                                    <div className="flex items-center gap-2">
+                                      <input
+                                        type="number" step="any" min="0" placeholder="0.00"
+                                        className="w-24 px-3 py-1.5 bg-white border border-amber-200 rounded-xl font-black text-amber-900 text-right text-sm outline-none focus:border-amber-400 transition-all"
+                                        value={awardCosts[mc.id!] || ''}
+                                        onChange={e => setAwardCosts(prev => ({ ...prev, [mc.id!]: parseFloat(e.target.value) || 0 }))}
+                                      />
+                                      <span className="text-[9px] font-black text-amber-600">L.E.</span>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
-                              {selectedCompIds.includes(mc.id!) && <i className="fa-solid fa-circle-check text-amber-500"></i>}
-                            </button>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -973,17 +1089,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         </select>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 gap-4">
                         <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Price per Item (Excl. Tax)</label>
-                          <input
-                            type="number" step="any"
-                            className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-xl outline-none focus:bg-white focus:border-blue-500 transition-all"
-                            value={awardCost} onChange={e => setAwardCost(parseFloat(e.target.value) || 0)}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Tax Percentage (%)</label>
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Global Tax Percentage (%)</label>
                           <input
                             type="number" step="any"
                             className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-xl outline-none focus:bg-white focus:border-blue-500 transition-all"

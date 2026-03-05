@@ -117,6 +117,9 @@ export interface ManufacturingComponent {
   supplierPartId?: string;
   supplierPartNumber?: string;
   rfpSupplierIds?: string[];
+  rfpId?: string;
+  awardId?: string;
+  sendPoId?: string;
   status?: CompStatus;
   statusUpdatedAt?: string;
   procurementStartedAt?: string;

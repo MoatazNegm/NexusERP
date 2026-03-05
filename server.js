@@ -1301,6 +1301,89 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
             }
 
+            case 'send-rfp-batch': {
+                const rfpId = Math.random().toString(36).substring(2, 9);
+                if (!payload.components || !Array.isArray(payload.components)) throw new Error("components array required");
+
+                let updatedCount = 0;
+                order.items.forEach(item => {
+                    item.components?.forEach(comp => {
+                        if (payload.components.includes(comp.id)) {
+                            comp.status = 'RFP_SENT';
+                            comp.rfpId = rfpId;
+                            comp.statusUpdatedAt = new Date().toISOString();
+                            updatedCount++;
+                        }
+                    });
+                });
+                order.logs.push(createAuditLog(`Sent RFP batch for ${updatedCount} components (RFP ID: ${rfpId})`, order.status, user));
+                break;
+            }
+
+            case 'award-tender-batch': {
+                const awardId = Math.random().toString(36).substring(2, 9);
+                if (!payload.components || !Array.isArray(payload.components)) throw new Error("components array required");
+
+                let updatedCount = 0;
+                order.items.forEach(item => {
+                    item.components?.forEach(comp => {
+                        const targetComponent = payload.components.find(c => c.id === comp.id);
+                        if (targetComponent) {
+                            comp.status = 'AWARDED';
+                            comp.awardId = awardId;
+                            comp.supplierId = payload.supplierId;
+                            comp.supplierName = payload.supplierName;
+                            comp.unitCost = targetComponent.unitCost || 0;
+                            comp.taxPercent = payload.taxPercent || 14;
+                            comp.leadTimeDays = payload.leadTimeDays;
+                            comp.statusUpdatedAt = new Date().toISOString();
+                            updatedCount++;
+                        }
+                    });
+                });
+                order.logs.push(createAuditLog(`Awarded Tender batch for ${updatedCount} components to ${payload.supplierName || payload.supplierId} (Award ID: ${awardId})`, order.status, user));
+                break;
+            }
+
+            case 'issue-po-batch': {
+                const sendPoId = Math.random().toString(36).substring(2, 9);
+                if (!payload.components || !Array.isArray(payload.components)) throw new Error("components array required");
+
+                let updatedCount = 0;
+                order.items.forEach(item => {
+                    item.components?.forEach(comp => {
+                        if (payload.components.includes(comp.id)) {
+                            comp.status = 'ORDERED';
+                            comp.sendPoId = sendPoId;
+                            comp.poNumber = payload.poNumber;
+                            comp.procurementStartedAt = new Date().toISOString();
+                            comp.statusUpdatedAt = new Date().toISOString();
+                            updatedCount++;
+                        }
+                    });
+                });
+                order.logs.push(createAuditLog(`Issued PO batch ${payload.poNumber} for ${updatedCount} components (PO Group ID: ${sendPoId})`, order.status, user));
+                break;
+            }
+
+            case 'cancel-po-batch': {
+                if (!payload.sendPoId) throw new Error("sendPoId required");
+                let updatedCount = 0;
+                order.items.forEach(item => {
+                    item.components?.forEach(comp => {
+                        if (comp.sendPoId === payload.sendPoId && comp.status === 'ORDERED') {
+                            comp.status = 'AWARDED';
+                            delete comp.sendPoId;
+                            delete comp.poNumber;
+                            comp.statusUpdatedAt = new Date().toISOString();
+                            updatedCount++;
+                        }
+                    });
+                });
+                order.logs.push(createAuditLog(`Cancelled PO batch for ${updatedCount} components (Former Group ID: ${payload.sendPoId})`, order.status, user));
+                break;
+            }
+
             case 'cancel-payment':
                 if (!order.payments || !order.payments[payload.index]) throw new Error("Payment index not found");
                 const [removed] = order.payments.splice(payload.index, 1);
