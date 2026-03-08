@@ -513,6 +513,31 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
               columns={[
                 { key: 'tracking', label: 'Tracking Context', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.customerName, render: r => (<><div className="font-black text-slate-800 text-sm">{r.customerName}</div><div className="font-mono text-[10px] text-blue-600 font-bold uppercase mt-1 tracking-widest">{r.internalOrderNumber}</div></>) },
                 { key: 'invoice', label: 'Invoice Identification', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.invoiceNumber || '', render: r => (<div className="inline-flex flex-col gap-1.5"><span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-[9px] font-black uppercase rounded border border-emerald-100 flex items-center gap-2"><i className="fa-solid fa-file-invoice-dollar"></i>Tax Invoice: {r.invoiceNumber}</span><div className="text-[8px] font-black text-rose-500 uppercase flex items-center gap-1.5 animate-pulse"><i className="fa-solid fa-triangle-exclamation"></i>Dispatch goods with physical invoice</div></div>) },
+                {
+                  key: 'readyItems', label: 'Dispatchable Assets', headerClassName: 'px-8 py-4 text-white', sortable: false, render: r => {
+                    const readyItems = r.items.filter(i => {
+                      const inHub = (i.hubReceivedQty || 0) - (i.dispatchedQty || 0);
+                      const approved = (i.approvedForDispatchQty || 0) - (i.dispatchedQty || 0);
+                      return Math.min(inHub, approved) > 0;
+                    });
+                    if (readyItems.length === 0) return <span className="text-[10px] font-bold text-slate-300 italic">No items cleared for release</span>;
+                    return (
+                      <div className="space-y-1">
+                        {readyItems.map(i => {
+                          const inHub = (i.hubReceivedQty || 0) - (i.dispatchedQty || 0);
+                          const approved = (i.approvedForDispatchQty || 0) - (i.dispatchedQty || 0);
+                          const max = Math.max(0, Math.min(inHub, approved));
+                          return (
+                            <div key={i.id} className="flex items-center justify-between gap-3 bg-white/50 p-1.5 rounded-lg border border-slate-100/50">
+                              <span className="text-[10px] font-bold text-slate-600 truncate max-w-[120px]">{i.description}</span>
+                              <span className="px-2 py-0.5 bg-sky-100 text-sky-700 text-[9px] font-black rounded-full whitespace-nowrap">{max} {i.unit}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  }
+                },
                 { key: 'dispatchSla', label: 'Dispatch SLA', headerClassName: 'px-8 py-4 text-white', sortable: false, render: r => <ThresholdTimer order={r} limitHrs={config.settings.hubReleasedLimitHrs} /> },
                 {
                   key: 'action', label: 'Action Authorization', headerClassName: 'px-8 py-4 text-white text-right', cellClassName: 'px-8 py-6 text-right', sortable: false, render: r => (
