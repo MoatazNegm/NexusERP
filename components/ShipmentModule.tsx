@@ -409,7 +409,18 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                         {/* Header */}
                         <div className="flex justify-between items-start mb-12">
                             <div>
-                                <div className="w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center text-2xl font-black mb-4">NX</div>
+                                {config.settings.companyLogo ? (
+                                    <img
+                                        src={config.settings.companyLogo}
+                                        alt={config.settings.companyName}
+                                        className="w-32 h-20 object-contain mb-4"
+                                        crossOrigin="anonymous"
+                                    />
+                                ) : (
+                                    <div className="w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center text-2xl font-black mb-4">
+                                        {config.settings.companyName.substring(0, 2).toUpperCase()}
+                                    </div>
+                                )}
                                 <h1 className="text-2xl font-black text-slate-900 uppercase" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyName}</h1>
                                 <p className="text-sm font-medium text-slate-500 max-w-[200px]" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyAddress}</p>
                             </div>
