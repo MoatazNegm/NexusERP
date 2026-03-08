@@ -91,6 +91,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
   const [comment, setComment] = useState('');
   const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [dispatchReceiptInputs, setDispatchReceiptInputs] = useState<Record<string, string>>({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -200,7 +201,26 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
     }
   };
 
-  const closeModals = () => { setDecisionModal(null); setComment(''); setPaymentAmount(''); setErrorMsg(null); };
+  const closeModals = () => { setDecisionModal(null); setComment(''); setPaymentAmount(''); setDispatchReceiptInputs({}); setErrorMsg(null); };
+
+  const handleInlineDispatchAuth = async (orderId: string, itemId: string) => {
+    const qtyStr = dispatchReceiptInputs[itemId];
+    const qty = parseFloat(qtyStr);
+    if (isNaN(qty) || qty <= 0) {
+      alert("Please enter a valid authorization quantity greater than 0.");
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      await dataService.approveDispatchReceipt(orderId, [{ itemId, qty }], "Inline item-level authorization receipt.");
+      setDispatchReceiptInputs(prev => ({ ...prev, [itemId]: '' }));
+      await fetchData();
+    } catch (e: any) {
+      alert(e.message || "Failed to authorize dispatch.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const [printOrder, setPrintOrder] = useState<CustomerOrder | null>(null);
   const printOrderRef = React.useRef<HTMLDivElement>(null);
@@ -555,97 +575,215 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
               const isInvoicedOrLater = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.PARTIAL_PAYMENT].includes(o.status);
 
+              // Calculate total authorized gross value.
+              let totalAuthorizedGross = 0;
+              let draftSum = 0;
+              o.items.forEach(it => {
+                totalAuthorizedGross += (it.approvedForDispatchQty || 0) * it.pricePerUnit * (1 + ((it.taxPercent || 0) / 100));
+                const draftQty = parseFloat(dispatchReceiptInputs[it.id]) || 0;
+                draftSum += draftQty * it.pricePerUnit * (1 + ((it.taxPercent || 0) / 100));
+              });
+
               return (
-                <tr key={o.id} className={`hover:bg-slate-50/80 transition-colors ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/20' : ''}`}>
-                  <td className="px-8 py-6">
-                    <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
-                    <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
-                    {o.invoiceNumber && <div className="text-[9px] font-black text-emerald-600 uppercase mt-1">Tax Invoice: {o.invoiceNumber}</div>}
-                  </td>
-                  <td className="px-8 py-6">
-                    <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} L.E.</div>
-                    <div className="text-[10px] text-slate-400 font-bold mt-1">Paid: {pl.paid.toLocaleString()} • Bal: {pl.outstanding.toLocaleString()}</div>
-                  </td>
-                  <td className="px-8 py-6">
-                    <div className={`inline-flex px-2 py-0.5 rounded text-[10px] font-black ${isBreach ? 'bg-rose-600 text-white shadow-sm animate-pulse' : 'bg-emerald-100 text-emerald-800'}`}>
-                      {pl.markupPct.toFixed(1)}% Markup
-                    </div>
-                    <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">Target: {config.settings.minimumMarginPct}%</div>
-                  </td>
-                  <td className="px-8 py-6">
-                    <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
-                      {getDynamicOrderStatusStyle(o, config).label}
-                    </div>
-                    <ThresholdSentinel order={o} config={config} />
-                  </td>
-                  <td className="px-8 py-6 text-right">
-                    <div className="flex gap-2 justify-end items-center">
-                      {/* Download Invoice Button */}
-                      {isInvoicedOrLater && (
-                        <button
-                          onClick={() => handleDownloadInvoice(o)}
-                          disabled={isDownloading && printOrder?.id === o.id}
-                          className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200"
-                          title="Download Tax Invoice"
-                        >
-                          {isDownloading && printOrder?.id === o.id ? <i className="fa-solid fa-circle-notch fa-spin text-xs"></i> : <i className="fa-solid fa-file-arrow-down text-xs"></i>}
-                        </button>
+                <React.Fragment key={o.id}>
+                  <tr className={`hover:bg-slate-50/80 transition-colors ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/20' : ''}`}>
+                    <td className="px-8 py-6">
+                      <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
+                      <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
+                      {o.invoiceNumber && <div className="text-[9px] font-black text-emerald-600 uppercase mt-1">Tax Invoice: {o.invoiceNumber}</div>}
+                      {totalAuthorizedGross > pl.paid && (
+                        <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded bg-rose-50 text-rose-600 border border-rose-100 text-[9px] font-black uppercase shadow-sm">
+                          <i className="fa-solid fa-triangle-exclamation"></i>
+                          Auth Exceeds Paid
+                        </div>
                       )}
-
-                      {isInvoicedOrLater && (
-                        <button
-                          onClick={() => setDecisionModal({ type: 'cancelInvoice', entityId: o.id, entityName: o.internalOrderNumber })}
-                          className="px-4 py-2 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[9px] font-black uppercase hover:bg-rose-100 transition-all flex items-center gap-2"
-                          title="Void current invoice and return to Billing stage"
-                        >
-                          <i className="fa-solid fa-file-circle-xmark"></i> Void Invoice
-                        </button>
+                      {(totalAuthorizedGross + draftSum) > pl.paid && draftSum > 0 && totalAuthorizedGross <= pl.paid && (
+                        <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded bg-amber-50 text-amber-600 border border-amber-200 text-[9px] font-black uppercase shadow-sm animate-pulse" title="The combination of your current draft authorizations plus existing authorizations exceeds the partial payments collected.">
+                          <i className="fa-solid fa-triangle-exclamation"></i>
+                          Draft Exceeds Paid
+                        </div>
                       )}
-
-                      {o.status === OrderStatus.NEGATIVE_MARGIN && (
-                        <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-rose-200">Force Authorization</button>
-                      )}
-                      {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
-                        <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">Generate Invoice</button>
-                      )}
-                      {![OrderStatus.REJECTED, OrderStatus.FULFILLED].includes(o.status) && (
-                        <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Collect Payment</button>
-                      )}
-                      {o.payments && o.payments.length > 0 && (
-                        <button
-                          onClick={() => setViewPaymentsOrder(o)}
-                          className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center hover:bg-emerald-100 transition-all border border-emerald-200"
-                          title="View Payment Receipts"
-                        >
-                          <i className="fa-solid fa-receipt text-xs"></i>
-                        </button>
-                      )}
-                      <div className="flex gap-1">
-                        {!o.einvoiceRequested && (
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className="flex items-center gap-2">
+                        <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} L.E.</div>
+                        {totalAuthorizedGross > pl.paid && (
+                          <div className="px-2 py-0.5 bg-rose-100 text-rose-700 text-[8px] font-black uppercase rounded shadow-sm animate-pulse border border-rose-200" title="The total value of internally authorized dispatches exceeds the collected payments.">
+                            Auth &gt; Paid Alert
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-bold mt-1">Paid: {pl.paid.toLocaleString()} • Bal: {pl.outstanding.toLocaleString()}</div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className={`inline-flex px-2 py-0.5 rounded text-[10px] font-black ${isBreach ? 'bg-rose-600 text-white shadow-sm animate-pulse' : 'bg-emerald-100 text-emerald-800'}`}>
+                        {pl.markupPct.toFixed(1)}% Markup
+                      </div>
+                      <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">Target: {config.settings.minimumMarginPct}%</div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
+                        {getDynamicOrderStatusStyle(o, config).label}
+                      </div>
+                      <ThresholdSentinel order={o} config={config} />
+                    </td>
+                    <td className="px-8 py-6 text-right">
+                      <div className="flex gap-2 justify-end items-center">
+                        {/* Download Invoice Button */}
+                        {isInvoicedOrLater && (
                           <button
-                            onClick={async () => {
-                              if (window.confirm(`Request official Gov. E-Invoice for ${o.internalOrderNumber}?`)) {
-                                await dataService.requestEInvoice(o.id);
-                                fetchData();
-                              }
-                            }}
-                            className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
-                            title="Request Gov. E-Invoice"
+                            onClick={() => handleDownloadInvoice(o)}
+                            disabled={isDownloading && printOrder?.id === o.id}
+                            className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200"
+                            title="Download Tax Invoice"
                           >
-                            <i className="fa-solid fa-file-invoice mr-1"></i> Gov. E-Invoice
+                            {isDownloading && printOrder?.id === o.id ? <i className="fa-solid fa-circle-notch fa-spin text-xs"></i> : <i className="fa-solid fa-file-arrow-down text-xs"></i>}
                           </button>
                         )}
-                        {o.einvoiceRequested && !o.einvoiceFile && (
-                          <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center">
-                            <i className="fa-solid fa-clock mr-1"></i> E-Invoice Pending
-                          </span>
+
+                        {isInvoicedOrLater && (
+                          <button
+                            onClick={() => setDecisionModal({ type: 'cancelInvoice', entityId: o.id, entityName: o.internalOrderNumber })}
+                            className="px-4 py-2 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[9px] font-black uppercase hover:bg-rose-100 transition-all flex items-center gap-2"
+                            title="Void current invoice and return to Billing stage"
+                          >
+                            <i className="fa-solid fa-file-circle-xmark"></i> Void Invoice
+                          </button>
                         )}
-                        <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-2 text-slate-300 hover:text-amber-500 transition-colors" title="Toggle Hold"><i className="fa-solid fa-hand"></i></button>
-                        <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-2 text-slate-300 hover:text-rose-500 transition-colors" title="Reject Order"><i className="fa-solid fa-ban"></i></button>
+
+                        {o.status === OrderStatus.NEGATIVE_MARGIN && (
+                          <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-rose-200">Force Authorization</button>
+                        )}
+                        {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
+                          <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">Generate Invoice</button>
+                        )}
+                        {![OrderStatus.REJECTED, OrderStatus.FULFILLED].includes(o.status) && (
+                          <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Collect Payment</button>
+                        )}
+                        {o.payments && o.payments.length > 0 && (
+                          <button
+                            onClick={() => setViewPaymentsOrder(o)}
+                            className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center hover:bg-emerald-100 transition-all border border-emerald-200"
+                            title="View Payment Receipts"
+                          >
+                            <i className="fa-solid fa-receipt text-xs"></i>
+                          </button>
+                        )}
+                        <div className="flex gap-1">
+                          {!o.einvoiceRequested && (
+                            <button
+                              onClick={async () => {
+                                if (window.confirm(`Request official Gov. E-Invoice for ${o.internalOrderNumber}?`)) {
+                                  await dataService.requestEInvoice(o.id);
+                                  fetchData();
+                                }
+                              }}
+                              className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
+                              title="Request Gov. E-Invoice"
+                            >
+                              <i className="fa-solid fa-file-invoice mr-1"></i> Gov. E-Invoice
+                            </button>
+                          )}
+                          {o.einvoiceRequested && !o.einvoiceFile && (
+                            <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center">
+                              <i className="fa-solid fa-clock mr-1"></i> E-Invoice Pending
+                            </span>
+                          )}
+                          <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-2 text-slate-300 hover:text-amber-500 transition-colors" title="Toggle Hold"><i className="fa-solid fa-hand"></i></button>
+                          <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-2 text-slate-300 hover:text-rose-500 transition-colors" title="Reject Order"><i className="fa-solid fa-ban"></i></button>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+
+                  {/* Inline Line Items for Authorization */}
+                  <tr className="bg-slate-50/50 border-b-2 border-slate-100">
+                    <td colSpan={5} className="px-8 pb-6 bg-transparent">
+                      <div className="bg-white rounded-2xl shadow-inner border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                        <div className="px-4 py-2 bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest grid grid-cols-12 gap-4 items-center">
+                          <div className="col-span-5">PO Item Definition</div>
+                          <div className="col-span-1 text-center">Hub Rdy</div>
+                          <div className="col-span-2 text-center">Authorized</div>
+                          <div className="col-span-1 text-center">Shipped</div>
+                          <div className="col-span-3 text-right pr-2">Dispatch Autho. Receipt</div>
+                        </div>
+                        {o.items.map(it => {
+                          const inHub = it.hubReceivedQty || 0;
+                          const approved = it.approvedForDispatchQty || 0;
+                          const dispatched = it.dispatchedQty || 0;
+                          const maxAuth = Math.max(0, inHub - approved);
+
+                          const itemGrossPerUnit = it.pricePerUnit * (1 + ((it.taxPercent || 0) / 100));
+                          const draftSumFromOthers = draftSum - ((parseFloat(dispatchReceiptInputs[it.id]) || 0) * itemGrossPerUnit);
+                          const availableAmount = pl.paid - totalAuthorizedGross - draftSumFromOthers;
+                          const maxAffordablePieces = itemGrossPerUnit > 0 ? Math.max(0, Math.floor(availableAmount / itemGrossPerUnit)) : maxAuth;
+                          const finalMaxQty = Math.min(maxAffordablePieces, maxAuth);
+
+                          return (
+                            <div key={it.id} className="px-4 py-3 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors">
+                              <div className="col-span-5">
+                                <div className="font-bold text-xs text-slate-800 line-clamp-1">{it.description}</div>
+                                <div className="text-[10px] text-slate-500 font-bold mt-0.5">
+                                  Tgt: {it.quantity} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} L.E.
+                                </div>
+                              </div>
+                              <div className="col-span-1 text-center font-black text-sky-600 text-xs">{inHub}</div>
+                              <div className="col-span-2 text-center text-[10px] font-bold">
+                                {approved > 0 ? (
+                                  <span className={`px-2 py-0.5 rounded-full ${approved >= inHub ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                    {approved} Auth
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 opacity-50 block text-center">None</span>
+                                )}
+                              </div>
+                              <div className="col-span-1 text-center font-black text-slate-400 text-xs">{dispatched}</div>
+                              <div className="col-span-3 flex justify-end gap-2 items-center">
+                                {maxAuth > 0 ? (
+                                  <>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max={maxAuth}
+                                      placeholder={`Max: ${maxAuth}`}
+                                      value={dispatchReceiptInputs[it.id] !== undefined ? dispatchReceiptInputs[it.id] : ''}
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value);
+                                        if (e.target.value === '' || isNaN(val)) {
+                                          setDispatchReceiptInputs(p => ({ ...p, [it.id]: e.target.value }));
+                                        } else {
+                                          setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(Math.min(val, maxAuth)) }));
+                                        }
+                                      }}
+                                      className="w-20 px-2 py-1.5 text-xs text-center font-bold border-2 border-slate-200 rounded-lg outline-none focus:border-indigo-400"
+                                    />
+                                    <button
+                                      disabled={isProcessing}
+                                      onClick={() => handleInlineDispatchAuth(o.id, it.id)}
+                                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-black uppercase shadow flex items-center gap-1 disabled:opacity-50"
+                                    >
+                                      <i className="fa-solid fa-file-signature"></i> Auth
+                                    </button>
+                                    <button
+                                      disabled={isProcessing || finalMaxQty <= 0}
+                                      onClick={() => setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(finalMaxQty) }))}
+                                      className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-lg text-[9px] font-black uppercase shadow-sm flex items-center gap-1 disabled:opacity-50 transition-all"
+                                      title="Set to max quantity affordable with current partial payment balance"
+                                    >
+                                      Max Paid
+                                    </button>
+                                  </>
+                                ) : (
+                                  <div className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">Fully Cleared</div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                </React.Fragment>
               );
             })}
           </tbody>

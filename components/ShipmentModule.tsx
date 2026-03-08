@@ -60,7 +60,11 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
     };
 
     const hubReleasedOrders = useMemo(() => {
-        return existingOrders.filter(o => o.status === OrderStatus.HUB_RELEASED);
+        return existingOrders.filter(o => {
+            if (![OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY].includes(o.status as OrderStatus)) return false;
+            // Show if anything is dispatched but not shipped, OR shipped but not delivered
+            return o.items.some(i => (i.dispatchedQty || 0) > (i.shippedQty || 0) || (i.shippedQty || 0) > (i.deliveredQty || 0));
+        });
     }, [existingOrders]);
 
     useEffect(() => {
@@ -115,7 +119,13 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
         try {
             const uploadRes = await dataService.uploadProofOfDelivery(file);
             if (uploadRes.success) {
-                await dataService.confirmOrderDelivery(confirmingDeliveryId, uploadRes.filePath);
+                const orderToConfirm = existingOrders.find(o => o.id === confirmingDeliveryId);
+                const itemsToDeliver = orderToConfirm?.items.filter(i => (i.shippedQty || 0) > (i.deliveredQty || 0)).map(i => ({
+                    itemId: i.id,
+                    qty: (i.shippedQty || 0) - (i.deliveredQty || 0)
+                })) || [];
+
+                await dataService.confirmOrderDelivery(confirmingDeliveryId, uploadRes.filePath, itemsToDeliver);
                 alert("Delivery confirmed and POD uploaded successfully.");
                 await fetchData();
             } else {
@@ -177,20 +187,48 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                             {order.items.reduce((s, i) => s + (i.quantity * i.pricePerUnit), 0).toLocaleString()} <span className="text-[10px] text-slate-400">L.E.</span>
                                         </td>
                                         <td className="px-8 py-6 text-right">
-                                            <button
-                                                onClick={() => setPrintingOrder(order)}
-                                                className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2 mb-2 ml-auto"
-                                            >
-                                                <i className="fa-solid fa-download"></i> Delivery Note
-                                            </button>
-                                            <button
-                                                disabled={processingId === order.id}
-                                                onClick={() => { setConfirmingDeliveryId(order.id); setTimeout(() => podUploadRef.current?.click(), 100); }}
-                                                className="px-6 py-2.5 bg-sky-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-sky-700 transition-all shadow-lg shadow-sky-100 flex items-center gap-2 ml-auto"
-                                            >
-                                                {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-hand-holding-hand"></i>}
-                                                Confirm Delivered
-                                            </button>
+                                            <div className="flex flex-col gap-2 items-end">
+                                                {order.items.some(i => (i.dispatchedQty || 0) > (i.shippedQty || 0)) && (
+                                                    <button
+                                                        disabled={processingId === order.id}
+                                                        onClick={async () => {
+                                                            setProcessingId(order.id);
+                                                            try {
+                                                                const itemsToShip = order.items.filter(i => (i.dispatchedQty || 0) > (i.shippedQty || 0)).map(i => ({
+                                                                    itemId: i.id,
+                                                                    qty: (i.dispatchedQty || 0) - (i.shippedQty || 0)
+                                                                }));
+                                                                await dataService.shipItems(order.id, itemsToShip);
+                                                                fetchData();
+                                                            } finally {
+                                                                setProcessingId(null);
+                                                            }
+                                                        }}
+                                                        className="px-6 py-2 bg-emerald-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
+                                                    >
+                                                        {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-arrow-right"></i>}
+                                                        Start Transit
+                                                    </button>
+                                                )}
+                                                {order.items.some(i => (i.shippedQty || 0) > (i.deliveredQty || 0)) && (
+                                                    <>
+                                                        <button
+                                                            onClick={() => setPrintingOrder(order)}
+                                                            className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2"
+                                                        >
+                                                            <i className="fa-solid fa-download"></i> Delivery Note
+                                                        </button>
+                                                        <button
+                                                            disabled={processingId === order.id}
+                                                            onClick={() => { setConfirmingDeliveryId(order.id); setTimeout(() => podUploadRef.current?.click(), 100); }}
+                                                            className="px-6 py-2.5 bg-sky-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-sky-700 transition-all shadow-lg shadow-sky-100 flex items-center gap-2"
+                                                        >
+                                                            {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-hand-holding-hand"></i>}
+                                                            Confirm Delivered
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -263,13 +301,17 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {printingOrder.items.map((item, idx) => (
-                                        <tr key={idx}>
-                                            <td className="px-6 py-6 font-bold text-slate-800" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{item.description}</td>
-                                            <td className="px-6 py-6 text-center text-sm font-medium text-slate-500">{item.unit}</td>
-                                            <td className="px-6 py-6 text-right font-black text-slate-900">{item.quantity}</td>
-                                        </tr>
-                                    ))}
+                                    {printingOrder.items.map((item, idx) => {
+                                        const inTransit = (item.shippedQty || 0) - (item.deliveredQty || 0);
+                                        if (inTransit <= 0) return null;
+                                        return (
+                                            <tr key={idx}>
+                                                <td className="px-6 py-6 font-bold text-slate-800" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{item.description}</td>
+                                                <td className="px-6 py-6 text-center text-sm font-medium text-slate-500">{item.unit}</td>
+                                                <td className="px-6 py-6 text-right font-black text-slate-900">{inTransit}</td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>

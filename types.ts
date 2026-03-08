@@ -16,6 +16,7 @@ export enum OrderStatus {
   ISSUE_INVOICE = 'ISSUE_INVOICE',
   INVOICED = 'INVOICED',
   HUB_RELEASED = 'HUB_RELEASED',
+  PARTIAL_DELIVERY = 'PARTIAL_DELIVERY',
   DELIVERED = 'DELIVERED',
   PARTIAL_PAYMENT = 'PARTIAL_PAYMENT',
   FULFILLED = 'FULFILLED'
@@ -123,6 +124,7 @@ export interface ManufacturingComponent {
   status?: CompStatus;
   statusUpdatedAt?: string;
   procurementStartedAt?: string;
+  consumedQty?: number;
 }
 
 export interface CustomerOrderItem {
@@ -138,6 +140,10 @@ export interface CustomerOrderItem {
   components?: ManufacturingComponent[];
   manufacturedQty?: number;
   hubReceivedQty?: number;
+  approvedForDispatchQty?: number;
+  dispatchedQty?: number;
+  shippedQty?: number;
+  deliveredQty?: number;
 }
 
 export interface InventoryItem {
@@ -186,6 +192,7 @@ export interface CustomerOrder {
     timestamp: string;
     type: 'HOLD_RELEASE' | 'MARGIN_RELEASE';
   };
+  deliveries?: { id: string, date: string, items: { itemId: string, qty: number }[], podFilePath?: string }[];
   loggingComplianceViolation?: boolean;
   isOverdue?: boolean;
   einvoiceRequested?: boolean;

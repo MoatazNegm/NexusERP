@@ -60,6 +60,7 @@ const OrderStatus = {
     ISSUE_INVOICE: 'ISSUE_INVOICE',
     INVOICED: 'INVOICED',
     HUB_RELEASED: 'HUB_RELEASED',
+    PARTIAL_DELIVERY: 'PARTIAL_DELIVERY',
     DELIVERED: 'DELIVERED',
     PARTIAL_PAYMENT: 'PARTIAL_PAYMENT',
     FULFILLED: 'FULFILLED'
@@ -467,36 +468,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
 
         // [AUTO] Manufacturing Start Logic (Release to Floor)
         if (order.status === OrderStatus.MANUFACTURING) {
-            (order.items || []).forEach(item => {
-                (item.components || []).forEach(comp => {
-                    // Deduct from stock if linked to inventory and not yet consumed
-                    // Allow both STOCK and PROCUREMENT sources to be consumed if they have an inventory ID
-                    if (comp.inventoryItemId && db.inventory && comp.source !== 'CONSUMED') {
-                        const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
-                        if (invItem) {
-                            const consumedQty = comp.quantity || 0;
-                            // Logic: Use quantityInStock (standard) or fallback to quantity (legacy)
-                            const currentStock = invItem.quantityInStock !== undefined ? invItem.quantityInStock : (invItem.quantity || 0);
-
-                            // Update both Stock (physical) and Reserved (allocation)
-                            invItem.quantityInStock = Math.max(0, currentStock - consumedQty);
-                            invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - consumedQty);
-
-                            // Clear legacy field if present to migrate
-                            if (invItem.quantity !== undefined) delete invItem.quantity;
-
-                            console.log(`[Inventory] [AUTO_MFG_START] Consumed ${consumedQty} of ${invItem.sku}. New InStock: ${invItem.quantityInStock}, New Reserved: ${invItem.quantityReserved}`);
-
-                            order.logs.push(createAuditLog(
-                                `[Inventory] Released ${consumedQty} units of ${invItem.sku} to Factory Floor.`,
-                                order.status,
-                                'System'
-                            ));
-                            comp.source = 'CONSUMED';
-                        }
-                    }
-                });
-            });
+            // We no longer deduct stock upfront. Stock is deducted incrementally inside register-manufacturing.
         }
 
         // [AUTO] Manufacturing Complete Logic
@@ -572,6 +544,7 @@ const STATUS_TO_THRESHOLD = {
     'INVOICED': 'hubReleasedLimitHrs',
     'HUB_RELEASED': 'deliveryLimitHrs',
     'DELIVERY': 'deliveredLimitHrs',
+    'PARTIAL_DELIVERY': 'deliveredLimitHrs',
     'DELIVERED': 'deliveredLimitHrs',
     'PARTIAL_PAYMENT': null  // handled by special payment SLA check
 };
@@ -834,6 +807,12 @@ const PORT = process.env.PORT || 3005;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
+// Crash Logger for debugging frontend blank screens
+app.get('/api/log-crash', (req, res) => {
+    console.log('\n\n🚨 FRONTEND CRASH 🚨\n', req.query.err, '\n\n');
+    res.send('ok');
+});
+
 app.use(express.static(path.join(__dirname, 'dist')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -1451,13 +1430,69 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!payload.itemId || payload.qty === undefined) throw new Error("Item ID and quantity required");
                 const mItem = order.items.find(i => i.id === payload.itemId);
                 if (!mItem) throw new Error("Item not found");
-                mItem.manufacturedQty = (mItem.manufacturedQty || 0) + payload.qty;
-                order.logs.push(createAuditLog(`Manufactured ${payload.qty} ${mItem.unit} of ${mItem.description}`, order.status, user));
+
+                const prevQty = mItem.manufacturedQty || 0;
+                const targetQty = mItem.quantity;
+                const maxMfg = Math.max(0, targetQty - prevQty);
+
+                if (payload.qty > maxMfg) {
+                    throw new Error(`Cannot manufacture ${payload.qty} units. Only ${maxMfg} units remaining to meet target.`);
+                }
+
+                const actualPayloadQty = payload.qty;
+                if (actualPayloadQty <= 0) break;
+
+                mItem.manufacturedQty = prevQty + actualPayloadQty;
+                order.logs.push(createAuditLog(`Manufactured ${actualPayloadQty} ${mItem.unit} of ${mItem.description} (${mItem.manufacturedQty}/${targetQty})`, order.status, user));
 
                 // Auto-transition if all items are fully manufactured
                 if (order.items.every(i => (i.manufacturedQty || 0) >= i.quantity)) {
                     order.status = OrderStatus.MANUFACTURING_COMPLETED;
                     order.logs.push(createAuditLog(`All items manufactured. Auto-transitioned to Ready for QC/Hub`, order.status, user));
+                }
+                break;
+
+            case 'consume-factory-component':
+                if (!payload.itemId || !payload.compId || !payload.qty) throw new Error("Item ID, Component ID and quantity required");
+                const cfcItem = order.items.find(i => i.id === payload.itemId);
+                if (!cfcItem) throw new Error("Item not found");
+                const cfcComp = (cfcItem.components || []).find(c => c.id === payload.compId);
+                if (!cfcComp) throw new Error("Component not found");
+
+                const cfcTotalAllocated = cfcComp.quantity || 0;
+                const cfcAlreadyConsumed = cfcComp.consumedQty || 0;
+                const cfcRemaining = Math.max(0, cfcTotalAllocated - cfcAlreadyConsumed);
+
+                if (payload.qty > cfcRemaining) {
+                    throw new Error(`Cannot consume ${payload.qty} units. Only ${cfcRemaining} units remaining in allocation.`);
+                }
+                const cfcConsumedQty = payload.qty;
+                if (cfcConsumedQty <= 0) throw new Error("Quantity must be greater than zero");
+
+                // Deduct from inventory
+                if (cfcComp.inventoryItemId && db.inventory) {
+                    const cfcInvItem = db.inventory.find(inv => inv.id === cfcComp.inventoryItemId);
+                    if (cfcInvItem) {
+                        const currentStock = cfcInvItem.quantityInStock !== undefined ? cfcInvItem.quantityInStock : (cfcInvItem.quantity || 0);
+                        if (cfcConsumedQty > currentStock) {
+                            throw new Error(`Insufficient stock for component ${cfcComp.description}. Available: ${currentStock}, Requested: ${cfcConsumedQty}`);
+                        }
+                        cfcInvItem.quantityInStock = Math.max(0, currentStock - cfcConsumedQty);
+                        cfcInvItem.quantityReserved = Math.max(0, (cfcInvItem.quantityReserved || 0) - cfcConsumedQty);
+                        if (cfcInvItem.quantity !== undefined) delete cfcInvItem.quantity;
+                        console.log(`[Inventory] [CONSUME_COMP] Consumed ${cfcConsumedQty.toFixed(2)} of ${cfcInvItem.sku}. InStock: ${cfcInvItem.quantityInStock.toFixed(2)}, Reserved: ${cfcInvItem.quantityReserved.toFixed(2)}`);
+                    }
+                }
+
+                cfcComp.consumedQty = cfcAlreadyConsumed + cfcConsumedQty;
+                order.logs.push(createAuditLog(
+                    `[Factory] Consumed ${cfcConsumedQty.toFixed(2)} units of ${cfcComp.description}. (${cfcComp.consumedQty.toFixed(2)}/${cfcTotalAllocated} total)`,
+                    order.status,
+                    user
+                ));
+
+                if (cfcComp.consumedQty >= cfcTotalAllocated) {
+                    cfcComp.source = 'CONSUMED';
                 }
                 break;
 
@@ -1478,7 +1513,15 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 for (const rcpt of payload.receipts) {
                     const hItem = order.items.find(i => i.id === rcpt.itemId);
                     if (hItem && rcpt.qty > 0) {
-                        hItem.hubReceivedQty = (hItem.hubReceivedQty || 0) + rcpt.qty;
+                        const mfd = hItem.manufacturedQty || 0;
+                        const alreadyHub = hItem.hubReceivedQty || 0;
+                        const maxReceive = Math.max(0, mfd - alreadyHub);
+
+                        if (rcpt.qty > maxReceive) {
+                            throw new Error(`Cannot receive ${rcpt.qty} units of ${hItem.description}. Only ${maxReceive} units are ready / manufactured.`);
+                        }
+
+                        hItem.hubReceivedQty = alreadyHub + rcpt.qty;
                         intakeDetails.push(`${rcpt.qty} ${hItem.unit} of ${hItem.description}`);
                     }
                 }
@@ -1503,16 +1546,134 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.logs.push(createAuditLog(`Official Tax Invoice Generated: ${order.invoiceNumber}`, order.status, user));
                 break;
 
-            case 'release-delivery':
-                order.status = OrderStatus.HUB_RELEASED;
-                order.logs.push(createAuditLog(`Shipment Released from Hub to Logistics Provider`, order.status, user));
+            case 'approve-dispatch-receipt': {
+                // Finance adding receipt for dispatch
+                if (!payload.items || !Array.isArray(payload.items)) throw new Error("Items array required");
+
+                let approvalDetails = [];
+                for (const reqItem of payload.items) {
+                    const oItem = order.items.find(i => i.id === reqItem.itemId);
+                    if (oItem && reqItem.qty > 0) {
+                        const currentApproved = oItem.approvedForDispatchQty || 0;
+                        const totalWillBeApproved = currentApproved + reqItem.qty;
+
+                        const hubReceived = oItem.hubReceivedQty || 0;
+                        if (totalWillBeApproved > hubReceived) {
+                            throw new Error(`Cannot receipt ${reqItem.qty} for ${oItem.description}. The total authorized amount (${totalWillBeApproved}) would exceed the items currently available in the hub (${hubReceived}).`);
+                        }
+
+                        oItem.approvedForDispatchQty = totalWillBeApproved;
+                        approvalDetails.push(`${reqItem.qty} ${oItem.unit} of ${oItem.description}`);
+                    }
+                }
+                if (approvalDetails.length > 0) {
+                    order.logs.push(createAuditLog(`Finance Partial Receipt for Dispatch: ${approvalDetails.join(', ')}`, order.status, user));
+                }
                 break;
+            }
+
+            case 'release-delivery': {
+                // Shipment dispatching goods
+                if (!payload.items || !Array.isArray(payload.items)) throw new Error("Items array required to dispatch.");
+
+                let dispatchDetails = [];
+                for (const dItem of payload.items) {
+                    const oItem = order.items.find(i => i.id === dItem.itemId);
+                    if (oItem && dItem.qty > 0) {
+                        const dispatched = oItem.dispatchedQty || 0;
+                        const approved = oItem.approvedForDispatchQty || 0;
+                        const inHub = oItem.hubReceivedQty || 0;
+
+                        if (dItem.qty > (approved - dispatched)) {
+                            throw new Error(`Cannot dispatch ${dItem.qty} units of ${oItem.description}. Finance receipt required. Only ${approved - dispatched} units are financially cleared.`);
+                        }
+                        if (dItem.qty > (inHub - dispatched)) {
+                            throw new Error(`Cannot dispatch ${dItem.qty} units of ${oItem.description}. Only ${inHub - dispatched} units available in hub.`);
+                        }
+
+                        oItem.dispatchedQty = dispatched + dItem.qty;
+                        dispatchDetails.push(`${dItem.qty} ${oItem.unit} of ${oItem.description}`);
+                    }
+                }
+
+                if (dispatchDetails.length === 0) throw new Error("No valid items to dispatch.");
+
+                // If ALL items are fully dispatched, move to HUB_RELEASED. Otherwise, keep INVOICED or PARTIAL status.
+                const allDispatched = order.items.every(i => (i.dispatchedQty || 0) >= i.quantity);
+                if (allDispatched) {
+                    order.status = OrderStatus.HUB_RELEASED;
+                }
+
+                order.logs.push(createAuditLog(`Shipment Released from Hub: ${dispatchDetails.join(', ')}`, order.status, user));
+                break;
+            }
+
+            case 'ship-items': {
+                // Moving items from Dispatched (at loading dock) to Shipped (on truck)
+                if (!payload.items || !Array.isArray(payload.items) || payload.items.length === 0) {
+                    throw new Error("Items array is required to start transit.");
+                }
+
+                let shipDetails = [];
+                for (const sItem of payload.items) {
+                    const oItem = order.items.find(i => i.id === sItem.itemId);
+                    if (oItem && sItem.qty > 0) {
+                        const shipped = oItem.shippedQty || 0;
+                        const dispatched = oItem.dispatchedQty || 0;
+
+                        if (sItem.qty > (dispatched - shipped)) {
+                            throw new Error(`Cannot ship ${sItem.qty} units of ${oItem.description}. Only ${dispatched - shipped} units are awaiting transit.`);
+                        }
+
+                        oItem.shippedQty = shipped + sItem.qty;
+                        shipDetails.push(`${sItem.qty} ${oItem.unit} of ${oItem.description}`);
+                    }
+                }
+
+                order.logs.push(createAuditLog(`Items transitioned to IN TRANSIT: ${shipDetails.join(', ')}`, order.status, user));
+                break;
+            }
 
             case 'confirm-delivery':
                 if (!payload.podFilePath) throw new Error("Signed Delivery Note is required to confirm delivery.");
-                order.status = OrderStatus.DELIVERED;
-                order.podFilePath = payload.podFilePath;
-                order.logs.push(createAuditLog(`Customer Delivery Confirmed & POD Filed: ${payload.podFilePath}`, order.status, user));
+                if (!payload.items || !Array.isArray(payload.items) || payload.items.length === 0) {
+                    throw new Error("Items array is required to confirm partial/full delivery");
+                }
+
+                if (!order.deliveries) order.deliveries = [];
+                const deliveryId = `DEL-${Date.now()}`;
+
+                let deliveryDetails = [];
+                for (const dItem of payload.items) {
+                    const oItem = order.items.find(i => i.id === dItem.itemId);
+                    if (oItem && dItem.qty > 0) {
+                        const delivered = oItem.deliveredQty || 0;
+                        const shipped = oItem.shippedQty || 0;
+
+                        if (dItem.qty > (shipped - delivered)) {
+                            throw new Error(`Cannot deliver ${dItem.qty} units of ${oItem.description}. Only ${shipped - delivered} units are in transit on a truck.`);
+                        }
+
+                        oItem.deliveredQty = delivered + dItem.qty;
+                        deliveryDetails.push(`${dItem.qty} ${oItem.unit} of ${oItem.description}`);
+                    }
+                }
+
+                order.deliveries.push({
+                    id: deliveryId,
+                    date: new Date().toISOString(),
+                    items: payload.items,
+                    podFilePath: payload.podFilePath
+                });
+
+                const allDelivered = order.items.every(i => (i.deliveredQty || 0) >= i.quantity);
+                if (allDelivered) {
+                    order.status = OrderStatus.DELIVERED;
+                } else {
+                    order.status = OrderStatus.PARTIAL_DELIVERY;
+                }
+
+                order.logs.push(createAuditLog(`Customer Delivery Confirmed (${allDelivered ? 'Complete' : 'Partial'}) & POD Filed: ${payload.podFilePath}`, order.status, user));
                 break;
 
             case 'request-einvoice':

@@ -11,16 +11,22 @@ interface FactoryModuleProps {
 
 export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey, currentUser }) => {
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
+  const [inventoryState, setInventoryState] = useState<any[]>([]);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [mfgInputs, setMfgInputs] = useState<Record<string, string>>({});
+  const [mfgCompInputs, setMfgCompInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchOrders();
   }, [refreshKey]);
 
   const fetchOrders = async () => {
-    const all = await dataService.getOrders();
-    setOrders(all.filter(o => [OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING].includes(o.status)));
+    const [allOrders, allInv] = await Promise.all([
+      dataService.getOrders(),
+      dataService.getInventory()
+    ]);
+    setOrders(allOrders.filter(o => [OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING].includes(o.status)));
+    setInventoryState(allInv);
   };
 
   const handleAction = async (id: string, next: 'start' | 'finish') => {
@@ -37,13 +43,46 @@ export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey
     const qty = parseFloat(qtyStr);
     if (isNaN(qty) || qty <= 0) return;
 
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+
     setProcessingId(`${orderId}-${itemId}`);
     try {
+      // Auto-start production if still in STAGED status
+      if (order.status === OrderStatus.WAITING_FACTORY) {
+        await dataService.startProduction(orderId);
+      }
       await dataService.registerManufacturing(orderId, itemId, qty);
       setMfgInputs(prev => ({ ...prev, [`${orderId}-${itemId}`]: '' }));
       await fetchOrders();
     } catch (e: any) {
       alert("Failed to register manufacturing: " + e.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleConsumeComponent = async (orderId: string, itemId: string, compId: string) => {
+    const compInputKey = `${orderId}-${itemId}-${compId}`;
+    const qtyStr = mfgCompInputs[compInputKey];
+    if (!qtyStr) return;
+    const qty = parseFloat(qtyStr);
+    if (isNaN(qty) || qty <= 0) return;
+
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    setProcessingId(compInputKey);
+    try {
+      // Auto-start production if still in STAGED status
+      if (order.status === OrderStatus.WAITING_FACTORY) {
+        await dataService.startProduction(orderId);
+      }
+      await dataService.consumeFactoryComponent(orderId, itemId, compId, qty);
+      setMfgCompInputs(prev => ({ ...prev, [compInputKey]: '' }));
+      await fetchOrders();
+    } catch (e: any) {
+      alert("Failed to consume component: " + e.message);
     } finally {
       setProcessingId(null);
     }
@@ -85,42 +124,133 @@ export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey
                         <div className="text-right">
                           <div className="text-[10px] font-black uppercase text-slate-400">Target</div>
                           <div className="text-sm font-black text-slate-900">{target} <span className="text-[10px] font-bold text-slate-400">{item.unit}</span></div>
+                          {!isComplete && (
+                            <div className="text-[9px] font-black text-amber-600 mt-0.5">Remaining: {(target - current).toLocaleString()}</div>
+                          )}
                         </div>
                       </div>
 
-                      {o.status === OrderStatus.MANUFACTURING && (
-                        <div className="flex items-center gap-3 pt-3 border-t border-slate-50">
-                          <div className="flex-1">
-                            <div className="text-[9px] font-black uppercase text-blue-600 mb-1">Mfd: {current}</div>
-                            <div className="w-full bg-slate-100 rounded-full h-1.5">
-                              <div className={`h-1.5 rounded-full ${isComplete ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, (current / target) * 100)}%` }}></div>
-                            </div>
+                      {/* Display Components (BoM) */}
+                      {item.components && item.components.length > 0 && (
+                        <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 mt-1">
+                          <div className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-2 flex justify-between px-1">
+                            <span>Bill of Materials</span>
+                            <span>Consumed Qty</span>
                           </div>
-                          {!isComplete && (
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                type="number"
-                                placeholder="Qty"
-                                value={mfgInputs[inputKey] || ''}
-                                onChange={(e) => setMfgInputs(p => ({ ...p, [inputKey]: e.target.value }))}
-                                className="w-16 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center focus:border-blue-500 outline-none"
-                              />
-                              <button
-                                onClick={() => handleRegisterMfg(o.id, item.id)}
-                                disabled={isProcessingThis || !mfgInputs[inputKey]}
-                                className="w-8 h-8 flex items-center justify-center bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                              >
-                                {isProcessingThis ? <i className="fa-solid fa-spinner fa-spin text-xs"></i> : <i className="fa-solid fa-check text-xs"></i>}
-                              </button>
-                            </div>
-                          )}
-                          {isComplete && (
-                            <div className="flex-none px-3 py-1 bg-emerald-50 text-emerald-600 rounded drop-shadow-sm text-[10px] font-black uppercase">
-                              <i className="fa-solid fa-check-double mr-1"></i> Done
-                            </div>
-                          )}
+                          <div className="space-y-1.5">
+                            {item.components.map(comp => {
+                              const compInputKey = `${o.id}-${item.id}-${comp.id}`;
+                              const compAllocated = comp.quantity || 0;
+                              const compConsumed = comp.consumedQty || 0;
+
+                              // Find actual stock in inventory
+                              const invItem = inventoryState.find(inv => inv.id === comp.inventoryItemId);
+                              const actualStock = invItem ? (invItem.quantityInStock !== undefined ? invItem.quantityInStock : (invItem.quantity || 0)) : 0;
+
+                              const compRemaining = Math.max(0, compAllocated - compConsumed);
+                              const maxPossibleToConsume = Math.min(compRemaining, actualStock);
+                              const compDone = compRemaining <= 0;
+                              return (
+                                <div key={comp.id} className={`flex justify-between items-center bg-white p-2 rounded-lg border shadow-sm ${compDone ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-100'}`}>
+                                  <div className="flex-1 min-w-0 pr-2">
+                                    <div className="font-bold text-slate-700 truncate text-xs">{comp.description}</div>
+                                    <div className="flex gap-2 text-[9px] font-mono mt-0.5">
+                                      {comp.componentNumber && <span className="text-blue-600">{comp.componentNumber}</span>}
+                                      {comp.supplierPartNumber && <span className="text-amber-600">{comp.supplierPartNumber}</span>}
+                                    </div>
+                                    <div className="text-[9px] mt-0.5">
+                                      <span className="text-slate-400">Allocated: {compAllocated.toLocaleString()}</span>
+                                      <span className="mx-1 text-slate-300">·</span>
+                                      <span className="text-blue-600">Used: {compConsumed.toLocaleString()}</span>
+                                      <span className="mx-1 text-slate-300">·</span>
+                                      <span className={compDone ? 'text-emerald-600 font-bold' : 'text-amber-600 font-bold'}>Left: {compRemaining.toLocaleString()}</span>
+                                      {!compDone && <span className={`ml-2 font-black ${actualStock < compRemaining ? 'text-rose-500' : 'text-slate-500'}`}>(Stock: {actualStock.toLocaleString()})</span>}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-1 flex-none shrink-0">
+                                    {!compDone ? (
+                                      <>
+                                        <input
+                                          type="number"
+                                          placeholder="Qty"
+                                          min={0}
+                                          max={maxPossibleToConsume}
+                                          value={mfgCompInputs[compInputKey] || ''}
+                                          onChange={(e) => {
+                                            const val = parseFloat(e.target.value);
+                                            if (e.target.value === '' || isNaN(val)) {
+                                              setMfgCompInputs(prev => ({ ...prev, [compInputKey]: e.target.value }));
+                                            } else {
+                                              const clamped = Math.min(val, maxPossibleToConsume);
+                                              setMfgCompInputs(prev => ({ ...prev, [compInputKey]: String(clamped) }));
+                                            }
+                                          }}
+                                          disabled={processingId === compInputKey || actualStock <= 0}
+                                          className="w-20 px-2 py-1 bg-slate-50 border border-slate-200 rounded text-xs font-black text-right focus:border-blue-500 outline-none disabled:opacity-50"
+                                        />
+                                        <span className="text-[9px] text-slate-400 font-sans w-6">{comp.unit || 'pcs'}</span>
+                                        <button
+                                          onClick={() => handleConsumeComponent(o.id, item.id, comp.id!)}
+                                          disabled={processingId === compInputKey || !mfgCompInputs[compInputKey]}
+                                          className="w-7 h-7 flex items-center justify-center bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 transition-colors"
+                                          title="Consume this component from stock"
+                                        >
+                                          {processingId === compInputKey ? <i className="fa-solid fa-spinner fa-spin text-[10px]"></i> : <i className="fa-solid fa-arrow-down text-[10px]"></i>}
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <span className="text-[9px] font-black text-emerald-600 uppercase"><i className="fa-solid fa-check-double mr-1"></i>Done</span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
+
+                      <div className="flex items-center gap-3 pt-3 border-t border-slate-50">
+                        <div className="flex-1">
+                          <div className="text-[9px] font-black uppercase text-blue-600 mb-1">Mfd: {current} / {target} <span className="text-amber-600 ml-1">(Remaining: {(target - current).toLocaleString()})</span></div>
+                          <div className="w-full bg-slate-100 rounded-full h-1.5">
+                            <div className={`h-1.5 rounded-full ${isComplete ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, (current / target) * 100)}%` }}></div>
+                          </div>
+                        </div>
+                        {!isComplete && (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              placeholder="Qty"
+                              min={0}
+                              max={target - current}
+                              value={mfgInputs[inputKey] || ''}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                const maxAllowed = target - current;
+                                if (e.target.value === '' || isNaN(val)) {
+                                  setMfgInputs(p => ({ ...p, [inputKey]: e.target.value }));
+                                } else {
+                                  const clamped = Math.min(val, maxAllowed);
+                                  setMfgInputs(p => ({ ...p, [inputKey]: String(clamped) }));
+                                }
+                              }}
+                              className="w-16 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center focus:border-blue-500 outline-none"
+                            />
+                            <button
+                              onClick={() => handleRegisterMfg(o.id, item.id)}
+                              disabled={isProcessingThis || !mfgInputs[inputKey]}
+                              className="w-8 h-8 flex items-center justify-center bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                            >
+                              {isProcessingThis ? <i className="fa-solid fa-spinner fa-spin text-xs"></i> : <i className="fa-solid fa-check text-xs"></i>}
+                            </button>
+                          </div>
+                        )}
+                        {isComplete && (
+                          <div className="flex-none px-3 py-1 bg-emerald-50 text-emerald-600 rounded drop-shadow-sm text-[10px] font-black uppercase">
+                            <i className="fa-solid fa-check-double mr-1"></i> Done
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

@@ -4,6 +4,7 @@ import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User } from '../types';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import { PartHistory } from './PartHistory';
 
 interface ProcurementModuleProps {
   config: AppConfig;
@@ -57,6 +58,7 @@ const CompThreshold: React.FC<{ component: ManufacturingComponent, config: AppCo
 export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, refreshKey, currentUser }) => {
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [activeTab, setActiveTab] = useState<'procurement' | 'history'>('procurement');
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null);
   const poTemplateRef = useRef<HTMLDivElement>(null);
   const [poPrintData, setPoPrintData] = useState<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier } | null>(null);
@@ -98,11 +100,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [pendingResolutions, setPendingResolutions] = useState<InTransitCompRecord[] | null>(null);
   const [resolutionChoices, setResolutionChoices] = useState<Record<string, CompResolution>>({});
   const [pendingRollbackOrder, setPendingRollbackOrder] = useState<CustomerOrder | null>(null);
+  const [allOrders, setAllOrders] = useState<CustomerOrder[]>([]);
 
   useEffect(() => { fetchData(); }, [refreshKey]);
 
   const fetchData = async () => {
     const [o, s] = await Promise.all([dataService.getOrders(), dataService.getSuppliers()]);
+    setAllOrders(o);
     const eligibleOrders = o.filter(order => [OrderStatus.WAITING_SUPPLIERS, OrderStatus.PARTIAL_PAYMENT, OrderStatus.NEGATIVE_MARGIN, OrderStatus.TECHNICAL_REVIEW].includes(order.status));
     setOrders(eligibleOrders);
     setSuppliers(s);
@@ -442,894 +446,916 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
   return (
     <div className="space-y-6">
-      {/* Hidden PDF Templates */}
-      <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
-        {/* RFP PDF Template */}
-        {(rfpPrintData || (activeAction?.type === 'RFP' && activeAction.order && rfpCompSelection.length > 0)) && (
-          <div ref={rfpTemplateRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
-            <div className="flex justify-between items-start mb-12">
-              <div className="flex flex-col gap-2">
-                {config.settings.companyLogo ? (
-                  <img src={config.settings.companyLogo} alt="Company Logo" className="h-16 object-contain" />
-                ) : (
-                  <div className="text-2xl font-black tracking-tighter text-blue-900 uppercase">{config.settings.companyName || 'Nexus ERP'}</div>
-                )}
-                <div className="text-xs font-bold text-slate-500 mt-2 max-w-[250px] whitespace-pre-line leading-relaxed">
-                  {config.settings.companyAddress || 'Headquarters'}
-                </div>
-              </div>
-              <div className="text-right flex flex-col items-end gap-1">
-                <div className="text-4xl font-black text-slate-900 uppercase tracking-tighter mb-2">Request For Proposal</div>
-                <div className="flex items-center gap-3">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</div>
-                  <div className="font-mono text-sm font-black">{new Date().toLocaleDateString()}</div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Ref</div>
-                  <div className="font-mono text-sm font-black text-blue-700">RFP-{rfpPrintData ? rfpPrintData.order.internalOrderNumber : activeAction!.order.internalOrderNumber}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-900 mb-10 text-sm font-bold leading-relaxed text-slate-700">
-              <p>Please provide your best commercial offer and lead time for the components listed below. Ensure your quotation clearly states unit prices and total amounts, excluding taxes. If applicable, please attach technical data sheets or compliance certificates.</p>
-            </div>
-
-            <div className="border-2 border-slate-900 mb-8 flex flex-col">
-              <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
-                <div className="col-span-1 p-3 border-r-2 border-slate-900">#</div>
-                <div className="col-span-6 p-3 border-r-2 border-slate-900 text-left">Component Description & Specifications</div>
-                <div className="col-span-3 p-3 border-r-2 border-slate-900">Supplier/Mfr Part #</div>
-                <div className="col-span-2 p-3">Quantity</div>
-              </div>
-
-              {rfpPrintData ? (
-                rfpPrintData.comps.map((comp, idx) => {
-                  const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
-                  return (
-                    <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
-                      <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
-                      <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
-                        <div className="font-black text-xs leading-relaxed">{comp.description}</div>
-                        {comp.componentNumber && <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>}
-                      </div>
-                      <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">{externalPartNum}</div>
-                      <div className="col-span-2 p-4 font-black">
-                        {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                activeAction!.order.items.flatMap(ci => (ci.components || []))
-                  .filter(comp => rfpCompSelection.includes(comp.id || ''))
-                  .map((comp, idx) => {
-                    const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
-                    return (
-                      <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
-                        <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
-                        <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
-                          <div className="font-black text-xs leading-relaxed">{comp.description}</div>
-                          {comp.componentNumber && <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>}
-                        </div>
-                        <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">{externalPartNum}</div>
-                        <div className="col-span-2 p-4 font-black">
-                          {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
-                        </div>
-                      </div>
-                    );
-                  })
-              )}
-            </div>
-
-            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 text-center mt-20 pt-8 border-t-2 border-slate-900">
-              Generated by {config.settings.companyName || 'Nexus ERP'} Procurement Operations
-            </div>
-          </div>
-        )}
-
-        {/* PO PDF Template */}
-        {poPrintData && (
-          <div ref={poTemplateRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
-            <div className="flex justify-between items-start mb-10">
-              <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">
-                {config.settings.companyLogo ? (
-                  <img src={config.settings.companyLogo} className="w-full h-full object-contain" />
-                ) : 'LOGO'}
-              </div>
-              <div className="text-right">
-                <h1 className="text-3xl font-black mb-1">{config.settings.companyName}</h1>
-                <p className="text-xl font-bold text-slate-600">{config.settings.companyAddress}</p>
-              </div>
-            </div>
-
-            <div className="border-t-2 border-b-2 border-slate-200 py-3 mb-8 flex justify-center items-center">
-              <h2 className="text-xl font-black uppercase flex items-center gap-6">
-                <span>رقم الشراء : {poPrintData.items[0]?.comp.poNumber}</span>
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-2 gap-8 mb-10">
-              <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
-                <div className="grid grid-cols-3">
-                  <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">المطلوب من:</div>
-                  <div className="col-span-2 p-3 font-black text-sm uppercase">{poPrintData.supplier.name}</div>
-                </div>
-                <div className="grid grid-cols-3">
-                  <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">العنوان :</div>
-                  <div className="col-span-2 p-3 text-xs font-bold">{poPrintData.supplier.address || 'N/A'}</div>
-                </div>
-                <div className="grid grid-cols-3">
-                  <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">رقم طلب العميل</div>
-                  <div className="col-span-2 p-3 font-mono font-black text-blue-600 text-xs">{poPrintData.order.internalOrderNumber}</div>
-                </div>
-              </div>
-
-              <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
-                <div className="grid grid-cols-3">
-                  <div className="col-span-2 p-3 font-black text-sm text-center tracking-widest">
-                    {new Date(poPrintData.items[0]?.comp.statusUpdatedAt).toLocaleDateString()}
-                  </div>
-                  <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-xs">التاريخ :</div>
-                </div>
-                <div className="p-3 bg-slate-50 text-center font-bold text-[10px]">
-                  مأموريه ضرائب الشركات المساهمه - القاهره
-                </div>
-                <div className="grid grid-cols-3">
-                  <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">522 803 435</div>
-                  <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">رقم التسجيل الضريبي :</div>
-                </div>
-                <div className="grid grid-cols-3">
-                  <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">00 212 00389 5</div>
-                  <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">رقم الملف الضريبي :</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="border-2 border-slate-900 mb-10 min-h-[400px] flex flex-col">
-              <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
-                <div className="col-span-4 p-3 border-r-2 border-slate-900">Description (الوصف)</div>
-                <div className="col-span-2 p-3 border-r-2 border-slate-900">Part No.<br />رقم القطعة</div>
-                <div className="col-span-1 p-3 border-r-2 border-slate-900">Price LE<br />السعر</div>
-                <div className="col-span-1 p-3 border-r-2 border-slate-900">quantities<br />الكميه</div>
-                <div className="col-span-2 p-3 border-r-2 border-slate-900">unit<br />الوحده</div>
-                <div className="col-span-2 p-3">Value القيمه</div>
-              </div>
-
-              {poPrintData.items.map(({ comp }, idx) => (
-                <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 text-center font-black">
-                  <div className="col-span-4 p-4 border-r-2 border-slate-900 text-left text-sm flex flex-col justify-center">
-                    <span>{comp.description}</span>
-                    {comp.componentNumber && <span className="text-[8px] text-slate-400 font-bold mt-0.5">(Internal P#: {comp.componentNumber})</span>}
-                  </div>
-                  <div className="col-span-2 p-4 border-r-2 border-slate-900 flex items-center justify-center font-mono text-xs text-blue-800 break-all">
-                    {comp.supplierPartNumber || ''}
-                  </div>
-                  <div className="col-span-1 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
-                    {comp.unitCost.toLocaleString()}
-                  </div>
-                  <div className="col-span-1 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
-                    {comp.quantity}
-                  </div>
-                  <div className="col-span-2 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
-                    {comp.unit === 'pcs' ? 'قطعة' : comp.unit}
-                  </div>
-                  <div className="col-span-2 p-4 flex items-center justify-center text-base">
-                    {(comp.quantity * comp.unitCost).toLocaleString()}
-                  </div>
-                </div>
-              ))}
-
-              {Array.from({ length: Math.max(0, 8 - poPrintData.items.length) }).map((_, idx) => (
-                <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 h-10">
-                  <div className="col-span-4 border-r-2 border-slate-900"></div>
-                  <div className="col-span-2 border-r-2 border-slate-900"></div>
-                  <div className="col-span-1 border-r-2 border-slate-900"></div>
-                  <div className="col-span-1 border-r-2 border-slate-900"></div>
-                  <div className="col-span-2 border-r-2 border-slate-900"></div>
-                  <div className="col-span-2"></div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-between items-end">
-              <div className="w-64 border-2 border-slate-900 divide-y-2 divide-slate-900 font-black">
-                <div className="grid grid-cols-2">
-                  <div className="p-3 bg-slate-50 border-r-2 border-slate-900 text-xs uppercase">Subtotal</div>
-                  <div className="p-3 text-right">
-                    {poPrintData.items.reduce((sum, { comp }) => sum + (comp.quantity * comp.unitCost), 0).toLocaleString()}
-                  </div>
-                </div>
-                <div className="grid grid-cols-2">
-                  <div className="p-3 bg-slate-50 border-r-2 border-slate-900 text-[10px] uppercase">Tax</div>
-                  <div className="p-3 text-right">
-                    {poPrintData.items.reduce((sum, { comp }) => sum + ((comp.quantity * comp.unitCost) * ((comp.taxPercent || 0) / 100)), 0).toLocaleString()}
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 bg-slate-100">
-                  <div className="p-3 border-r-2 border-slate-900 text-sm uppercase">TOTAL</div>
-                  <div className="p-3 text-right text-xl">
-                    {poPrintData.items.reduce((sum, { comp }) => {
-                      const base = comp.quantity * comp.unitCost;
-                      return sum + base + (base * ((comp.taxPercent || 0) / 100));
-                    }, 0).toLocaleString()}
-                  </div>
-                </div>
-              </div>
-
-              <div className="text-right italic text-[10px] text-slate-400 opacity-50 mb-4 pr-10">
-                AUTHORIZED DIGITAL DOCUMENT
-              </div>
-            </div>
-
-            <div className="mt-16 pt-6 border-t-2 border-slate-900 flex justify-between px-4 text-[11px] font-black uppercase tracking-widest">
-              <span>AGENT / المختص</span>
-              <span>REFERENCE / المرجع</span>
-              <span>APPROVED / يعتمد</span>
-            </div>
-          </div>
-        )}
+      {/* Tab Bar */}
+      <div className="flex gap-1 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 w-fit">
+        <button
+          onClick={() => setActiveTab('procurement')}
+          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'procurement' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+        >
+          <i className="fa-solid fa-truck-field mr-2"></i> Procurement
+        </button>
+        <button
+          onClick={() => setActiveTab('history')}
+          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'history' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+        >
+          <i className="fa-solid fa-clock-rotate-left mr-2"></i> Part History
+        </button>
       </div>
 
-      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-        <div className="flex justify-between items-center mb-10">
-          <div>
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Procurement & Sourcing Control</h2>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Strategic Supply Chain Orchestration • {totalComponents} Items across {orderGroups.length} Orders</p>
-          </div>
-        </div>
-
-        <div className="space-y-8">
-          {orderGroups.map(({ order: o, comps }) => {
-            const allAwardedOrOrdered = comps.every(({ comp: cc }) => ['AWARDED', 'ORDERED', 'RECEIVED'].includes(cc.status || ''));
-            const anyReadyToOrder = comps.some(({ comp: cc }) => cc.status === 'AWARDED');
-            const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
-            const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
-            const readyForPo = allAwardedOrOrdered && anyReadyToOrder;
-
-            return (
-              <div key={o.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden">
-                {/* Order Header */}
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 bg-slate-100/80 border-b border-slate-200">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center text-blue-600 text-lg">
-                      <i className="fa-solid fa-file-lines"></i>
-                    </div>
-                    <div>
-                      <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest">{o.internalOrderNumber}</div>
-                      <div className="font-black text-slate-800">{o.customerName}</div>
-                      <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} components to procure</div>
+      {activeTab === 'history' ? (
+        <PartHistory orders={allOrders} suppliers={suppliers} />
+      ) : (
+        <>
+          {/* Hidden PDF Templates */}
+          <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
+            {/* RFP PDF Template */}
+            {(rfpPrintData || (activeAction?.type === 'RFP' && activeAction.order && rfpCompSelection.length > 0)) && (
+              <div ref={rfpTemplateRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
+                <div className="flex justify-between items-start mb-12">
+                  <div className="flex flex-col gap-2">
+                    {config.settings.companyLogo ? (
+                      <img src={config.settings.companyLogo} alt="Company Logo" className="h-16 object-contain" />
+                    ) : (
+                      <div className="text-2xl font-black tracking-tighter text-blue-900 uppercase">{config.settings.companyName || 'Nexus ERP'}</div>
+                    )}
+                    <div className="text-xs font-bold text-slate-500 mt-2 max-w-[250px] whitespace-pre-line leading-relaxed">
+                      {config.settings.companyAddress || 'Headquarters'}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    {/* Rollback button - blocked if any component has PO */}
-                    <button
-                      onClick={() => {
-                        if (anyOrdered) {
-                          alert('Cannot rollback: There are active Purchase Orders on this order. Cancel all POs first using the Cancel PO button on each component.');
-                          return;
-                        }
-                        handleInitiateRollback(o);
-                      }}
-                      className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 transition-all ${anyOrdered ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border border-orange-200 text-orange-500 hover:bg-orange-50'
-                        }`}
-                      title={anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback to Logged Registry'}
-                    >
-                      <i className="fa-solid fa-file-export fa-flip-horizontal"></i>
-                      {anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback Order'}
-                    </button>
-
-                    {/* Global Issue PO for all awarded comps */}
-                    {readyForPo && (
-                      <button
-                        disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
-                        onClick={async () => {
-                          const po = await dataService.getUniquePoNumber();
-                          setPoNumberInput(po);
-                          // Find all AWARDED components regardless of supplier to present a grouped selector
-                          const awarded = comps.filter(({ comp: cc }) => cc.status === 'AWARDED');
-                          if (awarded.length > 0) {
-                            // By default group by the first awarded component's supplier
-                            const sId = awarded[0].comp.supplierId;
-                            const sameSupplier = awarded.filter(a => a.comp.supplierId === sId);
-                            setMultiComps(sameSupplier);
-                            setSelectedCompIds(sameSupplier.map(m => m.comp.id!));
-                            setActiveAction({ type: 'PO', order: o, item: sameSupplier[0].item, comp: sameSupplier[0].comp });
-                          }
-                        }}
-                        className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg flex items-center gap-2 transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-100'
-                          }`}
-                      >
-                        <i className="fa-solid fa-file-invoice"></i> Issue PO for All
-                      </button>
-                    )}
-                    {!allAwardedOrOrdered && !allOrderedOrHigher && (
-                      <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
-                        <i className="fa-solid fa-hourglass-half"></i>
-                        Awaiting all awards for PO
-                      </div>
-                    )}
+                  <div className="text-right flex flex-col items-end gap-1">
+                    <div className="text-4xl font-black text-slate-900 uppercase tracking-tighter mb-2">Request For Proposal</div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</div>
+                      <div className="font-mono text-sm font-black">{new Date().toLocaleDateString()}</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Ref</div>
+                      <div className="font-mono text-sm font-black text-blue-700">RFP-{rfpPrintData ? rfpPrintData.order.internalOrderNumber : activeAction!.order.internalOrderNumber}</div>
+                    </div>
                   </div>
                 </div>
 
-                {/* Components List */}
-                <div className="divide-y divide-slate-100">
-                  {comps.map(({ item: i, comp: c }) => (
-                    <div key={c.id} className="flex flex-col lg:flex-row justify-between items-center p-6 hover:bg-blue-50/30 transition-all group">
-                      <div className="flex gap-6 items-center w-full lg:w-auto">
-                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${c.status === 'ORDERED' ? 'bg-emerald-50 text-emerald-600' :
-                          c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
-                          }`}>
-                          <i className={`fa-solid ${c.status === 'ORDERED' ? 'fa-truck-fast' : c.status === 'AWARDED' ? 'fa-file-signature' : 'fa-diagram-project'}`}></i>
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
-                            {c.supplierPartNumber && <span className="text-[10px] font-black text-amber-600 font-mono tracking-widest uppercase border border-amber-200 bg-amber-50 px-1 rounded">MFR P/N: {c.supplierPartNumber}</span>}
-                            <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${c.status === 'ORDERED' ? 'bg-emerald-600 text-white' :
-                              c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
-                              }`}>{(c.status || '').replace('_', ' ')}</span>
-                            {c.rfpId && ['RFP_SENT', 'AWARDED'].includes(c.status || '') && (
-                              <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
-                                BATCH: {c.rfpId.substring(0, 6)}
-                              </span>
-                            )}
-                            {c.poNumber && <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-2 rounded">PO: {c.poNumber}</span>}
+                <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-900 mb-10 text-sm font-bold leading-relaxed text-slate-700">
+                  <p>Please provide your best commercial offer and lead time for the components listed below. Ensure your quotation clearly states unit prices and total amounts, excluding taxes. If applicable, please attach technical data sheets or compliance certificates.</p>
+                </div>
+
+                <div className="border-2 border-slate-900 mb-8 flex flex-col">
+                  <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
+                    <div className="col-span-1 p-3 border-r-2 border-slate-900">#</div>
+                    <div className="col-span-6 p-3 border-r-2 border-slate-900 text-left">Component Description & Specifications</div>
+                    <div className="col-span-3 p-3 border-r-2 border-slate-900">Supplier/Mfr Part #</div>
+                    <div className="col-span-2 p-3">Quantity</div>
+                  </div>
+
+                  {rfpPrintData ? (
+                    rfpPrintData.comps.map((comp, idx) => {
+                      const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
+                      return (
+                        <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
+                          <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
+                          <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
+                            <div className="font-black text-xs leading-relaxed">{comp.description}</div>
+                            {comp.componentNumber && <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>}
                           </div>
-                          <div className="font-black text-slate-800 text-base tracking-tight">{c.description}</div>
-                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">
-                            Item: {i.orderNumber} • Qty: {c.quantity} {c.unit} • Cost: {(c.unitCost || 0).toLocaleString()} L.E.
-                            {c.supplierId && (
-                              <span className="text-blue-600 ml-2">
-                                • Supplier: {suppliers.find(s => s.id === c.supplierId)?.name || 'Unknown'}
-                              </span>
-                            )}
+                          <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">{externalPartNum}</div>
+                          <div className="col-span-2 p-4 font-black">
+                            {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
                           </div>
-                          <CompThreshold component={c} config={config} />
                         </div>
+                      );
+                    })
+                  ) : (
+                    activeAction!.order.items.flatMap(ci => (ci.components || []))
+                      .filter(comp => rfpCompSelection.includes(comp.id || ''))
+                      .map((comp, idx) => {
+                        const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
+                        return (
+                          <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
+                            <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
+                            <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
+                              <div className="font-black text-xs leading-relaxed">{comp.description}</div>
+                              {comp.componentNumber && <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>}
+                            </div>
+                            <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">{externalPartNum}</div>
+                            <div className="col-span-2 p-4 font-black">
+                              {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
+                            </div>
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+
+                <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 text-center mt-20 pt-8 border-t-2 border-slate-900">
+                  Generated by {config.settings.companyName || 'Nexus ERP'} Procurement Operations
+                </div>
+              </div>
+            )}
+
+            {/* PO PDF Template */}
+            {poPrintData && (
+              <div ref={poTemplateRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
+                <div className="flex justify-between items-start mb-10">
+                  <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">
+                    {config.settings.companyLogo ? (
+                      <img src={config.settings.companyLogo} className="w-full h-full object-contain" />
+                    ) : 'LOGO'}
+                  </div>
+                  <div className="text-right">
+                    <h1 className="text-3xl font-black mb-1">{config.settings.companyName}</h1>
+                    <p className="text-xl font-bold text-slate-600">{config.settings.companyAddress}</p>
+                  </div>
+                </div>
+
+                <div className="border-t-2 border-b-2 border-slate-200 py-3 mb-8 flex justify-center items-center">
+                  <h2 className="text-xl font-black uppercase flex items-center gap-6">
+                    <span>رقم الشراء : {poPrintData.items[0]?.comp.poNumber}</span>
+                  </h2>
+                </div>
+
+                <div className="grid grid-cols-2 gap-8 mb-10">
+                  <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
+                    <div className="grid grid-cols-3">
+                      <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">المطلوب من:</div>
+                      <div className="col-span-2 p-3 font-black text-sm uppercase">{poPrintData.supplier.name}</div>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">العنوان :</div>
+                      <div className="col-span-2 p-3 text-xs font-bold">{poPrintData.supplier.address || 'N/A'}</div>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">رقم طلب العميل</div>
+                      <div className="col-span-2 p-3 font-mono font-black text-blue-600 text-xs">{poPrintData.order.internalOrderNumber}</div>
+                    </div>
+                  </div>
+
+                  <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
+                    <div className="grid grid-cols-3">
+                      <div className="col-span-2 p-3 font-black text-sm text-center tracking-widest">
+                        {new Date(poPrintData.items[0]?.comp.statusUpdatedAt).toLocaleDateString()}
                       </div>
-                      <div className="flex items-center gap-3 mt-4 lg:mt-0">
-                        <div className="flex items-center">
-                          {c.status === 'RFP_SENT' && (
-                            <button
-                              onClick={() => setActiveAction({ type: 'RESET', order: o, item: i, comp: c })}
-                              className="p-3 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
-                              title="Resend RFP / Reset Component Sourcing"
-                            >
-                              <i className="fa-solid fa-rotate-left"></i>
-                            </button>
-                          )}
+                      <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-xs">التاريخ :</div>
+                    </div>
+                    <div className="p-3 bg-slate-50 text-center font-bold text-[10px]">
+                      مأموريه ضرائب الشركات المساهمه - القاهره
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">522 803 435</div>
+                      <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">رقم التسجيل الضريبي :</div>
+                    </div>
+                    <div className="grid grid-cols-3">
+                      <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">00 212 00389 5</div>
+                      <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">رقم الملف الضريبي :</div>
+                    </div>
+                  </div>
+                </div>
 
-                          <button
-                            onClick={() => openHistory(c)}
-                            className="p-3 text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
-                            title="View Price History"
-                          >
-                            <i className="fa-solid fa-clock-rotate-left"></i>
-                          </button>
-                        </div>
+                <div className="border-2 border-slate-900 mb-10 min-h-[400px] flex flex-col">
+                  <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
+                    <div className="col-span-4 p-3 border-r-2 border-slate-900">Description (الوصف)</div>
+                    <div className="col-span-2 p-3 border-r-2 border-slate-900">Part No.<br />رقم القطعة</div>
+                    <div className="col-span-1 p-3 border-r-2 border-slate-900">Price LE<br />السعر</div>
+                    <div className="col-span-1 p-3 border-r-2 border-slate-900">quantities<br />الكميه</div>
+                    <div className="col-span-2 p-3 border-r-2 border-slate-900">unit<br />الوحده</div>
+                    <div className="col-span-2 p-3">Value القيمه</div>
+                  </div>
 
-                        {c.status === 'PENDING_OFFER' && (
-                          <button onClick={() => {
-                            setActiveAction({ type: 'RFP', order: o, item: i, comp: c });
-                            setRfpSelection(c.rfpSupplierIds || []);
-                            // Auto-select other components with the same rfpId if it exists
-                            const sameRfpIds = c.rfpId ? comps.filter(x => x.comp.rfpId === c.rfpId).map(x => x.comp.id!) : [c.id!];
-                            setRfpCompSelection(sameRfpIds);
-                          }}
-                            className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-black transition-all"
-                          >Send RFP</button>
-                        )}
-                        {c.status === 'RFP_SENT' && (
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={() => handleDownloadExistingRfp(o, c, comps)}
-                              className="px-5 py-2.5 bg-white border-2 border-slate-900 text-slate-900 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-slate-50 transition-all flex items-center gap-2"
-                            >
-                              <i className="fa-solid fa-file-pdf"></i> Download RFP
-                            </button>
-                            <button onClick={() => {
-                              const sameRfp = comps.filter(x => x.comp.status === 'RFP_SENT' && c.rfpId && x.comp.rfpId === c.rfpId);
-                              const displayComps = sameRfp.length > 0 ? sameRfp : [comps.find(x => x.comp.id === c.id)!];
-                              setMultiComps(displayComps);
-                              setSelectedCompIds([c.id!]); // Default to only current one selected
-                              setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
-                              setAwardCosts({ [c.id!]: c.unitCost || 0 });
-                              setAwardTaxPercent(c.taxPercent || 14);
-                            }}
-                              className="px-6 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
-                            >Award Tender</button>
-                          </div>
-                        )}
-                        {c.status === 'AWARDED' && (
-                          <div className="flex flex-col items-end gap-1.5">
-                            {!allAwardedOrOrdered && (
-                              <span className="text-[8px] font-black text-slate-400 uppercase">Waiting for other awards</span>
-                            )}
-                            {allAwardedOrOrdered && (
-                              <button
-                                disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
-                                onClick={async () => {
-                                  const po = await dataService.getUniquePoNumber();
-                                  setPoNumberInput(po);
-                                  // Find all awarded components sharing the same Award ID (and supplier) in THIS order
-                                  const sameAwardGroup = comps.filter(x =>
-                                    x.comp.status === 'AWARDED' &&
-                                    x.comp.supplierId === c.supplierId &&
-                                    (c.awardId ? x.comp.awardId === c.awardId : true)
-                                  );
-                                  setMultiComps(sameAwardGroup);
-                                  setSelectedCompIds([c.id!]); // Default to only current
-                                  setActiveAction({ type: 'PO', order: o, item: i, comp: c });
-                                }}
-                                className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-                              >
-                                Issue PO
-                              </button>
-                            )}
-                            {o.status === OrderStatus.NEGATIVE_MARGIN && (
-                              <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-500 uppercase animate-pulse">
-                                <i className="fa-solid fa-triangle-exclamation"></i>
-                                Financial Breach: PO Blocked
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {c.status === 'ORDERED' && (
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={() => handleDownloadPO(o, c)}
-                              className="px-5 py-2.5 bg-white border-2 border-blue-600 text-blue-600 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-2"
-                            >
-                              <i className="fa-solid fa-file-pdf"></i> Download PO
-                            </button>
-                            <button
-                              onClick={() => {
-                                // Find all components sharing this PO number and sendPoId
-                                const samePoBatch = comps.filter(x =>
-                                  x.comp.poNumber === c.poNumber &&
-                                  x.comp.status === 'ORDERED' &&
-                                  (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
-                                );
-                                setMultiComps(samePoBatch);
-                                setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
-                                setResetReason('');
-                                setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
-                              }}
-                              disabled={isActionLoading != null}
-                              className="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-rose-700 transition-all flex items-center gap-2"
-                            >
-                              <i className="fa-solid fa-ban"></i> Cancel Order
-                            </button>
-                            <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
-                              <i className="fa-solid fa-truck-fast mr-1"></i>In Transit
-                            </span>
-                          </div>
-                        )}
+                  {poPrintData.items.map(({ comp }, idx) => (
+                    <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 text-center font-black">
+                      <div className="col-span-4 p-4 border-r-2 border-slate-900 text-left text-sm flex flex-col justify-center">
+                        <span>{comp.description}</span>
+                        {comp.componentNumber && <span className="text-[8px] text-slate-400 font-bold mt-0.5">(Internal P#: {comp.componentNumber})</span>}
+                      </div>
+                      <div className="col-span-2 p-4 border-r-2 border-slate-900 flex items-center justify-center font-mono text-xs text-blue-800 break-all">
+                        {comp.supplierPartNumber || ''}
+                      </div>
+                      <div className="col-span-1 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
+                        {comp.unitCost.toLocaleString()}
+                      </div>
+                      <div className="col-span-1 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
+                        {comp.quantity}
+                      </div>
+                      <div className="col-span-2 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
+                        {comp.unit === 'pcs' ? 'قطعة' : comp.unit}
+                      </div>
+                      <div className="col-span-2 p-4 flex items-center justify-center text-base">
+                        {(comp.quantity * comp.unitCost).toLocaleString()}
                       </div>
                     </div>
                   ))}
+
+                  {Array.from({ length: Math.max(0, 8 - poPrintData.items.length) }).map((_, idx) => (
+                    <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 h-10">
+                      <div className="col-span-4 border-r-2 border-slate-900"></div>
+                      <div className="col-span-2 border-r-2 border-slate-900"></div>
+                      <div className="col-span-1 border-r-2 border-slate-900"></div>
+                      <div className="col-span-1 border-r-2 border-slate-900"></div>
+                      <div className="col-span-2 border-r-2 border-slate-900"></div>
+                      <div className="col-span-2"></div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-between items-end">
+                  <div className="w-64 border-2 border-slate-900 divide-y-2 divide-slate-900 font-black">
+                    <div className="grid grid-cols-2">
+                      <div className="p-3 bg-slate-50 border-r-2 border-slate-900 text-xs uppercase">Subtotal</div>
+                      <div className="p-3 text-right">
+                        {poPrintData.items.reduce((sum, { comp }) => sum + (comp.quantity * comp.unitCost), 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2">
+                      <div className="p-3 bg-slate-50 border-r-2 border-slate-900 text-[10px] uppercase">Tax</div>
+                      <div className="p-3 text-right">
+                        {poPrintData.items.reduce((sum, { comp }) => sum + ((comp.quantity * comp.unitCost) * ((comp.taxPercent || 0) / 100)), 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 bg-slate-100">
+                      <div className="p-3 border-r-2 border-slate-900 text-sm uppercase">TOTAL</div>
+                      <div className="p-3 text-right text-xl">
+                        {poPrintData.items.reduce((sum, { comp }) => {
+                          const base = comp.quantity * comp.unitCost;
+                          return sum + base + (base * ((comp.taxPercent || 0) / 100));
+                        }, 0).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right italic text-[10px] text-slate-400 opacity-50 mb-4 pr-10">
+                    AUTHORIZED DIGITAL DOCUMENT
+                  </div>
+                </div>
+
+                <div className="mt-16 pt-6 border-t-2 border-slate-900 flex justify-between px-4 text-[11px] font-black uppercase tracking-widest">
+                  <span>AGENT / المختص</span>
+                  <span>REFERENCE / المرجع</span>
+                  <span>APPROVED / يعتمد</span>
                 </div>
               </div>
-            );
-          })}
-          {orderGroups.length === 0 && (
-            <div className="p-24 text-center text-slate-300 italic uppercase text-xs font-black tracking-widest flex flex-col items-center gap-4">
-              <i className="fa-solid fa-clipboard-check text-5xl opacity-10"></i>
-              Global procurement pipeline is empty.
+            )}
+          </div>
+
+          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+            <div className="flex justify-between items-center mb-10">
+              <div>
+                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Procurement & Sourcing Control</h2>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Strategic Supply Chain Orchestration • {totalComponents} Items across {orderGroups.length} Orders</p>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
 
-      {
-        activeAction && (
-          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto">
-            <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-xl p-10 my-8 animate-in zoom-in-95 duration-300 border border-slate-100">
-              <div className="flex items-center gap-6 mb-8">
-                <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-inner ${activeAction.type === 'RFP' ? 'bg-blue-50 text-blue-600' :
-                  activeAction.type === 'AWARD' ? 'bg-amber-50 text-amber-600' :
-                    activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
-                  }`}>
-                  <i className={`fa-solid ${activeAction.type === 'RFP' ? 'fa-paper-plane' :
-                    activeAction.type === 'AWARD' ? 'fa-award' :
-                      activeAction.type === 'RESET' ? 'fa-rotate-left' :
-                        activeAction.type === 'ORDER_ROLLBACK' ? 'fa-file-export fa-flip-horizontal' : 'fa-file-invoice'
-                    }`}></i>
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
-                    {activeAction.type === 'RFP' ? 'Issue Request for Proposals' :
-                      activeAction.type === 'AWARD' ? 'Commercial Award Selection' :
-                        activeAction.type === 'RESET' ? 'Reset Sourcing Cycle' :
-                          activeAction.type === 'ORDER_ROLLBACK' ? 'Order Workflow Rollback' : 'Confirm Purchase Order'}
-                  </h3>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    {activeAction.type === 'ORDER_ROLLBACK' ? `Reverting to Logged Registry: ${activeAction.order.internalOrderNumber}` : `Comp: ${activeAction.comp?.description}`}
-                  </p>
-                </div>
-              </div>
+            <div className="space-y-8">
+              {orderGroups.map(({ order: o, comps }) => {
+                const allAwardedOrOrdered = comps.every(({ comp: cc }) => ['AWARDED', 'ORDERED', 'RECEIVED'].includes(cc.status || ''));
+                const anyReadyToOrder = comps.some(({ comp: cc }) => cc.status === 'AWARDED');
+                const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
+                const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
+                const readyForPo = allAwardedOrOrdered && anyReadyToOrder;
 
-              <div className="space-y-6">
-                {activeAction.type === 'RFP' && (
-                  <>
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-end mb-2">
+                return (
+                  <div key={o.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden">
+                    {/* Order Header */}
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 bg-slate-100/80 border-b border-slate-200">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center text-blue-600 text-lg">
+                          <i className="fa-solid fa-file-lines"></i>
+                        </div>
                         <div>
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Components to include in RFP</label>
-                          <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1">Select other components from this order to group into a single request.</p>
+                          <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest">{o.internalOrderNumber}</div>
+                          <div className="font-black text-slate-800">{o.customerName}</div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} components to procure</div>
                         </div>
                       </div>
-                      <div className="border border-slate-100 rounded-2xl p-2 max-h-48 overflow-y-auto custom-scrollbar space-y-1">
-                        {activeAction.order.items.flatMap(ci => (ci.components || []).filter(cc =>
-                          cc.source === 'PROCUREMENT' &&
-                          (['PENDING_OFFER', 'RFP_SENT'].includes(cc.status || ''))
-                        )).map(comp => (
-                          <label key={comp.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-slate-50 border-slate-100 hover:border-slate-300'}`}>
-                            <input
-                              type="checkbox"
-                              className="hidden"
-                              checked={rfpCompSelection.includes(comp.id || '')}
-                              onChange={(e) => {
-                                if (e.target.checked) setRfpCompSelection(prev => [...prev, comp.id || '']);
-                                else setRfpCompSelection(prev => prev.filter(id => id !== comp.id));
-                              }}
-                            />
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-white border-white text-blue-600' : 'bg-white border-slate-200'}`}>
-                              {rfpCompSelection.includes(comp.id || '') && <i className="fa-solid fa-check text-[10px]"></i>}
-                            </div>
-                            <div className="flex-1">
-                              <div className={`text-xs font-black ${rfpCompSelection.includes(comp.id || '') ? 'text-white' : 'text-slate-800'}`}>{comp.description}</div>
-                              <div className={`text-[9px] font-bold uppercase tracking-widest ${rfpCompSelection.includes(comp.id || '') ? 'text-blue-100' : 'text-slate-400'}`}>
-                                Qty: {comp.quantity} {comp.unit} | {comp.status?.replace('_', ' ')}
-                              </div>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
+                      <div className="flex items-center gap-3">
+                        {/* Rollback button - blocked if any component has PO */}
+                        <button
+                          onClick={() => {
+                            if (anyOrdered) {
+                              alert('Cannot rollback: There are active Purchase Orders on this order. Cancel all POs first using the Cancel PO button on each component.');
+                              return;
+                            }
+                            handleInitiateRollback(o);
+                          }}
+                          className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 transition-all ${anyOrdered ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border border-orange-200 text-orange-500 hover:bg-orange-50'
+                            }`}
+                          title={anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback to Logged Registry'}
+                        >
+                          <i className="fa-solid fa-file-export fa-flip-horizontal"></i>
+                          {anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback Order'}
+                        </button>
 
-                    <div className="pt-2">
-                      <button
-                        onClick={handleDownloadRfp}
-                        disabled={isDownloadingRfp || rfpCompSelection.length === 0}
-                        className="w-full py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-2xl font-black text-[10px] uppercase shadow-sm hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all flex items-center justify-center gap-2 group"
-                      >
-                        {isDownloadingRfp ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-solid fa-file-pdf text-rose-500 group-hover:text-white"></i>}
-                        {isDownloadingRfp ? 'Generating Request Document...' : 'Download Vendor RFP Document'}
-                      </button>
-                      {rfpCompSelection.length === 0 && <p className="text-center text-[9px] text-rose-500 font-bold uppercase mt-1">Select at least one component to generate PDF</p>}
-                    </div>
-
-                    <div className="space-y-3 pt-4 border-t border-slate-100">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Select Target Suppliers (Optional)</label>
-                      <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1 mb-2">If none selected, Award Tender will show all available vendors.</p>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 custom-scrollbar">
-                        {suppliers.map(s => (
+                        {/* Global Issue PO for all awarded comps */}
+                        {readyForPo && (
                           <button
-                            key={s.id}
-                            onClick={() => setRfpSelection(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
-                            className={`p-4 rounded-2xl border text-left transition-all flex items-center justify-between ${rfpSelection.includes(s.id) ? 'bg-blue-600 text-white border-blue-700 shadow-lg' : 'bg-slate-50 text-slate-700 border-slate-100 hover:border-blue-200'}`}
+                            disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
+                            onClick={async () => {
+                              const po = await dataService.getUniquePoNumber();
+                              setPoNumberInput(po);
+                              // Find all AWARDED components regardless of supplier to present a grouped selector
+                              const awarded = comps.filter(({ comp: cc }) => cc.status === 'AWARDED');
+                              if (awarded.length > 0) {
+                                // By default group by the first awarded component's supplier
+                                const sId = awarded[0].comp.supplierId;
+                                const sameSupplier = awarded.filter(a => a.comp.supplierId === sId);
+                                setMultiComps(sameSupplier);
+                                setSelectedCompIds(sameSupplier.map(m => m.comp.id!));
+                                setActiveAction({ type: 'PO', order: o, item: sameSupplier[0].item, comp: sameSupplier[0].comp });
+                              }
+                            }}
+                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg flex items-center gap-2 transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-100'
+                              }`}
                           >
-                            <span className="text-xs font-black uppercase tracking-tight">{s.name}</span>
-                            {rfpSelection.includes(s.id) && <i className="fa-solid fa-circle-check"></i>}
+                            <i className="fa-solid fa-file-invoice"></i> Issue PO for All
                           </button>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {activeAction.type === 'AWARD' && activeAction.comp && (
-                  <>
-                    <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 flex justify-between items-center mb-4">
-                      <div>
-                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Quantity</div>
-                        <div className="text-xl font-black text-slate-800">
-                          {selectedCompIds.length > 0 ? multiComps.filter(m => selectedCompIds.includes(m.comp.id!)).reduce((sum, m) => sum + (m.comp.quantity || 0), 0) : activeAction.comp.quantity}
-                          <span className="text-xs font-bold text-slate-400 ml-1">{activeAction.comp.unit}</span>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sourcing Code</div>
-                        <div className="font-mono text-xs font-bold text-blue-600">{activeAction.comp.componentNumber}</div>
+                        )}
+                        {!allAwardedOrOrdered && !allOrderedOrHigher && (
+                          <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
+                            <i className="fa-solid fa-hourglass-half"></i>
+                            Awaiting all awards for PO
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    {multiComps.length > 0 && (
-                      <div className="space-y-3 mb-4">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Matching Components in RFP</label>
-                        <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-1 custom-scrollbar">
-                          {multiComps.map(({ comp: mc, item: mi }) => {
-                            const isSelected = selectedCompIds.includes(mc.id!);
-                            return (
-                              <div
-                                key={mc.id}
-                                className={`p-3 rounded-2xl border transition-all ${isSelected ? 'bg-amber-50 border-amber-200 shadow-sm' : 'bg-white border-slate-100'}`}
+                    {/* Components List */}
+                    <div className="divide-y divide-slate-100">
+                      {comps.map(({ item: i, comp: c }) => (
+                        <div key={c.id} className="flex flex-col lg:flex-row justify-between items-center p-6 hover:bg-blue-50/30 transition-all group">
+                          <div className="flex gap-6 items-center w-full lg:w-auto">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${c.status === 'ORDERED' ? 'bg-emerald-50 text-emerald-600' :
+                              c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
+                              }`}>
+                              <i className={`fa-solid ${c.status === 'ORDERED' ? 'fa-truck-fast' : c.status === 'AWARDED' ? 'fa-file-signature' : 'fa-diagram-project'}`}></i>
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
+                                {c.supplierPartNumber && <span className="text-[10px] font-black text-amber-600 font-mono tracking-widest uppercase border border-amber-200 bg-amber-50 px-1 rounded">MFR P/N: {c.supplierPartNumber}</span>}
+                                <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${c.status === 'ORDERED' ? 'bg-emerald-600 text-white' :
+                                  c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
+                                  }`}>{(c.status || '').replace('_', ' ')}</span>
+                                {c.rfpId && ['RFP_SENT', 'AWARDED'].includes(c.status || '') && (
+                                  <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
+                                    BATCH: {c.rfpId.substring(0, 6)}
+                                  </span>
+                                )}
+                                {c.poNumber && <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-2 rounded">PO: {c.poNumber}</span>}
+                              </div>
+                              <div className="font-black text-slate-800 text-base tracking-tight">{c.description}</div>
+                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">
+                                Item: {i.orderNumber} • Qty: {c.quantity} {c.unit} • Cost: {(c.unitCost || 0).toLocaleString()} L.E.
+                                {c.supplierId && (
+                                  <span className="text-blue-600 ml-2">
+                                    • Supplier: {suppliers.find(s => s.id === c.supplierId)?.name || 'Unknown'}
+                                  </span>
+                                )}
+                              </div>
+                              <CompThreshold component={c} config={config} />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 mt-4 lg:mt-0">
+                            <div className="flex items-center">
+                              {c.status === 'RFP_SENT' && (
+                                <button
+                                  onClick={() => setActiveAction({ type: 'RESET', order: o, item: i, comp: c })}
+                                  className="p-3 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
+                                  title="Resend RFP / Reset Component Sourcing"
+                                >
+                                  <i className="fa-solid fa-rotate-left"></i>
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => openHistory(c)}
+                                className="p-3 text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
+                                title="View Price History"
                               >
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex flex-col cursor-pointer flex-1" onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])}>
-                                    <span className="text-[10px] font-black uppercase text-slate-700">{mc.description}</span>
-                                    <span className="text-[9px] font-bold text-slate-400">Qty: {mc.quantity} • Item: {mi.orderNumber}</span>
-                                  </div>
-                                  <button onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])} className="p-2">
-                                    {isSelected ? <i className="fa-solid fa-circle-check text-amber-500 text-lg"></i> : <i className="fa-regular fa-circle text-slate-300 text-lg"></i>}
+                                <i className="fa-solid fa-clock-rotate-left"></i>
+                              </button>
+                            </div>
+
+                            {c.status === 'PENDING_OFFER' && (
+                              <button onClick={() => {
+                                setActiveAction({ type: 'RFP', order: o, item: i, comp: c });
+                                setRfpSelection(c.rfpSupplierIds || []);
+                                // Auto-select other components with the same rfpId if it exists
+                                const sameRfpIds = c.rfpId ? comps.filter(x => x.comp.rfpId === c.rfpId).map(x => x.comp.id!) : [c.id!];
+                                setRfpCompSelection(sameRfpIds);
+                              }}
+                                className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-black transition-all"
+                              >Send RFP</button>
+                            )}
+                            {c.status === 'RFP_SENT' && (
+                              <div className="flex items-center gap-3">
+                                <button
+                                  onClick={() => handleDownloadExistingRfp(o, c, comps)}
+                                  className="px-5 py-2.5 bg-white border-2 border-slate-900 text-slate-900 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-slate-50 transition-all flex items-center gap-2"
+                                >
+                                  <i className="fa-solid fa-file-pdf"></i> Download RFP
+                                </button>
+                                <button onClick={() => {
+                                  const sameRfp = comps.filter(x => x.comp.status === 'RFP_SENT' && c.rfpId && x.comp.rfpId === c.rfpId);
+                                  const displayComps = sameRfp.length > 0 ? sameRfp : [comps.find(x => x.comp.id === c.id)!];
+                                  setMultiComps(displayComps);
+                                  setSelectedCompIds([c.id!]); // Default to only current one selected
+                                  setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
+                                  setAwardCosts({ [c.id!]: c.unitCost || 0 });
+                                  setAwardTaxPercent(c.taxPercent || 14);
+                                }}
+                                  className="px-6 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
+                                >Award Tender</button>
+                              </div>
+                            )}
+                            {c.status === 'AWARDED' && (
+                              <div className="flex flex-col items-end gap-1.5">
+                                {!allAwardedOrOrdered && (
+                                  <span className="text-[8px] font-black text-slate-400 uppercase">Waiting for other awards</span>
+                                )}
+                                {allAwardedOrOrdered && (
+                                  <button
+                                    disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
+                                    onClick={async () => {
+                                      const po = await dataService.getUniquePoNumber();
+                                      setPoNumberInput(po);
+                                      // Find all awarded components sharing the same Award ID (and supplier) in THIS order
+                                      const sameAwardGroup = comps.filter(x =>
+                                        x.comp.status === 'AWARDED' &&
+                                        x.comp.supplierId === c.supplierId &&
+                                        (c.awardId ? x.comp.awardId === c.awardId : true)
+                                      );
+                                      setMultiComps(sameAwardGroup);
+                                      setSelectedCompIds([c.id!]); // Default to only current
+                                      setActiveAction({ type: 'PO', order: o, item: i, comp: c });
+                                    }}
+                                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                  >
+                                    Issue PO
                                   </button>
-                                </div>
-                                {isSelected && (
-                                  <div className="mt-2 pt-2 border-t border-amber-200/50 flex items-center justify-between animate-in slide-in-from-top-2">
-                                    <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Price per {mc.unit || 'Item'}</span>
-                                    <div className="flex items-center gap-2">
-                                      <input
-                                        type="number" step="any" min="0" placeholder="0.00"
-                                        className="w-24 px-3 py-1.5 bg-white border border-amber-200 rounded-xl font-black text-amber-900 text-right text-sm outline-none focus:border-amber-400 transition-all"
-                                        value={awardCosts[mc.id!] || ''}
-                                        onChange={e => setAwardCosts(prev => ({ ...prev, [mc.id!]: parseFloat(e.target.value) || 0 }))}
-                                      />
-                                      <span className="text-[9px] font-black text-amber-600">L.E.</span>
-                                    </div>
+                                )}
+                                {o.status === OrderStatus.NEGATIVE_MARGIN && (
+                                  <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-500 uppercase animate-pulse">
+                                    <i className="fa-solid fa-triangle-exclamation"></i>
+                                    Financial Breach: PO Blocked
                                   </div>
                                 )}
                               </div>
-                            );
-                          })}
+                            )}
+                            {c.status === 'ORDERED' && (
+                              <div className="flex items-center gap-3">
+                                <button
+                                  onClick={() => handleDownloadPO(o, c)}
+                                  className="px-5 py-2.5 bg-white border-2 border-blue-600 text-blue-600 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-2"
+                                >
+                                  <i className="fa-solid fa-file-pdf"></i> Download PO
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    // Find all components sharing this PO number and sendPoId
+                                    const samePoBatch = comps.filter(x =>
+                                      x.comp.poNumber === c.poNumber &&
+                                      x.comp.status === 'ORDERED' &&
+                                      (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
+                                    );
+                                    setMultiComps(samePoBatch);
+                                    setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
+                                    setResetReason('');
+                                    setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
+                                  }}
+                                  disabled={isActionLoading != null}
+                                  className="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-rose-700 transition-all flex items-center gap-2"
+                                >
+                                  <i className="fa-solid fa-ban"></i> Cancel Order
+                                </button>
+                                <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
+                                  <i className="fa-solid fa-truck-fast mr-1"></i>In Transit
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {orderGroups.length === 0 && (
+                <div className="p-24 text-center text-slate-300 italic uppercase text-xs font-black tracking-widest flex flex-col items-center gap-4">
+                  <i className="fa-solid fa-clipboard-check text-5xl opacity-10"></i>
+                  Global procurement pipeline is empty.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {
+            activeAction && (
+              <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto">
+                <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-xl p-10 my-8 animate-in zoom-in-95 duration-300 border border-slate-100">
+                  <div className="flex items-center gap-6 mb-8">
+                    <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-inner ${activeAction.type === 'RFP' ? 'bg-blue-50 text-blue-600' :
+                      activeAction.type === 'AWARD' ? 'bg-amber-50 text-amber-600' :
+                        activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
+                      }`}>
+                      <i className={`fa-solid ${activeAction.type === 'RFP' ? 'fa-paper-plane' :
+                        activeAction.type === 'AWARD' ? 'fa-award' :
+                          activeAction.type === 'RESET' ? 'fa-rotate-left' :
+                            activeAction.type === 'ORDER_ROLLBACK' ? 'fa-file-export fa-flip-horizontal' : 'fa-file-invoice'
+                        }`}></i>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                        {activeAction.type === 'RFP' ? 'Issue Request for Proposals' :
+                          activeAction.type === 'AWARD' ? 'Commercial Award Selection' :
+                            activeAction.type === 'RESET' ? 'Reset Sourcing Cycle' :
+                              activeAction.type === 'ORDER_ROLLBACK' ? 'Order Workflow Rollback' : 'Confirm Purchase Order'}
+                      </h3>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                        {activeAction.type === 'ORDER_ROLLBACK' ? `Reverting to Logged Registry: ${activeAction.order.internalOrderNumber}` : `Comp: ${activeAction.comp?.description}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    {activeAction.type === 'RFP' && (
+                      <>
+                        <div className="space-y-3">
+                          <div className="flex justify-between items-end mb-2">
+                            <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Components to include in RFP</label>
+                              <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1">Select other components from this order to group into a single request.</p>
+                            </div>
+                          </div>
+                          <div className="border border-slate-100 rounded-2xl p-2 max-h-48 overflow-y-auto custom-scrollbar space-y-1">
+                            {activeAction.order.items.flatMap(ci => (ci.components || []).filter(cc =>
+                              cc.source === 'PROCUREMENT' &&
+                              (['PENDING_OFFER', 'RFP_SENT'].includes(cc.status || ''))
+                            )).map(comp => (
+                              <label key={comp.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-slate-50 border-slate-100 hover:border-slate-300'}`}>
+                                <input
+                                  type="checkbox"
+                                  className="hidden"
+                                  checked={rfpCompSelection.includes(comp.id || '')}
+                                  onChange={(e) => {
+                                    if (e.target.checked) setRfpCompSelection(prev => [...prev, comp.id || '']);
+                                    else setRfpCompSelection(prev => prev.filter(id => id !== comp.id));
+                                  }}
+                                />
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-white border-white text-blue-600' : 'bg-white border-slate-200'}`}>
+                                  {rfpCompSelection.includes(comp.id || '') && <i className="fa-solid fa-check text-[10px]"></i>}
+                                </div>
+                                <div className="flex-1">
+                                  <div className={`text-xs font-black ${rfpCompSelection.includes(comp.id || '') ? 'text-white' : 'text-slate-800'}`}>{comp.description}</div>
+                                  <div className={`text-[9px] font-bold uppercase tracking-widest ${rfpCompSelection.includes(comp.id || '') ? 'text-blue-100' : 'text-slate-400'}`}>
+                                    Qty: {comp.quantity} {comp.unit} | {comp.status?.replace('_', ' ')}
+                                  </div>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="pt-2">
+                          <button
+                            onClick={handleDownloadRfp}
+                            disabled={isDownloadingRfp || rfpCompSelection.length === 0}
+                            className="w-full py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-2xl font-black text-[10px] uppercase shadow-sm hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all flex items-center justify-center gap-2 group"
+                          >
+                            {isDownloadingRfp ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-solid fa-file-pdf text-rose-500 group-hover:text-white"></i>}
+                            {isDownloadingRfp ? 'Generating Request Document...' : 'Download Vendor RFP Document'}
+                          </button>
+                          {rfpCompSelection.length === 0 && <p className="text-center text-[9px] text-rose-500 font-bold uppercase mt-1">Select at least one component to generate PDF</p>}
+                        </div>
+
+                        <div className="space-y-3 pt-4 border-t border-slate-100">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Select Target Suppliers (Optional)</label>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1 mb-2">If none selected, Award Tender will show all available vendors.</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 custom-scrollbar">
+                            {suppliers.map(s => (
+                              <button
+                                key={s.id}
+                                onClick={() => setRfpSelection(prev => prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
+                                className={`p-4 rounded-2xl border text-left transition-all flex items-center justify-between ${rfpSelection.includes(s.id) ? 'bg-blue-600 text-white border-blue-700 shadow-lg' : 'bg-slate-50 text-slate-700 border-slate-100 hover:border-blue-200'}`}
+                              >
+                                <span className="text-xs font-black uppercase tracking-tight">{s.name}</span>
+                                {rfpSelection.includes(s.id) && <i className="fa-solid fa-circle-check"></i>}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {activeAction.type === 'AWARD' && activeAction.comp && (
+                      <>
+                        <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 flex justify-between items-center mb-4">
+                          <div>
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Quantity</div>
+                            <div className="text-xl font-black text-slate-800">
+                              {selectedCompIds.length > 0 ? multiComps.filter(m => selectedCompIds.includes(m.comp.id!)).reduce((sum, m) => sum + (m.comp.quantity || 0), 0) : activeAction.comp.quantity}
+                              <span className="text-xs font-bold text-slate-400 ml-1">{activeAction.comp.unit}</span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sourcing Code</div>
+                            <div className="font-mono text-xs font-bold text-blue-600">{activeAction.comp.componentNumber}</div>
+                          </div>
+                        </div>
+
+                        {multiComps.length > 0 && (
+                          <div className="space-y-3 mb-4">
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Matching Components in RFP</label>
+                            <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-1 custom-scrollbar">
+                              {multiComps.map(({ comp: mc, item: mi }) => {
+                                const isSelected = selectedCompIds.includes(mc.id!);
+                                return (
+                                  <div
+                                    key={mc.id}
+                                    className={`p-3 rounded-2xl border transition-all ${isSelected ? 'bg-amber-50 border-amber-200 shadow-sm' : 'bg-white border-slate-100'}`}
+                                  >
+                                    <div className="flex items-center justify-between mb-2">
+                                      <div className="flex flex-col cursor-pointer flex-1" onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])}>
+                                        <span className="text-[10px] font-black uppercase text-slate-700">{mc.description}</span>
+                                        <span className="text-[9px] font-bold text-slate-400">Qty: {mc.quantity} • Item: {mi.orderNumber}</span>
+                                      </div>
+                                      <button onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])} className="p-2">
+                                        {isSelected ? <i className="fa-solid fa-circle-check text-amber-500 text-lg"></i> : <i className="fa-regular fa-circle text-slate-300 text-lg"></i>}
+                                      </button>
+                                    </div>
+                                    {isSelected && (
+                                      <div className="mt-2 pt-2 border-t border-amber-200/50 flex items-center justify-between animate-in slide-in-from-top-2">
+                                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Price per {mc.unit || 'Item'}</span>
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="number" step="any" min="0" placeholder="0.00"
+                                            className="w-24 px-3 py-1.5 bg-white border border-amber-200 rounded-xl font-black text-amber-900 text-right text-sm outline-none focus:border-amber-400 transition-all"
+                                            value={awardCosts[mc.id!] || ''}
+                                            onChange={e => setAwardCosts(prev => ({ ...prev, [mc.id!]: parseFloat(e.target.value) || 0 }))}
+                                          />
+                                          <span className="text-[9px] font-black text-amber-600">L.E.</span>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="space-y-4">
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Award Winning Vendor</label>
+                            <select
+                              className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:bg-white focus:border-blue-500 transition-all"
+                              value={awardSupplierId} onChange={e => setAwardSupplierId(e.target.value)}
+                            >
+                              <option value="">Select Vendor...</option>
+                              {awardSuppliersList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-4">
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Global Tax Percentage (%)</label>
+                              <input
+                                type="number" step="any"
+                                className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-xl outline-none focus:bg-white focus:border-blue-500 transition-all"
+                                value={awardTaxPercent} onChange={e => setAwardTaxPercent(parseFloat(e.target.value) || 0)}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="p-6 bg-slate-900 rounded-[2rem] text-white space-y-4 mt-6">
+                            <div className="flex justify-between items-center opacity-60">
+                              <span className="text-[10px] font-black uppercase tracking-widest">Total Cost Without Tax</span>
+                              <span className="font-bold">{awardCalculations.totalExclTax.toLocaleString()} L.E.</span>
+                            </div>
+                            <div className="flex justify-between items-center text-amber-400">
+                              <span className="text-[10px] font-black uppercase tracking-widest">Tax Amount ({awardTaxPercent}%)</span>
+                              <span className="font-bold">+{awardCalculations.taxAmount.toLocaleString()} L.E.</span>
+                            </div>
+                            <div className="h-px bg-white/10 my-2"></div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs font-black uppercase tracking-[0.2em] text-blue-400">Total Award Value (Incl. Tax)</span>
+                              <span className="text-2xl font-black">{awardCalculations.totalInclTax.toLocaleString()} <span className="text-xs opacity-40">L.E.</span></span>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {activeAction.type === 'PO' && (
+                      <div className="space-y-6">
+                        <div className="p-5 bg-blue-50 rounded-2xl border border-blue-100 flex justify-between items-center">
+                          <div>
+                            <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Target Supplier</div>
+                            <div className="text-lg font-black text-blue-900 uppercase tracking-tight">
+                              {suppliers.find(s => s.id === (multiComps[0]?.comp.supplierId || activeAction.comp?.supplierId))?.name || 'Unknown Supplier'}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Order Ref</div>
+                            <div className="font-mono text-xs font-bold text-blue-600">{activeAction.order.internalOrderNumber}</div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Include in Purchase Order</label>
+                          <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-1 custom-scrollbar">
+                            {multiComps.map(({ item: mi, comp: mc }) => (
+                              <button
+                                key={mc.id}
+                                onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])}
+                                className={`p-4 rounded-2xl border text-left transition-all flex items-center justify-between ${selectedCompIds.includes(mc.id!) ? 'bg-blue-600 text-white border-blue-700 shadow-lg' : 'bg-slate-50 text-slate-700 border-slate-100 hover:border-blue-200'}`}
+                              >
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] font-black uppercase tracking-tight opacity-70">{mc.componentNumber}</span>
+                                  <span className="text-xs font-black uppercase tracking-tight">{mc.description}</span>
+                                  <span className="text-[9px] font-bold opacity-60">Qty: {mc.quantity} • Item: {mi.orderNumber}</span>
+                                </div>
+                                {selectedCompIds.includes(mc.id!) && <i className="fa-solid fa-circle-check"></i>}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">System Purchase Order ID</label>
+                          <input
+                            className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-2xl text-blue-600 outline-none focus:bg-white focus:border-blue-500 transition-all uppercase tracking-widest"
+                            value={poNumberInput} onChange={e => setPoNumberInput(e.target.value)}
+                          />
                         </div>
                       </div>
                     )}
 
-                    <div className="space-y-4">
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Award Winning Vendor</label>
-                        <select
-                          className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:bg-white focus:border-blue-500 transition-all"
-                          value={awardSupplierId} onChange={e => setAwardSupplierId(e.target.value)}
-                        >
-                          <option value="">Select Vendor...</option>
-                          {awardSuppliersList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                      </div>
+                    {activeAction.type === 'CANCEL_PO_BATCH' && (
+                      <div className="space-y-6">
+                        <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 flex justify-between items-center">
+                          <div>
+                            <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Cancelling PO</div>
+                            <div className="text-xl font-black text-rose-900 uppercase tracking-tight">
+                              {activeAction.comp?.poNumber || 'N/A'}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Components</div>
+                            <div className="text-lg font-black text-rose-600">{selectedCompIds.length}</div>
+                          </div>
+                        </div>
 
-                      <div className="grid grid-cols-1 gap-4">
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Affected Components</label>
+                          <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1 custom-scrollbar">
+                            {multiComps.map(({ comp: mc }) => (
+                              <div key={mc.id} className="p-3 bg-white border border-rose-100 rounded-xl flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-xs">
+                                  <i className="fa-solid fa-ban"></i>
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] font-black uppercase tracking-tight text-slate-400">{mc.componentNumber}</span>
+                                  <span className="text-[11px] font-black uppercase tracking-tight text-slate-700">{mc.description}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
+                          <p className="text-[11px] text-rose-800 font-black leading-relaxed uppercase">
+                            Strategic Rollback: Reverting these components to the RFP stage. A mandatory comment is required for the audit trail.
+                          </p>
+                          <div className="space-y-1.5">
+                            <label className="text-[9px] font-black text-rose-400 uppercase">Reason for Cancellation</label>
+                            <textarea
+                              className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100 placeholder:text-slate-300"
+                              placeholder="e.g. Supplier stock issue, project change, incorrect price..."
+                              rows={3}
+                              value={resetReason} onChange={e => setResetReason(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {(activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK') && (
+                      <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
+                        <p className="text-sm text-rose-800 font-bold leading-relaxed">
+                          {activeAction.type === 'RESET'
+                            ? 'Warning: This will void current sourcing progress and return the component to "Pending Offer".'
+                            : 'Strategic Action: Reverting this entire order will move it back to the "Logged Registry". This should only be used to correct major entry errors.'
+                          }
+                        </p>
                         <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Global Tax Percentage (%)</label>
-                          <input
-                            type="number" step="any"
-                            className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-xl outline-none focus:bg-white focus:border-blue-500 transition-all"
-                            value={awardTaxPercent} onChange={e => setAwardTaxPercent(parseFloat(e.target.value) || 0)}
+                          <label className="text-[9px] font-black text-rose-400 uppercase">Mandatory Operational Reason</label>
+                          <textarea
+                            className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100"
+                            placeholder="e.g. Supplier failed to deliver, pricing expired, correction required..."
+                            value={resetReason} onChange={e => setResetReason(e.target.value)}
                           />
                         </div>
                       </div>
+                    )}
+                  </div>
 
-                      <div className="p-6 bg-slate-900 rounded-[2rem] text-white space-y-4 mt-6">
-                        <div className="flex justify-between items-center opacity-60">
-                          <span className="text-[10px] font-black uppercase tracking-widest">Total Cost Without Tax</span>
-                          <span className="font-bold">{awardCalculations.totalExclTax.toLocaleString()} L.E.</span>
-                        </div>
-                        <div className="flex justify-between items-center text-amber-400">
-                          <span className="text-[10px] font-black uppercase tracking-widest">Tax Amount ({awardTaxPercent}%)</span>
-                          <span className="font-bold">+{awardCalculations.taxAmount.toLocaleString()} L.E.</span>
-                        </div>
-                        <div className="h-px bg-white/10 my-2"></div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-black uppercase tracking-[0.2em] text-blue-400">Total Award Value (Incl. Tax)</span>
-                          <span className="text-2xl font-black">{awardCalculations.totalInclTax.toLocaleString()} <span className="text-xs opacity-40">L.E.</span></span>
-                        </div>
-                      </div>
+                  <div className="mt-10 flex gap-3">
+                    <button onClick={closeModal} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">Abort</button>
+                    <button
+                      disabled={isActionLoading != null || ((activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0))}
+                      onClick={handleExecuteAction}
+                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
+                        }`}
+                    >
+                      {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
+                      {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : activeAction.type === 'CANCEL_PO_BATCH' ? 'Confirm Cancellation' : 'Commit Procurement'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          }
+          {/* --- Procurement Resolution Modal (in-transit components before rollback) --- */}
+          {
+            pendingResolutions && !activeAction && (
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto">
+                <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl p-10 my-8 animate-in zoom-in-95 duration-200 border border-slate-100">
+                  <div className="flex items-center gap-6 mb-8">
+                    <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center text-3xl shadow-inner">
+                      <i className="fa-solid fa-triangle-exclamation"></i>
                     </div>
-                  </>
-                )}
-
-                {activeAction.type === 'PO' && (
-                  <div className="space-y-6">
-                    <div className="p-5 bg-blue-50 rounded-2xl border border-blue-100 flex justify-between items-center">
-                      <div>
-                        <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Target Supplier</div>
-                        <div className="text-lg font-black text-blue-900 uppercase tracking-tight">
-                          {suppliers.find(s => s.id === (multiComps[0]?.comp.supplierId || activeAction.comp?.supplierId))?.name || 'Unknown Supplier'}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Order Ref</div>
-                        <div className="font-mono text-xs font-bold text-blue-600">{activeAction.order.internalOrderNumber}</div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Include in Purchase Order</label>
-                      <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-1 custom-scrollbar">
-                        {multiComps.map(({ item: mi, comp: mc }) => (
-                          <button
-                            key={mc.id}
-                            onClick={() => setSelectedCompIds(prev => prev.includes(mc.id!) ? prev.filter(x => x !== mc.id) : [...prev, mc.id!])}
-                            className={`p-4 rounded-2xl border text-left transition-all flex items-center justify-between ${selectedCompIds.includes(mc.id!) ? 'bg-blue-600 text-white border-blue-700 shadow-lg' : 'bg-slate-50 text-slate-700 border-slate-100 hover:border-blue-200'}`}
-                          >
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-black uppercase tracking-tight opacity-70">{mc.componentNumber}</span>
-                              <span className="text-xs font-black uppercase tracking-tight">{mc.description}</span>
-                              <span className="text-[9px] font-bold opacity-60">Qty: {mc.quantity} • Item: {mi.orderNumber}</span>
-                            </div>
-                            {selectedCompIds.includes(mc.id!) && <i className="fa-solid fa-circle-check"></i>}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">System Purchase Order ID</label>
-                      <input
-                        className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-2xl text-blue-600 outline-none focus:bg-white focus:border-blue-500 transition-all uppercase tracking-widest"
-                        value={poNumberInput} onChange={e => setPoNumberInput(e.target.value)}
-                      />
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Outstanding Supplier Commitments</h3>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                        {pendingResolutions.length} Component{pendingResolutions.length > 1 ? 's' : ''} in transit — Resolve before rollback
+                      </p>
                     </div>
                   </div>
-                )}
 
-                {activeAction.type === 'CANCEL_PO_BATCH' && (
-                  <div className="space-y-6">
-                    <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 flex justify-between items-center">
-                      <div>
-                        <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Cancelling PO</div>
-                        <div className="text-xl font-black text-rose-900 uppercase tracking-tight">
-                          {activeAction.comp?.poNumber || 'N/A'}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Components</div>
-                        <div className="text-lg font-black text-rose-600">{selectedCompIds.length}</div>
-                      </div>
-                    </div>
+                  <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
+                    The following components have active supplier commitments. You must decide the fate of each before rolling back this order:
+                  </p>
 
-                    <div className="space-y-3">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Affected Components</label>
-                      <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1 custom-scrollbar">
-                        {multiComps.map(({ comp: mc }) => (
-                          <div key={mc.id} className="p-3 bg-white border border-rose-100 rounded-xl flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-xs">
-                              <i className="fa-solid fa-ban"></i>
+                  <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-2">
+                    {pendingResolutions.map(rec => (
+                      <div key={rec.compId} className="bg-slate-50 border border-slate-100 rounded-2xl p-5">
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <div className="font-black text-slate-800 text-sm">{rec.compDesc}</div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5 flex gap-3">
+                              <span>Ref: {rec.componentNumber || 'N/A'}</span>
+                              <span>Supplier: {rec.supplierName}</span>
+                              <span>Qty: {rec.quantity}</span>
                             </div>
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-black uppercase tracking-tight text-slate-400">{mc.componentNumber}</span>
-                              <span className="text-[11px] font-black uppercase tracking-tight text-slate-700">{mc.description}</span>
+                            <div className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded mt-1.5 w-fit border ${rec.status === 'ORDERED' ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-amber-600 bg-amber-50 border-amber-100'
+                              }`}>
+                              {rec.status === 'ORDERED' ? 'PO Issued — Awaiting Delivery' : 'Awarded — Pending PO Issuance'}
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
-                      <p className="text-[11px] text-rose-800 font-black leading-relaxed uppercase">
-                        Strategic Rollback: Reverting these components to the RFP stage. A mandatory comment is required for the audit trail.
-                      </p>
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black text-rose-400 uppercase">Reason for Cancellation</label>
-                        <textarea
-                          className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100 placeholder:text-slate-300"
-                          placeholder="e.g. Supplier stock issue, project change, incorrect price..."
-                          rows={3}
-                          value={resetReason} onChange={e => setResetReason(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {(activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK') && (
-                  <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
-                    <p className="text-sm text-rose-800 font-bold leading-relaxed">
-                      {activeAction.type === 'RESET'
-                        ? 'Warning: This will void current sourcing progress and return the component to "Pending Offer".'
-                        : 'Strategic Action: Reverting this entire order will move it back to the "Logged Registry". This should only be used to correct major entry errors.'
-                      }
-                    </p>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black text-rose-400 uppercase">Mandatory Operational Reason</label>
-                      <textarea
-                        className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100"
-                        placeholder="e.g. Supplier failed to deliver, pricing expired, correction required..."
-                        value={resetReason} onChange={e => setResetReason(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-10 flex gap-3">
-                <button onClick={closeModal} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">Abort</button>
-                <button
-                  disabled={isActionLoading != null || ((activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0))}
-                  onClick={handleExecuteAction}
-                  className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
-                    }`}
-                >
-                  {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
-                  {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : activeAction.type === 'CANCEL_PO_BATCH' ? 'Confirm Cancellation' : 'Commit Procurement'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      }
-      {/* --- Procurement Resolution Modal (in-transit components before rollback) --- */}
-      {
-        pendingResolutions && !activeAction && (
-          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto">
-            <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl p-10 my-8 animate-in zoom-in-95 duration-200 border border-slate-100">
-              <div className="flex items-center gap-6 mb-8">
-                <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center text-3xl shadow-inner">
-                  <i className="fa-solid fa-triangle-exclamation"></i>
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Outstanding Supplier Commitments</h3>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
-                    {pendingResolutions.length} Component{pendingResolutions.length > 1 ? 's' : ''} in transit — Resolve before rollback
-                  </p>
-                </div>
-              </div>
-
-              <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
-                The following components have active supplier commitments. You must decide the fate of each before rolling back this order:
-              </p>
-
-              <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-2">
-                {pendingResolutions.map(rec => (
-                  <div key={rec.compId} className="bg-slate-50 border border-slate-100 rounded-2xl p-5">
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <div className="font-black text-slate-800 text-sm">{rec.compDesc}</div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5 flex gap-3">
-                          <span>Ref: {rec.componentNumber || 'N/A'}</span>
-                          <span>Supplier: {rec.supplierName}</span>
-                          <span>Qty: {rec.quantity}</span>
                         </div>
-                        <div className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded mt-1.5 w-fit border ${rec.status === 'ORDERED' ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-amber-600 bg-amber-50 border-amber-100'
-                          }`}>
-                          {rec.status === 'ORDERED' ? 'PO Issued — Awaiting Delivery' : 'Awarded — Pending PO Issuance'}
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'CANCEL_PO' }))}
+                            className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${resolutionChoices[rec.compId] === 'CANCEL_PO'
+                              ? 'bg-rose-600 text-white border-rose-600 shadow-lg'
+                              : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'
+                              }`}
+                          >
+                            <i className="fa-solid fa-ban"></i> Cancel Supplier PO
+                          </button>
+                          <button
+                            onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'RECEIVE_TO_STOCK' }))}
+                            className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${resolutionChoices[rec.compId] === 'RECEIVE_TO_STOCK'
+                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg'
+                              : 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400'
+                              }`}
+                          >
+                            <i className="fa-solid fa-boxes-stacked"></i> Receive to Stock
+                          </button>
                         </div>
                       </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'CANCEL_PO' }))}
-                        className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${resolutionChoices[rec.compId] === 'CANCEL_PO'
-                          ? 'bg-rose-600 text-white border-rose-600 shadow-lg'
-                          : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'
-                          }`}
-                      >
-                        <i className="fa-solid fa-ban"></i> Cancel Supplier PO
-                      </button>
-                      <button
-                        onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'RECEIVE_TO_STOCK' }))}
-                        className={`px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center justify-center gap-2 ${resolutionChoices[rec.compId] === 'RECEIVE_TO_STOCK'
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg'
-                          : 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400'
-                          }`}
-                      >
-                        <i className="fa-solid fa-boxes-stacked"></i> Receive to Stock
-                      </button>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
 
-              <div className="mt-8 flex gap-3">
-                <button
-                  onClick={closeModal}
-                  className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200"
-                >
-                  Abort
-                </button>
-                <button
-                  onClick={handleConfirmResolutions}
-                  className="flex-[2] py-4 bg-amber-500 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-xl shadow-amber-200 hover:bg-amber-600 transition-all flex items-center justify-center gap-2"
-                >
-                  <i className="fa-solid fa-arrow-right"></i>
-                  Confirm Resolutions & Continue
-                </button>
+                  <div className="mt-8 flex gap-3">
+                    <button
+                      onClick={closeModal}
+                      className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200"
+                    >
+                      Abort
+                    </button>
+                    <button
+                      onClick={handleConfirmResolutions}
+                      className="flex-[2] py-4 bg-amber-500 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-xl shadow-amber-200 hover:bg-amber-600 transition-all flex items-center justify-center gap-2"
+                    >
+                      <i className="fa-solid fa-arrow-right"></i>
+                      Confirm Resolutions & Continue
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        )
-      }
+            )
+          }
+        </>
+      )}
     </div >
   );
 };

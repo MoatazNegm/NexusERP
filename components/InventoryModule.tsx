@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { InventoryItem, CustomerOrder, Supplier, OrderStatus, CustomerOrderItem, ManufacturingComponent, AppConfig, User } from '../types';
+import { SortableTable, ColumnDef } from './SortableTable';
 
 type InventoryTab = 'inventory' | 'reception' | 'hub' | 'dispatch';
 
@@ -49,6 +50,7 @@ const ThresholdTimer: React.FC<{ order: CustomerOrder, limitHrs: number }> = ({ 
 
 export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refreshKey, currentUser }) => {
   const [activeTab, setActiveTab] = useState<InventoryTab>('inventory');
+  const [inventorySubTab, setInventorySubTab] = useState<'stock' | 'hub-storage'>('stock');
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -66,8 +68,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
   // Delivery Note PDF State
   const deliveryNoteRef = React.useRef<HTMLDivElement>(null);
   const [printingOrder, setPrintingOrder] = useState<CustomerOrder | null>(null);
-  const [confirmingDeliveryId, setConfirmingDeliveryId] = useState<string | null>(null);
-  const podUploadRef = React.useRef<HTMLInputElement>(null);
+  // Delivery confirmation moved to Shipment module
 
   useEffect(() => {
     if (printingOrder) {
@@ -117,6 +118,9 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
     loadData();
   }, [refreshKey, activeTab]);
 
+  const [pendingDispatch, setPendingDispatch] = useState<CustomerOrder | null>(null);
+  const [dispatchInputs, setDispatchInputs] = useState<Record<string, string>>({});
+
   const loadData = async () => {
     const [invData, orderData, suppData] = await Promise.all([
       dataService.getInventory(),
@@ -162,11 +166,14 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
   }, [allOrders]);
 
   const invoicedAwaitingDispatch = useMemo(() => {
-    return allOrders.filter(o => o.status === OrderStatus.INVOICED);
+    return allOrders.filter(o => {
+      if (![OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY].includes(o.status)) return false;
+      return o.items.some(i => (i.approvedForDispatchQty || 0) > (i.dispatchedQty || 0));
+    });
   }, [allOrders]);
 
   const recentDispatches = useMemo(() => {
-    return allOrders.filter(o => [OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.FULFILLED].includes(o.status))
+    return allOrders.filter(o => [OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY, OrderStatus.DELIVERED, OrderStatus.FULFILLED].includes(o.status))
       .sort((a, b) => b.dataEntryTimestamp.localeCompare(a.dataEntryTimestamp))
       .slice(0, 10);
   }, [allOrders]);
@@ -174,6 +181,51 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
   const goodsInHubReadyForInvoice = useMemo(() => {
     return allOrders.filter(o => o.status === OrderStatus.IN_PRODUCT_HUB);
   }, [allOrders]);
+
+  const hubStorageItems = useMemo(() => {
+    const list: { order: CustomerOrder, item: CustomerOrderItem, hubQty: number, mfdQty: number, target: number, allMfgDone: boolean }[] = [];
+    allOrders.forEach(order => {
+      const allDone = order.items.every(i => (i.manufacturedQty || 0) >= i.quantity);
+      order.items.forEach(item => {
+        const hubQty = item.hubReceivedQty || 0;
+        if (hubQty > 0) {
+          list.push({
+            order,
+            item,
+            hubQty,
+            mfdQty: item.manufacturedQty || 0,
+            target: item.quantity,
+            allMfgDone: allDone
+          });
+        }
+      });
+    });
+    return list;
+  }, [allOrders]);
+
+  // Flattened rows for Hub Intake table (no rowSpan needed)
+  type HubIntakeRow = { order: CustomerOrder; item: CustomerOrderItem; mfd: number; hub: number; readyForIntake: number; isFallback: boolean };
+  const hubIntakeRows = useMemo<HubIntakeRow[]>(() => {
+    const rows: HubIntakeRow[] = [];
+    finishedGoodsAwaitingHub.forEach(order => {
+      const hasItemLevel = order.items.some(i => (i.manufacturedQty || 0) > (i.hubReceivedQty || 0));
+      if (!hasItemLevel && order.status === OrderStatus.MANUFACTURING_COMPLETED) {
+        // Fallback row for legacy orders
+        order.items.forEach(item => {
+          rows.push({ order, item, mfd: item.quantity, hub: 0, readyForIntake: item.quantity, isFallback: true });
+        });
+      } else {
+        order.items.forEach(item => {
+          const mfd = item.manufacturedQty || 0;
+          const hub = item.hubReceivedQty || 0;
+          if (mfd > hub) {
+            rows.push({ order, item, mfd, hub, readyForIntake: mfd - hub, isFallback: false });
+          }
+        });
+      }
+    });
+    return rows;
+  }, [finishedGoodsAwaitingHub]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -243,11 +295,21 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
     }
   };
 
-  const executeDispatchRelease = async (orderId: string) => {
+  const executeDispatchRelease = async () => {
+    if (!pendingDispatch) return;
+    const orderId = pendingDispatch.id;
     setProcessingId(orderId);
     try {
-      await dataService.releaseForDelivery(orderId);
+      const itemsPayload = Object.entries(dispatchInputs)
+        .map(([itemId, qtyStr]) => ({ itemId, qty: parseFloat(qtyStr) || 0 }))
+        .filter(item => item.qty > 0);
+
+      if (itemsPayload.length === 0) throw new Error("Please enter quantities greater than 0 for at least one item.");
+
+      await dataService.dispatchAction(orderId, 'release-delivery', { items: itemsPayload });
       await loadData();
+      setPendingDispatch(null);
+      setDispatchInputs({});
     } catch (e: any) {
       alert(e.message || "Dispatch authorization failed.");
     } finally {
@@ -255,28 +317,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
     }
   };
 
-  const handlePodUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || !e.target.files[0] || !confirmingDeliveryId) return;
-    const file = e.target.files[0];
-
-    setProcessingId(confirmingDeliveryId);
-    try {
-      const uploadRes = await dataService.uploadProofOfDelivery(file);
-      if (uploadRes.success) {
-        await dataService.confirmOrderDelivery(confirmingDeliveryId, uploadRes.filePath);
-        alert("Delivery confirmed and POD uploaded successfully.");
-        await loadData();
-      } else {
-        throw new Error(uploadRes.error || "Upload failed");
-      }
-    } catch (err: any) {
-      alert("Failed to confirm delivery: " + err.message);
-    } finally {
-      setProcessingId(null);
-      setConfirmingDeliveryId(null);
-      if (podUploadRef.current) podUploadRef.current.value = '';
-    }
-  };
+  // handlePodUpload removed, handled by ShipmentModule
 
   const isConfirmationAllowed = useMemo(() => {
     if (!pendingConfirm) return false;
@@ -384,49 +425,76 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
       {activeTab === 'inventory' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
-            <div><h3 className="text-xl font-black text-slate-800">Physical Stock</h3></div>
-            <div className="flex-1 max-w-md relative mx-4">
-              <input
-                type="text"
-                placeholder="Search SKU or Description..."
-                className="w-full px-5 py-3 pl-12 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-blue-50 focus:border-blue-500 transition-all font-bold text-sm"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
-              <i className="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 text-lg"></i>
+            <div className="flex items-center gap-3">
+              <div className="flex gap-1 p-1 bg-slate-100 rounded-xl">
+                <button
+                  onClick={() => setInventorySubTab('stock')}
+                  className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${inventorySubTab === 'stock' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  <i className="fa-solid fa-boxes-stacked mr-1.5"></i>Stock
+                </button>
+                <button
+                  onClick={() => setInventorySubTab('hub-storage')}
+                  className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${inventorySubTab === 'hub-storage' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  <i className="fa-solid fa-warehouse mr-1.5"></i>Hub Storage
+                  {hubStorageItems.length > 0 && <span className="ml-1.5 px-1.5 py-0.5 bg-emerald-500 text-white rounded-full text-[8px]">{hubStorageItems.length}</span>}
+                </button>
+              </div>
             </div>
-            <button onClick={() => setIsAdding(!isAdding)} className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-black transition-all">Add Item</button>
+            {inventorySubTab === 'stock' && (
+              <>
+                <div className="flex-1 max-w-md relative mx-4">
+                  <input
+                    type="text"
+                    placeholder="Search SKU or Description..."
+                    className="w-full px-5 py-3 pl-12 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-blue-50 focus:border-blue-500 transition-all font-bold text-sm"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                  />
+                  <i className="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 text-lg"></i>
+                </div>
+                <button onClick={() => setIsAdding(!isAdding)} className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-black transition-all">Add Item</button>
+              </>
+            )}
           </div>
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b">
-              <tr>
-                <th className="px-8 py-4">SKU / Description</th>
-                <th className="px-8 py-4">PO / Order Ref</th>
-                <th className="px-8 py-4">In Stock</th>
-                <th className="px-8 py-4">Reserved</th>
-                <th className="px-8 py-4">Available</th>
-                <th className="px-8 py-4 text-right">Value</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filteredItems.map(item => (
-                <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-8 py-6">
-                    <div className="font-mono text-[10px] font-black text-blue-600">{item.sku}</div>
-                    <div className="font-bold text-slate-800">{item.description}</div>
-                  </td>
-                  <td className="px-8 py-6">
-                    <div className="text-[10px] font-black text-slate-900 uppercase">#{item.poNumber || 'N/A'}</div>
-                    <div className="text-[10px] font-bold text-slate-400 uppercase">{item.orderRef || 'STOCK'}</div>
-                  </td>
-                  <td className="px-8 py-6 font-bold">{item.quantityInStock} {item.unit}</td>
-                  <td className="px-8 py-6 text-amber-600 font-bold">{item.quantityReserved || 0}</td>
-                  <td className="px-8 py-6 font-black text-blue-600">{item.quantityInStock - (item.quantityReserved || 0)}</td>
-                  <td className="px-8 py-6 text-right font-black text-slate-900">{(item.quantityInStock * item.lastCost).toLocaleString()} L.E.</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+          {inventorySubTab === 'stock' && (
+            <SortableTable<InventoryItem>
+              storageKey="inv-stock"
+              theadClassName="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b"
+              data={filteredItems}
+              rowKey={(r) => r.id}
+              emptyMessage="No stock items."
+              columns={[
+                { key: 'sku', label: 'SKU / Description', sortValue: r => r.sku || r.description, render: r => (<><div className="font-mono text-[10px] font-black text-blue-600">{r.sku}</div><div className="font-bold text-slate-800">{r.description}</div></>) },
+                { key: 'po', label: 'PO / Order Ref', sortValue: r => r.poNumber || '', render: r => (<><div className="text-[10px] font-black text-slate-900 uppercase">#{r.poNumber || 'N/A'}</div><div className="text-[10px] font-bold text-slate-400 uppercase">{r.orderRef || 'STOCK'}</div></>) },
+                { key: 'inStock', label: 'In Stock', sortValue: r => r.quantityInStock, render: r => <span className="font-bold">{r.quantityInStock} {r.unit}</span> },
+                { key: 'reserved', label: 'Reserved', sortValue: r => r.quantityReserved || 0, render: r => <span className="text-amber-600 font-bold">{r.quantityReserved || 0}</span> },
+                { key: 'available', label: 'Available', sortValue: r => r.quantityInStock - (r.quantityReserved || 0), render: r => <span className="font-black text-blue-600">{r.quantityInStock - (r.quantityReserved || 0)}</span> },
+                { key: 'value', label: 'Value', headerClassName: 'px-8 py-4 text-right', cellClassName: 'px-8 py-6 text-right', sortValue: r => r.quantityInStock * r.lastCost, render: r => <span className="font-black text-slate-900">{(r.quantityInStock * r.lastCost).toLocaleString()} L.E.</span> },
+              ]}
+            />
+          )}
+
+          {inventorySubTab === 'hub-storage' && (
+            <SortableTable
+              storageKey="inv-hub-storage"
+              theadClassName="bg-emerald-900 text-[10px] font-black uppercase text-emerald-300 tracking-widest"
+              rowClassName="hover:bg-emerald-50/30 transition-colors"
+              data={hubStorageItems}
+              rowKey={(r) => `${r.order.id}-${r.item.id}`}
+              emptyMessage="No items currently in hub storage."
+              columns={[
+                { key: 'poRef', label: 'PO Reference', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.order.internalOrderNumber, render: r => (<><div className="font-mono text-xs font-black text-blue-600">{r.order.internalOrderNumber}</div><div className="text-[9px] text-slate-400 mt-0.5">{r.order.customerReferenceNumber}</div></>) },
+                { key: 'customer', label: 'Customer', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.order.customerName, render: r => <div className="font-bold text-slate-800 text-sm">{r.order.customerName}</div> },
+                { key: 'lineItem', label: 'Line Item', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.item.description, render: r => (<><div className="font-bold text-slate-700 text-xs">{r.item.description}</div><div className="text-[9px] text-slate-400 mt-0.5">Order Qty: {r.target} {r.item.unit}</div></>) },
+                { key: 'inHub', label: 'In Hub', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.hubQty, render: r => (<><div className="font-black text-emerald-600 text-sm">{r.hubQty.toLocaleString()}</div><div className="text-[9px] text-slate-400">{r.item.unit}</div></>) },
+                { key: 'mfdTarget', label: 'Mfd / Target', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.mfdQty / r.target, render: r => (<><div className="font-black text-slate-700 text-sm">{r.mfdQty.toLocaleString()} / {r.target.toLocaleString()}</div><div className="w-full bg-slate-100 rounded-full h-1 mt-1"><div className={`h-1 rounded-full ${r.mfdQty >= r.target ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, (r.mfdQty / r.target) * 100)}%` }}></div></div></>) },
+                { key: 'poStatus', label: 'PO Status', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.allMfgDone ? 1 : 0, render: r => r.allMfgDone ? (<span className="px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg text-[9px] font-black uppercase"><i className="fa-solid fa-check-double mr-1"></i>All Manufactured</span>) : (<span className="px-3 py-1 bg-amber-50 text-amber-600 border border-amber-100 rounded-lg text-[9px] font-black uppercase"><i className="fa-solid fa-industry mr-1"></i>Partially Done</span>) },
+              ]}
+            />
+          )}
         </div>
       )}
 
@@ -446,36 +514,20 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
               {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
-          <table className="w-full text-left">
-            <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-              <tr>
-                <th className="px-8 py-4 text-white">Vendor</th>
-                <th className="px-8 py-4 text-white">Component Descriptor</th>
-                <th className="px-8 py-4 text-white text-center">Expected Qty</th>
-                <th className="px-8 py-4 text-white text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {transitComponents.map(({ order, item, comp }) => (
-                <tr key={comp.id} className={`hover:bg-slate-50 transition-colors ${order.status === OrderStatus.IN_HOLD ? 'opacity-50 grayscale' : ''}`}>
-                  <td className="px-8 py-6">
-                    <div className="font-black text-slate-800 text-xs">{suppliers.find(s => s.id === comp.supplierId)?.name || 'N/A'}</div>
-                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-1">Ref: {order.internalOrderNumber}</div>
-                  </td>
-                  <td className="px-8 py-6 font-bold text-slate-700 text-xs">{comp.description}</td>
-                  <td className="px-8 py-6 text-center font-black text-slate-900 text-xs">{comp.quantity} <span className="text-slate-400 font-bold">{comp.unit}</span></td>
-                  <td className="px-8 py-6 text-right">
-                    <button
-                      onClick={() => { setPendingConfirm({ type: 'material', order, item, comp }); setReceivedQtyInput(''); }}
-                      className="px-6 py-3 bg-emerald-600 text-white font-black text-[10px] uppercase rounded-xl shadow-lg hover:bg-emerald-700 transition-all"
-                    >
-                      Process Reception
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <SortableTable
+            storageKey="inv-reception"
+            theadClassName="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest"
+            data={transitComponents}
+            rowKey={(r) => r.comp.id}
+            rowClassName={(r) => `hover:bg-slate-50 transition-colors ${r.order.status === OrderStatus.IN_HOLD ? 'opacity-50 grayscale' : ''}`}
+            emptyMessage="No pending components."
+            columns={[
+              { key: 'vendor', label: 'Vendor', headerClassName: 'px-8 py-4 text-white', sortValue: r => suppliers.find(s => s.id === r.comp.supplierId)?.name || '', render: r => (<><div className="font-black text-slate-800 text-xs">{suppliers.find(s => s.id === r.comp.supplierId)?.name || 'N/A'}</div><div className="text-[10px] font-bold text-slate-400 uppercase mt-1">Ref: {r.order.internalOrderNumber}</div></>) },
+              { key: 'component', label: 'Component Descriptor', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.comp.description, render: r => <span className="font-bold text-slate-700 text-xs">{r.comp.description}</span> },
+              { key: 'expectedQty', label: 'Expected Qty', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.comp.quantity, render: r => <span className="font-black text-slate-900 text-xs">{r.comp.quantity} <span className="text-slate-400 font-bold">{r.comp.unit}</span></span> },
+              { key: 'action', label: 'Action', headerClassName: 'px-8 py-4 text-white text-right', cellClassName: 'px-8 py-6 text-right', sortable: false, render: r => (<button onClick={() => { setPendingConfirm({ type: 'material', order: r.order, item: r.item, comp: r.comp }); setReceivedQtyInput(''); }} className="px-6 py-3 bg-emerald-600 text-white font-black text-[10px] uppercase rounded-xl shadow-lg hover:bg-emerald-700 transition-all">Process Reception</button>) },
+            ]}
+          />
         </div>
       )}
 
@@ -491,83 +543,63 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                 {finishedGoodsAwaitingHub.length} Orders Finished in Factory
               </div>
             </div>
-            <table className="w-full text-left">
-              <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-                <tr>
-                  <th className="px-8 py-4 text-white">Reference ID</th>
-                  <th className="px-8 py-4 text-white">Customer Account</th>
-                  <th className="px-8 py-4 text-white">Logistics SLA</th>
-                  <th className="px-8 py-4 text-white text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {finishedGoodsAwaitingHub.map(order => (
-                  <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-8 py-6 font-mono text-xs font-black text-blue-600">{order.internalOrderNumber}</td>
-                    <td className="px-8 py-6 font-black text-slate-800">{order.customerName}</td>
-                    <td className="px-8 py-6">
-                      <ThresholdTimer order={order} limitHrs={config.settings.transitToHubLimitHrs} />
-                    </td>
-                    <td className="px-8 py-6 text-right">
-                      <button
-                        disabled={processingId === order.id}
-                        onClick={() => {
+            <SortableTable<HubIntakeRow>
+              storageKey="inv-hub-intake"
+              theadClassName="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest"
+              rowClassName="hover:bg-amber-50/30 transition-colors"
+              data={hubIntakeRows}
+              rowKey={(r) => `${r.order.id}-${r.item.id}`}
+              emptyMessage="No pending intake from plant."
+              columns={[
+                { key: 'refCustomer', label: 'Reference / Customer', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.order.internalOrderNumber, render: r => (<><div className="font-mono text-xs font-black text-blue-600">{r.order.internalOrderNumber}</div><div className="font-bold text-slate-800 text-sm mt-0.5">{r.order.customerName}</div><div className="text-[9px] font-bold text-slate-400 mt-1">{r.order.status === OrderStatus.MANUFACTURING_COMPLETED ? 'MFG Complete' : 'In Production'}</div></>) },
+                { key: 'lineItem', label: 'Line Item', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.item.description, render: r => (<><div className="font-bold text-slate-700 text-xs">{r.item.description}</div><div className="text-[9px] text-slate-400 mt-0.5">Target: {r.item.quantity} {r.item.unit}</div></>) },
+                { key: 'manufactured', label: 'Manufactured', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.mfd, render: r => (<><div className="font-black text-blue-600 text-sm">{r.mfd.toLocaleString()}</div><div className="text-[9px] text-slate-400">{r.item.unit}</div></>) },
+                { key: 'inHub', label: 'In Hub', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.hub, render: r => (<><div className="font-black text-emerald-600 text-sm">{r.hub.toLocaleString()}</div><div className="text-[9px] text-slate-400">{r.item.unit}</div></>) },
+                { key: 'readyIntake', label: 'Ready for Intake', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.readyForIntake, render: r => (<><div className="font-black text-amber-600 text-sm">{r.readyForIntake.toLocaleString()}</div><div className="text-[9px] text-slate-400">{r.item.unit}</div></>) },
+                { key: 'sla', label: 'SLA', headerClassName: 'px-8 py-4 text-white', sortable: false, render: r => <ThresholdTimer order={r.order} limitHrs={config.settings.transitToHubLimitHrs} /> },
+                {
+                  key: 'action', label: 'Action', headerClassName: 'px-8 py-4 text-white text-right', cellClassName: 'px-8 py-6 text-right', sortable: false, render: r => (
+                    <button
+                      disabled={processingId === r.order.id}
+                      onClick={() => {
+                        if (r.isFallback) {
+                          executeHubReception(r.order.id);
+                        } else {
                           const initialInputs: Record<string, string> = {};
-                          let hasReceivable = false;
-                          order.items.forEach(i => {
+                          r.order.items.forEach(i => {
                             const max = (i.manufacturedQty || 0) - (i.hubReceivedQty || 0);
-                            if (max > 0) {
-                              initialInputs[i.id] = String(max);
-                              hasReceivable = true;
-                            }
+                            if (max > 0) initialInputs[i.id] = String(max);
                           });
-                          if (!hasReceivable && order.status === OrderStatus.MANUFACTURING_COMPLETED) {
-                            // Fallback for orders that completed before item-tracking
-                            executeHubReception(order.id);
-                          } else {
-                            setHubInputs(initialInputs);
-                            setPendingConfirm({ type: 'hub', order });
-                          }
-                        }}
-                        className="px-6 py-3 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-blue-700 transition-all flex items-center gap-2 ml-auto shadow-lg shadow-blue-100"
-                      >
-                        {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-warehouse"></i>}
-                        Confirm Hub Intake
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {finishedGoodsAwaitingHub.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="px-8 py-16 text-center text-slate-300 italic text-xs font-black uppercase tracking-widest">No pending intake from plant.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                          setHubInputs(initialInputs);
+                          setPendingConfirm({ type: 'hub', order: r.order });
+                        }
+                      }}
+                      className="px-5 py-2.5 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-blue-700 transition-all flex items-center gap-2 ml-auto shadow-lg shadow-blue-100"
+                    >
+                      {processingId === r.order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-warehouse"></i>}
+                      {r.isFallback ? 'Intake All' : 'Confirm Hub Intake'}
+                    </button>
+                  )
+                },
+              ]}
+            />
           </div>
 
           <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden opacity-80">
             <div className="p-8 border-b border-slate-100 flex justify-between items-center">
               <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">Staged Assets (Awaiting Invoicing)</h3>
             </div>
-            <table className="w-full text-left">
-              <tbody className="divide-y divide-slate-50">
-                {goodsInHubReadyForInvoice.map(order => (
-                  <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-8 py-4 font-mono text-[10px] font-black text-slate-400">{order.internalOrderNumber}</td>
-                    <td className="px-8 py-4 font-bold text-slate-500 text-xs">{order.customerName}</td>
-                    <td className="px-8 py-4 text-right">
-                      <span className="px-3 py-1 bg-slate-100 text-slate-400 text-[8px] font-black uppercase rounded border">Ready for Finance</span>
-                    </td>
-                  </tr>
-                ))}
-                {goodsInHubReadyForInvoice.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-8 py-8 text-center text-slate-200 italic text-[10px] font-black uppercase">Hub storage currently empty.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            <SortableTable<CustomerOrder>
+              storageKey="inv-staged-assets"
+              data={goodsInHubReadyForInvoice}
+              rowKey={(r) => r.id}
+              emptyMessage="Hub storage currently empty."
+              columns={[
+                { key: 'ref', label: 'Reference', sortValue: r => r.internalOrderNumber, cellClassName: 'px-8 py-4', render: r => <span className="font-mono text-[10px] font-black text-slate-400">{r.internalOrderNumber}</span> },
+                { key: 'customer', label: 'Customer', sortValue: r => r.customerName, cellClassName: 'px-8 py-4', render: r => <span className="font-bold text-slate-500 text-xs">{r.customerName}</span> },
+                { key: 'status', label: 'Status', cellClassName: 'px-8 py-4 text-right', sortable: false, render: () => <span className="px-3 py-1 bg-slate-100 text-slate-400 text-[8px] font-black uppercase rounded border">Ready for Finance</span> },
+              ]}
+            />
           </div>
         </div>
       )}
@@ -584,71 +616,33 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                 {invoicedAwaitingDispatch.length} Awaiting Dispatch
               </div>
             </div>
-            <table className="w-full text-left">
-              <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-                <tr>
-                  <th className="px-8 py-4 text-white">Tracking Context</th>
-                  <th className="px-8 py-4 text-white">Invoice Identification</th>
-                  <th className="px-8 py-4 text-white">Dispatch SLA</th>
-                  <th className="px-8 py-4 text-white text-right">Action Authorization</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {invoicedAwaitingDispatch.map(order => (
-                  <tr key={order.id} className="hover:bg-sky-50/40 transition-colors group">
-                    <td className="px-8 py-6">
-                      <div className="font-black text-slate-800 text-sm">{order.customerName}</div>
-                      <div className="font-mono text-[10px] text-blue-600 font-bold uppercase mt-1 tracking-widest">{order.internalOrderNumber}</div>
-                    </td>
-                    <td className="px-8 py-6">
-                      <div className="inline-flex flex-col gap-1.5">
-                        <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-[9px] font-black uppercase rounded border border-emerald-100 flex items-center gap-2">
-                          <i className="fa-solid fa-file-invoice-dollar"></i>
-                          Tax Invoice: {order.invoiceNumber}
-                        </span>
-                        <div className="text-[8px] font-black text-rose-500 uppercase flex items-center gap-1.5 animate-pulse">
-                          <i className="fa-solid fa-triangle-exclamation"></i>
-                          Dispatch goods with physical invoice
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-8 py-6">
-                      <ThresholdTimer order={order} limitHrs={config.settings.hubReleasedLimitHrs} />
-                    </td>
-                    <td className="px-8 py-6 text-right">
-                      <div className="flex flex-col items-end gap-2">
-                        <button
-                          disabled={processingId === order.id}
-                          onClick={() => executeDispatchRelease(order.id)}
-                          className="px-6 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl hover:bg-black transition-all flex items-center gap-2 shadow-lg shadow-slate-200"
-                        >
-                          {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-ramp-box"></i>}
-                          Authorize Dispatch & Release
-                        </button>
-                        <button
-                          onClick={() => setPrintingOrder(order)}
-                          disabled={processingId === order.id}
-                          className="px-6 py-2 bg-blue-50 text-blue-600 font-black text-[10px] uppercase rounded-xl hover:bg-blue-100 transition-all flex items-center gap-2"
-                        >
-                          <i className="fa-solid fa-file-contract"></i> Download Delivery Note
-                        </button>
-                        <p className="text-[8px] text-slate-400 font-bold uppercase pr-1 italic opacity-0 group-hover:opacity-100 transition-opacity">Attach physical Tax Invoice to manifest</p>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {invoicedAwaitingDispatch.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="px-8 py-20 text-center">
-                      <div className="flex flex-col items-center gap-4 text-slate-300">
-                        <i className="fa-solid fa-truck-fast text-5xl opacity-10"></i>
-                        <p className="text-xs font-black uppercase tracking-[0.3em]">Logistics Pipeline Clear</p>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            <SortableTable<CustomerOrder>
+              storageKey="inv-dispatch"
+              theadClassName="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest"
+              rowClassName="hover:bg-sky-50/40 transition-colors group"
+              data={invoicedAwaitingDispatch}
+              rowKey={(r) => r.id}
+              emptyMessage="Logistics Pipeline Clear"
+              columns={[
+                { key: 'tracking', label: 'Tracking Context', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.customerName, render: r => (<><div className="font-black text-slate-800 text-sm">{r.customerName}</div><div className="font-mono text-[10px] text-blue-600 font-bold uppercase mt-1 tracking-widest">{r.internalOrderNumber}</div></>) },
+                { key: 'invoice', label: 'Invoice Identification', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.invoiceNumber || '', render: r => (<div className="inline-flex flex-col gap-1.5"><span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-[9px] font-black uppercase rounded border border-emerald-100 flex items-center gap-2"><i className="fa-solid fa-file-invoice-dollar"></i>Tax Invoice: {r.invoiceNumber}</span><div className="text-[8px] font-black text-rose-500 uppercase flex items-center gap-1.5 animate-pulse"><i className="fa-solid fa-triangle-exclamation"></i>Dispatch goods with physical invoice</div></div>) },
+                { key: 'dispatchSla', label: 'Dispatch SLA', headerClassName: 'px-8 py-4 text-white', sortable: false, render: r => <ThresholdTimer order={r} limitHrs={config.settings.hubReleasedLimitHrs} /> },
+                {
+                  key: 'action', label: 'Action Authorization', headerClassName: 'px-8 py-4 text-white text-right', cellClassName: 'px-8 py-6 text-right', sortable: false, render: r => (
+                    <div className="flex flex-col items-end gap-2">
+                      <button disabled={processingId === r.id} onClick={() => { setPendingDispatch(r); setDispatchInputs({}); }} className="px-6 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl hover:bg-black transition-all flex items-center gap-2 shadow-lg shadow-slate-200">
+                        {processingId === r.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-ramp-box"></i>}
+                        Configure Dispatch
+                      </button>
+                      <button onClick={() => setPrintingOrder(r)} disabled={processingId === r.id} className="px-6 py-2 bg-blue-50 text-blue-600 font-black text-[10px] uppercase rounded-xl hover:bg-blue-100 transition-all flex items-center gap-2">
+                        <i className="fa-solid fa-file-contract"></i> Download Delivery Note
+                      </button>
+                      <p className="text-[8px] text-slate-400 font-bold uppercase pr-1 italic opacity-0 group-hover:opacity-100 transition-opacity">Attach physical Tax Invoice to manifest</p>
+                    </div>
+                  )
+                },
+              ]}
+            />
           </div>
 
           {recentDispatches.length > 0 && (
@@ -656,33 +650,25 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
               <div className="p-8 border-b border-slate-100 bg-slate-50/50">
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Recent Logistics Departures</h3>
               </div>
-              <table className="w-full text-left">
-                <tbody className="divide-y divide-slate-50 text-sm">
-                  {recentDispatches.map(order => (
-                    <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-8 py-4 font-mono text-[10px] text-slate-400">{order.internalOrderNumber}</td>
-                      <td className="px-8 py-4 font-bold text-slate-500 text-xs">{order.customerName}</td>
-                      <td className="px-8 py-4 text-right flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => setPrintingOrder(order)}
-                          className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2"
-                        >
+              <SortableTable<CustomerOrder>
+                storageKey="inv-recent-dispatches"
+                theadClassName="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b"
+                data={recentDispatches}
+                rowKey={(r) => r.id}
+                columns={[
+                  { key: 'ref', label: 'Reference', sortValue: r => r.internalOrderNumber, cellClassName: 'px-8 py-4', render: r => <span className="font-mono text-[10px] text-slate-400">{r.internalOrderNumber}</span> },
+                  { key: 'customer', label: 'Customer', sortValue: r => r.customerName, cellClassName: 'px-8 py-4', render: r => <span className="font-bold text-slate-500 text-xs">{r.customerName}</span> },
+                  {
+                    key: 'actions', label: 'Actions', cellClassName: 'px-8 py-4 text-right', sortable: false, render: r => (
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => setPrintingOrder(r)} className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2">
                           <i className="fa-solid fa-download"></i> Delivery Note
                         </button>
-                        <button
-                          disabled={processingId === order.id}
-                          onClick={() => { setConfirmingDeliveryId(order.id); setTimeout(() => podUploadRef.current?.click(), 100); }}
-                          className="px-4 py-2 bg-emerald-600 text-white font-bold text-[10px] uppercase rounded-lg hover:bg-emerald-700 transition-all flex items-center gap-2 shadow-sm"
-                        >
-                          {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check"></i>}
-                          Confirm Delivered
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <input type="file" ref={podUploadRef} className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={handlePodUpload} />
+                      </div>
+                    )
+                  },
+                ]}
+              />
             </div>
           )}
         </div>
@@ -747,8 +733,18 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                           <div className="w-24">
                             <input
                               type="number"
+                              min={0}
+                              max={max}
                               value={hubInputs[item.id] !== undefined ? hubInputs[item.id] : ''}
-                              onChange={e => setHubInputs(p => ({ ...p, [item.id]: e.target.value }))}
+                              onChange={e => {
+                                const val = parseFloat(e.target.value);
+                                if (e.target.value === '' || isNaN(val)) {
+                                  setHubInputs(p => ({ ...p, [item.id]: e.target.value }));
+                                } else {
+                                  const clamped = Math.min(val, max);
+                                  setHubInputs(p => ({ ...p, [item.id]: String(clamped) }));
+                                }
+                              }}
                               className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-black text-center focus:border-amber-500 outline-none"
                               placeholder="0"
                             />
@@ -770,6 +766,80 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
           </div>
         )
       }
+
+      {/* Dispatch Configuration Modal */}
+      {pendingDispatch && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-xl p-8 animate-in zoom-in-95 border-2 border-slate-100 relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-2 bg-sky-500"></div>
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-12 h-12 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center text-xl shadow-inner"><i className="fa-solid fa-truck-ramp-box"></i></div>
+              <div>
+                <h3 className="text-xl font-black text-slate-800 tracking-tight uppercase">Configure Dispatch</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{pendingDispatch.internalOrderNumber}</p>
+              </div>
+            </div>
+
+            <div className="max-h-[50vh] overflow-y-auto mb-8 pr-2 space-y-3 custom-scrollbar">
+              <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-800 text-xs font-bold flex gap-2 items-start">
+                <i className="fa-solid fa-circle-info mt-0.5"></i>
+                <div>Quantities are strictly limited by Finance Authorization Receipts and actual Hub Physical Availability.</div>
+              </div>
+              {pendingDispatch.items.map(item => {
+                const inHub = (item.hubReceivedQty || 0) - (item.dispatchedQty || 0);
+                const approved = (item.approvedForDispatchQty || 0) - (item.dispatchedQty || 0);
+                const max = Math.max(0, Math.min(inHub, approved));
+
+                if (max <= 0 && ((item.dispatchedQty || 0) >= item.quantity)) return null;
+
+                return (
+                  <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center gap-4">
+                    <div className="flex-1">
+                      <div className="font-bold text-slate-700 text-sm mb-1">{item.description}</div>
+                      <div className="flex gap-4">
+                        <div className="text-[9px] font-black uppercase text-slate-500">Hub Avail: <span className="text-sky-600">{inHub}</span></div>
+                        <div className="text-[9px] font-black uppercase text-slate-500">Finance Auth: <span className={approved > 0 ? 'text-emerald-600' : 'text-rose-600'}>{approved}</span></div>
+                      </div>
+                    </div>
+                    <div className="w-24">
+                      <input
+                        type="number"
+                        min={0}
+                        max={max}
+                        value={dispatchInputs[item.id] !== undefined ? dispatchInputs[item.id] : ''}
+                        onChange={e => {
+                          const val = parseFloat(e.target.value);
+                          if (e.target.value === '' || isNaN(val)) {
+                            setDispatchInputs(p => ({ ...p, [item.id]: e.target.value }));
+                          } else {
+                            const clamped = Math.min(val, max);
+                            setDispatchInputs(p => ({ ...p, [item.id]: String(clamped) }));
+                          }
+                        }}
+                        disabled={max <= 0}
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-black text-center focus:border-sky-500 outline-none disabled:bg-slate-100 disabled:opacity-50"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => { setPendingDispatch(null); setDispatchInputs({}); }} className="flex-1 py-4 bg-slate-100 text-slate-400 font-black rounded-2xl text-[10px] uppercase">Cancel</button>
+              <button
+                onClick={executeDispatchRelease}
+                disabled={processingId === pendingDispatch.id}
+                className="flex-[2] py-4 bg-sky-500 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-sky-600 transition-all disabled:opacity-50"
+              >
+                {processingId === pendingDispatch.id ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : null}
+                Finalize & Dispatch Selected
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div >
   );
 };

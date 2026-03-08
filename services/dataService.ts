@@ -239,6 +239,10 @@ class DataService {
     return this.dispatchAction(orderId, 'register-manufacturing', { itemId, qty });
   }
 
+  async consumeFactoryComponent(orderId: string, itemId: string, compId: string, qty: number) {
+    return this.dispatchAction(orderId, 'consume-factory-component', { itemId, compId, qty });
+  }
+
   async receivePartialHub(orderId: string, receipts: { itemId: string, qty: number }[]) {
     return this.dispatchAction(orderId, 'receive-hub-partial', { receipts });
   }
@@ -249,6 +253,10 @@ class DataService {
 
   async releaseForDelivery(id: string) {
     return this.dispatchAction(id, 'release-delivery');
+  }
+
+  async shipItems(id: string, items: { itemId: string, qty: number }[]) {
+    return this.dispatchAction(id, 'ship-items', { items });
   }
 
   async uploadProofOfDelivery(file: File) {
@@ -266,8 +274,8 @@ class DataService {
     return await response.json();
   }
 
-  async confirmOrderDelivery(id: string, podFilePath: string) {
-    return this.dispatchAction(id, 'confirm-delivery', { podFilePath });
+  async confirmOrderDelivery(id: string, podFilePath: string, items: { itemId: string, qty: number }[]) {
+    return this.dispatchAction(id, 'confirm-delivery', { podFilePath, items });
   }
 
   async uploadEInvoice(file: File) {
@@ -300,6 +308,10 @@ class DataService {
 
   async recordPayment(id: string, amount: number, memo: string) {
     return this.dispatchAction(id, 'record-payment', { amount, memo });
+  }
+
+  async approveDispatchReceipt(id: string, items: { itemId: string, qty: number }[], notes: string) {
+    return this.dispatchAction(id, 'approve-dispatch-receipt', { items, notes });
   }
 
   async setOrderHold(id: string, isHold: boolean, reason: string) {
