@@ -125,7 +125,9 @@
           "hubReceivedQty": 16000,
           "approvedForDispatchQty": 11378,
           "status": "Manufactured",
-          "dispatchedQty": 300
+          "dispatchedQty": 300,
+          "shippedQty": 300,
+          "deliveredQty": 300
         }
       ],
       "logs": [
@@ -326,11 +328,23 @@
           "message": "Shipment Released from Hub: 300 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "IN_PRODUCT_HUB",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-08T14:51:59.622Z",
+          "message": "Items transitioned to IN TRANSIT: 300 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-08T14:52:12.969Z",
+          "message": "Customer Delivery Confirmed (Partial) & POD Filed: uploads/pod/pod-1772981532871-745734877.pdf",
+          "status": "PARTIAL_DELIVERY",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
       "dataEntryTimestamp": "2026-02-26T19:17:32.187Z",
-      "status": "IN_PRODUCT_HUB",
+      "status": "PARTIAL_DELIVERY",
       "loggingComplianceViolation": false,
       "payments": [
         {
@@ -339,6 +353,19 @@
           "user": "System",
           "memo": "swsdfasddad",
           "receiptNumber": "RCV-001"
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "DEL-1772981532968",
+          "date": "2026-03-08T14:52:12.969Z",
+          "items": [
+            {
+              "itemId": "temp_1772133450572_0",
+              "qty": 300
+            }
+          ],
+          "podFilePath": "uploads/pod/pod-1772981532871-745734877.pdf"
         }
       ]
     }
@@ -695,7 +722,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:e34807b0a90b313de6c9aa7525efd141:bf3d7a6c0404bcef7f7f18041945a52ec258484ab47d6500b0318a224a3c5c85",
+        "password": "ENC:3bc828f58a1d6459713ca24b7b67ba58:4dba38541a3d087d7db071aa3903301dd69905a7f93c16136996e46cece9c6d3",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -751,7 +778,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:a3efcce0ccbc2c97a50f92f78b937c9c:2290d0b4a0e8c514790533df940070bc5c5e14c302686191691fc190131206d166eee2c9f65263a303b1d4290b4b7746",
+        "apiKey": "ENC:e8232ff0af1d6f90d211ac7ae02c2542:de3416e98aeaf98bbd07c2f26bac93d6a12662e44e5f9c1d0410820c61e1f6cbd8d93a168d9b9cab31e24e379b742354",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -776,7 +803,7 @@
         "userGroups_1770925213983"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:534480407366e53a7ab415dadb367ec5:63cc37d9fc949f0be8b2b68be9bdb15eea63d0da3e6deead60aa1ecf943de6e1c010b10b35496d7611c90901c0e4dab3",
+        "apiKey": "ENC:903923e992bf6b1a0bd19bbf94e79083:61b96cc8f17739c662994ac4cb6ab153e613e3a71808872a0a60c2dce43f9d2f22f3d69c3c130af8d8ad0071e0909968",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

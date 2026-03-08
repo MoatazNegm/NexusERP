@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, OrderStatus, AppConfig, User } from '../types';
+import { CustomerOrder, OrderStatus, AppConfig, User, CustomerOrderItem } from '../types';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
@@ -40,12 +40,13 @@ const DeliveryThresholdMarker: React.FC<{ order: CustomerOrder, config: AppConfi
     );
 };
 
-type ShipmentTab = 'pending' | 'transit';
+type ShipmentTab = 'pending' | 'transit' | 'history';
 
 export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshKey, currentUser }) => {
     const [activeTab, setActiveTab] = useState<ShipmentTab>('pending');
     const [existingOrders, setExistingOrders] = useState<CustomerOrder[]>([]);
     const [processingId, setProcessingId] = useState<string | null>(null);
+    const [historySearch, setHistorySearch] = useState('');
 
     // Delivery Note PDF & POD State
     const deliveryNoteRef = useRef<HTMLDivElement>(null);
@@ -75,6 +76,28 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
             return o.items.some(i => (i.shippedQty || 0) > (i.deliveredQty || 0));
         });
     }, [existingOrders]);
+
+    const deliveryHistory = useMemo(() => {
+        const flat: { order: CustomerOrder; delivery: NonNullable<CustomerOrder['deliveries']>[0]; item: CustomerOrderItem; qty: number }[] = [];
+        existingOrders.forEach(o => {
+            (o.deliveries || []).forEach(d => {
+                d.items.forEach(di => {
+                    const item = o.items.find(i => i.id === di.itemId);
+                    if (item) {
+                        flat.push({ order: o, delivery: d, item, qty: di.qty });
+                    }
+                });
+            });
+        });
+
+        return flat
+            .filter(h =>
+                h.order.internalOrderNumber?.toLowerCase().includes(historySearch.toLowerCase()) ||
+                h.order.customerName.toLowerCase().includes(historySearch.toLowerCase()) ||
+                h.item.description.toLowerCase().includes(historySearch.toLowerCase())
+            )
+            .sort((a, b) => new Date(b.delivery.date).getTime() - new Date(a.delivery.date).getTime());
+    }, [existingOrders, historySearch]);
 
     const displayOrders = activeTab === 'pending' ? pendingTransitOrders : inTransitOrders;
 
@@ -168,22 +191,43 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                     {inTransitOrders.length > 0 && <span className="mr-2 px-1.5 py-0.5 bg-sky-500 text-white rounded-full">{inTransitOrders.length}</span>}
                     In Transit
                 </button>
+                <button
+                    onClick={() => setActiveTab('history')}
+                    className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'history' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                >
+                    <i className="fa-solid fa-clock-rotate-left mr-2"></i>
+                    Delivery History
+                </button>
             </div>
 
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-6 bg-slate-50 border-b flex justify-between items-center">
                         <div className="flex items-center gap-4">
-                            <div className={`w-12 h-12 rounded-2xl ${activeTab === 'pending' ? 'bg-emerald-600 shadow-emerald-100' : 'bg-sky-600 shadow-sky-100'} flex items-center justify-center text-white shadow-lg`}>
-                                <i className={`fa-solid ${activeTab === 'pending' ? 'fa-truck-arrow-right' : 'fa-truck-fast'} text-xl`}></i>
+                            <div className={`w-12 h-12 rounded-2xl ${activeTab === 'pending' ? 'bg-emerald-600 shadow-emerald-100' : activeTab === 'transit' ? 'bg-sky-600 shadow-sky-100' : 'bg-slate-800 shadow-slate-200'} flex items-center justify-center text-white shadow-lg`}>
+                                <i className={`fa-solid ${activeTab === 'pending' ? 'fa-truck-arrow-right' : activeTab === 'transit' ? 'fa-truck-fast' : 'fa-clipboard-check'} text-xl`}></i>
                             </div>
-                            <div>
-                                <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">
-                                    {activeTab === 'pending' ? 'Cargo Preparation' : 'Last Mile Delivery'}
-                                </h2>
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
-                                    {activeTab === 'pending' ? 'Load dispatched items onto transport vehicles' : 'Confirm fulfillment and upload POD for items in transit'}
-                                </p>
+                            <div className="flex-1 flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                                        {activeTab === 'pending' ? 'Cargo Preparation' : activeTab === 'transit' ? 'Last Mile Delivery' : 'Fulfillment Archive'}
+                                    </h2>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                                        {activeTab === 'pending' ? 'Load dispatched items onto transport vehicles' : activeTab === 'transit' ? 'Confirm fulfillment and upload POD for items in transit' : 'View all completed deliveries and signed documents'}
+                                    </p>
+                                </div>
+                                {activeTab === 'history' && (
+                                    <div className="relative">
+                                        <i className="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                                        <input
+                                            type="text"
+                                            placeholder="Search History..."
+                                            value={historySearch}
+                                            onChange={e => setHistorySearch(e.target.value)}
+                                            className="pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-[10px] font-bold uppercase tracking-wider focus:ring-4 focus:ring-slate-50 outline-none w-64 transition-all"
+                                        />
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -191,46 +235,120 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-slate-50/50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-                                <tr>
-                                    <th className="px-8 py-5">Reference ID</th>
-                                    <th className="px-8 py-5">Customer Entity</th>
-                                    <th className="px-8 py-5">Status</th>
-                                    <th className="px-8 py-5">Value (Excl. tax)</th>
-                                    <th className="px-8 py-5 text-right">Action</th>
-                                </tr>
+                                {activeTab === 'history' ? (
+                                    <tr>
+                                        <th className="px-8 py-5">Delivery Date</th>
+                                        <th className="px-8 py-5">Order / Customer</th>
+                                        <th className="px-8 py-5">Delivered Item</th>
+                                        <th className="px-8 py-5 text-center">Qty</th>
+                                        <th className="px-8 py-5 text-right">Documents</th>
+                                    </tr>
+                                ) : (
+                                    <tr>
+                                        <th className="px-8 py-5">Reference ID</th>
+                                        <th className="px-8 py-5">Customer Entity</th>
+                                        <th className="px-8 py-5">Status</th>
+                                        <th className="px-8 py-5">Value (Excl. tax)</th>
+                                        <th className="px-8 py-5 text-right">Action</th>
+                                    </tr>
+                                )}
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                                {displayOrders.map(order => (
-                                    <tr key={order.id} className="hover:bg-sky-50/40 transition-all group">
-                                        <td className="px-8 py-6 font-mono text-xs font-black text-sky-600 uppercase">
-                                            <div>{order.internalOrderNumber}</div>
-                                            <div className="flex flex-col gap-0.5 mt-1.5">
-                                                <div className="text-[9px] text-slate-500 font-black uppercase">PO: {order.customerReferenceNumber || 'UNMATCHED'}</div>
-                                                <div className="text-[9px] text-slate-400 font-bold uppercase">Inv: {order.invoiceNumber || 'NOT ISSUED'}</div>
-                                            </div>
-                                        </td>
-                                        <td className="px-8 py-6">
-                                            <div className="font-black text-slate-800 text-sm tracking-tight">{order.customerName}</div>
-                                            <div className="text-[10px] text-slate-500">{order.items.length} POS Fabricated</div>
-                                        </td>
-                                        <td className="px-8 py-6 whitespace-nowrap">
-                                            {activeTab === 'pending' ? (
-                                                <div className="flex flex-col gap-1">
-                                                    <span className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-black uppercase border border-emerald-100 w-fit">Dispatched</span>
-                                                    <span className="text-[9px] text-slate-400 font-bold uppercase">Awaiting Transit</span>
+                                {activeTab === 'history' ? (
+                                    deliveryHistory.map((h, idx) => (
+                                        <tr key={`${h.delivery.id}-${h.item.id}-${idx}`} className="hover:bg-slate-50 transition-all">
+                                            <td className="px-8 py-6">
+                                                <div className="font-black text-slate-700 text-xs">{new Date(h.delivery.date).toLocaleDateString()}</div>
+                                                <div className="text-[9px] font-bold text-slate-400 uppercase mt-1">{new Date(h.delivery.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                                            </td>
+                                            <td className="px-8 py-6">
+                                                <div className="font-mono text-[10px] font-black text-blue-600 uppercase mb-1">{h.order.internalOrderNumber}</div>
+                                                <div className="font-bold text-slate-800 text-xs">{h.order.customerName}</div>
+                                            </td>
+                                            <td className="px-8 py-6">
+                                                <div className="font-bold text-slate-700 text-xs">{h.item.description}</div>
+                                            </td>
+                                            <td className="px-8 py-6 text-center">
+                                                <span className="px-3 py-1 bg-slate-100 text-slate-800 rounded-full font-black text-[10px]">{h.qty} {h.item.unit}</span>
+                                            </td>
+                                            <td className="px-8 py-6 text-right">
+                                                {h.delivery.podFilePath ? (
+                                                    <a
+                                                        href={h.delivery.podFilePath}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-xl font-black text-[9px] uppercase hover:bg-emerald-100 transition-all"
+                                                    >
+                                                        <i className="fa-solid fa-file-contract"></i> View Signed POD
+                                                    </a>
+                                                ) : (
+                                                    <span className="text-[9px] font-bold text-slate-300 uppercase italic">No File Uploaded</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))
+                                ) : (
+                                    displayOrders.map(order => (
+                                        <tr key={order.id} className="hover:bg-sky-50/40 transition-all group">
+                                            <td className="px-8 py-6 font-mono text-xs font-black text-sky-600 uppercase">
+                                                <div>{order.internalOrderNumber}</div>
+                                                <div className="flex flex-col gap-0.5 mt-1.5">
+                                                    <div className="text-[9px] text-slate-500 font-black uppercase">PO: {order.customerReferenceNumber || 'UNMATCHED'}</div>
+                                                    <div className="text-[9px] text-slate-400 font-bold uppercase">Inv: {order.invoiceNumber || 'NOT ISSUED'}</div>
                                                 </div>
-                                            ) : (
-                                                <DeliveryThresholdMarker order={order} config={config} />
-                                            )}
-                                        </td>
-                                        <td className="px-8 py-6 font-black text-slate-700 text-sm">
-                                            {order.items.reduce((s, i) => s + (i.quantity * i.pricePerUnit), 0).toLocaleString()} <span className="text-[10px] text-slate-400">L.E.</span>
-                                        </td>
-                                        <td className="px-8 py-6 text-right">
-                                            <div className="flex flex-col gap-2 items-end">
+                                            </td>
+                                            <td className="px-8 py-6">
+                                                <div className="font-black text-slate-800 text-sm tracking-tight">{order.customerName}</div>
+                                                <div className="text-[10px] text-slate-500">{order.items.length} POS Fabricated</div>
+                                            </td>
+                                            <td className="px-8 py-6 whitespace-nowrap">
                                                 {activeTab === 'pending' ? (
-                                                    <div className="flex flex-col gap-2 items-end">
-                                                        <div className="flex gap-2">
+                                                    <div className="flex flex-col gap-1">
+                                                        <span className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-black uppercase border border-emerald-100 w-fit">Dispatched</span>
+                                                        <span className="text-[9px] text-slate-400 font-bold uppercase">Awaiting Transit</span>
+                                                    </div>
+                                                ) : (
+                                                    <DeliveryThresholdMarker order={order} config={config} />
+                                                )}
+                                            </td>
+                                            <td className="px-8 py-6 font-black text-slate-700 text-sm">
+                                                {order.items.reduce((s, i) => s + (i.quantity * i.pricePerUnit), 0).toLocaleString()} <span className="text-[10px] text-slate-400">L.E.</span>
+                                            </td>
+                                            <td className="px-8 py-6 text-right">
+                                                <div className="flex flex-col gap-2 items-end">
+                                                    {activeTab === 'pending' ? (
+                                                        <div className="flex flex-col gap-2 items-end">
+                                                            <div className="flex gap-2">
+                                                                <button
+                                                                    onClick={() => setPrintingOrder(order)}
+                                                                    className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2"
+                                                                >
+                                                                    <i className="fa-solid fa-download"></i> Delivery Note
+                                                                </button>
+                                                                <button
+                                                                    disabled={processingId === order.id}
+                                                                    onClick={async () => {
+                                                                        setProcessingId(order.id);
+                                                                        try {
+                                                                            const itemsToShip = order.items.filter(i => (i.dispatchedQty || 0) > (i.shippedQty || 0)).map(i => ({
+                                                                                itemId: i.id,
+                                                                                qty: (i.dispatchedQty || 0) - (i.shippedQty || 0)
+                                                                            }));
+                                                                            await dataService.shipItems(order.id, itemsToShip);
+                                                                            fetchData();
+                                                                        } finally {
+                                                                            setProcessingId(null);
+                                                                        }
+                                                                    }}
+                                                                    className="px-6 py-2 bg-emerald-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
+                                                                >
+                                                                    {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-arrow-right"></i>}
+                                                                    Start Transit
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <>
                                                             <button
                                                                 onClick={() => setPrintingOrder(order)}
                                                                 className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2"
@@ -239,54 +357,25 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                                             </button>
                                                             <button
                                                                 disabled={processingId === order.id}
-                                                                onClick={async () => {
-                                                                    setProcessingId(order.id);
-                                                                    try {
-                                                                        const itemsToShip = order.items.filter(i => (i.dispatchedQty || 0) > (i.shippedQty || 0)).map(i => ({
-                                                                            itemId: i.id,
-                                                                            qty: (i.dispatchedQty || 0) - (i.shippedQty || 0)
-                                                                        }));
-                                                                        await dataService.shipItems(order.id, itemsToShip);
-                                                                        fetchData();
-                                                                    } finally {
-                                                                        setProcessingId(null);
-                                                                    }
-                                                                }}
-                                                                className="px-6 py-2 bg-emerald-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
+                                                                onClick={() => { setConfirmingDeliveryId(order.id); setTimeout(() => podUploadRef.current?.click(), 100); }}
+                                                                className="px-6 py-2.5 bg-sky-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-sky-700 transition-all shadow-lg shadow-sky-100 flex items-center gap-2"
                                                             >
-                                                                {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-arrow-right"></i>}
-                                                                Start Transit
+                                                                {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-hand-holding-hand"></i>}
+                                                                Confirm Delivered
                                                             </button>
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <>
-                                                        <button
-                                                            onClick={() => setPrintingOrder(order)}
-                                                            className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2"
-                                                        >
-                                                            <i className="fa-solid fa-download"></i> Delivery Note
-                                                        </button>
-                                                        <button
-                                                            disabled={processingId === order.id}
-                                                            onClick={() => { setConfirmingDeliveryId(order.id); setTimeout(() => podUploadRef.current?.click(), 100); }}
-                                                            className="px-6 py-2.5 bg-sky-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-sky-700 transition-all shadow-lg shadow-sky-100 flex items-center gap-2"
-                                                        >
-                                                            {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-hand-holding-hand"></i>}
-                                                            Confirm Delivered
-                                                        </button>
-                                                    </>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                                {displayOrders.length === 0 && (
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                                {((activeTab === 'history' && deliveryHistory.length === 0) || (activeTab !== 'history' && displayOrders.length === 0)) && (
                                     <tr>
                                         <td colSpan={5} className="px-8 py-20 text-center text-slate-300">
                                             <div className="flex flex-col items-center gap-3">
-                                                <i className={`fa-solid ${activeTab === 'pending' ? 'fa-boxes-packing' : 'fa-truck-fast'} text-5xl opacity-10`}></i>
-                                                <p className="font-black text-xs uppercase tracking-[0.2em]">No shipments in this stage</p>
+                                                <i className={`fa-solid ${activeTab === 'pending' ? 'fa-boxes-packing' : activeTab === 'transit' ? 'fa-truck-fast' : 'fa-clock-rotate-left'} text-5xl opacity-10`}></i>
+                                                <p className="font-black text-xs uppercase tracking-[0.2em]">No records found in this stage</p>
                                             </div>
                                         </td>
                                     </tr>
@@ -296,19 +385,21 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                     </div>
                 </div>
 
-                <div className={`p-6 rounded-2xl border flex gap-4 animate-in slide-in-from-top-4 ${activeTab === 'pending' ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
-                    <i className={`fa-solid fa-circle-info mt-0.5 ${activeTab === 'pending' ? 'text-emerald-500' : 'text-amber-500'}`}></i>
-                    <div className="space-y-1">
-                        <h4 className={`text-[10px] font-black uppercase ${activeTab === 'pending' ? 'text-emerald-900' : 'text-amber-900'}`}>
-                            {activeTab === 'pending' ? 'Dispatch Clearance' : 'Operational Protocol'}
-                        </h4>
-                        <p className={`text-xs font-medium ${activeTab === 'pending' ? 'text-emerald-800' : 'text-amber-800'}`}>
-                            {activeTab === 'pending'
-                                ? "Items appearing here have been released from the warehouse. Confirming 'Transit' marks them as physically loaded on the truck."
-                                : "Items appearing here are currently 'In Transit'. Download the Delivery Note and ensure the customer signs it before confirming delivery."}
-                        </p>
+                {activeTab !== 'history' && (
+                    <div className={`p-6 rounded-2xl border flex gap-4 animate-in slide-in-from-top-4 ${activeTab === 'pending' ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
+                        <i className={`fa-solid fa-circle-info mt-0.5 ${activeTab === 'pending' ? 'text-emerald-500' : 'text-amber-500'}`}></i>
+                        <div className="space-y-1">
+                            <h4 className={`text-[10px] font-black uppercase ${activeTab === 'pending' ? 'text-emerald-900' : 'text-amber-900'}`}>
+                                {activeTab === 'pending' ? 'Dispatch Clearance' : 'Operational Protocol'}
+                            </h4>
+                            <p className={`text-xs font-medium ${activeTab === 'pending' ? 'text-emerald-800' : 'text-amber-800'}`}>
+                                {activeTab === 'pending'
+                                    ? "Items appearing here have been released from the warehouse. Confirming 'Transit' marks them as physically loaded on the truck."
+                                    : "Items appearing here are currently 'In Transit'. Download the Delivery Note and ensure the customer signs it before confirming delivery."}
+                            </p>
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
 
             {/* Hidden Delivery Note Template */}
