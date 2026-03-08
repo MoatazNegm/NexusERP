@@ -229,26 +229,36 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                         <td className="px-8 py-6 text-right">
                                             <div className="flex flex-col gap-2 items-end">
                                                 {activeTab === 'pending' ? (
-                                                    <button
-                                                        disabled={processingId === order.id}
-                                                        onClick={async () => {
-                                                            setProcessingId(order.id);
-                                                            try {
-                                                                const itemsToShip = order.items.filter(i => (i.dispatchedQty || 0) > (i.shippedQty || 0)).map(i => ({
-                                                                    itemId: i.id,
-                                                                    qty: (i.dispatchedQty || 0) - (i.shippedQty || 0)
-                                                                }));
-                                                                await dataService.shipItems(order.id, itemsToShip);
-                                                                fetchData();
-                                                            } finally {
-                                                                setProcessingId(null);
-                                                            }
-                                                        }}
-                                                        className="px-6 py-2 bg-emerald-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
-                                                    >
-                                                        {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-arrow-right"></i>}
-                                                        Start Transit
-                                                    </button>
+                                                    <div className="flex flex-col gap-2 items-end">
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                onClick={() => setPrintingOrder(order)}
+                                                                className="px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2"
+                                                            >
+                                                                <i className="fa-solid fa-download"></i> Delivery Note
+                                                            </button>
+                                                            <button
+                                                                disabled={processingId === order.id}
+                                                                onClick={async () => {
+                                                                    setProcessingId(order.id);
+                                                                    try {
+                                                                        const itemsToShip = order.items.filter(i => (i.dispatchedQty || 0) > (i.shippedQty || 0)).map(i => ({
+                                                                            itemId: i.id,
+                                                                            qty: (i.dispatchedQty || 0) - (i.shippedQty || 0)
+                                                                        }));
+                                                                        await dataService.shipItems(order.id, itemsToShip);
+                                                                        fetchData();
+                                                                    } finally {
+                                                                        setProcessingId(null);
+                                                                    }
+                                                                }}
+                                                                className="px-6 py-2 bg-emerald-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
+                                                            >
+                                                                {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-arrow-right"></i>}
+                                                                Start Transit
+                                                            </button>
+                                                        </div>
+                                                    </div>
                                                 ) : (
                                                     <>
                                                         <button
@@ -345,13 +355,16 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {printingOrder.items.map((item, idx) => {
-                                        const inTransit = (item.shippedQty || 0) - (item.deliveredQty || 0);
-                                        if (inTransit <= 0) return null;
+                                        const qty = activeTab === 'pending'
+                                            ? (item.dispatchedQty || 0) - (item.shippedQty || 0)
+                                            : (item.shippedQty || 0) - (item.deliveredQty || 0);
+
+                                        if (qty <= 0) return null;
                                         return (
                                             <tr key={idx}>
                                                 <td className="px-6 py-6 font-bold text-slate-800" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{item.description}</td>
                                                 <td className="px-6 py-6 text-center text-sm font-medium text-slate-500">{item.unit}</td>
-                                                <td className="px-6 py-6 text-right font-black text-slate-900">{inTransit}</td>
+                                                <td className="px-6 py-6 text-right font-black text-slate-900">{qty}</td>
                                             </tr>
                                         );
                                     })}

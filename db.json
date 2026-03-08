@@ -124,7 +124,8 @@
           "manufacturedQty": 16000,
           "hubReceivedQty": 16000,
           "approvedForDispatchQty": 11378,
-          "status": "Manufactured"
+          "status": "Manufactured",
+          "dispatchedQty": 300
         }
       ],
       "logs": [
@@ -317,6 +318,12 @@
         {
           "timestamp": "2026-03-08T13:41:54.683Z",
           "message": "[SYSTEM] Hub Processing Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "IN_PRODUCT_HUB",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-08T14:07:41.253Z",
+          "message": "Shipment Released from Hub: 300 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "IN_PRODUCT_HUB",
           "user": "System"
         }
@@ -688,7 +695,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:ae345d0e7a7c93ac024da072c0796676:769d55bed30adabd8ae32939602ab95db8817945c0e66625d282dfd947606fde",
+        "password": "ENC:e34807b0a90b313de6c9aa7525efd141:bf3d7a6c0404bcef7f7f18041945a52ec258484ab47d6500b0318a224a3c5c85",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -744,7 +751,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:6e1c12c339220ec4662e9d40067dfdf4:49d3525e106db59ccad06e70b552978892e947c1424550b1592ef545c082abe101b704daf5c2048463c2b4a61efec2f0",
+        "apiKey": "ENC:a3efcce0ccbc2c97a50f92f78b937c9c:2290d0b4a0e8c514790533df940070bc5c5e14c302686191691fc190131206d166eee2c9f65263a303b1d4290b4b7746",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -769,7 +776,7 @@
         "userGroups_1770925213983"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:afa5ec77dc0d3875ef93dd0b08d2f1b4:e0af42378368ffe4b2fe4e905627d49e5a37191bebdb30b08917405c1c94bca9b355d31d1b3c5caf8b9c0f6bc4e00d93",
+        "apiKey": "ENC:534480407366e53a7ab415dadb367ec5:63cc37d9fc949f0be8b2b68be9bdb15eea63d0da3e6deead60aa1ecf943de6e1c010b10b35496d7611c90901c0e4dab3",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {
