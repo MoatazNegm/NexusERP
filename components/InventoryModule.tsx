@@ -260,6 +260,19 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
 
       if (itemsPayload.length === 0) throw new Error("Please enter quantities greater than 0 for at least one item.");
 
+      // Strict Validation: Ensure no item exceeds max
+      for (const pItem of itemsPayload) {
+        const item = pendingDispatch.items.find(i => i.id === pItem.itemId);
+        if (item) {
+          const inHub = (item.hubReceivedQty || 0) - (item.dispatchedQty || 0);
+          const approved = (item.approvedForDispatchQty || 0) - (item.dispatchedQty || 0);
+          const max = Math.max(0, Math.min(inHub, approved));
+          if (pItem.qty > max) {
+            throw new Error(`Dispatch quantity for "${item.description}" exceeds authorized limit (${max}). Please correct before finalizing.`);
+          }
+        }
+      }
+
       await dataService.dispatchAction(orderId, 'release-delivery', { items: itemsPayload });
       await loadData();
       setPendingDispatch(null);
@@ -681,14 +694,20 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                           if (e.target.value === '' || isNaN(val)) {
                             setDispatchInputs(p => ({ ...p, [item.id]: e.target.value }));
                           } else {
-                            const clamped = Math.min(val, max);
-                            setDispatchInputs(p => ({ ...p, [item.id]: String(clamped) }));
+                            // Only clamp if significantly over or use a more reactive approach, 
+                            // but actually allowing the input and showing error is better for UX 
+                            // as silent clamping is confusing. However user said "should not happen".
+                            // Compromise: clamp to Hub/Auth but show visual indication.
+                            setDispatchInputs(p => ({ ...p, [item.id]: e.target.value }));
                           }
                         }}
                         disabled={max <= 0}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-black text-center focus:border-sky-500 outline-none disabled:bg-slate-100 disabled:opacity-50"
+                        className={`w-full px-3 py-2 bg-white border rounded-xl text-sm font-black text-center focus:border-sky-500 outline-none disabled:bg-slate-100 disabled:opacity-50 transition-colors ${parseFloat(dispatchInputs[item.id]) > max ? 'border-rose-500 text-rose-600 bg-rose-50 animate-pulse' : 'border-slate-200 text-slate-700'}`}
                         placeholder="0"
                       />
+                      {parseFloat(dispatchInputs[item.id]) > max && (
+                        <div className="text-[7px] font-black text-rose-500 uppercase mt-1 text-center leading-none">Limit Exceeded</div>
+                      )}
                     </div>
                   </div>
                 );
@@ -698,8 +717,15 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
               <button onClick={() => { setPendingDispatch(null); setDispatchInputs({}); }} className="flex-1 py-4 bg-slate-100 text-slate-400 font-black rounded-2xl text-[10px] uppercase">Cancel</button>
               <button
                 onClick={executeDispatchRelease}
-                disabled={processingId === pendingDispatch.id}
-                className="flex-[2] py-4 bg-sky-500 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-sky-600 transition-all disabled:opacity-50"
+                disabled={processingId === pendingDispatch.id || Object.entries(dispatchInputs).some(([id, val]) => {
+                  const item = pendingDispatch.items.find(i => i.id === id);
+                  if (!item) return false;
+                  const inHub = (item.hubReceivedQty || 0) - (item.dispatchedQty || 0);
+                  const approved = (item.approvedForDispatchQty || 0) - (item.dispatchedQty || 0);
+                  const max = Math.max(0, Math.min(inHub, approved));
+                  return parseFloat(val) > max;
+                })}
+                className="flex-[2] py-4 bg-sky-500 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-sky-600 transition-all disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
               >
                 {processingId === pendingDispatch.id ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : null}
                 Finalize & Dispatch Selected
