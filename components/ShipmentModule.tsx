@@ -40,7 +40,10 @@ const DeliveryThresholdMarker: React.FC<{ order: CustomerOrder, config: AppConfi
     );
 };
 
+type ShipmentTab = 'pending' | 'transit';
+
 export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshKey, currentUser }) => {
+    const [activeTab, setActiveTab] = useState<ShipmentTab>('pending');
     const [existingOrders, setExistingOrders] = useState<CustomerOrder[]>([]);
     const [processingId, setProcessingId] = useState<string | null>(null);
 
@@ -59,13 +62,21 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
         setExistingOrders(o);
     };
 
-    const hubReleasedOrders = useMemo(() => {
+    const pendingTransitOrders = useMemo(() => {
         return existingOrders.filter(o => {
             if (![OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY].includes(o.status as OrderStatus)) return false;
-            // Show if anything is dispatched but not shipped, OR shipped but not delivered
-            return o.items.some(i => (i.dispatchedQty || 0) > (i.shippedQty || 0) || (i.shippedQty || 0) > (i.deliveredQty || 0));
+            return o.items.some(i => (i.dispatchedQty || 0) > (i.shippedQty || 0));
         });
     }, [existingOrders]);
+
+    const inTransitOrders = useMemo(() => {
+        return existingOrders.filter(o => {
+            if (![OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY].includes(o.status as OrderStatus)) return false;
+            return o.items.some(i => (i.shippedQty || 0) > (i.deliveredQty || 0));
+        });
+    }, [existingOrders]);
+
+    const displayOrders = activeTab === 'pending' ? pendingTransitOrders : inTransitOrders;
 
     useEffect(() => {
         if (printingOrder) {
@@ -142,32 +153,54 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
 
     return (
         <div className="max-w-[1200px] mx-auto pb-12 space-y-6">
+            <div className="flex flex-wrap gap-1 p-1 bg-slate-100 rounded-2xl w-fit">
+                <button
+                    onClick={() => setActiveTab('pending')}
+                    className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'pending' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                >
+                    {pendingTransitOrders.length > 0 && <span className="mr-2 px-1.5 py-0.5 bg-emerald-500 text-white rounded-full">{pendingTransitOrders.length}</span>}
+                    Pending Transit
+                </button>
+                <button
+                    onClick={() => setActiveTab('transit')}
+                    className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'transit' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                >
+                    {inTransitOrders.length > 0 && <span className="mr-2 px-1.5 py-0.5 bg-sky-500 text-white rounded-full">{inTransitOrders.length}</span>}
+                    In Transit
+                </button>
+            </div>
+
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-6 bg-slate-50 border-b flex justify-between items-center">
                         <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-sky-600 flex items-center justify-center text-white shadow-lg shadow-sky-100">
-                                <i className="fa-solid fa-truck-ramp-box text-xl"></i>
+                            <div className={`w-12 h-12 rounded-2xl ${activeTab === 'pending' ? 'bg-emerald-600 shadow-emerald-100' : 'bg-sky-600 shadow-sky-100'} flex items-center justify-center text-white shadow-lg`}>
+                                <i className={`fa-solid ${activeTab === 'pending' ? 'fa-truck-arrow-right' : 'fa-truck-fast'} text-xl`}></i>
                             </div>
                             <div>
-                                <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Last Mile Delivery</h2>
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Confirm fulfillment for invoiced and dispatched assets</p>
+                                <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                                    {activeTab === 'pending' ? 'Cargo Preparation' : 'Last Mile Delivery'}
+                                </h2>
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                                    {activeTab === 'pending' ? 'Load dispatched items onto transport vehicles' : 'Confirm fulfillment and upload POD for items in transit'}
+                                </p>
                             </div>
                         </div>
                     </div>
+
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-slate-50/50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest">
                                 <tr>
                                     <th className="px-8 py-5">Reference ID</th>
                                     <th className="px-8 py-5">Customer Entity</th>
-                                    <th className="px-8 py-5">Dispatch SLA</th>
+                                    <th className="px-8 py-5">Status</th>
                                     <th className="px-8 py-5">Value (Excl. tax)</th>
-                                    <th className="px-8 py-5 text-right">Confirm Hand-off</th>
+                                    <th className="px-8 py-5 text-right">Action</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-50">
-                                {hubReleasedOrders.map(order => (
+                            <tbody className="divide-y divide-slate-100">
+                                {displayOrders.map(order => (
                                     <tr key={order.id} className="hover:bg-sky-50/40 transition-all group">
                                         <td className="px-8 py-6 font-mono text-xs font-black text-sky-600 uppercase">
                                             <div>{order.internalOrderNumber}</div>
@@ -181,14 +214,21 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                             <div className="text-[10px] text-slate-500">{order.items.length} POS Fabricated</div>
                                         </td>
                                         <td className="px-8 py-6 whitespace-nowrap">
-                                            <DeliveryThresholdMarker order={order} config={config} />
+                                            {activeTab === 'pending' ? (
+                                                <div className="flex flex-col gap-1">
+                                                    <span className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-black uppercase border border-emerald-100 w-fit">Dispatched</span>
+                                                    <span className="text-[9px] text-slate-400 font-bold uppercase">Awaiting Transit</span>
+                                                </div>
+                                            ) : (
+                                                <DeliveryThresholdMarker order={order} config={config} />
+                                            )}
                                         </td>
                                         <td className="px-8 py-6 font-black text-slate-700 text-sm">
                                             {order.items.reduce((s, i) => s + (i.quantity * i.pricePerUnit), 0).toLocaleString()} <span className="text-[10px] text-slate-400">L.E.</span>
                                         </td>
                                         <td className="px-8 py-6 text-right">
                                             <div className="flex flex-col gap-2 items-end">
-                                                {order.items.some(i => (i.dispatchedQty || 0) > (i.shippedQty || 0)) && (
+                                                {activeTab === 'pending' ? (
                                                     <button
                                                         disabled={processingId === order.id}
                                                         onClick={async () => {
@@ -209,8 +249,7 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                                         {processingId === order.id ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-truck-arrow-right"></i>}
                                                         Start Transit
                                                     </button>
-                                                )}
-                                                {order.items.some(i => (i.shippedQty || 0) > (i.deliveredQty || 0)) && (
+                                                ) : (
                                                     <>
                                                         <button
                                                             onClick={() => setPrintingOrder(order)}
@@ -232,12 +271,12 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                         </td>
                                     </tr>
                                 ))}
-                                {hubReleasedOrders.length === 0 && (
+                                {displayOrders.length === 0 && (
                                     <tr>
-                                        <td colSpan={5} className="px-8 py-20 text-center">
-                                            <div className="flex flex-col items-center gap-3 text-slate-300">
-                                                <i className="fa-solid fa-box-open text-5xl opacity-10"></i>
-                                                <p className="font-black text-xs uppercase tracking-[0.2em]">No shipments awaiting delivery confirmation</p>
+                                        <td colSpan={5} className="px-8 py-20 text-center text-slate-300">
+                                            <div className="flex flex-col items-center gap-3">
+                                                <i className={`fa-solid ${activeTab === 'pending' ? 'fa-boxes-packing' : 'fa-truck-fast'} text-5xl opacity-10`}></i>
+                                                <p className="font-black text-xs uppercase tracking-[0.2em]">No shipments in this stage</p>
                                             </div>
                                         </td>
                                     </tr>
@@ -247,15 +286,19 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                     </div>
                 </div>
 
-                {hubReleasedOrders.length > 0 && (
-                    <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4 animate-in slide-in-from-top-4">
-                        <i className="fa-solid fa-circle-info text-amber-500 mt-0.5"></i>
-                        <div className="space-y-1">
-                            <h4 className="text-[10px] font-black text-amber-900 uppercase">Operational Protocol</h4>
-                            <p className="text-xs text-amber-800 font-medium">Orders appearing here have passed through <strong>Manufacturing</strong>, <strong>Quality Staging</strong>, <strong>Finance Invoicing</strong>, and <strong>Warehouse Release</strong>. Confirming delivery closes the active operational lifecycle for these records.</p>
-                        </div>
+                <div className={`p-6 rounded-2xl border flex gap-4 animate-in slide-in-from-top-4 ${activeTab === 'pending' ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
+                    <i className={`fa-solid fa-circle-info mt-0.5 ${activeTab === 'pending' ? 'text-emerald-500' : 'text-amber-500'}`}></i>
+                    <div className="space-y-1">
+                        <h4 className={`text-[10px] font-black uppercase ${activeTab === 'pending' ? 'text-emerald-900' : 'text-amber-900'}`}>
+                            {activeTab === 'pending' ? 'Dispatch Clearance' : 'Operational Protocol'}
+                        </h4>
+                        <p className={`text-xs font-medium ${activeTab === 'pending' ? 'text-emerald-800' : 'text-amber-800'}`}>
+                            {activeTab === 'pending'
+                                ? "Items appearing here have been released from the warehouse. Confirming 'Transit' marks them as physically loaded on the truck."
+                                : "Items appearing here are currently 'In Transit'. Download the Delivery Note and ensure the customer signs it before confirming delivery."}
+                        </p>
                     </div>
-                )}
+                </div>
             </div>
 
             {/* Hidden Delivery Note Template */}
