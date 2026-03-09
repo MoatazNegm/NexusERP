@@ -83,20 +83,19 @@
               "description": "part 1",
               "quantity": 1,
               "unit": "pcs",
-              "unitCost": 100,
+              "unitCost": 200,
               "taxPercent": 14,
               "source": "CONSUMED",
               "status": "Manufactured",
-              "statusUpdatedAt": "2026-03-08T13:30:42.219Z",
+              "statusUpdatedAt": "2026-03-09T19:29:38.433Z",
               "componentNumber": "CMP-INT-2024-0001-0-0",
-              "rfpId": "p5dfckr",
-              "awardId": "vv0bxmv",
+              "awardId": "ci7t5lz",
               "supplierId": "suppliers_1771146837526",
               "supplierName": "supp1",
-              "sendPoId": "e3tzydq",
-              "poNumber": "PO-059000",
-              "procurementStartedAt": "2026-03-08T13:04:21.651Z",
-              "inventoryItemId": "inv_1772975070480_yw3vs",
+              "sendPoId": "2v0i39w",
+              "poNumber": "PO-536517",
+              "procurementStartedAt": "2026-03-09T14:45:38.203Z",
+              "inventoryItemId": "inv_1773067546456_4rkpa",
               "consumedQty": 1
             },
             {
@@ -104,30 +103,30 @@
               "description": "part 2",
               "quantity": 1,
               "unit": "pcs",
-              "unitCost": 200,
+              "unitCost": 100,
               "taxPercent": 14,
-              "source": "PROCUREMENT",
+              "source": "CONSUMED",
               "status": "Manufactured",
-              "statusUpdatedAt": "2026-03-08T13:30:42.219Z",
+              "statusUpdatedAt": "2026-03-09T19:29:38.433Z",
               "componentNumber": "CMP-INT-2024-0001-0-1",
-              "rfpId": "p5dfckr",
-              "awardId": "vv0bxmv",
+              "awardId": "ci7t5lz",
               "supplierId": "suppliers_1771146837526",
               "supplierName": "supp1",
-              "sendPoId": "e3tzydq",
-              "poNumber": "PO-059000",
-              "procurementStartedAt": "2026-03-08T13:04:21.651Z",
-              "inventoryItemId": "inv_1772975085220_01jdn"
+              "sendPoId": "2v0i39w",
+              "poNumber": "PO-536517",
+              "procurementStartedAt": "2026-03-09T14:45:38.203Z",
+              "inventoryItemId": "inv_1773067549008_r9vo8",
+              "consumedQty": 1
             }
           ],
           "isAccepted": false,
           "manufacturedQty": 16000,
           "hubReceivedQty": 16000,
-          "approvedForDispatchQty": 11378,
-          "status": "Manufactured",
-          "dispatchedQty": 11378,
-          "shippedQty": 300,
-          "deliveredQty": 300
+          "approvedForDispatchQty": 16000,
+          "dispatchedQty": 16000,
+          "shippedQty": 16000,
+          "deliveredQty": 16000,
+          "status": "Manufactured"
         }
       ],
       "logs": [
@@ -192,217 +191,316 @@
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:04:04.124Z",
-          "message": "Sent RFP batch for 2 components (RFP ID: p5dfckr)",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-03-08T13:04:04.127Z",
-          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-03-08T13:04:16.417Z",
-          "message": "Awarded Tender batch for 2 components to supp1 (Award ID: vv0bxmv)",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-03-08T13:04:21.651Z",
-          "message": "Issued PO batch PO-059000 for 2 components (PO Group ID: e3tzydq)",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-03-08T13:04:30.480Z",
-          "message": "Component Received to Stock & Reserved for Factory: part 1",
-          "status": "WAITING_SUPPLIERS",
-          "user": "System"
-        },
-        {
-          "timestamp": "2026-03-08T13:04:33.993Z",
+          "timestamp": "2026-03-09T14:01:45.385Z",
           "message": "[SYSTEM] deliveryWarningDays Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:04:45.220Z",
+          "timestamp": "2026-03-09T14:01:45.945Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T14:01:46.497Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T14:45:20.347Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T14:45:34.640Z",
+          "message": "Awarded Tender batch for 2 components to supp1 (Award ID: ci7t5lz)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T14:45:34.641Z",
+          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T14:45:38.203Z",
+          "message": "Issued PO batch PO-536517 for 2 components (PO Group ID: 2v0i39w)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T14:45:46.456Z",
+          "message": "Component Received to Stock & Reserved for Factory: part 1",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T14:45:49.009Z",
           "message": "Component Received to Stock & Reserved for Factory: part 2",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:04:45.220Z",
+          "timestamp": "2026-03-09T14:45:49.009Z",
           "message": "[AUTO] Procurement Complete: All components reserved. Status moved from WAITING_SUPPLIERS to WAITING_FACTORY",
           "status": "WAITING_FACTORY",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:04:55.050Z",
+          "timestamp": "2026-03-09T14:45:55.983Z",
           "message": "Production Started: Released to Floor",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:04:55.070Z",
+          "timestamp": "2026-03-09T14:45:55.998Z",
           "message": "[Factory] Consumed 1.00 units of part 1. (1.00/1 total)",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:04:59.399Z",
-          "message": "Manufactured 8000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14% (8000/16000)",
+          "timestamp": "2026-03-09T14:45:59.600Z",
+          "message": "Manufactured 1000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14% (1000/16000)",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:05:05.545Z",
-          "message": "Hub Intake: 8000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "timestamp": "2026-03-09T14:46:17.910Z",
+          "message": "Payment of 200 recorded. Bal: 13,844.8",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:05:33.414Z",
-          "message": "Payment of 10000 recorded. Bal: 4,044.8",
+          "timestamp": "2026-03-09T14:46:27.872Z",
+          "message": "Payment of 1800 recorded. Bal: 12,044.8",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:06:16.018Z",
-          "message": "Finance Partial Receipt for Dispatch: 200 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "timestamp": "2026-03-09T14:46:35.926Z",
+          "message": "Hub Intake: 1000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:06:23.707Z",
-          "message": "Finance Partial Receipt for Dispatch: 1000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "timestamp": "2026-03-09T14:47:00.960Z",
+          "message": "Manufactured 9000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14% (10000/16000)",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:13:26.240Z",
+          "timestamp": "2026-03-09T14:47:05.686Z",
+          "message": "Hub Intake: 9000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T14:47:22.273Z",
+          "message": "Finance Partial Receipt for Dispatch: 2278 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T19:17:59.097Z",
           "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:30:42.215Z",
-          "message": "Manufactured 8000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14% (16000/16000)",
+          "timestamp": "2026-03-09T19:27:32.006Z",
+          "message": "Shipment Released from Hub: 2278 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:30:42.215Z",
+          "timestamp": "2026-03-09T19:27:59.637Z",
+          "message": "Items transitioned to IN TRANSIT: 2278 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T19:28:08.086Z",
+          "message": "Customer Delivery Confirmed (Partial) & POD Filed: uploads/pod/pod-1773084487960-95631088.pdf",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T19:28:56.473Z",
+          "message": "Full payment received (Pre-payment). Operational status 'MANUFACTURING' retained.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T19:29:21.976Z",
+          "message": "Finance Partial Receipt for Dispatch: 7722 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T19:29:28.782Z",
+          "message": "[Factory] Consumed 1.00 units of part 2. (1.00/1 total)",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T19:29:38.433Z",
+          "message": "Manufactured 6000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14% (16000/16000)",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T19:29:38.433Z",
           "message": "All items manufactured. Auto-transitioned to Ready for QC/Hub",
           "status": "MANUFACTURING_COMPLETED",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:30:57.940Z",
-          "message": "Hub Intake: 8000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "timestamp": "2026-03-09T19:29:45.367Z",
+          "message": "Hub Intake: 6000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "MANUFACTURING_COMPLETED",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:30:57.940Z",
+          "timestamp": "2026-03-09T19:29:45.367Z",
           "message": "All items received at Hub. Auto-transitioned to Ready for Invoicing",
           "status": "IN_PRODUCT_HUB",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:35:01.398Z",
-          "message": "Finance Partial Receipt for Dispatch: 10178 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "timestamp": "2026-03-09T19:30:04.927Z",
+          "message": "Shipment Released from Hub: 7722 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "IN_PRODUCT_HUB",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T13:41:54.683Z",
-          "message": "[SYSTEM] Hub Processing Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "timestamp": "2026-03-09T19:30:47.886Z",
+          "message": "Finance Partial Receipt for Dispatch: 5999 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "IN_PRODUCT_HUB",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T14:07:41.253Z",
-          "message": "Shipment Released from Hub: 300 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "timestamp": "2026-03-09T19:30:55.403Z",
+          "message": "Finance Partial Receipt for Dispatch: 1 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "IN_PRODUCT_HUB",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T14:51:59.622Z",
-          "message": "Items transitioned to IN TRANSIT: 300 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
-          "status": "IN_PRODUCT_HUB",
+          "timestamp": "2026-03-09T19:31:37.144Z",
+          "message": "Shipment Released from Hub: 6000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "HUB_RELEASED",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-08T14:52:12.969Z",
-          "message": "Customer Delivery Confirmed (Partial) & POD Filed: uploads/pod/pod-1772981532871-745734877.pdf",
-          "status": "PARTIAL_DELIVERY",
+          "timestamp": "2026-03-09T19:32:04.231Z",
+          "message": "Items transitioned to IN TRANSIT: 13722 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "HUB_RELEASED",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-09T14:17:01.792Z",
-          "message": "Shipment Released from Hub: 11078 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
-          "status": "PARTIAL_DELIVERY",
+          "timestamp": "2026-03-09T19:32:11.148Z",
+          "message": "Customer Delivery Confirmed (Complete) & POD Filed: uploads/pod/pod-1773084731069-924707017.pdf",
+          "status": "DELIVERED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T19:44:28.391Z",
+          "message": "Gov. E-Invoice requested",
+          "status": "DELIVERED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-09T20:05:58.092Z",
+          "message": "Gov. E-Invoice Attached: uploads/einvoices/einvoice-1773086758032-453908152.pdf",
+          "status": "FULFILLED",
           "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
       "dataEntryTimestamp": "2026-02-26T19:17:32.187Z",
-      "status": "PARTIAL_DELIVERY",
+      "status": "FULFILLED",
       "loggingComplianceViolation": false,
       "payments": [
         {
-          "amount": 10000,
-          "date": "2026-03-08T13:05:33.273Z",
+          "amount": 200,
+          "date": "2026-03-09T14:46:17.893Z",
           "user": "System",
-          "memo": "swsdfasddad",
+          "memo": "2000",
           "receiptNumber": "RCV-001"
+        },
+        {
+          "amount": 1800,
+          "date": "2026-03-09T14:46:27.872Z",
+          "user": "System",
+          "memo": "ssdf",
+          "receiptNumber": "RCV-002"
+        },
+        {
+          "amount": 12044.800000000001,
+          "date": "2026-03-09T19:28:56.473Z",
+          "user": "System",
+          "memo": "all",
+          "receiptNumber": "RCV-003"
         }
       ],
       "deliveries": [
         {
-          "id": "DEL-1772981532968",
-          "date": "2026-03-08T14:52:12.969Z",
+          "id": "DEL-1773084488086",
+          "date": "2026-03-09T19:28:08.086Z",
           "items": [
             {
               "itemId": "temp_1772133450572_0",
-              "qty": 300
+              "qty": 2278
             }
           ],
-          "podFilePath": "uploads/pod/pod-1772981532871-745734877.pdf"
+          "podFilePath": "uploads/pod/pod-1773084487960-95631088.pdf"
+        },
+        {
+          "id": "DEL-1773084731148",
+          "date": "2026-03-09T19:32:11.148Z",
+          "items": [
+            {
+              "itemId": "temp_1772133450572_0",
+              "qty": 13722
+            }
+          ],
+          "podFilePath": "uploads/pod/pod-1773084731069-924707017.pdf"
         }
-      ]
+      ],
+      "einvoiceRequested": true,
+      "einvoiceFile": "uploads/einvoices/einvoice-1773086758032-453908152.pdf"
     }
   ],
   "inventory": [
     {
-      "id": "inv_1772975070480_yw3vs",
+      "id": "inv_1773067546456_4rkpa",
       "description": "part 1",
       "sku": "CMP-INT-2024-0001-0-0",
       "quantityInStock": 0,
       "quantityReserved": 0,
       "category": "Uncategorized",
       "unit": "pcs",
-      "lastCost": 100,
+      "lastCost": 200,
       "minStockLevel": 0,
-      "lastUpdated": "2026-03-08T13:04:30.480Z",
-      "poNumber": "PO-059000",
+      "lastUpdated": "2026-03-09T14:45:46.456Z",
+      "poNumber": "PO-536517",
       "orderRef": "INT-2024-0001"
     },
     {
-      "id": "inv_1772975085220_01jdn",
+      "id": "inv_1773067549008_r9vo8",
       "description": "part 2",
       "sku": "CMP-INT-2024-0001-0-1",
-      "quantityInStock": 1,
+      "quantityInStock": 0,
       "quantityReserved": 0,
       "category": "Uncategorized",
       "unit": "pcs",
-      "lastCost": 200,
+      "lastCost": 100,
       "minStockLevel": 0,
-      "lastUpdated": "2026-03-08T13:04:45.220Z",
-      "poNumber": "PO-059000",
+      "lastUpdated": "2026-03-09T14:45:49.008Z",
+      "poNumber": "PO-536517",
       "orderRef": "INT-2024-0001"
     }
   ],
@@ -621,31 +719,51 @@
       ]
     },
     {
-      "id": "nt_1772975073993_0cq7",
+      "id": "nt_1773064905385_crt8",
       "journalKey": "delivery_passed_orders_1772133452187",
       "orderId": "orders_1772133452187",
       "type": "delivery_passed",
-      "sentAt": "2026-03-08T13:04:33.993Z",
+      "sentAt": "2026-03-09T14:01:45.385Z",
       "recipients": [
         "erpalerts@quickstor.net"
       ]
     },
     {
-      "id": "nt_1772975606240_gknv",
+      "id": "nt_1773064905945_xodf",
+      "journalKey": "comp_pendingOfferLimitHrs_orders_1772133452187_temp_1772133450572_0_comp_1772133459732_rr0mj",
+      "orderId": "orders_1772133452187",
+      "type": "comp_pendingOfferLimitHrs",
+      "sentAt": "2026-03-09T14:01:45.945Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1773064906497_xh2p",
+      "journalKey": "comp_pendingOfferLimitHrs_orders_1772133452187_temp_1772133450572_0_comp_1772133478197_gyjhz",
+      "orderId": "orders_1772133452187",
+      "type": "comp_pendingOfferLimitHrs",
+      "sentAt": "2026-03-09T14:01:46.497Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1773067520347_v124",
+      "journalKey": "threshold_pendingOfferLimitHrs_orders_1772133452187",
+      "orderId": "orders_1772133452187",
+      "type": "threshold_pendingOfferLimitHrs",
+      "sentAt": "2026-03-09T14:45:20.347Z",
+      "recipients": [
+        "erpalerts@quickstor.net"
+      ]
+    },
+    {
+      "id": "nt_1773083879097_6xwo",
       "journalKey": "threshold_mfgFinishLimitHrs_orders_1772133452187",
       "orderId": "orders_1772133452187",
       "type": "threshold_mfgFinishLimitHrs",
-      "sentAt": "2026-03-08T13:13:26.240Z",
-      "recipients": [
-        "erpalerts@quickstor.net"
-      ]
-    },
-    {
-      "id": "nt_1772977314683_8xqf",
-      "journalKey": "threshold_productHubLimitHrs_orders_1772133452187",
-      "orderId": "orders_1772133452187",
-      "type": "threshold_productHubLimitHrs",
-      "sentAt": "2026-03-08T13:41:54.683Z",
+      "sentAt": "2026-03-09T19:17:59.097Z",
       "recipients": [
         "erpalerts@quickstor.net"
       ]
@@ -728,7 +846,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:e2830a7f4ad7af54f6feea2a7b99bf78:b1cdc0079292b3873b3fb41e9bd79ae88b666a37b815fe98b0f4f4b11f9fb036",
+        "password": "ENC:164592bfe0de12b7ff5683b9b2bf2d0d:5b91632b4150e91ea9828467e65bdb135cf0f8a96855534b3f45f279ad69ba20",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -784,7 +902,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:77c351e2b7ae67a867d3b4c088ae90df:287a5f7898b330b8ee53ee6af5f11b7f7b8158496ab0702b2ffde128eb87a0d5f36703d6407013f26929a8b12d7ba498",
+        "apiKey": "ENC:2d46449c7b6dca051e8b9f98889a29bf:671f54bcfcfe7789d9616c99b6a72b6b919ac49bff795d1061c2d6bc386c2016e5f5407804bf348d8c970ac5266699db",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -809,7 +927,7 @@
         "userGroups_1770925213983"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:daa528b7d9f73de1a3cefdc146881832:fe7ed02c113c2abeac1a6beccbabda5fcfd3cd6b6bb372c7cb6b5dd11e64cc3c78ba40af618cd0b4139973524a46f0ef",
+        "apiKey": "ENC:3d0cfb89f05f18bcb4f9128b3400373f:6e8dfc45a17321224ec2ab5abc1b0ef311d6e0126ec661477b90e7e9a7d2ff63e56b7826c116e667b62d0ec848bc73f1",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

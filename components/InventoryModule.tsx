@@ -121,7 +121,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
 
   const invoicedAwaitingDispatch = useMemo(() => {
     return allOrders.filter(o => {
-      if (![OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE, OrderStatus.INVOICED, OrderStatus.HUB_RELEASED].includes(o.status)) return false;
+      if ([OrderStatus.REJECTED, OrderStatus.IN_HOLD].includes(o.status)) return false;
       return o.items.some(i => (i.approvedForDispatchQty || 0) > (i.dispatchedQty || 0));
     });
   }, [allOrders]);

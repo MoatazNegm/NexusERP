@@ -567,8 +567,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               const isBreach = pl.markupPct < config.settings.minimumMarginPct;
               const showRow = activeTab === 'orders' ||
                 (activeTab === 'margins' && o.status === OrderStatus.NEGATIVE_MARGIN) ||
-                (activeTab === 'billing' && [OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status)) ||
-                (activeTab === 'ar' && [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(o.status));
+                (activeTab === 'billing' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
+                (activeTab === 'ar' && ([OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(o.status) || o.items.some(i => (i.approvedForDispatchQty || 0) > 0)));
 
               if (!showRow) return null;
 

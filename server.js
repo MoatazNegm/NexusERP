@@ -1663,7 +1663,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                 const allDelivered = order.items.every(i => (i.deliveredQty || 0) >= i.quantity);
                 if (allDelivered) {
-                    order.status = OrderStatus.DELIVERED;
+                    if (order.einvoiceRequested && !order.einvoiceFile) {
+                        order.status = OrderStatus.DELIVERED;
+                    } else {
+                        order.status = OrderStatus.FULFILLED;
+                    }
                 }
 
                 order.logs.push(createAuditLog(`Customer Delivery Confirmed (${allDelivered ? 'Complete' : 'Partial'}) & POD Filed: ${payload.podFilePath}`, order.status, user));
@@ -1677,6 +1681,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             case 'attach-einvoice':
                 if (!payload.einvoiceFile) throw new Error("E-Invoice file is required.");
                 order.einvoiceFile = payload.einvoiceFile;
+
+                const fullyDelivered = order.items.every(i => (i.deliveredQty || 0) >= i.quantity);
+                if (fullyDelivered && order.status === OrderStatus.DELIVERED) {
+                    order.status = OrderStatus.FULFILLED;
+                }
+
                 order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}`, order.status, user));
                 break;
 
