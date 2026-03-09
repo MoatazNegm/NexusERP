@@ -9,7 +9,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'margins' | 'billing' | 'ar' | 'entities' | 'tax_clearances';
+type FinanceTab = 'orders' | 'margins' | 'billing' | 'entities' | 'tax_clearances';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   const status = order.status;
@@ -516,7 +516,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
         <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
-          {(['orders', 'margins', 'billing', 'ar', 'entities', 'tax_clearances'] as const).map(tab => (
+          {(['orders', 'margins', 'billing', 'entities', 'tax_clearances'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -677,8 +677,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               const isBreach = pl.markupPct < config.settings.minimumMarginPct;
               const showRow = activeTab === 'orders' ||
                 (activeTab === 'margins' && o.status === OrderStatus.NEGATIVE_MARGIN) ||
-                (activeTab === 'billing' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
-                (activeTab === 'ar' && ([OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(o.status) || o.items.some(i => (i.approvedForDispatchQty || 0) > 0)));
+                (activeTab === 'billing' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0))));
 
               if (!showRow) return null;
 
