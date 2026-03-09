@@ -43,6 +43,19 @@ const einvoiceStorage = multer.diskStorage({
 });
 const uploadEInvoice = multer({ storage: einvoiceStorage });
 
+const whtStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const dir = path.join(__dirname, 'uploads', 'wht_certificates');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'wht-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const uploadWht = multer({ storage: whtStorage });
+
 const OrderStatus = {
     LOGGED: 'LOGGED',
     TECHNICAL_REVIEW: 'TECHNICAL_REVIEW',
@@ -1028,6 +1041,66 @@ app.get('/api/v1/procurement/history', (req, res) => {
     res.json(history.slice(0, 20)); // Limit to last 20 records
 });
 
+app.post('/api/v1/customers/merge', (req, res) => {
+    try {
+        const { primaryId, secondaryIds } = req.body;
+        console.log(`[Merge] Attempting to merge clusters into ${primaryId}. Secondaries:`, secondaryIds);
+
+        if (!primaryId || !secondaryIds || !Array.isArray(secondaryIds)) {
+            return res.status(400).json({ error: "Missing merge parameters" });
+        }
+
+        const db = readDb();
+        const primary = db.customers.find(c => c.id === primaryId);
+        if (!primary) return res.status(404).json({ error: "Primary customer not found" });
+
+        const user = req.headers['x-user'] || 'System';
+        const secondaryNames = [];
+        const deletedIds = [];
+
+        // Identify secondary customers and their names
+        secondaryIds.forEach(id => {
+            const idx = db.customers.findIndex(c => c.id === id);
+            if (idx !== -1) {
+                secondaryNames.push(db.customers[idx].name);
+                deletedIds.push(id);
+                db.customers.splice(idx, 1);
+            }
+        });
+
+        if (deletedIds.length === 0) return res.status(400).json({ error: "No valid secondary customers found" });
+
+        // Migrate Orders
+        let ordersMigrated = 0;
+        db.orders.forEach(order => {
+            if (secondaryNames.includes(order.customerName)) {
+                order.customerName = primary.name;
+                if (!order.logs) order.logs = [];
+                order.logs.push(createAuditLog(`Customer record migrated to ${primary.name} due to merge`, order.status, user));
+                ordersMigrated++;
+            }
+        });
+
+        // Audit log for primary customer
+        if (!primary.logs) primary.logs = [];
+        primary.logs.push(createAuditLog(`Merged ${deletedIds.length} duplicate records. Migrated ${ordersMigrated} orders.`, undefined, user));
+
+        if (writeDb(db)) {
+            console.log(`[Merge] Success. Deleted ${deletedIds.length} records, migrated ${ordersMigrated} orders.`);
+            res.json({
+                message: `Successfully merged ${deletedIds.length} customers and migrated ${ordersMigrated} orders.`,
+                deletedIds
+            });
+        } else {
+            console.error(`[Merge] Database write failed.`);
+            res.status(500).json({ error: "Failed to save changes to database" });
+        }
+    } catch (e) {
+        console.error(`[Merge] UNEXPECTED ERROR:`, e);
+        res.status(500).json({ error: `Server error: ${e.message}` });
+    }
+});
+
 const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules'];
 COLLECTIONS.forEach(col => {
     app.get(`/api/v1/${col}`, getCollection(col));
@@ -1402,17 +1475,22 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 let revenue = 0;
                 order.items.forEach(it => revenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
 
+                let targetRevenue = revenue;
+                if (order.appliesWithholdingTax) {
+                    targetRevenue = revenue * 0.99; // Deduct 1% WHT
+                }
+
                 const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(order.status);
 
-                if (totalPaid >= revenue) {
+                if (totalPaid >= (targetRevenue - 0.01)) { // Added 0.01 for floating point precision
                     if (isLateStage) {
                         order.status = OrderStatus.FULFILLED;
-                        order.logs.push(createAuditLog(`Full payment reconciled. Order lifecycle FULFILLED.`, order.status, user));
+                        order.logs.push(createAuditLog(`Full payment reconciled${order.appliesWithholdingTax ? ' (with 1% WHT deducted)' : ''}. Order lifecycle FULFILLED.`, order.status, user));
                     } else {
-                        order.logs.push(createAuditLog(`Full payment received (Pre-payment). Operational status '${order.status}' retained.`, order.status, user));
+                        order.logs.push(createAuditLog(`Full payment received (Pre-payment)${order.appliesWithholdingTax ? ' (with 1% WHT deducted)' : ''}. Operational status '${order.status}' retained.`, order.status, user));
                     }
                 } else {
-                    order.logs.push(createAuditLog(`Payment of ${payload.amount} recorded. Bal: ${Math.max(0, revenue - totalPaid).toLocaleString()}`, order.status, user));
+                    order.logs.push(createAuditLog(`Payment of ${payload.amount} recorded. Bal: ${Math.max(0, targetRevenue - totalPaid).toLocaleString()}`, order.status, user));
                 }
                 break;
 
@@ -1888,6 +1966,16 @@ app.post('/api/upload-pod', uploadPod.single('podFile'), (req, res) => {
 });
 
 app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, error: "No file" });
+        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        res.json({ success: true, filePath: relativePath });
+    } catch (err) {
+        res.status(500).json({ success: false, error: "Upload failed" });
+    }
+});
+
+app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');

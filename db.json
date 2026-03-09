@@ -16,43 +16,10 @@
           "timestamp": "2026-02-15T09:12:55.966Z",
           "message": "Entity registered",
           "user": "System"
-        }
-      ]
-    },
-    {
-      "id": "customers_1771170343375",
-      "name": "Unilever Mashreq for Import and Export (LLC)",
-      "email": "",
-      "phone": "",
-      "address": "15 Sphinx Square, EL-Mohandeseen, Giza (6th floor) Cairo, dummy Egypt",
-      "paymentTermDays": 30,
-      "contactName": "Ahmed Hemedah",
-      "contactPhone": "",
-      "contactEmail": "",
-      "contactAddress": "15 Sphinx Square, EL-Mohandeseen, Giza (6th floor) Cairo, dummy Egypt",
-      "logs": [
+        },
         {
-          "timestamp": "2026-02-15T15:45:43.377Z",
-          "message": "Entity registered",
-          "user": "System"
-        }
-      ]
-    },
-    {
-      "id": "customers_1772116765845",
-      "name": "Unilever",
-      "email": "",
-      "phone": "",
-      "address": "",
-      "paymentTermDays": 30,
-      "contactName": "",
-      "contactPhone": "",
-      "contactEmail": "",
-      "contactAddress": "",
-      "logs": [
-        {
-          "timestamp": "2026-02-26T14:39:25.845Z",
-          "message": "Entity registered",
+          "timestamp": "2026-03-09T22:37:40.745Z",
+          "message": "Merged 2 duplicate records. Migrated 1 orders.",
           "user": "System"
         }
       ]
@@ -61,7 +28,7 @@
   "orders": [
     {
       "id": "orders_1772133452187",
-      "customerName": "Unilever Mashreq for Import and Export (LLC)",
+      "customerName": "Unilever Mashreq for Import and Export",
       "customerReferenceNumber": "PO16948286",
       "orderDate": "2025-08-31",
       "paymentSlaDays": 30,
@@ -413,15 +380,15 @@
           "user": "System"
         },
         {
-          "timestamp": "2026-03-09T20:05:58.092Z",
-          "message": "Gov. E-Invoice Attached: uploads/einvoices/einvoice-1773086758032-453908152.pdf",
-          "status": "FULFILLED",
+          "timestamp": "2026-03-09T22:37:40.745Z",
+          "message": "Customer record migrated to Unilever Mashreq for Import and Export due to merge",
+          "status": "DELIVERED",
           "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0001",
       "dataEntryTimestamp": "2026-02-26T19:17:32.187Z",
-      "status": "FULFILLED",
+      "status": "DELIVERED",
       "loggingComplianceViolation": false,
       "payments": [
         {
@@ -470,8 +437,7 @@
           "podFilePath": "uploads/pod/pod-1773084731069-924707017.pdf"
         }
       ],
-      "einvoiceRequested": true,
-      "einvoiceFile": "uploads/einvoices/einvoice-1773086758032-453908152.pdf"
+      "einvoiceRequested": true
     }
   ],
   "inventory": [
@@ -846,7 +812,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:164592bfe0de12b7ff5683b9b2bf2d0d:5b91632b4150e91ea9828467e65bdb135cf0f8a96855534b3f45f279ad69ba20",
+        "password": "ENC:0ab6097e0df5c30ad3edc30fc0c7f2cd:4bd68b50e015bb1074705154c715598f7b37b6c9218cdb767a07d4bdb14fad22",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -902,7 +868,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:2d46449c7b6dca051e8b9f98889a29bf:671f54bcfcfe7789d9616c99b6a72b6b919ac49bff795d1061c2d6bc386c2016e5f5407804bf348d8c970ac5266699db",
+        "apiKey": "ENC:0953cde8e59fe05e8c01038baedb2ee1:53273c0efc1d0b54455c77f5e9e2281d1a767e5704d55ac130481d2257125dbb830a63c29a312457265bd8703e7fd86d",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -927,7 +893,7 @@
         "userGroups_1770925213983"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:3d0cfb89f05f18bcb4f9128b3400373f:6e8dfc45a17321224ec2ab5abc1b0ef311d6e0126ec661477b90e7e9a7d2ff63e56b7826c116e667b62d0ec848bc73f1",
+        "apiKey": "ENC:a27008f31d8164c6c43d50bec2e8b534:dd024c15383a5d7e33e6a0d21d8a8515ee1925e348a89f5f625b309ae07c57ac2f09181a9805d42602b8f551267fd02f",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

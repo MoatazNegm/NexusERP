@@ -9,7 +9,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'margins' | 'billing' | 'ar' | 'entities';
+type FinanceTab = 'orders' | 'margins' | 'billing' | 'ar' | 'entities' | 'tax_clearances';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   const status = order.status;
@@ -79,6 +79,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [whtPeriod, setWhtPeriod] = useState<'this_year' | 'last_year'>('this_year');
+  const [whtSearch, setWhtSearch] = useState('');
 
   const [decisionModal, setDecisionModal] = useState<{
     type: 'orderHold' | 'orderReject' | 'customerHold' | 'supplierBlacklist' | 'marginRelease' | 'billing' | 'payment' | 'cancelInvoice' | 'cancelPayment' | 'revertToSourcing';
@@ -139,7 +141,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
     const paid = (order.payments || []).reduce((s, p) => s + p.amount, 0);
     const marginPct = revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0;
     const markupPct = cost > 0 ? ((revenue - cost) / cost) * 100 : (revenue > 0 ? 100 : 0);
-    return { revenue, grossRevenue, cost, marginPct, markupPct, paid, outstanding: Math.max(0, grossRevenue - paid) };
+    const targetRev = order.appliesWithholdingTax ? grossRevenue * 0.99 : grossRevenue;
+    return { revenue, grossRevenue, cost, marginPct, markupPct, paid, outstanding: Math.max(0, targetRev - paid) };
   };
 
   const ordersWithPL = useMemo(() => orders.map(o => ({ ...o, pl: getPL(o) })), [orders]);
@@ -151,6 +154,41 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)
     );
   }, [ordersWithPL, search]);
+
+  const whtOrders = useMemo(() => {
+    const q = whtSearch.toLowerCase().trim();
+    const now = new Date();
+    const year = whtPeriod === 'this_year' ? now.getFullYear() : now.getFullYear() - 1;
+
+    return orders.filter(o =>
+      o.appliesWithholdingTax &&
+      o.status === OrderStatus.FULFILLED &&
+      (o.customerName.toLowerCase().includes(q) || o.internalOrderNumber.toLowerCase().includes(q)) &&
+      new Date(o.orderDate || o.dataEntryTimestamp).getFullYear() === year
+    );
+  }, [orders, whtSearch, whtPeriod]);
+
+  const handleUploadWHT = async (orderId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsProcessing(true);
+    try {
+      const formData = new FormData();
+      formData.append('whtFile', file);
+      const res = await fetch('http://localhost:3005/api/upload-wht-certificate', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.success) {
+        await dataService.updateOrder(orderId, { whtCertificateFile: data.filePath });
+        await fetchData();
+      } else {
+        throw new Error("Upload failed on server");
+      }
+    } catch (err) {
+      alert("Failed to attach Withholding Tax Certificate. Ensure the backend is running and the file is valid.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleExecuteDecision = async () => {
     if (!decisionModal) return;
@@ -477,26 +515,46 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       </div>
 
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-        <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner">
-          {(['orders', 'margins', 'billing', 'ar', 'entities'] as const).map(tab => (
+        <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
+          {(['orders', 'margins', 'billing', 'ar', 'entities', 'tax_clearances'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`px-8 py-3 rounded-xl text-[10px] whitespace-nowrap font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
               {tab === 'margins' && orders.some(o => o.status === OrderStatus.NEGATIVE_MARGIN) && <span className="mr-2 w-2 h-2 rounded-full bg-rose-50 inline-block animate-pulse"></span>}
-              {tab.replace(/([A-Z])/g, ' $1')}
+              {tab.replace(/([A-Z_])/g, ' $1').replace('_', ' ')}
             </button>
           ))}
         </div>
-        <div className="relative w-full lg:w-96">
-          <input
-            type="text" placeholder="Filter Ledger..."
-            className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
-            value={search} onChange={e => setSearch(e.target.value)}
-          />
-          <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
-        </div>
+        {activeTab === 'tax_clearances' ? (
+          <div className="flex gap-4 w-full lg:w-auto">
+            <div className="relative group w-40">
+              <select className="w-full pl-10 pr-4 py-3 bg-white border-2 border-slate-100 rounded-2xl text-[10px] font-black uppercase appearance-none focus:border-blue-500 transition-all outline-none text-slate-700 shadow-sm" value={whtPeriod} onChange={e => setWhtPeriod(e.target.value as 'this_year' | 'last_year')}>
+                <option value="this_year">This Year</option>
+                <option value="last_year">Last Year</option>
+              </select>
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"><i className="fa-solid fa-calendar text-xs"></i></div>
+            </div>
+            <div className="relative flex-1 lg:w-64">
+              <input
+                type="text" placeholder="Search Customer..."
+                className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
+                value={whtSearch} onChange={e => setWhtSearch(e.target.value)}
+              />
+              <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+            </div>
+          </div>
+        ) : (
+          <div className="relative w-full lg:w-96">
+            <input
+              type="text" placeholder="Filter Ledger..."
+              className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
+              value={search} onChange={e => setSearch(e.target.value)}
+            />
+            <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
@@ -509,6 +567,13 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   <th className="px-8 py-5 text-white">Entity Type</th>
                   <th className="px-8 py-5 text-white">Account Status</th>
                   <th className="px-8 py-5 text-white text-right">Credit Action</th>
+                </>
+              ) : activeTab === 'tax_clearances' ? (
+                <>
+                  <th className="px-8 py-5 text-white">Tax PO Details</th>
+                  <th className="px-8 py-5 text-white">Target Revenue (99%)</th>
+                  <th className="px-8 py-5 text-white">WHT Value (1%)</th>
+                  <th className="px-8 py-5 text-white text-right">Clearance Status</th>
                 </>
               ) : (
                 <>
@@ -561,6 +626,51 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                     </td>
                   </tr>
                 ))}
+              </>
+            ) : activeTab === 'tax_clearances' ? (
+              <>
+                {whtOrders.map(o => {
+                  let grossRevenue = 0;
+                  o.items.forEach(it => grossRevenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+                  const whtAmount = grossRevenue * 0.01;
+                  const targetRevenue = grossRevenue * 0.99;
+
+                  return (
+                    <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="px-8 py-6">
+                        <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
+                        <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
+                      </td>
+                      <td className="px-8 py-6 text-sm font-black text-slate-700">{targetRevenue.toLocaleString()} L.E.</td>
+                      <td className="px-8 py-6 text-sm font-black text-amber-600">{whtAmount.toLocaleString()} L.E.</td>
+                      <td className="px-8 py-6 text-right">
+                        {o.whtCertificateFile ? (
+                          <a href={`http://localhost:3005/${o.whtCertificateFile}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-100 transition-all">
+                            <i className="fa-solid fa-file-shield text-base"></i> Tax Cleared
+                          </a>
+                        ) : (
+                          <div className="flex flex-col items-end gap-2">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-600 border border-rose-100 rounded-lg text-[9px] font-black uppercase">
+                              <i className="fa-solid fa-clock"></i> Pending Proof
+                            </span>
+                            <label className="cursor-pointer px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-black transition-all inline-flex items-center gap-2 shadow-lg shadow-slate-200">
+                              <i className={`fa-solid ${isProcessing ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'}`}></i> Upload Certificate
+                              <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={isProcessing} onChange={e => handleUploadWHT(o.id, e)} />
+                            </label>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+                {whtOrders.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-8 py-16 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">
+                      <i className="fa-solid fa-file-invoice-dollar text-4xl block mb-3 opacity-20"></i>
+                      No Tax Clearance Records Found
+                    </td>
+                  </tr>
+                )}
               </>
             ) : filteredOrders.map(o => {
               const pl = o.pl;

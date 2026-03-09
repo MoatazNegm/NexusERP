@@ -109,10 +109,25 @@ class DataService {
   async setCustomerHold(id: string, isHold: boolean, reason: string) {
     return this.put('customers', id, { isHold, holdReason: reason });
   }
-  async isCustomerOverdue(name: string) {
-    const customers = await this.getCustomers();
-    const cust = customers.find(c => c.name === name);
-    return cust?.isHold || false;
+  async mergeCustomers(primaryId: string, secondaryIds: string[]) {
+    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
+      ? JSON.parse(localStorage.getItem('nexus_user')!).username
+      : 'System';
+
+    const res = await fetch(`${BACKEND_URL}/api/v1/customers/merge`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user': user
+      },
+      body: JSON.stringify({ primaryId, secondaryIds })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Merge failed");
+    }
+    return await res.json();
   }
 
   async getSuppliers() { return this.get<Supplier>('suppliers'); }

@@ -44,6 +44,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
           if (comp.unitCost === 0 && comp.source === 'PROCUREMENT') hasPendingCosts = true;
         });
       });
+      if (order.appliesWithholdingTax) revenue *= 0.99;
+
       const marginAmt = revenue - cost;
       const marginPctOnSales = revenue > 0 ? (marginAmt / revenue) * 100 : 0;
       const markupPct = cost > 0 ? (marginAmt / cost) * 100 : (revenue > 0 ? 100 : 0);
@@ -74,7 +76,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
 
   const isOrderInPeriod = (order: CustomerOrder, range: { start: Date, end: Date } | null) => {
     if (!range) return true;
-    const orderDate = new Date(order.poDate || order.receivedAt || Date.now());
+    const orderDate = new Date(order.orderDate || order.dataEntryTimestamp || Date.now());
     return orderDate >= range.start && orderDate <= range.end;
   };
 
@@ -88,6 +90,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
         totalCostInclTax += (comp.quantity * (comp.unitCost || 0) * (1 + taxVal));
       });
     });
+    if (order.appliesWithholdingTax) revenueExclTax *= 0.99;
+
     const netProfit = revenueExclTax - totalCostInclTax;
     return { revenueExclTax, totalCostInclTax, netProfit };
   };
@@ -96,7 +100,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
   const companyAnalysisProfit = useMemo(() => orders.reduce((sum, o) => (isOrderInPeriod(o, analysisRange) && o.status !== OrderStatus.REJECTED ? sum + calculateAnalysisMetrics(o).netProfit : sum), 0), [orders, analysisRange]);
 
   const analysisOrdersFiltered = useMemo(() => orders.filter(o => {
-    const custMatch = selectedCustomerId === 'all' || o.customerId === selectedCustomerId || o.customerName === (customers.find(c => c.id === selectedCustomerId)?.name);
+    const custMatch = selectedCustomerId === 'all' || o.customerName === (customers.find(c => c.id === selectedCustomerId)?.name);
     return custMatch && isOrderInPeriod(o, analysisRange) && o.status !== OrderStatus.REJECTED;
   }), [orders, selectedCustomerId, analysisRange, customers]);
 

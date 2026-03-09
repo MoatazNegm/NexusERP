@@ -26,7 +26,12 @@ const LogTimeline: React.FC<{ logs: LogEntry[] }> = ({ logs }) => (
   </div>
 );
 
-type CRMTab = 'form' | 'history';
+type CRMTab = 'form' | 'history' | 'duplicates';
+
+interface DuplicateGroup {
+  primaryId: string;
+  customers: Customer[];
+}
 
 interface CRMModuleProps {
   refreshKey?: number;
@@ -45,7 +50,8 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
     contactPhone: '',
     contactAddress: '',
     contactEmail: '',
-    paymentTermDays: 45
+    paymentTermDays: 45,
+    appliesWithholdingTax: false
   });
 
   const [activeTab, setActiveTab] = useState<CRMTab>('form');
@@ -53,6 +59,8 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
+  const [merging, setMerging] = useState(false);
 
   useEffect(() => {
     loadCustomers();
@@ -61,6 +69,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
   const loadCustomers = async () => {
     const data = await dataService.getCustomers();
     setCustomers(data);
+    findDuplicates(data);
     setLoading(false);
 
     if (editingCustomer) {
@@ -80,11 +89,59 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
       contactPhone: '',
       contactAddress: '',
       contactEmail: '',
-      paymentTermDays: 45
+      paymentTermDays: 45,
+      appliesWithholdingTax: false
     });
     setEditingCustomer(null);
     setIsFormVisible(false);
     setActiveTab('form');
+  };
+
+  const findDuplicates = (allCustomers: Customer[]) => {
+    const groups: DuplicateGroup[] = [];
+    const processed = new Set<string>();
+
+    const normalize = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    allCustomers.forEach(c1 => {
+      if (processed.has(c1.id)) return;
+      const cluster = [c1];
+      const n1 = normalize(c1.name);
+
+      allCustomers.forEach(c2 => {
+        if (c1.id === c2.id || processed.has(c2.id)) return;
+        const n2 = normalize(c2.name);
+
+        // Similarity criteria: subset or subset after normalization
+        const isSubset = n1.includes(n2) || n2.includes(n1) || c1.name.toLowerCase().includes(c2.name.toLowerCase()) || c2.name.toLowerCase().includes(c1.name.toLowerCase());
+
+        if (isSubset) {
+          cluster.push(c2);
+        }
+      });
+
+      if (cluster.length > 1) {
+        cluster.forEach(c => processed.add(c.id));
+        groups.push({ primaryId: cluster[0].id, customers: cluster });
+      }
+    });
+
+    setDuplicateGroups(groups);
+  };
+
+  const handleMerge = async (primaryId: string, secondaryIds: string[]) => {
+    if (!confirm(`Are you sure you want to merge these customers? All POs and activity will be migrated to the primary record, and duplicate records will be deleted.`)) return;
+
+    setMerging(true);
+    try {
+      await dataService.mergeCustomers(primaryId, secondaryIds);
+      await loadCustomers();
+      alert("Customers merged successfully!");
+    } catch (e: any) {
+      alert("Merge failed: " + e.message);
+    } finally {
+      setMerging(false);
+    }
   };
 
   const handleEdit = (cust: Customer, defaultTab: CRMTab = 'form') => {
@@ -98,7 +155,8 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
       contactPhone: cust.contactPhone || '',
       contactAddress: cust.contactAddress || '',
       contactEmail: cust.contactEmail || '',
-      paymentTermDays: cust.paymentTermDays || 45
+      paymentTermDays: cust.paymentTermDays || 45,
+      appliesWithholdingTax: cust.appliesWithholdingTax || false
     });
     setEditingCustomer(cust);
     setActiveTab(defaultTab);
@@ -161,6 +219,19 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
           <i className={`fa-solid ${isFormVisible ? 'fa-xmark' : 'fa-plus'}`}></i>
           {isFormVisible ? 'Cancel' : 'New Customer'}
         </button>
+        <button
+          onClick={() => {
+            setIsFormVisible(true);
+            setActiveTab('duplicates');
+          }}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all"
+        >
+          <i className="fa-solid fa-wand-magic-sparkles"></i>
+          Check Duplicates
+          {duplicateGroups.length > 0 && (
+            <span className="bg-white text-indigo-600 text-[10px] px-1.5 py-0.5 rounded-full">{duplicateGroups.length}</span>
+          )}
+        </button>
       </div>
 
       {isFormVisible && (
@@ -185,6 +256,14 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                 {activeTab === 'history' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-600"></div>}
               </button>
             )}
+            <button
+              onClick={() => setActiveTab('duplicates')}
+              className={`flex-1 px-6 py-4 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all relative ${activeTab === 'duplicates' ? 'text-amber-600 bg-amber-50/30' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              <i className="fa-solid fa-clone"></i>
+              Duplicate Resolution
+              {activeTab === 'duplicates' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-amber-600"></div>}
+            </button>
           </div>
 
           <div className="p-0">
@@ -233,6 +312,24 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                         </div>
                       </div>
                     </div>
+
+                    <div className="mt-6 p-4 bg-indigo-50 rounded-xl border border-indigo-100 flex items-start gap-4">
+                      <div className="flex-1">
+                        <label className="flex items-center gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500"
+                            checked={custForm.appliesWithholdingTax}
+                            onChange={e => setCustForm({ ...custForm, appliesWithholdingTax: e.target.checked })}
+                          />
+                          <span className="text-sm font-bold text-slate-800">Apply 1% Withholding Tax Deduction</span>
+                        </label>
+                        <p className="text-xs text-slate-500 mt-1 pl-8 font-medium">If checked, this customer pays the PO Total MINUS 1%. The system will consider the PO fulfilled upon receiving the 99% payment plus a tax certificate.</p>
+                      </div>
+                      <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-500 shrink-0">
+                        <i className="fa-solid fa-file-invoice-dollar"></i>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="space-y-4">
@@ -270,7 +367,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                   </button>
                 </div>
               </form>
-            ) : (
+            ) : activeTab === 'history' ? (
               <div className="p-8 animate-in fade-in slide-in-from-bottom-2 duration-300 min-h-[400px]">
                 <div className="flex justify-between items-center mb-6">
                   <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
@@ -280,6 +377,80 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                   <div className="text-[10px] text-slate-400 font-medium italic">Chronological list of all system modifications</div>
                 </div>
                 {editingCustomer && <LogTimeline logs={editingCustomer.logs} />}
+              </div>
+            ) : (
+              <div className="p-8 animate-in fade-in slide-in-from-bottom-2 duration-300 min-h-[400px]">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <i className="fa-solid fa-layer-group"></i>
+                      Potential Duplicate Groups Found ({duplicateGroups.length})
+                    </h4>
+                    <p className="text-[10px] text-slate-500 mt-1 italic">We found records with names that are subsets of each other or very similar.</p>
+                  </div>
+                </div>
+
+                {duplicateGroups.length === 0 ? (
+                  <div className="py-20 text-center space-y-4">
+                    <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-300 border-2 border-dashed border-slate-200">
+                      <i className="fa-solid fa-circle-check text-2xl"></i>
+                    </div>
+                    <p className="text-sm font-bold text-slate-400">Your customer database looks clean! No obvious duplicates detected.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {duplicateGroups.map((group, gIdx) => (
+                      <div key={gIdx} className="border border-amber-100 rounded-xl bg-amber-50/20 overflow-hidden">
+                        <div className="bg-amber-50 px-4 py-2 border-b border-amber-100 flex justify-between items-center text-[10px]">
+                          <span className="font-bold text-amber-700 uppercase tracking-wider">Duplicate Cluster #{gIdx + 1}</span>
+                          <span className="text-amber-600 italic">Select one primary record to merge into</span>
+                        </div>
+                        <div className="p-4 space-y-4">
+                          <div className="bg-white rounded-lg border border-slate-100 overflow-hidden shadow-sm">
+                            {group.customers.map(c => (
+                              <label key={c.id} className="flex items-center gap-4 p-4 hover:bg-slate-50 border-b border-slate-50 last:border-0 cursor-pointer group">
+                                <input
+                                  type="radio"
+                                  name={`group-${gIdx}`}
+                                  checked={group.primaryId === c.id}
+                                  onChange={() => {
+                                    const newGroups = [...duplicateGroups];
+                                    newGroups[gIdx].primaryId = c.id;
+                                    setDuplicateGroups(newGroups);
+                                  }}
+                                  className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-slate-300"
+                                />
+                                <div className="flex-1">
+                                  <div className="text-sm font-bold text-slate-800">{c.name}</div>
+                                  <div className="text-[10px] text-slate-500 flex gap-4 mt-1">
+                                    <span><i className="fa-solid fa-location-dot"></i> {c.address || 'No Address'}</span>
+                                    <span><i className="fa-solid fa-envelope"></i> {c.email || 'No Email'}</span>
+                                  </div>
+                                </div>
+                                {group.primaryId === c.id && (
+                                  <span className="text-[9px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Target Primary</span>
+                                )}
+                              </label>
+                            ))}
+                          </div>
+                          <div className="flex justify-end pr-2">
+                            <button
+                              disabled={merging}
+                              onClick={() => handleMerge(
+                                group.primaryId,
+                                group.customers.filter(c => c.id !== group.primaryId).map(c => c.id)
+                              )}
+                              className="px-6 py-2 bg-blue-600 text-white rounded-lg font-black text-[11px] uppercase tracking-wide hover:bg-blue-700 disabled:opacity-50 shadow-lg shadow-blue-100"
+                            >
+                              {merging ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : <i className="fa-solid fa-compress mr-2"></i>}
+                              Merge Clones into Primary
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -325,7 +496,14 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded">Net {cust.paymentTermDays || 45}</span>
+                    <div className="flex flex-col gap-2 items-start">
+                      <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded">Net {cust.paymentTermDays || 45}</span>
+                      {cust.appliesWithholdingTax && (
+                        <span className="text-[9px] font-black uppercase text-indigo-700 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded flex items-center gap-1">
+                          <i className="fa-solid fa-percent text-[7px]"></i> 1% WHT
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     {cust.contactName ? (

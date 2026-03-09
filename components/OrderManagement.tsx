@@ -33,6 +33,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [customerReferenceNumber, setCustomerReferenceNumber] = useState('');
   const [orderDate, setOrderDate] = useState(today);
   const [paymentSlaDays, setPaymentSlaDays] = useState(config.settings.defaultPaymentSlaDays);
+  const [appliesWithholdingTax, setAppliesWithholdingTax] = useState(false);
   const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
   const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(0);
   const [targetDeliveryDate, setTargetDeliveryDate] = useState(today);
@@ -113,6 +114,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCustomerReferenceNumber(match.customerReferenceNumber || match.internalOrderNumber);
     setOrderDate(match.orderDate);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
+    setAppliesWithholdingTax(match.appliesWithholdingTax || false);
     setTargetDeliveryDays(match.targetDeliveryDays || 0);
     setTargetDeliveryDate(match.targetDeliveryDate || match.orderDate);
     setItems(match.items.map(it => ({ ...it, taxDetected: true })));
@@ -241,6 +243,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           setIsNewCustomerCreated(true);
         }
         setCustomerName(extracted.customer.name);
+        if (existingCust) {
+          setAppliesWithholdingTax(existingCust.appliesWithholdingTax || false);
+        }
         if (extracted.paymentSlaDays) {
           setPaymentSlaDays(extracted.paymentSlaDays);
         }
@@ -274,6 +279,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const resetForm = () => {
     setCustomerName(''); setCustomerReferenceNumber(''); setOrderDate(today);
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
+    setAppliesWithholdingTax(false);
     setTargetDeliveryDays(0);
     setTargetDeliveryDate(today);
     setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true, logs: [] }]);
@@ -285,7 +291,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     if (editStatus.isFrozen) return;
     try {
       if (editingOrderId) {
-        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, items: items as any });
+        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, items: items as any });
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
         // Prevent duplicate PO IDs on the frontend side
@@ -302,6 +308,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           customerReferenceNumber,
           orderDate,
           paymentSlaDays,
+          appliesWithholdingTax,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
           targetDeliveryDate,
           items: items as any
@@ -343,6 +350,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCustomerReferenceNumber(`STOCK-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`);
     setOrderDate(today);
     setPaymentSlaDays(0);
+    setAppliesWithholdingTax(false);
     setItems([{ id: 'temp_1', description: 'Stock Replenishment', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 0, taxDetected: true, logs: [] }]);
     setMessage({ type: 'info', text: 'Internal Stock Order template loaded.' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -472,8 +480,13 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       value={customerName}
                       list="crm-customer-suggestions"
                       onChange={e => {
-                        setCustomerName(e.target.value);
+                        const newName = e.target.value;
+                        setCustomerName(newName);
                         setIsNewCustomerCreated(false);
+                        const matchCust = customers.find(c => c.name.toLowerCase() === newName.toLowerCase());
+                        if (matchCust && matchCust.appliesWithholdingTax !== undefined) {
+                          setAppliesWithholdingTax(matchCust.appliesWithholdingTax);
+                        }
                       }}
                       onBlur={handleCustomerBlur}
                       required
@@ -582,6 +595,25 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         {deliveryInputMode === 'days' ? `Scheduled: ${targetDeliveryDate}` : `Calculated: ${targetDeliveryDays} Days`}
                       </span>
                     </div>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-4">
+                  <div className="flex-1">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        disabled={editStatus.isFrozen}
+                        type="checkbox"
+                        className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500"
+                        checked={appliesWithholdingTax}
+                        onChange={e => setAppliesWithholdingTax(e.target.checked)}
+                      />
+                      <span className="text-sm font-bold text-slate-800">Apply 1% Withholding Tax Deduction for this Order</span>
+                    </label>
+                    <p className="text-xs text-slate-500 mt-1 pl-8 font-medium">If enabled, the customer is expected to pay exactly 99% of the PO value, plus provide a WHT certificate in the Finance module.</p>
+                  </div>
+                  <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-500 shrink-0">
+                    <i className="fa-solid fa-file-invoice-dollar"></i>
                   </div>
                 </div>
 

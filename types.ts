@@ -71,6 +71,7 @@ export interface Customer {
   paymentTermDays: number;
   isHold?: boolean;
   holdReason?: string;
+  appliesWithholdingTax?: boolean;
   logs?: LogEntry[];
 }
 
@@ -197,6 +198,8 @@ export interface CustomerOrder {
   einvoiceFile?: string;
   targetDeliveryDays?: number;
   targetDeliveryDate?: string;
+  appliesWithholdingTax?: boolean;
+  whtCertificateFile?: string;
 }
 
 export interface OpenAIConfig {
