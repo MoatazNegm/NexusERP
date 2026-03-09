@@ -60,9 +60,7 @@ const OrderStatus = {
     ISSUE_INVOICE: 'ISSUE_INVOICE',
     INVOICED: 'INVOICED',
     HUB_RELEASED: 'HUB_RELEASED',
-    PARTIAL_DELIVERY: 'PARTIAL_DELIVERY',
     DELIVERED: 'DELIVERED',
-    PARTIAL_PAYMENT: 'PARTIAL_PAYMENT',
     FULFILLED: 'FULFILLED'
 };
 
@@ -1404,7 +1402,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 let revenue = 0;
                 order.items.forEach(it => revenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
 
-                const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.PARTIAL_PAYMENT].includes(order.status);
+                const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(order.status);
 
                 if (totalPaid >= revenue) {
                     if (isLateStage) {
@@ -1414,9 +1412,6 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         order.logs.push(createAuditLog(`Full payment received (Pre-payment). Operational status '${order.status}' retained.`, order.status, user));
                     }
                 } else {
-                    if (isLateStage) {
-                        order.status = OrderStatus.PARTIAL_PAYMENT;
-                    }
                     order.logs.push(createAuditLog(`Payment of ${payload.amount} recorded. Bal: ${Math.max(0, revenue - totalPaid).toLocaleString()}`, order.status, user));
                 }
                 break;
@@ -1669,11 +1664,6 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const allDelivered = order.items.every(i => (i.deliveredQty || 0) >= i.quantity);
                 if (allDelivered) {
                     order.status = OrderStatus.DELIVERED;
-                } else {
-                    const isLateStageDelivery = [OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY].includes(order.status);
-                    if (isLateStageDelivery) {
-                        order.status = OrderStatus.PARTIAL_DELIVERY;
-                    }
                 }
 
                 order.logs.push(createAuditLog(`Customer Delivery Confirmed (${allDelivered ? 'Complete' : 'Partial'}) & POD Filed: ${payload.podFilePath}`, order.status, user));

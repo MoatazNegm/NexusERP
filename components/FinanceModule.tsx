@@ -25,7 +25,6 @@ const getStatusLimit = (order: CustomerOrder, settings: any) => {
     case OrderStatus.INVOICED: return settings.hubReleasedLimitHrs;
     case OrderStatus.HUB_RELEASED: return settings.deliveryLimitHrs;
     case OrderStatus.DELIVERED:
-    case OrderStatus.PARTIAL_PAYMENT:
       return (order.paymentSlaDays || settings.defaultPaymentSlaDays) * 24;
     default: return 0;
   }
@@ -569,11 +568,11 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               const showRow = activeTab === 'orders' ||
                 (activeTab === 'margins' && o.status === OrderStatus.NEGATIVE_MARGIN) ||
                 (activeTab === 'billing' && [OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status)) ||
-                (activeTab === 'ar' && [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.PARTIAL_PAYMENT].includes(o.status));
+                (activeTab === 'ar' && [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(o.status));
 
               if (!showRow) return null;
 
-              const isInvoicedOrLater = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.PARTIAL_PAYMENT].includes(o.status);
+              const isInvoicedOrLater = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(o.status);
 
               // Calculate total authorized gross value.
               let totalAuthorizedGross = 0;

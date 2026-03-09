@@ -106,12 +106,10 @@ export const STATUS_CONFIG: Record<OrderStatus, { label: string, color: string, 
   [OrderStatus.TRANSITION_TO_STOCK]: { label: 'Transit to Hub', color: 'emerald', icon: 'fa-truck-fast' },
   [OrderStatus.IN_PRODUCT_HUB]: { label: 'In Product Hub', color: 'teal', icon: 'fa-warehouse' },
   [OrderStatus.ISSUE_INVOICE]: { label: 'Issue Invoice', color: 'pink', icon: 'fa-file-signature' },
-  [OrderStatus.INVOICED]: { label: 'Invoiced', color: 'teal', icon: 'fa-file-invoice-dollar' },
-  [OrderStatus.HUB_RELEASED]: { label: 'Hub Released', color: 'sky', icon: 'fa-dolly' },
-  [OrderStatus.DELIVERED]: { label: 'Delivered', color: 'rose', icon: 'fa-handshake' },
-  [OrderStatus.PARTIAL_DELIVERY]: { label: 'Partial Delivery', color: 'rose', icon: 'fa-box-open' },
-  [OrderStatus.PARTIAL_PAYMENT]: { label: 'Partial Payment', color: 'yellow', icon: 'fa-money-bill-transfer' },
-  [OrderStatus.FULFILLED]: { label: 'Fulfilled', color: 'green', icon: 'fa-circle-check' }
+  [OrderStatus.INVOICED]: { label: 'Invoiced', color: 'blue', icon: 'fa-file-invoice-dollar' },
+  [OrderStatus.HUB_RELEASED]: { label: 'In Transit', color: 'indigo', icon: 'fa-truck-fast' },
+  [OrderStatus.DELIVERED]: { label: 'Delivered', color: 'emerald', icon: 'fa-box-check' },
+  [OrderStatus.FULFILLED]: { label: 'Fulfilled', color: 'emerald', icon: 'fa-check-double' }
 };
 
 export const getDynamicOrderStatusStyle = (order: CustomerOrder, config: AppConfig): { label: string, color: string, icon: string } => {

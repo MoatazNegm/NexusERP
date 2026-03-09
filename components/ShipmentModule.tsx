@@ -65,14 +65,14 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
 
     const pendingTransitOrders = useMemo(() => {
         return existingOrders.filter(o => {
-            if (![OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE, OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY].includes(o.status as OrderStatus)) return false;
+            if (![OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE, OrderStatus.INVOICED, OrderStatus.HUB_RELEASED].includes(o.status as OrderStatus)) return false;
             return o.items.some(i => (i.dispatchedQty || 0) > (i.shippedQty || 0));
         });
     }, [existingOrders]);
 
     const inTransitOrders = useMemo(() => {
         return existingOrders.filter(o => {
-            if (![OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE, OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY].includes(o.status as OrderStatus)) return false;
+            if (![OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE, OrderStatus.INVOICED, OrderStatus.HUB_RELEASED].includes(o.status as OrderStatus)) return false;
             return o.items.some(i => (i.shippedQty || 0) > (i.deliveredQty || 0));
         });
     }, [existingOrders]);

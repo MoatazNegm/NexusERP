@@ -151,7 +151,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
     }
   };
 
-  const showInvoiceButton = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.PARTIAL_PAYMENT].includes(order.status);
+  const showInvoiceButton = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(order.status);
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
