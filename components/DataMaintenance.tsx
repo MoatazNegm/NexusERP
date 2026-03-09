@@ -19,7 +19,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
 
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
-  const [showPasscodeModal, setShowPasscodeModal] = useState<{ type: 'export' | 'import', file?: File } | null>(null);
+  const [showPasscodeModal, setShowPasscodeModal] = useState<{ type: 'export' | 'import' | 'full-export' | 'full-import', file?: File } | null>(null);
   const [passcode, setPasscode] = useState('');
 
   const [groups, setGroups] = useState<UserGroup[]>([]);
@@ -177,38 +177,39 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   };
 
   const handleFullExport = async () => {
+    if (passcode.length < 4) { alert("Passphrase too short. Minimum 4 characters required for secure archive."); return; }
     setIsProcessing(true);
-    setMessage({ type: 'info', text: 'Generating full system archive (Database + Assets)...' });
+    setShowPasscodeModal(null);
+    setMessage({ type: 'info', text: 'Encrypting full system archive (Database + Assets)...' });
     try {
-      const blob = await dataService.exportFullSystemBackup();
+      const blob = await dataService.exportFullSystemBackup(passcode);
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `nexus-full-archive-${new Date().toISOString().slice(0, 10)}.zip`;
+      link.download = `nexus-full-archive-${new Date().toISOString().slice(0, 10)}.nxarchive`;
       link.click();
-      setMessage({ type: 'success', text: 'Full system archive generated successfully.' });
+      setMessage({ type: 'success', text: 'Secure full system archive generated successfully.' });
+      setPasscode('');
     } catch (e) {
-      setMessage({ type: 'error', text: 'Full backup failed.' });
+      setMessage({ type: 'error', text: 'Secure full backup failed.' });
     } finally { setIsProcessing(false); }
   };
 
-  const handleFullImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!confirm("RESTORE WARNING: This will overwrite ALL data and uploaded documents with the contents of this archive. This action is irreversible. Proceed?")) {
-      e.target.value = '';
-      return;
-    }
+  const handleFullImport = async () => {
+    if (!showPasscodeModal?.file || !passcode) return;
     setIsProcessing(true);
-    setMessage({ type: 'info', text: 'Restoring full system environment...' });
+    const file = showPasscodeModal.file;
+    setShowPasscodeModal(null);
+    setMessage({ type: 'info', text: 'Decrypting and restoring full system environment...' });
     try {
-      await dataService.importFullSystemBackup(file);
+      await dataService.importFullSystemBackup(file, passcode);
       setMessage({ type: 'success', text: 'Restoration complete. The system will now reload.' });
       setTimeout(() => window.location.reload(), 2000);
     } catch (e: any) {
-      setMessage({ type: 'error', text: e.message || 'Restoration failed.' });
+      setMessage({ type: 'error', text: e.message || 'Restoration failed. Incorrect password or corrupted archive.' });
     } finally {
       setIsProcessing(false);
+      setPasscode('');
       if (fullBackupInputRef.current) fullBackupInputRef.current.value = '';
     }
   };
@@ -1146,9 +1147,22 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed italic">Recommended for server migrations or disaster recovery. Bundles `db.json` and the entire `uploads/` directory into a single archive.</p>
                 <div className="grid grid-cols-2 gap-4 pt-2">
-                  <button onClick={handleFullExport} className="py-4 bg-white border border-sky-200 text-sky-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-sky-50 transition-colors">Download Archive</button>
-                  <button onClick={() => fullBackupInputRef.current?.click()} className="py-4 bg-sky-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:bg-sky-700 transition-all">Restore Archive</button>
-                  <input type="file" ref={fullBackupInputRef} className="hidden" accept=".zip" onChange={handleFullImport} />
+                  <button onClick={() => setShowPasscodeModal({ type: 'full-export' })} disabled={isProcessing} className="py-4 bg-white border border-sky-200 text-sky-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-sky-50 transition-colors disabled:opacity-50">
+                    {isProcessing ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : ''}Download Archive
+                  </button>
+                  <button onClick={() => fullBackupInputRef.current?.click()} disabled={isProcessing} className="py-4 bg-sky-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:bg-sky-700 transition-all disabled:opacity-50">
+                    {isProcessing ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : ''}Restore Archive
+                  </button>
+                  <input type="file" ref={fullBackupInputRef} className="hidden" accept=".nxarchive,.zip" onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      if (!confirm("RESTORE WARNING: This will overwrite ALL data and uploaded documents with the contents of this archive. This action is irreversible. Proceed?")) {
+                        e.target.value = '';
+                        return;
+                      }
+                      setShowPasscodeModal({ type: 'full-import', file });
+                    }
+                  }} />
                 </div>
               </div>
 
@@ -1193,11 +1207,47 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
         showPasscodeModal && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
             <div className="bg-white rounded-[3rem] shadow-2xl w-full max-sm p-8 border border-slate-100">
-              <h3 className="text-xl font-black text-slate-800 mb-6 uppercase text-center">Security Access</h3>
-              <input type="password" autoFocus className="w-full p-5 bg-slate-50 border rounded-2xl text-center text-2xl tracking-widest font-black outline-none mb-6" placeholder="••••" value={passcode} onChange={e => setPasscode(e.target.value)} />
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white mb-6 mx-auto ${showPasscodeModal.type.includes('import') ? 'bg-amber-500 shadow-amber-100' : 'bg-blue-600 shadow-blue-100'} shadow-lg`}>
+                <i className={`fa-solid ${showPasscodeModal.type.includes('import') ? 'fa-unlock-keyhole' : 'fa-lock'} text-xl`}></i>
+              </div>
+              <h3 className="text-xl font-black text-slate-800 mb-2 uppercase text-center tracking-tight">
+                {showPasscodeModal.type.includes('import') ? 'Security Clearance' : 'Encrypt Archive'}
+              </h3>
+              <p className="text-xs font-bold text-slate-500 mb-6 text-center">
+                {showPasscodeModal.type.includes('import')
+                  ? 'Enter the administrative passphrase used to encrypt this archive to proceed.'
+                  : 'Set a highly secure passphrase. You will need this to decrypt the archive later.'}
+              </p>
+              <input
+                type="password"
+                autoFocus
+                className="w-full p-5 bg-slate-50 border rounded-2xl text-center text-2xl tracking-[0.3em] font-black outline-none focus:border-blue-500 transition-all mb-6"
+                placeholder="••••"
+                value={passcode}
+                onChange={e => setPasscode(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    if (showPasscodeModal.type === 'export') handleExport();
+                    else if (showPasscodeModal.type === 'import') handleImport();
+                    else if (showPasscodeModal.type === 'full-export') handleFullExport();
+                    else if (showPasscodeModal.type === 'full-import') handleFullImport();
+                  }
+                }}
+              />
               <div className="flex gap-3">
-                <button onClick={() => { setShowPasscodeModal(null); setPasscode(''); }} className="flex-1 py-4 bg-slate-100 text-slate-500 font-bold rounded-xl uppercase text-[10px]">Abort</button>
-                <button onClick={showPasscodeModal.type === 'export' ? handleExport : handleImport} className="flex-[2] py-4 bg-blue-600 text-white font-black rounded-xl uppercase text-[10px] shadow-xl">Execute</button>
+                <button onClick={() => { setShowPasscodeModal(null); setPasscode(''); }} className="flex-1 py-4 bg-slate-100 text-slate-500 font-bold rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-colors">Abort</button>
+                <button
+                  onClick={() => {
+                    if (showPasscodeModal.type === 'export') handleExport();
+                    else if (showPasscodeModal.type === 'import') handleImport();
+                    else if (showPasscodeModal.type === 'full-export') handleFullExport();
+                    else if (showPasscodeModal.type === 'full-import') handleFullImport();
+                  }}
+                  disabled={isProcessing}
+                  className={`flex-[2] py-4 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-xl transition-all disabled:opacity-50 ${showPasscodeModal.type.includes('import') ? 'bg-amber-500 hover:bg-amber-600' : 'bg-blue-600 hover:bg-blue-700'}`}
+                >
+                  {isProcessing ? 'Processing...' : showPasscodeModal.type.includes('import') ? 'Decrypt & Restore' : 'Encrypt & Download'}
+                </button>
               </div>
             </div>
           </div>
