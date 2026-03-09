@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexusERP Operational Workflow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+    </script>
+    <style>
+        @media print {
+            .no-print { display: none; }
+            body { background: white; }
+            .page-break { page-break-before: always; }
+        }
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 p-8 md:p-16">
+
+    <div class="max-w-4xl mx-auto space-y-12">
+        
+        <!-- Header -->
+        <header class="border-b border-slate-200 pb-8 flex justify-between items-end">
+            <div>
+                <h1 class="text-4xl font-black tracking-tight text-slate-900 uppercase">NexusERP Workflow</h1>
+                <p class="text-slate-500 font-medium mt-2 uppercase tracking-widest text-xs">Standard Operating Procedure & Lifecycle Guide</p>
+            </div>
+            <div class="no-print">
+                <button onclick="window.print()" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700 transition-colors shadow-lg">
+                    Export to PDF
+                </button>
+            </div>
+        </header>
+
+        <!-- Diagram Section -->
+        <section class="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-xl overflow-hidden">
+            <h2 class="text-lg font-black uppercase tracking-tight mb-8 text-blue-600">PO Lifecycle Diagram</h2>
+            <div class="mermaid flex justify-center">
+                graph TD
+                    subgraph Registry ["Registry (Order Management)"]
+                        A["Log New Customer PO"] --> B["Initial Data Entry"]
+                    end
+
+                    subgraph Technical ["Technical Review"]
+                        B --> C["Define Bill of Materials - BoM"]
+                        C --> D["Identify Stock vs. Procurement"]
+                        D --> E["Finalize Technical Study"]
+                    end
+
+                    subgraph Finance ["Finance (Approval & Billing)"]
+                        E --> F{"Margin & Hold Check"}
+                        F -- "Warning/Block" --> G["Management Override"]
+                        G --> H
+                        F -- "Passed" --> H["Operational Release"]
+                        H --> L
+                        P["Issue Tax Invoice"] --> Q["Request Gov E-Invoice"]
+                        Q --> W
+                    end
+
+                    subgraph Procurement ["Procurement"]
+                        H --> I["Send RFP to Suppliers"]
+                        I --> J["Award Tenders"]
+                        J --> K["Issue Supplier POs"]
+                    end
+
+                    subgraph Inventory ["Inventory & Reception"]
+                        K --> L["Receive Components via Reception"]
+                        L --> M["Reserve Stock for Factory"]
+                        V["Intake Finished Goods to Hub"] --> P
+                    end
+
+                    subgraph Factory ["Factory Floor"]
+                        M --> N["Start Production"]
+                        N --> O["Manufacture Items & Consume Parts"]
+                        O --> V
+                    end
+
+                    subgraph Shipment ["Logistics & Shipment"]
+                        P --> R["Release Items for Dispatch"]
+                        R --> S["Transition to In-Transit"]
+                        S --> T["Confirm Delivery & Upload POD"]
+                    end
+
+                    subgraph GovInvoice ["Gov. E-Invoice Portal"]
+                        Q --> U["Upload Official E-Invoice"]
+                    end
+
+                    subgraph Status ["System Status"]
+                        T & U --> Z(("FULFILLED"))
+                    end
+
+                    style Z fill:#059669,stroke:#064e3b,color:#fff,stroke-width:4px
+                    style A fill:#2563eb,color:#fff
+                    style F fill:#f59e0b,color:#fff
+            </div>
+        </section>
+
+        <!-- Steps Section -->
+        <section class="space-y-8">
+            <h2 class="text-2xl font-black uppercase text-slate-800 tracking-tight">Step-by-Step Operations</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Step 1 -->
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                    <div class="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-black mb-4">1</div>
+                    <h3 class="font-black uppercase text-sm mb-2">Order Entry (Registry)</h3>
+                    <p class="text-slate-600 text-sm leading-relaxed">Log the customer's PO number, reference, and requested items. This initiates the digital footprint of the order.</p>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                    <div class="w-8 h-8 bg-slate-900 text-white rounded-full flex items-center justify-center font-black mb-4">2</div>
+                    <h3 class="font-black uppercase text-sm mb-2">Technical Study (Engineering)</h3>
+                    <p class="text-slate-600 text-sm leading-relaxed">Define the Bill of Materials (BoM). System reserves current stock automatically while flagging missing parts for Procurement.</p>
+                </div>
+
+                <!-- Step 3 -->
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                    <div class="w-8 h-8 bg-amber-500 text-white rounded-full flex items-center justify-center font-black mb-4">3</div>
+                    <h3 class="font-black uppercase text-sm mb-2">Financial Gating (Finance)</h3>
+                    <p class="text-slate-600 text-sm leading-relaxed">Automated margin checks. Low-margin orders are blocked until Management provides a manual release with justifications.</p>
+                </div>
+
+                <!-- Step 4 -->
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                    <div class="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-black mb-4">4</div>
+                    <h3 class="font-black uppercase text-sm mb-2">Component Sourcing (Procurement)</h3>
+                    <p class="text-slate-600 text-sm leading-relaxed">Request RFPs from vetted suppliers. Award tenders and issue Supplier POs based on cost and lead-time analysis.</p>
+                </div>
+
+                <!-- Step 5 -->
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                    <div class="w-8 h-8 bg-rose-600 text-white rounded-full flex items-center justify-center font-black mb-4">5</div>
+                    <h3 class="font-black uppercase text-sm mb-2">Material Intake (Reception)</h3>
+                    <p class="text-slate-600 text-sm leading-relaxed">Suppliers deliver parts. Reception module receives items into Inventory, instantly reserving them for the assigned Factory job.</p>
+                </div>
+
+                <!-- Step 6 -->
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                    <div class="w-8 h-8 bg-emerald-600 text-white rounded-full flex items-center justify-center font-black mb-4">6</div>
+                    <h3 class="font-black uppercase text-sm mb-2">Production (Factory)</h3>
+                    <p class="text-slate-600 text-sm leading-relaxed">Production starts floor release. As units are finished, they are recorded, and inventory is consumed in real-time.</p>
+                </div>
+            </div>
+
+            <div class="p-8 bg-slate-900 rounded-[2rem] text-white space-y-4">
+                <h3 class="text-xl font-black uppercase text-blue-400">The Road to Fulfillment</h3>
+                <div class="space-y-4 text-slate-300 text-sm leading-relaxed">
+                    <p><span class="text-white font-bold">1. Finished Goods:</span> Items move from the factory floor to the Product Hub, triggering readiness for billing.</p>
+                    <p><span class="text-white font-bold">2. Invoicing & Logistics:</span> Finance generates the Tax Invoice and requests the official Gov E-Invoice. Simultaneously, Shipment dispatches goods via POD verification.</p>
+                    <p class="text-emerald-400 font-bold bg-white/5 p-4 rounded-xl border border-white/10 uppercase tracking-widest text-center">Fulfillment Trigger: (All Items Delivered) + (E-Invoice Uploaded) = Order Archived</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="text-center text-slate-400 text-[10px] uppercase tracking-[0.2em] pt-8">
+            NexusERP Operations Control &copy; 2026 – All Rights Reserved
+        </footer>
+
+    </div>
+
+</body>
+</html>
