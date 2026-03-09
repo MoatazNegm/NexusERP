@@ -109,6 +109,7 @@ export const STATUS_CONFIG: Record<OrderStatus, { label: string, color: string, 
   [OrderStatus.INVOICED]: { label: 'Invoiced', color: 'teal', icon: 'fa-file-invoice-dollar' },
   [OrderStatus.HUB_RELEASED]: { label: 'Hub Released', color: 'sky', icon: 'fa-dolly' },
   [OrderStatus.DELIVERED]: { label: 'Delivered', color: 'rose', icon: 'fa-handshake' },
+  [OrderStatus.PARTIAL_DELIVERY]: { label: 'Partial Delivery', color: 'rose', icon: 'fa-box-open' },
   [OrderStatus.PARTIAL_PAYMENT]: { label: 'Partial Payment', color: 'yellow', icon: 'fa-money-bill-transfer' },
   [OrderStatus.FULFILLED]: { label: 'Fulfilled', color: 'green', icon: 'fa-circle-check' }
 };

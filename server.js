@@ -1670,7 +1670,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (allDelivered) {
                     order.status = OrderStatus.DELIVERED;
                 } else {
-                    order.status = OrderStatus.PARTIAL_DELIVERY;
+                    const isLateStageDelivery = [OrderStatus.HUB_RELEASED, OrderStatus.PARTIAL_DELIVERY].includes(order.status);
+                    if (isLateStageDelivery) {
+                        order.status = OrderStatus.PARTIAL_DELIVERY;
+                    }
                 }
 
                 order.logs.push(createAuditLog(`Customer Delivery Confirmed (${allDelivered ? 'Complete' : 'Partial'}) & POD Filed: ${payload.podFilePath}`, order.status, user));
