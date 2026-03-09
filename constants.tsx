@@ -135,6 +135,32 @@ export const getDynamicOrderStatusStyle = (order: CustomerOrder, config: AppConf
   return base;
 };
 
+export const getPartialStateMetrics = (order: CustomerOrder) => {
+  let totalQty = 0;
+  let mfgQty = 0;
+  let delQty = 0;
+  let revenue = 0;
+
+  order.items.forEach(item => {
+    const qty = item.quantity || 0;
+    totalQty += qty;
+    mfgQty += item.manufacturedQty || 0;
+    delQty += item.deliveredQty || 0;
+    revenue += (qty * (item.pricePerUnit || 0) * (1 + ((item.taxPercent || 0) / 100)));
+  });
+
+  const totalPaid = (order.payments || []).reduce((sum, p) => sum + p.amount, 0);
+
+  return {
+    mfgPercent: totalQty > 0 ? Math.floor((mfgQty / totalQty) * 100) : 0,
+    delPercent: totalQty > 0 ? Math.floor((delQty / totalQty) * 100) : 0,
+    payPercent: revenue > 0 ? Math.floor((totalPaid / revenue) * 100) : 0,
+    isPartiallyManufactured: mfgQty > 0 && mfgQty < totalQty,
+    isPartiallyDelivered: delQty > 0 && delQty < totalQty,
+    isPartiallyPaid: totalPaid > 0 && totalPaid < revenue
+  };
+};
+
 // --- DATA GENERATION UTILS ---
 const now = new Date();
 const hoursAgo = (h: number) => new Date(now.getTime() - h * 60 * 60 * 1000).toISOString();

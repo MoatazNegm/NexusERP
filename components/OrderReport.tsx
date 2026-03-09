@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig } from '../types';
-import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
+import { STATUS_CONFIG, getDynamicOrderStatusStyle, getPartialStateMetrics } from '../constants';
 import { OrderDetailsModal } from './OrderDetailsModal';
 
 interface OrderReportProps {
@@ -245,12 +245,36 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
                   <div className="text-[10px] text-slate-400 font-medium">Ref: {order.customerReferenceNumber || 'None'}</div>
                 </td>
                 <td className="px-6 py-4">
-                  <div className="flex flex-col gap-1">
+                  <div className="flex flex-col gap-1 items-start">
                     <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border bg-${getDynamicOrderStatusStyle(order, config).color}-50 text-${getDynamicOrderStatusStyle(order, config).color}-600 border-${getDynamicOrderStatusStyle(order, config).color}-100 flex items-center gap-1.5 w-fit`}>
                       <i className={`fa-solid ${getDynamicOrderStatusStyle(order, config).icon} text-[8px]`}></i>
                       {getDynamicOrderStatusStyle(order, config).label}
                     </span>
                     <ThresholdTimer order={order} config={config} />
+
+                    {/* Partial State Indicators */}
+                    {(() => {
+                      const metrics = getPartialStateMetrics(order);
+                      return (
+                        <div className="flex flex-col gap-1 mt-1">
+                          {metrics.isPartiallyManufactured && (
+                            <span className="text-[8px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 flex items-center gap-1 w-fit">
+                              <i className="fa-solid fa-industry"></i> {metrics.mfgPercent}% Mfg.
+                            </span>
+                          )}
+                          {metrics.isPartiallyDelivered && (
+                            <span className="text-[8px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100 flex items-center gap-1 w-fit">
+                              <i className="fa-solid fa-truck-fast"></i> {metrics.delPercent}% Del.
+                            </span>
+                          )}
+                          {metrics.isPartiallyPaid && (
+                            <span className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 flex items-center gap-1 w-fit">
+                              <i className="fa-solid fa-money-bill"></i> {metrics.payPercent}% Paid
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </td>
                 <td className="px-6 py-4 text-right font-black text-slate-300 group-hover:text-blue-500 transition-colors">

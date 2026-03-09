@@ -722,7 +722,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:dc67f959255addeced3b52c9becf40f3:70f5b117948c0539e1995107f537b45929f46b5da5c2af8e90b9bb6991b9cd7f",
+        "password": "ENC:b5c0db4e8f77213707c6242d8e3038c1:ce597fabbcf2ad5fbe4f39eb04b9e82160a1c0d32257cf2297e5d5611b766196",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -778,7 +778,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:838b1fbcf6e0c653c361fe5ddad6fe7d:41bb9dc4993629bdef7bfefb636770fb9f149d9655d2a634b71caafbb267439b7b0b5006008bfdbcdeda0af7d824bc5c",
+        "apiKey": "ENC:1d7622f039b2f65ecccd2f3237b49c26:2b934561b9a5f135397d2dcea9a6ebd148d4e73f2b026dd709dc19a1b06d85cab98a640af32f5923d8011a7dbdaf5fd2",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -803,7 +803,7 @@
         "userGroups_1770925213983"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:5178204aee3dd601d2cec0423acb7836:049f104c92d70ef6bf16687fa6aa0b6bc91d8d1143c855de4c37354c316966792e35c75eba247d5e41f1a5548f0e4646",
+        "apiKey": "ENC:2bf36e4752db99cb3bce920a856d3a01:79571ada711ba2b4ef7038a7e9082fb2700967859a5721c3bd5017ee31b8216b9ebd1f59124c06df390b95566aef573d",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {
