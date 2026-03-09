@@ -581,21 +581,25 @@ class DataService {
     return true;
   }
 
-  async exportFullSystemBackup(): Promise<Blob> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/full-backup`);
-    if (!response.ok) throw new Error("Full backup failed");
+  async exportFullSystemBackup(passcode: string): Promise<Blob> {
+    const response = await fetch(`${BACKEND_URL}/api/v1/full-backup?password=${encodeURIComponent(passcode)}`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || "Full backup failed");
+    }
     return await response.blob();
   }
 
-  async importFullSystemBackup(file: File): Promise<boolean> {
+  async importFullSystemBackup(file: File, passcode: string): Promise<boolean> {
     const formData = new FormData();
     formData.append('archive', file);
+    formData.append('password', passcode);
     const response = await fetch(`${BACKEND_URL}/api/v1/full-restore`, {
       method: 'POST',
       body: formData
     });
     if (!response.ok) {
-      const err = await response.json();
+      const err = await response.json().catch(() => ({}));
       throw new Error(err.error || "Full restore failed");
     }
     return true;

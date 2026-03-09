@@ -1729,6 +1729,11 @@ app.get('/api/v1/backup', (req, res) => {
 
 app.get('/api/v1/full-backup', (req, res) => {
     try {
+        const password = req.query.password;
+        if (!password) {
+            return res.status(400).json({ error: "Password is required for secure system export." });
+        }
+
         const zip = new AdmZip();
 
         // Add database
@@ -1742,14 +1747,27 @@ app.get('/api/v1/full-backup', (req, res) => {
             zip.addLocalFolder(uploadsDir, 'uploads');
         }
 
-        const buffer = zip.toBuffer();
+        const rawBuffer = zip.toBuffer();
+
+        // Encrypt the entire zip buffer with AES-256-GCM
+        const salt = crypto.randomBytes(16);
+        const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+        const encrypted = Buffer.concat([cipher.update(rawBuffer), cipher.final()]);
+        const authTag = cipher.getAuthTag();
+
+        // Format: [16 bytes salt] [12 bytes IV] [16 bytes AuthTag] [Encrypted Payload]
+        const finalBuffer = Buffer.concat([salt, iv, authTag, encrypted]);
+
         const date = new Date().toISOString().slice(0, 10);
-        res.set('Content-Type', 'application/zip');
-        res.set('Content-Disposition', `attachment; filename=nexus-full-archive-${date}.zip`);
-        res.send(buffer);
+        res.set('Content-Type', 'application/octet-stream');
+        res.set('Content-Disposition', `attachment; filename=nexus-full-archive-${date}.nxarchive`);
+        res.send(finalBuffer);
     } catch (err) {
-        console.error("Full backup failed:", err);
-        res.status(500).json({ error: "Full backup failed" });
+        console.error("Full secure backup failed:", err);
+        res.status(500).json({ error: "Full secure backup failed" });
     }
 });
 
@@ -1780,7 +1798,36 @@ app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => 
     try {
         if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
 
-        const zip = new AdmZip(req.file.buffer);
+        const password = req.body.password;
+        if (!password) {
+            return res.status(400).json({ error: "Password is required to restore secure archive." });
+        }
+
+        const fileBuffer = req.file.buffer;
+
+        // Minimum size: 16 (salt) + 12 (iv) + 16 (authTag) = 44 bytes
+        if (fileBuffer.length < 44) {
+            return res.status(400).json({ error: "Invalid archive format." });
+        }
+
+        const salt = fileBuffer.subarray(0, 16);
+        const iv = fileBuffer.subarray(16, 28);
+        const authTag = fileBuffer.subarray(28, 44);
+        const encrypted = fileBuffer.subarray(44);
+
+        const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(authTag);
+
+        let rawBuffer;
+        try {
+            rawBuffer = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+        } catch (decryptErr) {
+            console.error("Decryption failed:", decryptErr);
+            return res.status(401).json({ error: "Decryption failed. Incorrect password or corrupted archive." });
+        }
+
+        const zip = new AdmZip(rawBuffer);
         const entries = zip.getEntries();
 
         // Basic verification

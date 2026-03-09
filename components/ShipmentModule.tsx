@@ -299,7 +299,31 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                             </td>
                                             <td className="px-8 py-6">
                                                 <div className="font-black text-slate-800 text-sm tracking-tight">{order.customerName}</div>
-                                                <div className="text-[10px] text-slate-500">{order.items.length} POS Fabricated</div>
+                                                <div className="text-[10px] text-slate-500 mb-2">{order.items.length} POS Fabricated</div>
+
+                                                {/* Inline Item Display for Shipment Context */}
+                                                <div className="flex flex-col gap-1 border-t border-slate-100 pt-2 mt-2">
+                                                    <div className="text-[8px] font-black uppercase text-slate-400 tracking-widest mb-1">
+                                                        {activeTab === 'pending' ? 'Items Ready for Dispatch' : 'Items In Transit'}
+                                                    </div>
+                                                    {order.items.map((item, i) => {
+                                                        const relevantQty = activeTab === 'pending'
+                                                            ? (item.dispatchedQty || 0) - (item.shippedQty || 0)
+                                                            : (item.shippedQty || 0) - (item.deliveredQty || 0);
+
+                                                        if (relevantQty <= 0) return null;
+                                                        return (
+                                                            <div key={i} className="flex justify-between items-center bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+                                                                <span className="text-[10px] font-bold text-slate-700 truncate max-w-[150px]" title={item.description}>
+                                                                    {item.description}
+                                                                </span>
+                                                                <span className="text-[9px] font-black text-slate-900 bg-white px-2 py-0.5 rounded shadow-sm border border-slate-200">
+                                                                    {relevantQty} {item.unit}
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
                                             </td>
                                             <td className="px-8 py-6 whitespace-nowrap">
                                                 {activeTab === 'pending' ? (
