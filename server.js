@@ -1,4 +1,4 @@
-﻿
+
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -212,11 +212,11 @@ const resolveSettings = (db) => {
             senderEmail: 'erpalerts@quickstor.net',
             useSsl: true
         },
-        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice'],
+        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning'],
         roleMappings: {
             dashboard: ['management'],
             orders: ['order_management'],
-            technicalReview: ['order_management'],
+            technicalReview: ['planning'],
             finance: ['finance'],
             procurement: ['procurement'],
             factory: ['factory'],

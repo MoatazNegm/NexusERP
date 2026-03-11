@@ -81,6 +81,40 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   const [search, setSearch] = useState('');
   const [whtPeriod, setWhtPeriod] = useState<'this_year' | 'last_year'>('this_year');
   const [whtSearch, setWhtSearch] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'desc' });
+  const [columnOrder, setColumnOrder] = useState<string[]>(['context', 'date', 'revenue', 'markup', 'status', 'actions']);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+
+  const handleSort = (key: string) => {
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+    }));
+  };
+
+  const handleDragStart = (e: React.DragEvent, col: string) => {
+    e.dataTransfer.setData('col', col);
+  };
+
+  const handleDragOver = (e: React.DragEvent, col: string) => {
+    e.preventDefault();
+    setDragOverCol(col);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetCol: string) => {
+    e.preventDefault();
+    const sourceCol = e.dataTransfer.getData('col');
+    if (sourceCol === targetCol) return;
+    setColumnOrder(prev => {
+      const newOrder = [...prev];
+      const srcIdx = newOrder.indexOf(sourceCol);
+      const tgtIdx = newOrder.indexOf(targetCol);
+      newOrder.splice(srcIdx, 1);
+      newOrder.splice(tgtIdx, 0, sourceCol);
+      return newOrder;
+    });
+    setDragOverCol(null);
+  };
 
   const [decisionModal, setDecisionModal] = useState<{
     type: 'orderHold' | 'orderReject' | 'customerHold' | 'supplierBlacklist' | 'marginRelease' | 'billing' | 'payment' | 'cancelInvoice' | 'cancelPayment' | 'revertToSourcing';
@@ -149,24 +183,50 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
   const filteredOrders = useMemo(() => {
     const q = search.toLowerCase().trim();
-    return ordersWithPL.filter(o =>
+    const filtered = ordersWithPL.filter(o =>
       (o.internalOrderNumber.toLowerCase().includes(q) || o.customerName.toLowerCase().includes(q)) &&
       ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)
     );
-  }, [ordersWithPL, search]);
+
+    const sorted = [...filtered].sort((a: any, b: any) => {
+      let valA: any = a[sortConfig.key];
+      let valB: any = b[sortConfig.key];
+
+      if (sortConfig.key === 'markupPct' || sortConfig.key === 'grossRevenue' || sortConfig.key === 'paid' || sortConfig.key === 'outstanding') {
+        valA = a.pl[sortConfig.key];
+        valB = b.pl[sortConfig.key];
+      }
+
+      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
+  }, [ordersWithPL, search, sortConfig]);
 
   const whtOrders = useMemo(() => {
     const q = whtSearch.toLowerCase().trim();
     const now = new Date();
     const year = whtPeriod === 'this_year' ? now.getFullYear() : now.getFullYear() - 1;
 
-    return orders.filter(o =>
+    const filtered = orders.filter(o =>
       o.appliesWithholdingTax &&
       o.status === OrderStatus.FULFILLED &&
       (o.customerName.toLowerCase().includes(q) || o.internalOrderNumber.toLowerCase().includes(q)) &&
       new Date(o.orderDate || o.dataEntryTimestamp).getFullYear() === year
     );
-  }, [orders, whtSearch, whtPeriod]);
+
+    const sorted = [...filtered].sort((a: any, b: any) => {
+      const valA = a[sortConfig.key] || '';
+      const valB = b[sortConfig.key] || '';
+      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
+  }, [orders, whtSearch, whtPeriod, sortConfig]);
 
   const handleUploadWHT = async (orderId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -561,26 +621,50 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         <table className="w-full text-left">
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
             <tr>
-              <th className="px-8 py-5 text-white">Operational Context</th>
               {activeTab === 'entities' ? (
                 <>
-                  <th className="px-8 py-5 text-white">Entity Type</th>
+                  <th className="px-8 py-5 text-white">Operational Context</th>
+                  <th className="px-8 py-5 text-white cursor-pointer select-none" onClick={() => handleSort('name')}>
+                    Entity Type {sortConfig.key === 'name' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
+                  </th>
                   <th className="px-8 py-5 text-white">Account Status</th>
                   <th className="px-8 py-5 text-white text-right">Credit Action</th>
                 </>
-              ) : activeTab === 'tax_clearances' ? (
-                <>
-                  <th className="px-8 py-5 text-white">Tax PO Details</th>
-                  <th className="px-8 py-5 text-white">Target Revenue (99%)</th>
-                  <th className="px-8 py-5 text-white">WHT Value (1%)</th>
-                  <th className="px-8 py-5 text-white text-right">Clearance Status</th>
-                </>
               ) : (
                 <>
-                  <th className="px-8 py-5 text-white">Revenue Metrics</th>
-                  <th className="px-8 py-5 text-white">Markup Analysis</th>
-                  <th className="px-8 py-5 text-white">SLA / Status</th>
-                  <th className="px-8 py-5 text-white text-right">Auth Actions</th>
+                  {columnOrder.map(col => {
+                    if (col === 'context') return (
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('internalOrderNumber')}>
+                        {activeTab === 'tax_clearances' ? 'Tax PO Details' : 'Operational Context'} {sortConfig.key === 'internalOrderNumber' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
+                      </th>
+                    );
+                    if (col === 'date') return (
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-4 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('orderDate')}>
+                        {activeTab === 'tax_clearances' ? 'Target Revenue (99%)' : 'Order Date'} {sortConfig.key === 'orderDate' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
+                      </th>
+                    );
+                    if (col === 'revenue') return (
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('grossRevenue')}>
+                        {activeTab === 'tax_clearances' ? 'WHT Value (1%)' : 'Revenue Metrics'} {sortConfig.key === 'grossRevenue' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
+                      </th>
+                    );
+                    if (col === 'markup') return (
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('markupPct')}>
+                        {activeTab === 'tax_clearances' ? 'Clearance Status' : 'Markup Analysis'} {sortConfig.key === 'markupPct' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
+                      </th>
+                    );
+                    if (col === 'status') return (
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('status')}>
+                        {activeTab === 'tax_clearances' ? '-' : 'SLA / Status'} {sortConfig.key === 'status' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
+                      </th>
+                    );
+                    if (col === 'actions') return (
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white text-right transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`}>
+                        {activeTab === 'tax_clearances' ? '-' : 'Auth Actions'}
+                      </th>
+                    );
+                    return null;
+                  })}
                 </>
               )}
             </tr>
@@ -588,7 +672,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
           <tbody className="divide-y divide-slate-50">
             {activeTab === 'entities' ? (
               <>
-                {customers.map(c => (
+                {[...customers].sort((a, b) => {
+                  const valA = (a.name || '').toLowerCase();
+                  const valB = (b.name || '').toLowerCase();
+                  if (sortConfig.key !== 'name') return 0;
+                  if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+                  if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+                  return 0;
+                }).map(c => (
                   <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-8 py-6">
                       <div className="font-black text-slate-800">{c.name}</div>
@@ -607,7 +698,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                     </td>
                   </tr>
                 ))}
-                {suppliers.map(s => (
+                {[...suppliers].sort((a, b) => {
+                  const valA = (a.name || '').toLowerCase();
+                  const valB = (b.name || '').toLowerCase();
+                  if (sortConfig.key !== 'name') return 0;
+                  if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+                  if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+                  return 0;
+                }).map(s => (
                   <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-8 py-6">
                       <div className="font-black text-slate-800">{s.name}</div>
@@ -637,35 +735,47 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
                   return (
                     <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="px-8 py-6">
-                        <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
-                        <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
-                      </td>
-                      <td className="px-8 py-6 text-sm font-black text-slate-700">{targetRevenue.toLocaleString()} L.E.</td>
-                      <td className="px-8 py-6 text-sm font-black text-amber-600">{whtAmount.toLocaleString()} L.E.</td>
-                      <td className="px-8 py-6 text-right">
-                        {o.whtCertificateFile ? (
-                          <a href={`http://localhost:3005/${o.whtCertificateFile}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-100 transition-all">
-                            <i className="fa-solid fa-file-shield text-base"></i> Tax Cleared
-                          </a>
-                        ) : (
-                          <div className="flex flex-col items-end gap-2">
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-600 border border-rose-100 rounded-lg text-[9px] font-black uppercase">
-                              <i className="fa-solid fa-clock"></i> Pending Proof
-                            </span>
-                            <label className="cursor-pointer px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-black transition-all inline-flex items-center gap-2 shadow-lg shadow-slate-200">
-                              <i className={`fa-solid ${isProcessing ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'}`}></i> Upload Certificate
-                              <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={isProcessing} onChange={e => handleUploadWHT(o.id, e)} />
-                            </label>
-                          </div>
-                        )}
-                      </td>
+                      {columnOrder.map(col => {
+                        if (col === 'context') return (
+                          <td key={col} className="px-8 py-6">
+                            <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
+                            <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
+                            <div className="text-[9px] text-slate-400 font-bold mt-1 uppercase tracking-tighter">{o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}</div>
+                          </td>
+                        );
+                        if (col === 'date' || col === 'revenue' || col === 'markup' || col === 'status' || col === 'actions') {
+                          // Tax clearances mapping: date->revenue, revenue->WHT, markup->status
+                          if (col === 'date') return <td key={col} className="px-8 py-6 text-sm font-black text-slate-700">{targetRevenue.toLocaleString()} L.E.</td>;
+                          if (col === 'revenue') return <td key={col} className="px-8 py-6 text-sm font-black text-amber-600">{whtAmount.toLocaleString()} L.E.</td>;
+                          if (col === 'markup') return (
+                            <td key={col} className="px-8 py-6 text-right">
+                              {o.whtCertificateFile ? (
+                                <a href={`http://localhost:3005/${o.whtCertificateFile}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-100 transition-all">
+                                  <i className="fa-solid fa-file-shield text-base"></i> Tax Cleared
+                                </a>
+                              ) : (
+                                <div className="flex flex-col items-end gap-2">
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-600 border border-rose-100 rounded-lg text-[9px] font-black uppercase">
+                                    <i className="fa-solid fa-clock"></i> Pending Proof
+                                  </span>
+                                  <label className="cursor-pointer px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-black transition-all inline-flex items-center gap-2 shadow-lg shadow-slate-200">
+                                    <i className={`fa-solid ${isProcessing ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'}`}></i> Upload Certificate
+                                    <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={isProcessing} onChange={e => handleUploadWHT(o.id, e)} />
+                                  </label>
+                                </div>
+                              )}
+                            </td>
+                          );
+                          return <td key={col}></td>;
+                        }
+                        return null;
+                      })}
                     </tr>
                   )
                 })}
                 {whtOrders.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-8 py-16 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">
+                    <td colSpan={columnOrder.length} className="px-8 py-16 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">
                       <i className="fa-solid fa-file-invoice-dollar text-4xl block mb-3 opacity-20"></i>
                       No Tax Clearance Records Found
                     </td>
@@ -673,7 +783,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                 )}
               </>
             ) : filteredOrders.map(o => {
-              const pl = o.pl;
+              const pl = (o as any).pl;
               const isBreach = pl.markupPct < config.settings.minimumMarginPct;
               const showRow = activeTab === 'orders' ||
                 (activeTab === 'margins' && o.status === OrderStatus.NEGATIVE_MARGIN) ||
@@ -683,130 +793,122 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
               const isInvoicedOrLater = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(o.status);
 
-              // Calculate total authorized gross value.
               let totalAuthorizedGross = 0;
               let draftSum = 0;
               o.items.forEach(it => {
-                totalAuthorizedGross += (it.approvedForDispatchQty || 0) * it.pricePerUnit * (1 + ((it.taxPercent || 0) / 100));
+                totalAuthorizedGross += (it.approvedForDispatchQty || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
                 const draftQty = parseFloat(dispatchReceiptInputs[it.id]) || 0;
-                draftSum += draftQty * it.pricePerUnit * (1 + ((it.taxPercent || 0) / 100));
+                draftSum += draftQty * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
               });
 
               return (
                 <React.Fragment key={o.id}>
                   <tr className={`hover:bg-slate-50/80 transition-colors ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/20' : ''}`}>
-                    <td className="px-8 py-6">
-                      <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
-                      <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
-                      {o.invoiceNumber && <div className="text-[9px] font-black text-emerald-600 uppercase mt-1">Tax Invoice: {o.invoiceNumber}</div>}
-                      {totalAuthorizedGross > pl.paid && (
-                        <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded bg-rose-50 text-rose-600 border border-rose-100 text-[9px] font-black uppercase shadow-sm">
-                          <i className="fa-solid fa-triangle-exclamation"></i>
-                          Auth Exceeds Paid
-                        </div>
-                      )}
-                      {(totalAuthorizedGross + draftSum) > pl.paid && draftSum > 0 && totalAuthorizedGross <= pl.paid && (
-                        <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded bg-amber-50 text-amber-600 border border-amber-200 text-[9px] font-black uppercase shadow-sm animate-pulse" title="The combination of your current draft authorizations plus existing authorizations exceeds the partial payments collected.">
-                          <i className="fa-solid fa-triangle-exclamation"></i>
-                          Draft Exceeds Paid
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-8 py-6">
-                      <div className="flex items-center gap-2">
-                        <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} L.E.</div>
-                        {totalAuthorizedGross > pl.paid && (
-                          <div className="px-2 py-0.5 bg-rose-100 text-rose-700 text-[8px] font-black uppercase rounded shadow-sm animate-pulse border border-rose-200" title="The total value of internally authorized dispatches exceeds the collected payments.">
-                            Auth &gt; Paid Alert
+                    {columnOrder.map(col => {
+                      if (col === 'context') return (
+                        <td key={col} className="px-8 py-6">
+                          <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
+                          <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
+                          {o.invoiceNumber && <div className="text-[9px] font-black text-emerald-600 uppercase mt-1">Tax Invoice: {o.invoiceNumber}</div>}
+                        </td>
+                      );
+                      if (col === 'date') return (
+                        <td key={col} className="px-4 py-6">
+                          <div className="text-xs font-black text-slate-700 uppercase tracking-tighter">
+                            {o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}
                           </div>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-bold mt-1">Paid: {pl.paid.toLocaleString()} • Bal: {pl.outstanding.toLocaleString()}</div>
-                    </td>
-                    <td className="px-8 py-6">
-                      <div className={`inline-flex px-2 py-0.5 rounded text-[10px] font-black ${isBreach ? 'bg-rose-600 text-white shadow-sm animate-pulse' : 'bg-emerald-100 text-emerald-800'}`}>
-                        {pl.markupPct.toFixed(1)}% Markup
-                      </div>
-                      <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">Target: {config.settings.minimumMarginPct}%</div>
-                    </td>
-                    <td className="px-8 py-6">
-                      <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
-                        {getDynamicOrderStatusStyle(o, config).label}
-                      </div>
-                      <ThresholdSentinel order={o} config={config} />
-                    </td>
-                    <td className="px-8 py-6 text-right">
-                      <div className="flex gap-2 justify-end items-center">
-                        {/* Download Invoice Button */}
-                        {isInvoicedOrLater && (
-                          <button
-                            onClick={() => handleDownloadInvoice(o)}
-                            disabled={isDownloading && printOrder?.id === o.id}
-                            className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200"
-                            title="Download Tax Invoice"
-                          >
-                            {isDownloading && printOrder?.id === o.id ? <i className="fa-solid fa-circle-notch fa-spin text-xs"></i> : <i className="fa-solid fa-file-arrow-down text-xs"></i>}
-                          </button>
-                        )}
-
-                        {isInvoicedOrLater && (
-                          <button
-                            onClick={() => setDecisionModal({ type: 'cancelInvoice', entityId: o.id, entityName: o.internalOrderNumber })}
-                            className="px-4 py-2 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[9px] font-black uppercase hover:bg-rose-100 transition-all flex items-center gap-2"
-                            title="Void current invoice and return to Billing stage"
-                          >
-                            <i className="fa-solid fa-file-circle-xmark"></i> Void Invoice
-                          </button>
-                        )}
-
-                        {o.status === OrderStatus.NEGATIVE_MARGIN && (
-                          <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-rose-200">Force Authorization</button>
-                        )}
-                        {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
-                          <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">Generate Invoice</button>
-                        )}
-                        {![OrderStatus.REJECTED, OrderStatus.FULFILLED].includes(o.status) && (
-                          <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Collect Payment</button>
-                        )}
-                        {o.payments && o.payments.length > 0 && (
-                          <button
-                            onClick={() => setViewPaymentsOrder(o)}
-                            className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center hover:bg-emerald-100 transition-all border border-emerald-200"
-                            title="View Payment Receipts"
-                          >
-                            <i className="fa-solid fa-receipt text-xs"></i>
-                          </button>
-                        )}
-                        <div className="flex gap-1">
-                          {!o.einvoiceRequested && (
-                            <button
-                              onClick={async () => {
-                                if (window.confirm(`Request official Gov. E-Invoice for ${o.internalOrderNumber}?`)) {
-                                  await dataService.requestEInvoice(o.id);
-                                  fetchData();
-                                }
-                              }}
-                              className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
-                              title="Request Gov. E-Invoice"
-                            >
-                              <i className="fa-solid fa-file-invoice mr-1"></i> Gov. E-Invoice
-                            </button>
-                          )}
-                          {o.einvoiceRequested && !o.einvoiceFile && (
-                            <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center">
-                              <i className="fa-solid fa-clock mr-1"></i> E-Invoice Pending
-                            </span>
-                          )}
-                          <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-2 text-slate-300 hover:text-amber-500 transition-colors" title="Toggle Hold"><i className="fa-solid fa-hand"></i></button>
-                          <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-2 text-slate-300 hover:text-rose-500 transition-colors" title="Reject Order"><i className="fa-solid fa-ban"></i></button>
-                        </div>
-                      </div>
-                    </td>
+                          <div className="text-[9px] text-slate-400 font-bold mt-1">Acquisition Date</div>
+                        </td>
+                      );
+                      if (col === 'revenue') return (
+                        <td key={col} className="px-8 py-6">
+                          <div className="flex items-center gap-2">
+                            <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} L.E.</div>
+                          </div>
+                          <div className="text-[9px] text-slate-400 font-bold mt-1">
+                            Paid: {pl.paid.toLocaleString()} L.E. • Bal: {pl.outstanding.toLocaleString()}
+                          </div>
+                        </td>
+                      );
+                      if (col === 'markup') return (
+                        <td key={col} className="px-8 py-6">
+                          <div className={`px-3 py-1.5 rounded-xl border-2 text-[10px] font-black w-fit shadow-sm ${isBreach ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-emerald-50 border-emerald-100 text-emerald-600'}`}>
+                            {pl.markupPct.toFixed(1)}% Markup
+                          </div>
+                          <div className="text-[8px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Target: {config.settings.minimumMarginPct}%</div>
+                        </td>
+                      );
+                      if (col === 'status') return (
+                        <td key={col} className="px-8 py-6">
+                          <div className="flex flex-col gap-2">
+                            <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
+                              {getDynamicOrderStatusStyle(o, config).label}
+                            </div>
+                            <ThresholdSentinel order={o} config={config} />
+                          </div>
+                        </td>
+                      );
+                      if (col === 'actions') return (
+                        <td key={col} className="px-8 py-6 text-right">
+                          <div className="flex justify-end gap-2 items-center">
+                            {isInvoicedOrLater && (
+                              <>
+                                <button
+                                  onClick={() => handleDownloadInvoice(o)}
+                                  className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200"
+                                  title="Download Tax Invoice"
+                                >
+                                  {isDownloading && printOrder?.id === o.id ? <i className="fa-solid fa-circle-notch fa-spin text-xs"></i> : <i className="fa-solid fa-file-arrow-down text-xs"></i>}
+                                </button>
+                                <button
+                                  onClick={() => setDecisionModal({ type: 'cancelInvoice', entityId: o.id, entityName: o.internalOrderNumber })}
+                                  className="px-4 py-2 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[9px] font-black uppercase hover:bg-rose-100 transition-all flex items-center gap-2"
+                                  title="Void current invoice and return to Billing stage"
+                                >
+                                  <i className="fa-solid fa-file-circle-xmark"></i> Void
+                                </button>
+                              </>
+                            )}
+                            {o.status === OrderStatus.NEGATIVE_MARGIN && (
+                              <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-rose-200">Force Auth</button>
+                            )}
+                            {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
+                              <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">Generate Invoice</button>
+                            )}
+                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Pay</button>
+                            <div className="flex gap-1">
+                              {!o.einvoiceRequested && (
+                                <button
+                                  onClick={async () => {
+                                    if (window.confirm(`Request official Gov. E-Invoice for ${o.internalOrderNumber}?`)) {
+                                      await dataService.requestEInvoice(o.id);
+                                      fetchData();
+                                    }
+                                  }}
+                                  className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
+                                  title="Request Gov. E-Invoice"
+                                >
+                                  <i className="fa-solid fa-file-invoice mr-1"></i> Gov
+                                </button>
+                              )}
+                              {o.einvoiceRequested && !o.einvoiceFile && (
+                                <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center">
+                                  <i className="fa-solid fa-clock mr-1"></i>
+                                </span>
+                              )}
+                              <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-2 text-slate-300 hover:text-amber-500 transition-colors" title="Toggle Hold"><i className="fa-solid fa-hand"></i></button>
+                              <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-2 text-slate-300 hover:text-rose-500 transition-colors" title="Reject Order"><i className="fa-solid fa-ban"></i></button>
+                            </div>
+                          </div>
+                        </td>
+                      );
+                      return null;
+                    })}
                   </tr>
 
                   {/* Inline Line Items for Authorization */}
                   <tr className="bg-slate-50/50 border-b-2 border-slate-100">
-                    <td colSpan={5} className="px-8 pb-6 bg-transparent">
+                    <td colSpan={columnOrder.length} className="px-8 pb-6 bg-transparent">
                       <div className="bg-white rounded-2xl shadow-inner border border-slate-200 overflow-hidden divide-y divide-slate-100">
                         <div className="px-4 py-2 bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest grid grid-cols-12 gap-4 items-center">
                           <div className="col-span-5">PO Item Definition</div>
@@ -821,7 +923,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                           const dispatched = it.dispatchedQty || 0;
                           const maxAuth = Math.max(0, inHub - approved);
 
-                          const itemGrossPerUnit = it.pricePerUnit * (1 + ((it.taxPercent || 0) / 100));
+                          const itemGrossPerUnit = (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
                           const draftSumFromOthers = draftSum - ((parseFloat(dispatchReceiptInputs[it.id]) || 0) * itemGrossPerUnit);
                           const availableAmount = pl.paid - totalAuthorizedGross - draftSumFromOthers;
                           const maxAffordablePieces = itemGrossPerUnit > 0 ? Math.max(0, Math.floor(availableAmount / itemGrossPerUnit)) : maxAuth;
@@ -896,13 +998,15 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             })}
           </tbody>
         </table>
-        {filteredOrders.length === 0 && !loading && (
-          <div className="p-20 text-center flex flex-col items-center gap-3 text-slate-300 italic uppercase font-black tracking-widest text-xs">
-            <i className="fa-solid fa-vault text-5xl opacity-10 mb-4"></i>
-            Financial queue is empty
-          </div>
-        )}
-      </div>
+        {
+          filteredOrders.length === 0 && !loading && (
+            <div className="p-20 text-center flex flex-col items-center gap-3 text-slate-300 italic uppercase font-black tracking-widest text-xs">
+              <i className="fa-solid fa-vault text-5xl opacity-10 mb-4"></i>
+              Financial queue is empty
+            </div>
+          )
+        }
+      </div >
 
       {decisionModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
@@ -983,80 +1087,82 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       )}
 
       {/* Payment History / Receipts Modal */}
-      {viewPaymentsOrder && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[110] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl p-10 animate-in zoom-in-95 border border-slate-100 flex flex-col max-h-[90vh]">
-            <div className="flex justify-between items-start mb-8">
-              <div className="flex items-center gap-6">
-                <div className="w-16 h-16 rounded-3xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-3xl shadow-inner">
-                  <i className="fa-solid fa-receipt"></i>
+      {
+        viewPaymentsOrder && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[110] flex items-center justify-center p-4">
+            <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl p-10 animate-in zoom-in-95 border border-slate-100 flex flex-col max-h-[90vh]">
+              <div className="flex justify-between items-start mb-8">
+                <div className="flex items-center gap-6">
+                  <div className="w-16 h-16 rounded-3xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-3xl shadow-inner">
+                    <i className="fa-solid fa-receipt"></i>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Payment Receipts</h3>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order: {viewPaymentsOrder.internalOrderNumber}</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Payment Receipts</h3>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order: {viewPaymentsOrder.internalOrderNumber}</p>
+                <button onClick={() => setViewPaymentsOrder(null)} className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all flex items-center justify-center">
+                  <i className="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                <table className="w-full text-left">
+                  <thead className="sticky top-0 bg-white z-10 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
+                    <tr>
+                      <th className="px-4 py-4">Receipt #</th>
+                      <th className="px-4 py-4">Date</th>
+                      <th className="px-4 py-4">Amount</th>
+                      <th className="px-4 py-4 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {(viewPaymentsOrder.payments || []).map((p, idx) => {
+                      const totalPaidAtThisPoint = viewPaymentsOrder.payments?.slice(0, idx + 1).reduce((s, pay) => s + pay.amount, 0) || 0;
+                      let grossSum = 0;
+                      viewPaymentsOrder.items.forEach(it => grossSum += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+                      const isClosingPayment = totalPaidAtThisPoint >= grossSum;
+
+                      return (
+                        <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-5 font-mono text-xs font-black text-blue-600 uppercase">{p.receiptNumber || `RCV-${String(idx + 1).padStart(3, '0')}`}</td>
+                          <td className="px-4 py-5 font-bold text-slate-500 text-xs">{new Date(p.date).toLocaleDateString()}</td>
+                          <td className="px-4 py-5 font-black text-slate-800">{p.amount.toLocaleString()} L.E.</td>
+                          <td className="px-4 py-5 text-right">
+                            <button
+                              onClick={() => {
+                                setPaymentInvoiceData({
+                                  order: viewPaymentsOrder,
+                                  paymentAmount: p.amount,
+                                  receiptNumber: p.receiptNumber || `RCV-${String(idx + 1).padStart(3, '0')}`,
+                                  isFinal: isClosingPayment,
+                                  previousPayments: viewPaymentsOrder.payments?.slice(0, idx) || []
+                                });
+                              }}
+                              className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 inline-flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all border border-blue-100"
+                              title="Download PDF Receipt"
+                            >
+                              <i className="fa-solid fa-file-arrow-down text-xs"></i>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-8 pt-8 border-t border-slate-100 flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  Total Received: {(viewPaymentsOrder.payments || []).reduce((s, p) => s + p.amount, 0).toLocaleString()} L.E.
                 </div>
+                <button onClick={() => setViewPaymentsOrder(null)} className="px-8 py-3 bg-slate-900 text-white rounded-xl hover:bg-black transition-all">Close</button>
               </div>
-              <button onClick={() => setViewPaymentsOrder(null)} className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all flex items-center justify-center">
-                <i className="fa-solid fa-xmark"></i>
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-              <table className="w-full text-left">
-                <thead className="sticky top-0 bg-white z-10 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
-                  <tr>
-                    <th className="px-4 py-4">Receipt #</th>
-                    <th className="px-4 py-4">Date</th>
-                    <th className="px-4 py-4">Amount</th>
-                    <th className="px-4 py-4 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {(viewPaymentsOrder.payments || []).map((p, idx) => {
-                    const totalPaidAtThisPoint = viewPaymentsOrder.payments?.slice(0, idx + 1).reduce((s, pay) => s + pay.amount, 0) || 0;
-                    let grossSum = 0;
-                    viewPaymentsOrder.items.forEach(it => grossSum += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
-                    const isClosingPayment = totalPaidAtThisPoint >= grossSum;
-
-                    return (
-                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-5 font-mono text-xs font-black text-blue-600 uppercase">{p.receiptNumber || `RCV-${String(idx + 1).padStart(3, '0')}`}</td>
-                        <td className="px-4 py-5 font-bold text-slate-500 text-xs">{new Date(p.date).toLocaleDateString()}</td>
-                        <td className="px-4 py-5 font-black text-slate-800">{p.amount.toLocaleString()} L.E.</td>
-                        <td className="px-4 py-5 text-right">
-                          <button
-                            onClick={() => {
-                              setPaymentInvoiceData({
-                                order: viewPaymentsOrder,
-                                paymentAmount: p.amount,
-                                receiptNumber: p.receiptNumber || `RCV-${String(idx + 1).padStart(3, '0')}`,
-                                isFinal: isClosingPayment,
-                                previousPayments: viewPaymentsOrder.payments?.slice(0, idx) || []
-                              });
-                            }}
-                            className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 inline-flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all border border-blue-100"
-                            title="Download PDF Receipt"
-                          >
-                            <i className="fa-solid fa-file-arrow-down text-xs"></i>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-8 pt-8 border-t border-slate-100 flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                Total Received: {(viewPaymentsOrder.payments || []).reduce((s, p) => s + p.amount, 0).toLocaleString()} L.E.
-              </div>
-              <button onClick={() => setViewPaymentsOrder(null)} className="px-8 py-3 bg-slate-900 text-white rounded-xl hover:bg-black transition-all">Close</button>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 };

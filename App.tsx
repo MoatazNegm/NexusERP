@@ -146,7 +146,7 @@ const App: React.FC = () => {
     const items = [
       { id: 'dashboard', icon: 'fa-gauge-high', label: 'Dashboard', roles: mapping['dashboard'] || ['management'] as UserRole[] },
       { id: 'orders', icon: 'fa-clipboard-list', label: 'Order Management', roles: mapping['orders'] || ['order_management'] as UserRole[], module: 'orderManagement' as keyof AppConfig['modules'] },
-      { id: 'technicalReview', icon: 'fa-microscope', label: 'Technical Review', roles: mapping['technicalReview'] || ['order_management'] as UserRole[], module: 'technicalReview' as keyof AppConfig['modules'] },
+      { id: 'technicalReview', icon: 'fa-microscope', label: 'Technical Review', roles: mapping['technicalReview'] || ['planning'] as UserRole[], module: 'technicalReview' as keyof AppConfig['modules'] },
       { id: 'finance', icon: 'fa-hand-holding-dollar', label: 'Finance Operations', roles: mapping['finance'] || ['finance'] as UserRole[], module: 'finance' as keyof AppConfig['modules'] },
       { id: 'procurement', icon: 'fa-diagram-project', label: 'Procurement', roles: mapping['procurement'] || ['procurement'] as UserRole[], module: 'procurement' as keyof AppConfig['modules'] },
       { id: 'factory', icon: 'fa-industry', label: 'Factory Build', roles: mapping['factory'] || ['factory'] as UserRole[], module: 'factory' as keyof AppConfig['modules'] },

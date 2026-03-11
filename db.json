@@ -660,6 +660,17 @@
       ],
       "email": "Khaled@sldkj",
       "password": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+    },
+    {
+      "id": "users_1773260048865",
+      "name": "ziad",
+      "username": "ziad",
+      "roles": [],
+      "groupIds": [
+        "userGroups_1770927056150"
+      ],
+      "email": "ziad@ziad.com",
+      "password": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
     }
   ],
   "notifications": [
@@ -812,7 +823,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:e3fa3e44f30c37ba9faeee809e694005:e1d4cef4775926c4de66ddaac51ae5471f04ebb79412f85608b343dafc7eda3d",
+        "password": "ENC:9084abdd14c674ab7b4107b98cfe03b0:67e00e79384d57e3e132c8f119b0a4db7f87dd45226398c0082f7ae87ac238fc",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -826,7 +837,8 @@
         "finance",
         "crm",
         "inventory",
-        "Gov.EInvoice"
+        "Gov.EInvoice",
+        "planning"
       ],
       "roleMappings": {
         "dashboard": [
@@ -836,7 +848,7 @@
           "order_management"
         ],
         "technicalReview": [
-          "order_management"
+          "planning"
         ],
         "finance": [
           "finance"
@@ -868,7 +880,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:847f5c329cd542426684789f23e94b49:6673845d63a60000c55b3073d4f765b3285a84853e077ab303db829b32c29778937ac2d573219e7e3993a987fe5f1460",
+        "apiKey": "ENC:33e1efab1eaa320876de0d6c80f65e07:92f4c8622f040cc421a611c584d4ab08f4d59776101e37e5e75af4dcb393ecdcb4e36a192fd1a71eedff1bbd0ebfee15",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -893,7 +905,7 @@
         "userGroups_1770925213983"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:79f9947eeeb7416a70afe8976831cb68:b85f5dac1e5c92f0ff8f6eb6db35c219e10d99a4783a3335fb8bc2980938ede0e43a2e7b8eada4d74b359b92f25da03f",
+        "apiKey": "ENC:4c957967744871acad89c0987336ef51:865559232f4677376ba31f73c8b2c05fbea99166b7ed4eecce4881f4c902a596c7d90b52c46e5607bd50f8ee3a4e74e3",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

@@ -46,7 +46,7 @@ export const INITIAL_CONFIG: AppConfig = {
     roleMappings: {
       dashboard: ['management'],
       orders: ['order_management'],
-      technicalReview: ['order_management'],
+      technicalReview: ['planning'],
       finance: ['finance'],
       procurement: ['procurement'],
       factory: ['factory'],
