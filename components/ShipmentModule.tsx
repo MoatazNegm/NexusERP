@@ -111,7 +111,7 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                     alert("Error: Template not generated. Please try again.");
                     setPrintingOrder(null);
                 }
-            }, 100);
+            }, 500);
         }
     }, [printingOrder]);
 
@@ -123,7 +123,7 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
             const canvas = await html2canvas(element, {
                 scale: 2,
                 useCORS: true,
-                logging: false,
+                logging: true,
                 backgroundColor: '#ffffff'
             });
             const imgData = canvas.toDataURL('image/png');
@@ -437,13 +437,12 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                 <div className="text-sm font-bold text-slate-400 uppercase">#{printingOrder.internalOrderNumber}</div>
                                 <div className="text-xs font-bold text-slate-400 mt-1">Date: {new Date().toLocaleDateString()}</div>
                             </div>
-                            <div className="text-right flex flex-col items-end">
+                            <div className="text-right flex flex-col items-end min-h-[160px]">
                                 {config.settings.companyLogo ? (
                                     <img
                                         src={config.settings.companyLogo}
                                         alt={config.settings.companyName}
                                         className="w-56 h-36 object-contain mb-4"
-                                        crossOrigin="anonymous"
                                     />
                                 ) : (
                                     <div className="w-24 h-24 bg-slate-900 text-white rounded-full flex items-center justify-center text-3xl font-black mb-4">

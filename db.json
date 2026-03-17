@@ -824,11 +824,11 @@
             }
           ],
           "isAccepted": false,
-          "manufacturedQty": 3000,
-          "hubReceivedQty": 3000,
-          "approvedForDispatchQty": 319,
-          "dispatchedQty": 319,
-          "shippedQty": 319,
+          "manufacturedQty": 16000,
+          "hubReceivedQty": 7100,
+          "approvedForDispatchQty": 1329,
+          "dispatchedQty": 1329,
+          "shippedQty": 1319,
           "deliveredQty": 319
         },
         {
@@ -1355,6 +1355,60 @@
           "message": "[SYSTEM] Manufacturing Run Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
           "status": "MANUFACTURING",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:04:16.834Z",
+          "message": "Manufactured 13000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14% (16000/16000)",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:04:34.160Z",
+          "message": "Hub Intake: 4000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:04:54.051Z",
+          "message": "Payment of 1500.800000000001 recorded. Bal: 13,632",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:05:21.082Z",
+          "message": "Finance Partial Receipt for Dispatch: 1000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:05:40.361Z",
+          "message": "Shipment Released from Hub: 1000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:12:54.716Z",
+          "message": "Items transitioned to IN TRANSIT: 1000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:13:13.902Z",
+          "message": "Hub Intake: 100 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:13:46.490Z",
+          "message": "Finance Partial Receipt for Dispatch: 10 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T14:13:58.869Z",
+          "message": "Shipment Released from Hub: 10 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0002",
@@ -1375,6 +1429,13 @@
           "user": "System",
           "memo": "dlssld",
           "receiptNumber": "RCV-002"
+        },
+        {
+          "amount": 1500.800000000001,
+          "date": "2026-03-17T14:04:53.971Z",
+          "user": "System",
+          "memo": "ldsdk",
+          "receiptNumber": "RCV-003"
         }
       ],
       "einvoiceRequested": true,
@@ -2040,7 +2101,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:b4856d4b68c8535813ac4fcb98ef98f0:525d0522fadd99cf1ffe6bf7dd12c2ddba6e4bbbb9de67d8ce951b60c87a707d",
+        "password": "ENC:a63f517e656c89f28e3acc98b91669b0:b697746b102535824fe8097161f682167a8c6411e89ac25f806351b5d47af6d9",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -2097,7 +2158,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:fa1b632833b5fe72942621558b302a04:8470d41bba445c255a116bd5c5eafb656b4776c8fb2e2c2b618aac43d8407c22398d961c3a116ed5d3cf9cb43d74f7eb",
+        "apiKey": "ENC:c9280fe2edada4951005946e7c6bc206:7dad9140898169858d8704743dfe894904f16aca0470259ef2c27c09df0409f8d8a9b06d59a08a79904d127f45fcecc6",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -2123,7 +2184,7 @@
         "userGroups_1770927056150"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:4f9c5ac9e41a75e0a3504061d287221a:1d6daf5029a768b572943ab80803d11f36495f8c1d809ab9ba0f66865709514b4343fb56c7f888954267bbdb8ab20ffe",
+        "apiKey": "ENC:2882e61cce96d6beaa0febec8bc48f5d:dd5a5a15e534627e4d01b56477422f59e5bbecff776f55fcb23eeb5baf87f137cea7fe0d133d1a0279dfc97bcde1603c",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {
