@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { Supplier, SupplierPart, LogEntry, User } from '../types';
+import { Supplier, SupplierPart, LogEntry, User, UserRole } from '../types';
 
 const LogTimeline: React.FC<{ logs: LogEntry[] }> = ({ logs }) => (
   <div className="space-y-4 relative pl-4 border-l-2 border-slate-100 py-2">
@@ -23,10 +23,11 @@ type SupplierTab = 'form' | 'pricelist' | 'history';
 
 interface SupplierModuleProps {
   currentUser: User;
+  userRoles: UserRole[];
   refreshKey?: number;
 }
 
-export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, refreshKey }) => {
+export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, userRoles, refreshKey }) => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [suppForm, setSuppForm] = useState<Omit<Supplier, 'id' | 'logs' | 'priceList'>>({
     name: '',
@@ -48,7 +49,7 @@ export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, ref
 
   const [newPart, setNewPart] = useState({ partNumber: '', description: '', price: 0, currency: 'L.E.' });
 
-  const canEdit = currentUser.roles.includes('admin') || currentUser.roles.includes('procurement');
+  const canEdit = userRoles.includes('admin') || userRoles.includes('procurement');
 
   useEffect(() => {
     loadSuppliers();

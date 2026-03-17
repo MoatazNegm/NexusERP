@@ -331,7 +331,7 @@ const App: React.FC = () => {
       case 'factory': return <FactoryModule config={config} refreshKey={refreshKey} currentUser={currentUser} />;
       case 'inventory': return <InventoryModule config={config} refreshKey={refreshKey} currentUser={currentUser} />;
       case 'shipment': return <ShipmentModule config={config} refreshKey={refreshKey} currentUser={currentUser} />;
-      case 'suppliers': return <SupplierModule currentUser={currentUser} refreshKey={refreshKey} />;
+      case 'suppliers': return <SupplierModule currentUser={currentUser} userRoles={effectiveRoles} refreshKey={refreshKey} />;
       case 'crm': return <CRMModule refreshKey={refreshKey} currentUser={currentUser} />;
       case 'reporting': return <ProfitabilityReport orders={orders} config={config} />;
       case 'systemLogs': return <SystemLogs refreshKey={refreshKey} />;
