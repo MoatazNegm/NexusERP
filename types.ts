@@ -124,6 +124,7 @@ export interface ManufacturingComponent {
   statusUpdatedAt?: string;
   procurementStartedAt?: string;
   consumedQty?: number;
+  receivedQty?: number;
 }
 
 export interface CustomerOrderItem {

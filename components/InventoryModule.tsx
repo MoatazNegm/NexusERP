@@ -193,13 +193,15 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
     if (!pendingConfirm || !pendingConfirm.comp || !pendingConfirm.item) return;
     const { order, item, comp } = pendingConfirm;
 
-    if (parseFloat(receivedQtyInput) !== comp.quantity) {
+    const leftToReceive = (comp.quantity || 0) - (comp.receivedQty || 0);
+    const qtyToReceive = parseFloat(receivedQtyInput);
+    if (isNaN(qtyToReceive) || qtyToReceive <= 0 || qtyToReceive > leftToReceive) {
       return;
     }
 
     setProcessingId(comp.id);
     try {
-      await dataService.receiveComponent(order.id, item.id, comp.id);
+      await dataService.receiveComponent(order.id, item.id, comp.id, qtyToReceive);
       await loadData();
       setPendingConfirm(null);
       setReceivedQtyInput('');
@@ -289,7 +291,9 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
   const isConfirmationAllowed = useMemo(() => {
     if (!pendingConfirm) return false;
     if (pendingConfirm.type !== 'material') return true;
-    return parseFloat(receivedQtyInput) === (pendingConfirm.comp?.quantity || 0);
+    const leftToReceive = (pendingConfirm.comp?.quantity || 0) - (pendingConfirm.comp?.receivedQty || 0);
+    const inputQty = parseFloat(receivedQtyInput);
+    return !isNaN(inputQty) && inputQty > 0 && inputQty <= leftToReceive;
   }, [pendingConfirm, receivedQtyInput]);
 
   return (
@@ -594,8 +598,23 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                   </div>
                   <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 mb-8 space-y-6">
                     <div className="text-center">
-                      <div className="text-[10px] font-black text-slate-400 uppercase mb-2">Expected Quantity</div>
-                      <div className="text-3xl font-black text-slate-800">{pendingConfirm.comp?.quantity} <span className="text-sm font-bold text-slate-400">{pendingConfirm.comp?.unit}</span></div>
+                      <div className="text-[10px] font-black text-slate-400 uppercase mb-2 text-center">Receipt Status</div>
+                      <div className="flex justify-center items-center gap-8">
+                        <div>
+                          <div className="text-[8px] font-black text-slate-400 uppercase">Ordered</div>
+                          <div className="text-xl font-black text-slate-800">{pendingConfirm.comp?.quantity}</div>
+                        </div>
+                        <div className="h-8 w-px bg-slate-200"></div>
+                        <div>
+                          <div className="text-[8px] font-black text-emerald-500 uppercase">Received</div>
+                          <div className="text-xl font-black text-emerald-600">{pendingConfirm.comp?.receivedQty || 0}</div>
+                        </div>
+                        <div className="h-8 w-px bg-slate-200"></div>
+                        <div>
+                          <div className="text-[8px] font-black text-amber-500 uppercase">Left</div>
+                          <div className="text-xl font-black text-amber-600">{(pendingConfirm.comp?.quantity || 0) - (pendingConfirm.comp?.receivedQty || 0)}</div>
+                        </div>
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[9px] font-black text-blue-600 uppercase ml-1">Physical Count Input</label>
@@ -604,8 +623,8 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                         className="w-full p-4 border-2 border-white bg-white rounded-2xl text-center text-2xl font-black focus:border-blue-500 outline-none shadow-sm"
                         placeholder="0.00" value={receivedQtyInput} onChange={e => setReceivedQtyInput(e.target.value)}
                       />
-                      {receivedQtyInput && parseFloat(receivedQtyInput) !== pendingConfirm.comp?.quantity && (
-                        <div className="text-[9px] font-black text-rose-500 uppercase mt-2 text-center flex items-center justify-center gap-2 animate-pulse"><i className="fa-solid fa-triangle-exclamation"></i> Mismatch Detected</div>
+                      {receivedQtyInput && parseFloat(receivedQtyInput) > ((pendingConfirm.comp?.quantity || 0) - (pendingConfirm.comp?.receivedQty || 0)) && (
+                        <div className="text-[9px] font-black text-rose-500 uppercase mt-2 text-center flex items-center justify-center gap-2 animate-pulse"><i className="fa-solid fa-triangle-exclamation"></i> Exceeds Ordered Quantity</div>
                       )}
                     </div>
                   </div>

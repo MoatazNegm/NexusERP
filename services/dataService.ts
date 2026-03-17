@@ -230,8 +230,8 @@ class DataService {
 
   async getUniquePoNumber() { return `PO-${Date.now().toString().slice(-6)}`; }
 
-  async receiveComponent(orderId: string, itemId: string, compId: string) {
-    return this.dispatchAction(orderId, 'receive-component', { itemId, compId });
+  async receiveComponent(orderId: string, itemId: string, compId: string, qty?: number) {
+    return this.dispatchAction(orderId, 'receive-component', { itemId, compId, qty });
   }
 
   async cancelComponentPo(orderId: string, itemId: string, compId: string) {

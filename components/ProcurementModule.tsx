@@ -798,13 +798,22 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                     BATCH: {c.rfpId.substring(0, 6)}
                                   </span>
                                 )}
-                                {c.poNumber && <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-2 rounded">PO: {c.poNumber}</span>}
                               </div>
                               <div className="font-black text-slate-800 text-base tracking-tight">{c.description}</div>
-                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">
-                                Item: {i.orderNumber} • Qty: {c.quantity} {c.unit} • Cost: {(c.unitCost || 0).toLocaleString()} L.E.
+                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex flex-wrap gap-x-2 gap-y-1">
+                                <span>Item: {i.orderNumber}</span>
+                                <span>•</span>
+                                <span>Ordered Qty: {c.quantity} {c.unit}</span>
+                                <span>•</span>
+                                <span>Cost: {(c.unitCost || 0).toLocaleString()} L.E.</span>
+                                {c.receivedQty !== undefined && c.receivedQty > 0 && (
+                                  <>
+                                    <span className="text-emerald-600 font-black">• Received: {c.receivedQty}</span>
+                                    <span className="text-amber-600 font-black">• Left: {Math.max(0, (c.quantity || 0) - c.receivedQty)}</span>
+                                  </>
+                                )}
                                 {c.supplierId && (
-                                  <span className="text-blue-600 ml-2">
+                                  <span className="text-blue-600">
                                     • Supplier: {suppliers.find(s => s.id === c.supplierId)?.name || 'Unknown'}
                                   </span>
                                 )}

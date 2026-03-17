@@ -1133,7 +1133,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
     const settings = resolveSettings(db);
 
     // --- LOCAL HELPER TO FIX SCOPE ISSUES ---
-    const updateInventoryItem = (db, comp, action, order) => {
+    const updateInventoryItem = (db, comp, action, order, receiveQty) => {
         if (!db.inventory) db.inventory = [];
         // Try to find existing inventory item by ID (if linked) or Description/PartNumber
         let invItem = db.inventory.find(i => i.id === comp.inventoryItemId);
@@ -1141,6 +1141,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             invItem = db.inventory.find(i => (i.sku && i.sku === comp.componentNumber) || (i.description === comp.description));
         }
         if (action === 'RECEIVE') {
+            const qtyToIncr = receiveQty !== undefined ? receiveQty : (comp.quantity || 0);
             if (!invItem) {
                 invItem = {
                     id: `inv_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -1158,14 +1159,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             }
             comp.inventoryItemId = invItem.id;
             const currentStock = invItem.quantityInStock !== undefined ? invItem.quantityInStock : (invItem.quantity || 0);
-            invItem.quantityInStock = currentStock + (comp.quantity || 0);
+            invItem.quantityInStock = currentStock + qtyToIncr;
             // Migrate legacy
             if (invItem.quantity !== undefined) delete invItem.quantity;
             invItem.lastCost = comp.unitCost || invItem.lastCost || 0;
             invItem.lastUpdated = new Date().toISOString();
             invItem.poNumber = comp.poNumber;
             invItem.orderRef = order.internalOrderNumber;
-            console.log(`[Inventory] Received: ${invItem.description}. Stock: ${invItem.quantityInStock}, Rsrv: ${invItem.quantityReserved}`);
+            console.log(`[Inventory] Received: ${invItem.description}. Incoming: ${qtyToIncr}. Stock: ${invItem.quantityInStock}, Rsrv: ${invItem.quantityReserved}`);
         } else if (action === 'RELEASE') {
             if (invItem && (invItem.quantityReserved || 0) > 0) {
                 invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - (comp.quantity || 0));
@@ -1242,19 +1243,32 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
             }
 
-            case 'receive-component':
+            case 'receive-component': {
                 const itemIdx = order.items.findIndex(i => i.id === payload.itemId);
                 if (itemIdx === -1) throw new Error("Item not found");
                 const compIdx = order.items[itemIdx].components?.findIndex(c => c.id === payload.compId);
                 if (compIdx === -1) throw new Error("Component not found");
 
                 const compToReceive = order.items[itemIdx].components[compIdx];
-                updateInventoryItem(db, compToReceive, 'RECEIVE', order);
+                const totalOrdered = compToReceive.quantity || 0;
+                const alreadyReceived = compToReceive.receivedQty || 0;
+                const leftToReceive = totalOrdered - alreadyReceived;
 
-                compToReceive.status = order.customerName === 'Internal Stock' ? 'RECEIVED' : 'RESERVED';
+                const qtyToProcess = payload.qty !== undefined ? parseFloat(payload.qty) : leftToReceive;
+
+                if (isNaN(qtyToProcess) || qtyToProcess <= 0) throw new Error("Invalid quantity received");
+                if (qtyToProcess > leftToReceive) throw new Error(`Cannot receive more than ordered (Left: ${leftToReceive})`);
+
+                updateInventoryItem(db, compToReceive, 'RECEIVE', order, qtyToProcess);
+
+                compToReceive.receivedQty = alreadyReceived + qtyToProcess;
+                if (compToReceive.receivedQty >= totalOrdered) {
+                    compToReceive.status = order.customerName === 'Internal Stock' ? 'RECEIVED' : 'RESERVED';
+                }
                 compToReceive.statusUpdatedAt = new Date().toISOString();
-                order.logs.push(createAuditLog(`Component Received to Stock${order.customerName !== 'Internal Stock' ? ' & Reserved for Factory' : ''}: ${compToReceive.description}`, order.status, user));
+                order.logs.push(createAuditLog(`Component Receipt: ${qtyToProcess} ${compToReceive.unit} of ${compToReceive.description} (Total Received: ${compToReceive.receivedQty}/${totalOrdered})`, order.status, user));
                 break;
+            }
 
             case 'convert-to-stock-order': {
                 // Mark a component as ordered for stock — no inventory entry yet
