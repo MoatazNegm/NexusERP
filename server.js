@@ -821,7 +821,9 @@ const runThresholdAudit = async () => {
                 const elapsedHrs = (Date.now() - statusEnteredAt) / (1000 * 60 * 60);
                 if (elapsedHrs > limitHrs) {
                     const label = THRESHOLD_LABELS[compThresholdKey] || compThresholdKey;
-                    const journalKey = `comp_${compThresholdKey}_${order.id}_${item.id}_${comp.id}`;
+                    // For Supplier Fulfillment (ORDERED status), make alerts recurring once per day
+                    const dateSuffix = compThresholdKey === 'orderedLimitHrs' ? `_${new Date().toISOString().split('T')[0]}` : '';
+                    const journalKey = `comp_${compThresholdKey}_${order.id}_${item.id}_${comp.id}${dateSuffix}`;
                     await sendAlertForOrder(order, journalKey, `comp_${compThresholdKey}`, compThresholdKey,
                         `[NEXUS] ${label} Exceeded: ${order.internalOrderNumber} / ${comp.componentNumber || comp.description}`,
                         `Component "${comp.description}" (${comp.componentNumber || 'N/A'}) in order ${order.internalOrderNumber}, item "${item.description}", ` +
@@ -881,7 +883,7 @@ const calculateOrderHealth = (order, settings) => {
     }
 
     // 2. Check Component Level Thresholds (Procurement)
-    if (!isOverdue && order.status === OrderStatus.WAITING_SUPPLIERS) {
+    if (!isOverdue) {
         for (const item of (order.items || [])) {
             for (const comp of (item.components || [])) {
                 const compLimitKey = COMP_STATUS_TO_THRESHOLD[comp.status];
