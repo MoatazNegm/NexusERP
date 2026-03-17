@@ -1337,6 +1337,24 @@
           "message": "Customer Delivery Confirmed (Partial) & POD Filed: uploads/pod/pod-1773755623963-893684057.pdf",
           "status": "MANUFACTURING",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:59:55.350Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:59:55.350Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:59:55.350Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0002",
@@ -1908,6 +1926,18 @@
         "aly_adam@quickstor.net",
         "zeyad_mamdouh@psp-co.org"
       ]
+    },
+    {
+      "id": "nt_1773755995350_ycbq",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1773753262020",
+      "orderId": "orders_1773753262020",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-03-17T13:59:55.350Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
     }
   ],
   "settings": [
@@ -2010,7 +2040,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:f19dd694dff1c762f77d9b78ce52e647:fdab795e81e8c27b308a853440336c5e13b8fd640afa663c767a30475e2cb5bd",
+        "password": "ENC:b4856d4b68c8535813ac4fcb98ef98f0:525d0522fadd99cf1ffe6bf7dd12c2ddba6e4bbbb9de67d8ce951b60c87a707d",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -2067,7 +2097,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:94d19c858dd4438c0c00cb4162789f21:6a5b5b362e4c8f4df0f1d9806f90b91ef02bb1d133df7a47edcac90ba48cfff5e80b61f7a2940c7b891e00960e48dca9",
+        "apiKey": "ENC:fa1b632833b5fe72942621558b302a04:8470d41bba445c255a116bd5c5eafb656b4776c8fb2e2c2b618aac43d8407c22398d961c3a116ed5d3cf9cb43d74f7eb",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -2093,7 +2123,7 @@
         "userGroups_1770927056150"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:0199a7ce0ca83c40bc8c7e7b900bd773:b16f47dd7cb4bc09ce227a02303069d73a7d5521e81d11c47d72ae1c4e312de32575b0d2c7cb3890a0436e6db9f66957",
+        "apiKey": "ENC:4f9c5ac9e41a75e0a3504061d287221a:1d6daf5029a768b572943ab80803d11f36495f8c1d809ab9ba0f66865709514b4343fb56c7f888954267bbdb8ab20ffe",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

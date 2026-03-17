@@ -433,25 +433,25 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                         {/* Header */}
                         <div className="flex justify-between items-start mb-12">
                             <div>
+                                <h2 className="text-4xl font-black text-slate-200 uppercase mb-2" style={{ letterSpacing: '0px' }}>Delivery Note</h2>
+                                <div className="text-sm font-bold text-slate-400 uppercase">#{printingOrder.internalOrderNumber}</div>
+                                <div className="text-xs font-bold text-slate-400 mt-1">Date: {new Date().toLocaleDateString()}</div>
+                            </div>
+                            <div className="text-right flex flex-col items-end">
                                 {config.settings.companyLogo ? (
                                     <img
                                         src={config.settings.companyLogo}
                                         alt={config.settings.companyName}
-                                        className="w-32 h-20 object-contain mb-4"
+                                        className="w-56 h-36 object-contain mb-4"
                                         crossOrigin="anonymous"
                                     />
                                 ) : (
-                                    <div className="w-20 h-20 bg-slate-900 text-white rounded-full flex items-center justify-center text-2xl font-black mb-4">
+                                    <div className="w-24 h-24 bg-slate-900 text-white rounded-full flex items-center justify-center text-3xl font-black mb-4">
                                         {config.settings.companyName.substring(0, 2).toUpperCase()}
                                     </div>
                                 )}
-                                <h1 className="text-2xl font-black text-slate-900 uppercase" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyName}</h1>
-                                <p className="text-sm font-medium text-slate-500 max-w-[200px]" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyAddress}</p>
-                            </div>
-                            <div className="text-right">
-                                <h2 className="text-4xl font-black text-slate-200 uppercase mb-2" style={{ letterSpacing: '0px' }}>Delivery Note</h2>
-                                <div className="text-sm font-bold text-slate-400 uppercase">#{printingOrder.internalOrderNumber}</div>
-                                <div className="text-xs font-bold text-slate-400 mt-1">Date: {new Date().toLocaleDateString()}</div>
+                                <h1 className="text-2xl font-black text-slate-900 uppercase leading-tight" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyName}</h1>
+                                <p className="text-sm font-medium text-slate-500 max-w-[300px]" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyAddress}</p>
                             </div>
                         </div>
 
