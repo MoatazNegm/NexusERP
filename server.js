@@ -116,6 +116,27 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     return currentStatus;
 };
 
+const isOrderFullyPaid = (order) => {
+    if (!order.payments) return false;
+    const totalPaid = order.payments.reduce((s, p) => s + (p.amount || 0), 0);
+    let revenue = 0;
+    (order.items || []).forEach(it => {
+        revenue += ((it.quantity || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100)));
+    });
+
+    let targetRevenue = revenue;
+    if (order.appliesWithholdingTax) {
+        targetRevenue = revenue * 0.99; // Deduct 1% WHT
+    }
+
+    return totalPaid >= (targetRevenue - 0.01); // 0.01 for floating point precision
+};
+
+const isOrderFullyDelivered = (order) => {
+    if (!order.items || order.items.length === 0) return false;
+    return order.items.every(i => (i.deliveredQty || 0) >= (i.quantity || 0));
+};
+
 // --- DATABASE HANDLERS ---
 const readDb = () => {
     try {
@@ -1484,26 +1505,23 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     memo: payload.memo || 'Regular payment',
                     receiptNumber
                 });
-                const totalPaid = order.payments.reduce((s, p) => s + p.amount, 0);
-                // Calculate gross revenue to see if fully paid
-                let revenue = 0;
-                order.items.forEach(it => revenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
-
-                let targetRevenue = revenue;
-                if (order.appliesWithholdingTax) {
-                    targetRevenue = revenue * 0.99; // Deduct 1% WHT
-                }
-
+                const fullyPaid = isOrderFullyPaid(order);
+                const fullyDelivered = isOrderFullyDelivered(order);
                 const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(order.status);
 
-                if (totalPaid >= (targetRevenue - 0.01)) { // Added 0.01 for floating point precision
-                    if (isLateStage) {
+                if (fullyPaid) {
+                    if (isLateStage && fullyDelivered) {
                         order.status = OrderStatus.FULFILLED;
-                        order.logs.push(createAuditLog(`Full payment reconciled${order.appliesWithholdingTax ? ' (with 1% WHT deducted)' : ''}. Order lifecycle FULFILLED.`, order.status, user));
+                        order.logs.push(createAuditLog(`Full payment reconciled${order.appliesWithholdingTax ? ' (with 1% WHT deducted)' : ''} & Delivery complete. Order lifecycle FULFILLED.`, order.status, user));
+                    } else if (isLateStage && !fullyDelivered) {
+                        order.logs.push(createAuditLog(`Full payment reconciled. Awaiting final delivery completion to FULFILL.`, order.status, user));
                     } else {
                         order.logs.push(createAuditLog(`Full payment received (Pre-payment)${order.appliesWithholdingTax ? ' (with 1% WHT deducted)' : ''}. Operational status '${order.status}' retained.`, order.status, user));
                     }
                 } else {
+                    let revenue = 0;
+                    order.items.forEach(it => revenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+                    let targetRevenue = revenue * (order.appliesWithholdingTax ? 0.99 : 1);
                     order.logs.push(createAuditLog(`Payment of ${payload.amount} recorded. Bal: ${Math.max(0, targetRevenue - totalPaid).toLocaleString()}`, order.status, user));
                 }
                 break;
@@ -1721,7 +1739,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
             }
 
-            case 'confirm-delivery':
+            case 'confirm-delivery': {
                 if (!payload.podFilePath) throw new Error("Signed Delivery Note is required to confirm delivery.");
                 if (!payload.items || !Array.isArray(payload.items) || payload.items.length === 0) {
                     throw new Error("Items array is required to confirm partial/full delivery");
@@ -1753,34 +1771,44 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     podFilePath: payload.podFilePath
                 });
 
-                const allDelivered = order.items.every(i => (i.deliveredQty || 0) >= i.quantity);
-                if (allDelivered) {
+                const allItemsDelivered = isOrderFullyDelivered(order);
+                const fullyPaid = isOrderFullyPaid(order);
+
+                if (allItemsDelivered) {
                     if (order.einvoiceRequested && !order.einvoiceFile) {
                         order.status = OrderStatus.DELIVERED;
-                    } else {
+                    } else if (fullyPaid) {
                         order.status = OrderStatus.FULFILLED;
+                    } else {
+                        // All delivered but not paid -> move to DELIVERED status
+                        order.status = OrderStatus.DELIVERED;
                     }
                 }
 
-                order.logs.push(createAuditLog(`Customer Delivery Confirmed (${allDelivered ? 'Complete' : 'Partial'}) & POD Filed: ${payload.podFilePath}`, order.status, user));
+                order.logs.push(createAuditLog(`Customer Delivery Confirmed (${allItemsDelivered ? 'Complete' : 'Partial'}) & POD Filed: ${payload.podFilePath}${allItemsDelivered && !fullyPaid ? ' (Awaiting full payment to FULFILL)' : ''}`, order.status, user));
                 break;
+            }
 
             case 'request-einvoice':
                 order.einvoiceRequested = true;
                 order.logs.push(createAuditLog('Gov. E-Invoice requested', order.status, user));
                 break;
 
-            case 'attach-einvoice':
+            case 'attach-einvoice': {
                 if (!payload.einvoiceFile) throw new Error("E-Invoice file is required.");
                 order.einvoiceFile = payload.einvoiceFile;
 
-                const fullyDelivered = order.items.every(i => (i.deliveredQty || 0) >= i.quantity);
-                if (fullyDelivered && order.status === OrderStatus.DELIVERED) {
+                const fullyDel = isOrderFullyDelivered(order);
+                const fullyPaid_ = isOrderFullyPaid(order);
+                if (fullyDel && fullyPaid_) {
                     order.status = OrderStatus.FULFILLED;
+                } else if (fullyDel && order.status === OrderStatus.DELIVERED) {
+                    // Stay in DELIVERED until paid
                 }
 
-                order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}`, order.status, user));
+                order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}${fullyDel && !fullyPaid_ ? ' (Awaiting full payment to FULFILL)' : ''}`, order.status, user));
                 break;
+            }
 
             case 'void-action':
                 // Generic audit logging without status change
