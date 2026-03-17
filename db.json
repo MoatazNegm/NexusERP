@@ -825,7 +825,8 @@
           ],
           "isAccepted": false,
           "manufacturedQty": 3000,
-          "hubReceivedQty": 3000
+          "hubReceivedQty": 3000,
+          "approvedForDispatchQty": 149
         },
         {
           "id": "temp_1773753407144",
@@ -1285,12 +1286,46 @@
           "message": "Hub Intake: 3000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "MANUFACTURING",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:42:30.096Z",
+          "message": "Payment of 130 recorded. Bal: 15,282.8",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:43:11.831Z",
+          "message": "Finance Partial Receipt for Dispatch: 149 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:43:54.063Z",
+          "message": "Payment of 150 recorded. Bal: 15,132.8",
+          "status": "MANUFACTURING",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0002",
       "dataEntryTimestamp": "2026-03-17T13:14:22.024Z",
       "status": "MANUFACTURING",
-      "loggingComplianceViolation": false
+      "loggingComplianceViolation": false,
+      "payments": [
+        {
+          "amount": 130,
+          "date": "2026-03-17T13:42:30.045Z",
+          "user": "System",
+          "memo": "enter down payment",
+          "receiptNumber": "RCV-001"
+        },
+        {
+          "amount": 150,
+          "date": "2026-03-17T13:43:54.062Z",
+          "user": "System",
+          "memo": "dlssld",
+          "receiptNumber": "RCV-002"
+        }
+      ]
     }
   ],
   "inventory": [
@@ -1928,7 +1963,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:36b248861adfcc72e3b9dfefbede5cfe:75ebd14c3db256925adfe1e9e5bfcfad43b610fccf40c4ddc57889099815ce68",
+        "password": "ENC:b75c977e7b4fafee6200ad36f9ecf762:777665274d6136ac9578ea5e5ffab7a07588dcd667344f919dc10b7ac19b91b3",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -1985,7 +2020,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:652fd3a7255ebcc674e3c2c197e5c6d8:7a7bf47c9e91282395dfa5d4a9ff4492cd55664f21c2b750e43429e7ee2d0dea8946ebc11116cd84477e941f94525889",
+        "apiKey": "ENC:de229d9b63bbf8072acc1520b065308e:7bb126bfe8530937ef3d42b4f9e84434712dae9e23b8cec4b1341ee1473a33dae15bea0743e51dc09869174690edfbe4",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -2011,7 +2046,7 @@
         "userGroups_1770927056150"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:6628e8688044dc9f9c18619022ce36dc:49253521e625cda4d8843aba403d859ac40de878c0d64c481428eaed354ce3db9156530a42fc06916abbf1c3bdb35ab8",
+        "apiKey": "ENC:e42c1025a2f09f873a2fac4b7e7b3e0a:a085a884adf0042fb02ce2c70d55c83e666c1297eb243de9e83c2208cc9b63abbc97ccf147193a1bed7ad79cdac39e97",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

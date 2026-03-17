@@ -838,16 +838,25 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                           <div className="text-[8px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Target: {config.settings.minimumMarginPct}%</div>
                         </td>
                       );
-                      if (col === 'status') return (
-                        <td key={col} className="px-8 py-6">
-                          <div className="flex flex-col gap-2">
-                            <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
-                              {getDynamicOrderStatusStyle(o, config).label}
+                      if (col === 'status') {
+                        const isExceedingPayment = (totalAuthorizedGross + draftSum) > pl.paid + 0.01; // small epsilon for float precision
+                        return (
+                          <td key={col} className="px-8 py-6">
+                            <div className="flex flex-col gap-2">
+                              <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
+                                {getDynamicOrderStatusStyle(o, config).label}
+                              </div>
+                              {isExceedingPayment && (
+                                <div className="px-2 py-0.5 bg-rose-600 text-white text-[8px] font-black uppercase rounded animate-pulse flex items-center gap-1 shadow-sm shadow-rose-200">
+                                  <i className="fa-solid fa-triangle-exclamation"></i>
+                                  Dispatch Exceeds Payment
+                                </div>
+                              )}
+                              <ThresholdSentinel order={o} config={config} />
                             </div>
-                            <ThresholdSentinel order={o} config={config} />
-                          </div>
-                        </td>
-                      );
+                          </td>
+                        );
+                      }
                       if (col === 'actions') return (
                         <td key={col} className="px-8 py-6 text-right">
                           <div className="flex justify-end gap-2 items-center">
@@ -951,22 +960,33 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                               <div className="col-span-3 flex justify-end gap-2 items-center">
                                 {maxAuth > 0 ? (
                                   <>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={maxAuth}
-                                      placeholder={`Max: ${maxAuth}`}
-                                      value={dispatchReceiptInputs[it.id] !== undefined ? dispatchReceiptInputs[it.id] : ''}
-                                      onChange={(e) => {
-                                        const val = parseFloat(e.target.value);
-                                        if (e.target.value === '' || isNaN(val)) {
-                                          setDispatchReceiptInputs(p => ({ ...p, [it.id]: e.target.value }));
-                                        } else {
-                                          setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(Math.min(val, maxAuth)) }));
-                                        }
-                                      }}
-                                      className="w-20 px-2 py-1.5 text-xs text-center font-bold border-2 border-slate-200 rounded-lg outline-none focus:border-indigo-400"
-                                    />
+                                    <div className="flex flex-col items-end gap-1">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max={maxAuth}
+                                        placeholder={`Max: ${maxAuth}`}
+                                        value={dispatchReceiptInputs[it.id] !== undefined ? dispatchReceiptInputs[it.id] : ''}
+                                        onChange={(e) => {
+                                          const val = parseFloat(e.target.value);
+                                          if (e.target.value === '' || isNaN(val)) {
+                                            setDispatchReceiptInputs(p => ({ ...p, [it.id]: e.target.value }));
+                                          } else {
+                                            setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(Math.min(val, maxAuth)) }));
+                                          }
+                                        }}
+                                        className={`w-20 px-2 py-1.5 text-xs text-center font-bold border-2 rounded-lg outline-none transition-all ${
+                                          (parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 
+                                          ? 'border-rose-500 bg-rose-50 text-rose-600 animate-shake' 
+                                          : 'border-slate-200 focus:border-indigo-400'
+                                        }`}
+                                      />
+                                      {(parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 && (
+                                        <div className="text-[8px] font-black text-rose-500 uppercase tracking-tighter">
+                                          Excess: {((parseFloat(dispatchReceiptInputs[it.id]) || 0) - maxAffordablePieces).toLocaleString()} {it.unit}
+                                        </div>
+                                      )}
+                                    </div>
                                     <button
                                       disabled={isProcessing}
                                       onClick={() => handleInlineDispatchAuth(o.id, it.id)}
