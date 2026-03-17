@@ -783,7 +783,7 @@
               "unit": "pcs",
               "unitCost": 12,
               "taxPercent": 14,
-              "source": "PROCUREMENT",
+              "source": "CONSUMED",
               "status": "RESERVED",
               "supplierPartNumber": "part1",
               "statusUpdatedAt": "2026-03-17T13:20:14.449Z",
@@ -796,7 +796,8 @@
               "poNumber": "PO-584303",
               "procurementStartedAt": "2026-03-17T13:19:47.084Z",
               "inventoryItemId": "inv_1773753614449_xx0mb",
-              "receivedQty": 1
+              "receivedQty": 1,
+              "consumedQty": 1
             },
             {
               "id": "comp_1773753458032_01yc0",
@@ -805,7 +806,7 @@
               "unit": "pcs",
               "unitCost": 12,
               "taxPercent": 14,
-              "source": "PROCUREMENT",
+              "source": "CONSUMED",
               "status": "RESERVED",
               "supplierPartNumber": "part2",
               "statusUpdatedAt": "2026-03-17T13:20:21.802Z",
@@ -818,10 +819,13 @@
               "poNumber": "PO-588158",
               "procurementStartedAt": "2026-03-17T13:19:52.590Z",
               "inventoryItemId": "inv_1773753621802_0bc55",
-              "receivedQty": 2
+              "receivedQty": 2,
+              "consumedQty": 2
             }
           ],
-          "isAccepted": false
+          "isAccepted": false,
+          "manufacturedQty": 3000,
+          "hubReceivedQty": 3000
         },
         {
           "id": "temp_1773753407144",
@@ -863,9 +867,9 @@
               "unitCost": 1,
               "taxPercent": 14,
               "source": "PROCUREMENT",
-              "status": "ORDERED",
+              "status": "RESERVED",
               "supplierPartNumber": "part4",
-              "statusUpdatedAt": "2026-03-17T13:20:32.719Z",
+              "statusUpdatedAt": "2026-03-17T13:35:44.636Z",
               "componentNumber": "CMP-INT-2024-0002-1-1",
               "rfpId": "zskbvpu",
               "awardId": "wejbjvq",
@@ -875,7 +879,7 @@
               "poNumber": "PO-588158",
               "procurementStartedAt": "2026-03-17T13:19:52.590Z",
               "inventoryItemId": "inv_1773753632719_tbw6s",
-              "receivedQty": 3
+              "receivedQty": 4
             },
             {
               "id": "comp_1773753488946_w2sms",
@@ -1187,99 +1191,105 @@
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:53.485Z",
+          "timestamp": "2026-03-17T13:35:27.439Z",
           "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:53.485Z",
+          "timestamp": "2026-03-17T13:35:27.439Z",
           "message": "[SYSTEM] Pending Offer Limit Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:53.485Z",
+          "timestamp": "2026-03-17T13:35:27.439Z",
           "message": "[SYSTEM] Pending Offer Limit Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:56.394Z",
+          "timestamp": "2026-03-17T13:35:30.361Z",
           "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:56.394Z",
+          "timestamp": "2026-03-17T13:35:30.361Z",
           "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:56.394Z",
+          "timestamp": "2026-03-17T13:35:30.361Z",
           "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:59.604Z",
+          "timestamp": "2026-03-17T13:35:33.691Z",
           "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:59.604Z",
+          "timestamp": "2026-03-17T13:35:33.691Z",
           "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:26:59.604Z",
+          "timestamp": "2026-03-17T13:35:33.691Z",
           "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:32:27.106Z",
-          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "timestamp": "2026-03-17T13:35:44.636Z",
+          "message": "Component Receipt: 1 pcs of desc4 (Total Received: 4/4)",
           "status": "WAITING_SUPPLIERS",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:32:27.106Z",
-          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
-          "status": "WAITING_SUPPLIERS",
+          "timestamp": "2026-03-17T13:35:44.637Z",
+          "message": "[AUTO] Early Manufacturing Start Enabled: At least one component reserved. Status moved from WAITING_SUPPLIERS to WAITING_FACTORY",
+          "status": "WAITING_FACTORY",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:32:27.106Z",
-          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
-          "status": "WAITING_SUPPLIERS",
+          "timestamp": "2026-03-17T13:36:58.511Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:32:31.113Z",
-          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
-          "status": "WAITING_SUPPLIERS",
+          "timestamp": "2026-03-17T13:36:58.563Z",
+          "message": "Manufactured 3000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14% (3000/16000)",
+          "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:32:31.113Z",
-          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
-          "status": "WAITING_SUPPLIERS",
+          "timestamp": "2026-03-17T13:36:59.617Z",
+          "message": "[Factory] Consumed 2.00 units of desc2. (2.00/2 total)",
+          "status": "MANUFACTURING",
           "user": "System"
         },
         {
-          "timestamp": "2026-03-17T13:32:31.113Z",
-          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
-          "status": "WAITING_SUPPLIERS",
+          "timestamp": "2026-03-17T13:37:00.297Z",
+          "message": "[Factory] Consumed 1.00 units of desc1. (1.00/1 total)",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:38:23.686Z",
+          "message": "Hub Intake: 3000 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
           "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0002",
       "dataEntryTimestamp": "2026-03-17T13:14:22.024Z",
-      "status": "WAITING_SUPPLIERS",
+      "status": "MANUFACTURING",
       "loggingComplianceViolation": false
     }
   ],
@@ -1358,8 +1368,8 @@
       "id": "inv_1773753614449_xx0mb",
       "description": "desc1",
       "sku": "CMP-INT-2024-0002-0-0",
-      "quantityInStock": 1,
-      "quantityReserved": 1,
+      "quantityInStock": 0,
+      "quantityReserved": 0,
       "category": "Uncategorized",
       "unit": "pcs",
       "lastCost": 12,
@@ -1386,8 +1396,8 @@
       "id": "inv_1773753621802_0bc55",
       "description": "desc2",
       "sku": "CMP-INT-2024-0002-0-1",
-      "quantityInStock": 2,
-      "quantityReserved": 2,
+      "quantityInStock": 0,
+      "quantityReserved": 0,
       "category": "Uncategorized",
       "unit": "pcs",
       "lastCost": 12,
@@ -1400,13 +1410,13 @@
       "id": "inv_1773753632719_tbw6s",
       "description": "desc4",
       "sku": "CMP-INT-2024-0002-1-1",
-      "quantityInStock": 3,
-      "quantityReserved": 0,
+      "quantityInStock": 4,
+      "quantityReserved": 4,
       "category": "Uncategorized",
       "unit": "pcs",
       "lastCost": 1,
       "minStockLevel": 0,
-      "lastUpdated": "2026-03-17T13:20:32.719Z",
+      "lastUpdated": "2026-03-17T13:35:44.636Z",
       "poNumber": "PO-588158",
       "orderRef": "INT-2024-0002"
     },
@@ -1782,11 +1792,11 @@
       ]
     },
     {
-      "id": "nt_1773754013485_vs1a",
+      "id": "nt_1773754527439_5qq4",
       "journalKey": "threshold_pendingOfferLimitHrs_orders_1773753262020",
       "orderId": "orders_1773753262020",
       "type": "threshold_pendingOfferLimitHrs",
-      "sentAt": "2026-03-17T13:26:53.485Z",
+      "sentAt": "2026-03-17T13:35:27.439Z",
       "recipients": [
         "erpalerts@quickstor.net",
         "aly_adam@quickstor.net",
@@ -1794,35 +1804,11 @@
       ]
     },
     {
-      "id": "nt_1773754016394_8ip2",
-      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753481652_9hp4w",
-      "orderId": "orders_1773753262020",
-      "type": "comp_orderedLimitHrs",
-      "sentAt": "2026-03-17T13:26:56.394Z",
-      "recipients": [
-        "erpalerts@quickstor.net",
-        "aly_adam@quickstor.net",
-        "zeyad_mamdouh@psp-co.org"
-      ]
-    },
-    {
-      "id": "nt_1773754019604_mvu8",
-      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms",
-      "orderId": "orders_1773753262020",
-      "type": "comp_orderedLimitHrs",
-      "sentAt": "2026-03-17T13:26:59.604Z",
-      "recipients": [
-        "erpalerts@quickstor.net",
-        "aly_adam@quickstor.net",
-        "zeyad_mamdouh@psp-co.org"
-      ]
-    },
-    {
-      "id": "nt_1773754347106_xvfp",
+      "id": "nt_1773754530361_8l2w",
       "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753481652_9hp4w_2026-03-17",
       "orderId": "orders_1773753262020",
       "type": "comp_orderedLimitHrs",
-      "sentAt": "2026-03-17T13:32:27.106Z",
+      "sentAt": "2026-03-17T13:35:30.361Z",
       "recipients": [
         "erpalerts@quickstor.net",
         "aly_adam@quickstor.net",
@@ -1830,11 +1816,11 @@
       ]
     },
     {
-      "id": "nt_1773754351113_qgiu",
+      "id": "nt_1773754533691_8ygs",
       "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms_2026-03-17",
       "orderId": "orders_1773753262020",
       "type": "comp_orderedLimitHrs",
-      "sentAt": "2026-03-17T13:32:31.113Z",
+      "sentAt": "2026-03-17T13:35:33.691Z",
       "recipients": [
         "erpalerts@quickstor.net",
         "aly_adam@quickstor.net",
@@ -1942,7 +1928,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:8d9104610d20fb77fd79d0369ccc1a82:193f674a71292976d1d2057f8cb26ff5e30d133f2d681bb9be641c538cfb47d1",
+        "password": "ENC:36b248861adfcc72e3b9dfefbede5cfe:75ebd14c3db256925adfe1e9e5bfcfad43b610fccf40c4ddc57889099815ce68",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -1999,7 +1985,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:3253320464dd2833ab7d92b6e3bf2628:d8cbe07a765b4385a515a2998d25ff0b04a0ebcbd1a0b26c9240152a2cf90c464f8069ab28414dde44a9943e4c3b3229",
+        "apiKey": "ENC:652fd3a7255ebcc674e3c2c197e5c6d8:7a7bf47c9e91282395dfa5d4a9ff4492cd55664f21c2b750e43429e7ee2d0dea8946ebc11116cd84477e941f94525889",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -2025,7 +2011,7 @@
         "userGroups_1770927056150"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:b2232a8b8b1f0dd97d691860a9ece198:920748df1e98a1b75f5647cef4f319e8ac92814589223403db8a0d6f7900fb40223422a396673dcc9eae4493fb9eece7",
+        "apiKey": "ENC:6628e8688044dc9f9c18619022ce36dc:49253521e625cda4d8843aba403d859ac40de878c0d64c481428eaed354ce3db9156530a42fc06916abbf1c3bdb35ab8",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

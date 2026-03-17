@@ -1511,6 +1511,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     memo: payload.memo || 'Regular payment',
                     receiptNumber
                 });
+                const totalPaid = (order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
                 const fullyPaid = isOrderFullyPaid(order);
                 const fullyDelivered = isOrderFullyDelivered(order);
                 const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(order.status);
