@@ -755,6 +755,442 @@
           "podFilePath": "uploads/pod/pod-1773747299387-818391915.pdf"
         }
       ]
+    },
+    {
+      "id": "orders_1773753262020",
+      "customerName": "Unilever Mashreq for Import and Export (LLC)",
+      "customerReferenceNumber": "PO16948287",
+      "orderDate": "2025-08-31",
+      "paymentSlaDays": 30,
+      "appliesWithholdingTax": false,
+      "targetDeliveryDays": 0,
+      "targetDeliveryDate": "2026-03-17",
+      "items": [
+        {
+          "id": "temp_1773753255975_0",
+          "description": "64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "quantity": 16000,
+          "unit": "Pieces",
+          "pricePerUnit": 0.77,
+          "taxPercent": 14,
+          "taxDetected": true,
+          "logs": [],
+          "components": [
+            {
+              "id": "comp_1773753436063_si2ez",
+              "description": "desc1",
+              "quantity": 1,
+              "unit": "pcs",
+              "unitCost": 12,
+              "taxPercent": 14,
+              "source": "PROCUREMENT",
+              "status": "RESERVED",
+              "supplierPartNumber": "part1",
+              "statusUpdatedAt": "2026-03-17T13:20:14.449Z",
+              "componentNumber": "CMP-INT-2024-0002-0-0",
+              "rfpId": "zskbvpu",
+              "awardId": "xkm9rqy",
+              "supplierId": "suppliers_1771146837526",
+              "supplierName": "supp1",
+              "sendPoId": "028kvmm",
+              "poNumber": "PO-584303",
+              "procurementStartedAt": "2026-03-17T13:19:47.084Z",
+              "inventoryItemId": "inv_1773753614449_xx0mb",
+              "receivedQty": 1
+            },
+            {
+              "id": "comp_1773753458032_01yc0",
+              "description": "desc2",
+              "quantity": 2,
+              "unit": "pcs",
+              "unitCost": 12,
+              "taxPercent": 14,
+              "source": "PROCUREMENT",
+              "status": "RESERVED",
+              "supplierPartNumber": "part2",
+              "statusUpdatedAt": "2026-03-17T13:20:21.802Z",
+              "componentNumber": "CMP-INT-2024-0002-0-1",
+              "rfpId": "zskbvpu",
+              "awardId": "wejbjvq",
+              "supplierId": "suppliers_1771146860410",
+              "supplierName": "xupp2",
+              "sendPoId": "f7eyoik",
+              "poNumber": "PO-588158",
+              "procurementStartedAt": "2026-03-17T13:19:52.590Z",
+              "inventoryItemId": "inv_1773753621802_0bc55",
+              "receivedQty": 2
+            }
+          ],
+          "isAccepted": false
+        },
+        {
+          "id": "temp_1773753407144",
+          "description": "line 2",
+          "quantity": 100,
+          "unit": "pcs",
+          "pricePerUnit": 12,
+          "taxPercent": 14,
+          "taxDetected": true,
+          "logs": [],
+          "components": [
+            {
+              "id": "comp_1773753473905_ceepl",
+              "description": "desc3",
+              "quantity": 3,
+              "unit": "pcs",
+              "unitCost": 11,
+              "taxPercent": 14,
+              "source": "PROCUREMENT",
+              "status": "RESERVED",
+              "supplierPartNumber": "part3",
+              "statusUpdatedAt": "2026-03-17T13:20:26.694Z",
+              "componentNumber": "CMP-INT-2024-0002-1-0",
+              "rfpId": "zskbvpu",
+              "awardId": "wejbjvq",
+              "supplierId": "suppliers_1771146860410",
+              "supplierName": "xupp2",
+              "sendPoId": "f7eyoik",
+              "poNumber": "PO-588158",
+              "procurementStartedAt": "2026-03-17T13:19:52.590Z",
+              "inventoryItemId": "inv_1773753618045_2nsiq",
+              "receivedQty": 3
+            },
+            {
+              "id": "comp_1773753481652_9hp4w",
+              "description": "desc4",
+              "quantity": 4,
+              "unit": "pcs",
+              "unitCost": 1,
+              "taxPercent": 14,
+              "source": "PROCUREMENT",
+              "status": "ORDERED",
+              "supplierPartNumber": "part4",
+              "statusUpdatedAt": "2026-03-17T13:20:32.719Z",
+              "componentNumber": "CMP-INT-2024-0002-1-1",
+              "rfpId": "zskbvpu",
+              "awardId": "wejbjvq",
+              "supplierId": "suppliers_1771146860410",
+              "supplierName": "xupp2",
+              "sendPoId": "f7eyoik",
+              "poNumber": "PO-588158",
+              "procurementStartedAt": "2026-03-17T13:19:52.590Z",
+              "inventoryItemId": "inv_1773753632719_tbw6s",
+              "receivedQty": 3
+            },
+            {
+              "id": "comp_1773753488946_w2sms",
+              "description": "desc5",
+              "quantity": 5,
+              "unit": "pcs",
+              "unitCost": 22,
+              "taxPercent": 14,
+              "source": "PROCUREMENT",
+              "status": "ORDERED",
+              "supplierPartNumber": "part5",
+              "statusUpdatedAt": "2026-03-17T13:20:37.422Z",
+              "componentNumber": "CMP-INT-2024-0002-1-2",
+              "rfpId": "zskbvpu",
+              "awardId": "wejbjvq",
+              "supplierId": "suppliers_1771146860410",
+              "supplierName": "xupp2",
+              "sendPoId": "f7eyoik",
+              "poNumber": "PO-588158",
+              "procurementStartedAt": "2026-03-17T13:19:52.590Z",
+              "inventoryItemId": "inv_1773753637422_d542v",
+              "receivedQty": 4
+            }
+          ],
+          "isAccepted": false
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-03-17T13:14:22.025Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:22.027Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:29.228Z",
+          "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:29.228Z",
+          "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:29.228Z",
+          "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:29.228Z",
+          "message": "[SYSTEM] Logging Delay (Compliance) Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:32.043Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:32.043Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:32.043Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:32.043Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:35.573Z",
+          "message": "[SYSTEM] deliveryWarningDays Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:35.573Z",
+          "message": "[SYSTEM] deliveryWarningDays Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:14:35.573Z",
+          "message": "[SYSTEM] deliveryWarningDays Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:15:52.620Z",
+          "message": "Component added: desc1 (PROCUREMENT)",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:15:52.621Z",
+          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:16:00.516Z",
+          "message": "Component added: desc2 (PROCUREMENT)",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:16:22.029Z",
+          "message": "Rollback to Registry: adding more line items (BoM cleared & stock released)",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:16:25.292Z",
+          "message": "[SYSTEM] Rollback Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:16:25.292Z",
+          "message": "[SYSTEM] Rollback Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:16:25.292Z",
+          "message": "[SYSTEM] Rollback Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:17:02.383Z",
+          "message": "Order modified",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:17:16.063Z",
+          "message": "Component added: desc1 (PROCUREMENT)",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:17:16.063Z",
+          "message": "[AUTO] Workflow Update: Status moved from LOGGED to TECHNICAL_REVIEW",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:17:26.304Z",
+          "message": "Component added: Desc2 (PROCUREMENT)",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:17:30.112Z",
+          "message": "Component removed: Desc2",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:17:38.033Z",
+          "message": "Component added: desc2 (PROCUREMENT)",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:17:44.509Z",
+          "message": "Item undefined: Accepted",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:17:53.905Z",
+          "message": "Component added: desc3 (PROCUREMENT)",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:18:01.652Z",
+          "message": "Component added: desc4 (PROCUREMENT)",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:18:08.946Z",
+          "message": "Component added: desc5 (PROCUREMENT)",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:18:10.833Z",
+          "message": "Item undefined: Accepted",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:18:40.129Z",
+          "message": "Technical study finalized and pushed to Procurement",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:18:48.278Z",
+          "message": "Sent RFP batch for 3 components (RFP ID: 6pfj0i2)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:18:48.278Z",
+          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:18:48.279Z",
+          "message": "[AUTO] BoM mutation detected on item 2. Technical approval revoked.",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:18:54.821Z",
+          "message": "Sent RFP batch for 4 components (RFP ID: fh0o50m)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:19:05.587Z",
+          "message": "Sent RFP batch for 5 components (RFP ID: zskbvpu)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:19:14.502Z",
+          "message": "Awarded Tender batch for 1 components to supp1 (Award ID: xkm9rqy)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:19:40.629Z",
+          "message": "Awarded Tender batch for 4 components to xupp2 (Award ID: wejbjvq)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:19:47.084Z",
+          "message": "Issued PO batch PO-584303 for 1 components (PO Group ID: 028kvmm)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:19:52.590Z",
+          "message": "Issued PO batch PO-588158 for 4 components (PO Group ID: f7eyoik)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:20:14.449Z",
+          "message": "Component Receipt: 1 pcs of desc1 (Total Received: 1/1)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:20:18.045Z",
+          "message": "Component Receipt: 2 pcs of desc3 (Total Received: 2/3)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:20:21.802Z",
+          "message": "Component Receipt: 2 pcs of desc2 (Total Received: 2/2)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:20:26.694Z",
+          "message": "Component Receipt: 1 pcs of desc3 (Total Received: 3/3)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:20:32.719Z",
+          "message": "Component Receipt: 3 pcs of desc4 (Total Received: 3/4)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-17T13:20:37.422Z",
+          "message": "Component Receipt: 4 pcs of desc5 (Total Received: 4/5)",
+          "status": "WAITING_SUPPLIERS",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0002",
+      "dataEntryTimestamp": "2026-03-17T13:14:22.024Z",
+      "status": "WAITING_SUPPLIERS",
+      "loggingComplianceViolation": false
     }
   ],
   "inventory": [
@@ -827,6 +1263,76 @@
       "lastUpdated": "2026-03-17T10:23:36.220Z",
       "poNumber": "PO-791071",
       "orderRef": "INT-2024-0001"
+    },
+    {
+      "id": "inv_1773753614449_xx0mb",
+      "description": "desc1",
+      "sku": "CMP-INT-2024-0002-0-0",
+      "quantityInStock": 1,
+      "quantityReserved": 1,
+      "category": "Uncategorized",
+      "unit": "pcs",
+      "lastCost": 12,
+      "minStockLevel": 0,
+      "lastUpdated": "2026-03-17T13:20:14.449Z",
+      "poNumber": "PO-584303",
+      "orderRef": "INT-2024-0002"
+    },
+    {
+      "id": "inv_1773753618045_2nsiq",
+      "description": "desc3",
+      "sku": "CMP-INT-2024-0002-1-0",
+      "quantityInStock": 3,
+      "quantityReserved": 3,
+      "category": "Uncategorized",
+      "unit": "pcs",
+      "lastCost": 11,
+      "minStockLevel": 0,
+      "lastUpdated": "2026-03-17T13:20:26.694Z",
+      "poNumber": "PO-588158",
+      "orderRef": "INT-2024-0002"
+    },
+    {
+      "id": "inv_1773753621802_0bc55",
+      "description": "desc2",
+      "sku": "CMP-INT-2024-0002-0-1",
+      "quantityInStock": 2,
+      "quantityReserved": 2,
+      "category": "Uncategorized",
+      "unit": "pcs",
+      "lastCost": 12,
+      "minStockLevel": 0,
+      "lastUpdated": "2026-03-17T13:20:21.802Z",
+      "poNumber": "PO-588158",
+      "orderRef": "INT-2024-0002"
+    },
+    {
+      "id": "inv_1773753632719_tbw6s",
+      "description": "desc4",
+      "sku": "CMP-INT-2024-0002-1-1",
+      "quantityInStock": 3,
+      "quantityReserved": 0,
+      "category": "Uncategorized",
+      "unit": "pcs",
+      "lastCost": 1,
+      "minStockLevel": 0,
+      "lastUpdated": "2026-03-17T13:20:32.719Z",
+      "poNumber": "PO-588158",
+      "orderRef": "INT-2024-0002"
+    },
+    {
+      "id": "inv_1773753637422_d542v",
+      "description": "desc5",
+      "sku": "CMP-INT-2024-0002-1-2",
+      "quantityInStock": 4,
+      "quantityReserved": 0,
+      "category": "Uncategorized",
+      "unit": "pcs",
+      "lastCost": 22,
+      "minStockLevel": 0,
+      "lastUpdated": "2026-03-17T13:20:37.422Z",
+      "poNumber": "PO-588158",
+      "orderRef": "INT-2024-0002"
     }
   ],
   "suppliers": [
@@ -1146,6 +1652,44 @@
         "erpalerts@quickstor.net",
         "aly_adam@quickstor.net"
       ]
+    },
+    {
+      "id": "nt_1773753269228_n6jw",
+      "journalKey": "delay_orders_1773753262020",
+      "orderId": "orders_1773753262020",
+      "type": "logging_delay",
+      "sentAt": "2026-03-17T13:14:29.228Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1773753272043",
+      "journalKey": "new_order_orders_1773753262020",
+      "orderId": "orders_1773753262020",
+      "type": "new_order",
+      "sentAt": "2026-03-17T13:14:32.043Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1773753275573_g6zd",
+      "journalKey": "delivery_warning_0_orders_1773753262020",
+      "orderId": "orders_1773753262020",
+      "type": "delivery_warning",
+      "sentAt": "2026-03-17T13:14:35.573Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
     }
   ],
   "settings": [
@@ -1248,7 +1792,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:370f742d09b6362690a17d06bd0e4f9e:8d3f0090529f9c079305c3b6d932145275f0e580a726ba7c99a6d1c591ab7e6b",
+        "password": "ENC:5ec32985e108ec91fd258869fb3f72db:b02e7f6f626f68ceefc06aec5cfb578010c884050ace15b74f191a95223c2ac8",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -1305,7 +1849,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:e43a3b72d586205944c620f129d21a77:bb413cc92c63009f018bfedc7564065511bdff9222abac1a954c9c06818fe61844cba20e4736a30625697fdd8d94b14c",
+        "apiKey": "ENC:af31e5eabac1b94c7ac3d537cd766a0c:db940a88608417b3d1869292a386b4f702e71413cc35aceb53963066d12acdcdb03b2c34708be98513f31c2e8e7666c4",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -1331,7 +1875,7 @@
         "userGroups_1770927056150"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:bbcd85cd25b0d9dac7dc7c482e3cec6f:b98563e2129fc9cbf718259672a92b72ad0b8fa0ba2a9d4bb64dcdfff645c6f52fbdcc20e636fddaaef9b804e968720d",
+        "apiKey": "ENC:7c4389122da21c0e66bfbfba66b6cbb6:d61024b4e33d04f2595199b0a76c4e043ab4e2081f87d3299b8d0156ef0971d81b848e928fedd21f38755cf594330cc8",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {

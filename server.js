@@ -476,9 +476,9 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         if (order.status === OrderStatus.WAITING_SUPPLIERS) {
             const hasItems = order.items && order.items.length > 0;
             if (hasItems) {
-                // Check for Standard Orders (Reserved)
-                const allReserved = order.items.every(item =>
-                    (item.components || []).every(comp => comp.status === 'RESERVED')
+                // Check for Standard Orders (At least one Reserved/Received to allow early manufacturing)
+                const anyReservedOrReceived = order.items.some(item =>
+                    (item.components || []).some(comp => ['RESERVED', 'RECEIVED', 'IN_STOCK'].includes(comp.status))
                 );
 
                 // Check for Stock Orders (Received/In Stock)
@@ -486,14 +486,18 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     (item.components || []).every(comp => ['RECEIVED', 'IN_STOCK'].includes(comp.status))
                 );
 
+                const allReserved = order.items.every(item =>
+                    (item.components || []).every(comp => comp.status === 'RESERVED')
+                );
+
                 if (order.customerName === 'Internal Stock' && allReceived) {
                     const old = order.status;
                     order.status = OrderStatus.FULFILLED;
                     order.logs.push(createAuditLog(`[AUTO] Stock Replenishment Complete: All items in stock. Status moved from ${old} to ${order.status}`, order.status, 'System'));
-                } else if (allReserved) {
+                } else if (order.customerName !== 'Internal Stock' && anyReservedOrReceived) {
                     const old = order.status;
                     order.status = OrderStatus.WAITING_FACTORY;
-                    order.logs.push(createAuditLog(`[AUTO] Procurement Complete: All components reserved. Status moved from ${old} to ${order.status}`, order.status, 'System'));
+                    order.logs.push(createAuditLog(`[AUTO] Early Manufacturing Start Enabled: At least one component reserved. Status moved from ${old} to ${order.status}`, order.status, 'System'));
                 }
             }
         }

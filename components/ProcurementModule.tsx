@@ -107,7 +107,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const fetchData = async () => {
     const [o, s] = await Promise.all([dataService.getOrders(), dataService.getSuppliers()]);
     setAllOrders(o);
-    const eligibleOrders = o.filter(order => [OrderStatus.WAITING_SUPPLIERS, OrderStatus.NEGATIVE_MARGIN, OrderStatus.TECHNICAL_REVIEW].includes(order.status));
+    const eligibleOrders = o.filter(order => [
+      OrderStatus.WAITING_SUPPLIERS, 
+      OrderStatus.NEGATIVE_MARGIN, 
+      OrderStatus.TECHNICAL_REVIEW,
+      OrderStatus.WAITING_FACTORY,
+      OrderStatus.MANUFACTURING
+    ].includes(order.status));
     setOrders(eligibleOrders);
     setSuppliers(s);
   };
