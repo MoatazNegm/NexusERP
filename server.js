@@ -439,7 +439,13 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
     // 4. Force Status Evaluation
     if (!skipStatusEval) {
         const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
-        const minMargin = dbSettings.minimumMarginPct || 15;
+        let minMargin = dbSettings.minimumMarginPct || 15;
+
+        // CUSTOMER OVERRIDE: Check if customer has a specific minimum margin
+        const customer = db.customers.find(c => c.name === order.customerName);
+        if (customer && customer.minimumMarginPct !== undefined && customer.minimumMarginPct !== null) {
+            minMargin = customer.minimumMarginPct;
+        }
 
         // Skip margin check for Internal Stock orders (they always have 0 revenue)
         let nextStatus = order.status || OrderStatus.LOGGED;
@@ -744,9 +750,16 @@ const runThresholdAudit = async () => {
                 (it.components || []).forEach(c => { totalCost += (c.quantity * (c.unitCost || 0)); });
             });
             const markupPct = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+
+            let effectiveMin = settings.minimumMarginPct || 15;
+            const customer = db.customers.find(c => c.name === order.customerName);
+            if (customer && customer.minimumMarginPct !== undefined && customer.minimumMarginPct !== null) {
+                effectiveMin = customer.minimumMarginPct;
+            }
+
             await sendAlertForOrder(order, `margin_${order.id}`, 'negative_margin', 'minimumMarginPct',
-                `[NEXUS] Margin Alert: ${order.internalOrderNumber} below ${settings.minimumMarginPct || 15}%`,
-                `Order ${order.internalOrderNumber} has a margin of ${markupPct.toFixed(1)}%, below the minimum threshold of ${settings.minimumMarginPct || 15}%.`);
+                `[NEXUS] Margin Alert: ${order.internalOrderNumber} below ${effectiveMin}%`,
+                `Order ${order.internalOrderNumber} has a margin of ${markupPct.toFixed(1)}%, below the minimum threshold of ${effectiveMin}%.`);
         }
 
         // A5. Payment SLA Overdue (days since invoice)
@@ -2031,6 +2044,184 @@ app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) 
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
+    }
+});
+
+// ==================== SUPPLIER PAYMENTS ====================
+
+// GET all supplier payments
+app.get('/api/v1/supplierPayments', (req, res) => {
+    const db = readDb();
+    res.json(db.supplierPayments || []);
+});
+
+// POST record a supplier payment with FIFO allocation
+app.post('/api/v1/supplierPayments', (req, res) => {
+    try {
+        const db = readDb();
+        const user = req.headers['x-user'] || 'System';
+        const { supplierId, amount, memo, date } = req.body;
+        if (!supplierId || !amount || amount <= 0) {
+            return res.status(400).json({ error: "supplierId and a positive amount are required" });
+        }
+
+        const supplier = (db.suppliers || []).find(s => s.id === supplierId);
+        if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+
+        // Gather all PROCUREMENT components for this supplier across all orders, sorted FIFO
+        const componentEntries = [];
+        (db.orders || []).forEach(order => {
+            order.items.forEach(item => {
+                (item.components || []).forEach(comp => {
+                    if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId &&
+                        ['ORDERED', 'ORDERED_FOR_STOCK', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(comp.status)) {
+                        componentEntries.push({
+                            componentId: comp.id,
+                            orderId: order.id,
+                            orderNumber: order.internalOrderNumber,
+                            itemDescription: comp.description,
+                            totalCost: (comp.quantity || 0) * (comp.unitCost || 0),
+                            procurementStartedAt: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp
+                        });
+                    }
+                });
+            });
+        });
+
+        // Sort FIFO by procurement start date
+        componentEntries.sort((a, b) => new Date(a.procurementStartedAt).getTime() - new Date(b.procurementStartedAt).getTime());
+
+        // Calculate already-allocated amounts per component from previous payments
+        const previousAllocations = {};
+        (db.supplierPayments || []).forEach(payment => {
+            if (payment.supplierId === supplierId) {
+                payment.allocations.forEach(alloc => {
+                    previousAllocations[alloc.componentId] = (previousAllocations[alloc.componentId] || 0) + alloc.amount;
+                });
+            }
+        });
+
+        // FIFO allocate the new payment
+        let remaining = amount;
+        const allocations = [];
+        for (const entry of componentEntries) {
+            if (remaining <= 0) break;
+            const alreadyAllocated = previousAllocations[entry.componentId] || 0;
+            const unallocated = Math.max(0, entry.totalCost - alreadyAllocated);
+            if (unallocated <= 0) continue;
+
+            const allocAmount = Math.min(remaining, unallocated);
+            allocations.push({
+                componentId: entry.componentId,
+                orderId: entry.orderId,
+                orderNumber: entry.orderNumber,
+                itemDescription: entry.itemDescription,
+                amount: Math.round(allocAmount * 100) / 100
+            });
+            remaining -= allocAmount;
+        }
+
+        // Create the payment record
+        const paymentRecord = {
+            id: `sp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            supplierId,
+            supplierName: supplier.name,
+            amount,
+            date: date ? new Date(date).toISOString() : new Date().toISOString(),
+            memo: memo || '',
+            user,
+            allocations
+        };
+
+        if (!db.supplierPayments) db.supplierPayments = [];
+        db.supplierPayments.push(paymentRecord);
+        writeDb(db);
+
+        res.json(paymentRecord);
+    } catch (err) {
+        res.status(500).json({ error: err.message || "Failed to record supplier payment" });
+    }
+});
+
+// GET supplier ledger (balance, delivered, pending, payments)
+app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
+    try {
+        const db = readDb();
+        const { supplierId } = req.params;
+        const supplier = (db.suppliers || []).find(s => s.id === supplierId);
+        if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+
+        // Gather all components for this supplier
+        const components = [];
+        (db.orders || []).forEach(order => {
+            order.items.forEach(item => {
+                (item.components || []).forEach(comp => {
+                    if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId &&
+                        !['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)) {
+                        const totalCost = (comp.quantity || 0) * (comp.unitCost || 0);
+                        const receivedQty = comp.receivedQty || 0;
+                        const deliveredValue = receivedQty * (comp.unitCost || 0);
+                        const pendingQty = Math.max(0, (comp.quantity || 0) - receivedQty);
+                        const pendingValue = pendingQty * (comp.unitCost || 0);
+
+                        components.push({
+                            componentId: comp.id,
+                            orderId: order.id,
+                            orderNumber: order.internalOrderNumber,
+                            description: comp.description,
+                            poNumber: comp.poNumber,
+                            quantity: comp.quantity,
+                            unitCost: comp.unitCost,
+                            totalCost,
+                            receivedQty,
+                            deliveredValue,
+                            pendingQty,
+                            pendingValue,
+                            status: comp.status,
+                            procurementStartedAt: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp
+                        });
+                    }
+                });
+            });
+        });
+
+        // Sort FIFO
+        components.sort((a, b) => new Date(a.procurementStartedAt).getTime() - new Date(b.procurementStartedAt).getTime());
+
+        // Calculate already-allocated amounts per component
+        const allocatedPerComponent = {};
+        (db.supplierPayments || []).forEach(payment => {
+            if (payment.supplierId === supplierId) {
+                payment.allocations.forEach(alloc => {
+                    allocatedPerComponent[alloc.componentId] = (allocatedPerComponent[alloc.componentId] || 0) + alloc.amount;
+                });
+            }
+        });
+
+        // Enrich components with allocated amounts
+        components.forEach(c => {
+            c.allocatedPayments = allocatedPerComponent[c.componentId] || 0;
+            c.unallocatedBalance = Math.max(0, c.totalCost - c.allocatedPayments);
+        });
+
+        // Get all payments for this supplier
+        const payments = (db.supplierPayments || []).filter(p => p.supplierId === supplierId);
+
+        // Summary
+        const totalCommitted = components.reduce((s, c) => s + c.totalCost, 0);
+        const totalDelivered = components.reduce((s, c) => s + c.deliveredValue, 0);
+        const totalPending = components.reduce((s, c) => s + c.pendingValue, 0);
+        const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
+        const balance = totalDelivered - totalPaid; // positive = we owe, negative = overpaid
+
+        res.json({
+            supplier: { id: supplier.id, name: supplier.name },
+            summary: { totalCommitted, totalDelivered, totalPending, totalPaid, balance },
+            components,
+            payments
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message || "Failed to compute supplier ledger" });
     }
 });
 

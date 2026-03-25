@@ -14,7 +14,8 @@ import {
   UserGroup,
   User,
   EmailConfig,
-  CompStatus
+  CompStatus,
+  SupplierPayment
 } from '../types';
 import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
 
@@ -156,6 +157,30 @@ class DataService {
     if (!supp) throw new Error('Vendor not found');
     supp.priceList = supp.priceList.filter(p => p.id !== partId);
     return this.put('suppliers', id, supp);
+  }
+
+  async getSupplierPayments() { return this.get<SupplierPayment>('supplierPayments'); }
+  async recordSupplierPayment(supplierId: string, amount: number, memo: string, date?: string) {
+    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
+      ? JSON.parse(localStorage.getItem('nexus_user')!).username
+      : 'System';
+    const res = await fetch(`${BACKEND_URL}/api/v1/supplierPayments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user': user },
+      body: JSON.stringify({ supplierId, amount, memo, date })
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Payment failed'); }
+    return res.json();
+  }
+  async getSupplierLedger(supplierId: string) {
+    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
+      ? JSON.parse(localStorage.getItem('nexus_user')!).username
+      : 'System';
+    const res = await fetch(`${BACKEND_URL}/api/v1/supplier-ledger/${supplierId}`, {
+      headers: { 'x-user': user }
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Ledger fetch failed'); }
+    return res.json();
   }
 
   async getInventory() { return this.get<InventoryItem>('inventory'); }

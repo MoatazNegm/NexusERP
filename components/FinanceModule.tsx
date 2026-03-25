@@ -9,7 +9,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'margins' | 'billing' | 'entities' | 'tax_clearances';
+type FinanceTab = 'orders' | 'margins' | 'billing' | 'entities' | 'tax_clearances' | 'supplier_payments';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   const status = order.status;
@@ -130,6 +130,23 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Supplier Payments state
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [supplierLedger, setSupplierLedger] = useState<any>(null);
+  const [spAmount, setSpAmount] = useState('');
+  const [spMemo, setSpMemo] = useState('');
+  const [spDate, setSpDate] = useState(new Date().toISOString().split('T')[0]);
+  const [spLoading, setSpLoading] = useState(false);
+  const [spError, setSpError] = useState<string | null>(null);
+  const [expandedPaymentId, setExpandedPaymentId] = useState<string | null>(null);
+
+  const generatePaymentRef = () => {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+    const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `PAY-${dateStr}-${rand}`;
+  };
+
   // Payment Invoice PDF state
   const [paymentInvoiceData, setPaymentInvoiceData] = useState<{
     order: CustomerOrder;
@@ -159,6 +176,45 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       console.error("Finance sync error:", e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadSupplierLedger = async (supplierId: string) => {
+    if (!supplierId) { setSupplierLedger(null); return; }
+    setSpLoading(true);
+    setSpError(null);
+    try {
+      const raw = await dataService.getSupplierLedger(supplierId);
+      // Flatten the response so UI can read summary fields directly
+      setSupplierLedger({
+        ...raw.summary,
+        pendingObligations: raw.summary?.totalPending || 0,
+        components: raw.components || [],
+        payments: raw.payments || [],
+        supplier: raw.supplier,
+      });
+    } catch (e: any) {
+      setSpError(e.message || 'Failed to load supplier ledger');
+    } finally {
+      setSpLoading(false);
+    }
+  };
+
+  const handleRecordPayment = async () => {
+    if (!selectedSupplierId || !spAmount) return;
+    const amount = parseFloat(spAmount);
+    if (isNaN(amount) || amount <= 0) { setSpError('Enter a valid amount'); return; }
+    setSpLoading(true);
+    setSpError(null);
+    try {
+      await dataService.recordSupplierPayment(selectedSupplierId, amount, spMemo, spDate);
+      setSpAmount('');
+      setSpMemo(generatePaymentRef());
+      await loadSupplierLedger(selectedSupplierId);
+    } catch (e: any) {
+      setSpError(e.message || 'Failed to record payment');
+    } finally {
+      setSpLoading(false);
     }
   };
 
@@ -576,7 +632,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
         <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
-          {(['orders', 'margins', 'billing', 'entities', 'tax_clearances'] as const).map(tab => (
+          {(['orders', 'margins', 'billing', 'entities', 'tax_clearances', 'supplier_payments'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -617,6 +673,241 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         )}
       </div>
 
+
+      {activeTab === 'supplier_payments' ? (
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh] p-8 space-y-8">
+          {/* Supplier Selector */}
+          <div className="flex flex-col lg:flex-row gap-6 items-start">
+            <div className="flex-1 w-full">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Select Supplier</label>
+              <select
+                className="w-full px-5 py-3 bg-white border-2 border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
+                value={selectedSupplierId}
+                onChange={e => { 
+                  setSelectedSupplierId(e.target.value); 
+                  loadSupplierLedger(e.target.value); 
+                  if (e.target.value) setSpMemo(generatePaymentRef());
+                }}
+              >
+                <option value="">-- Choose a Supplier --</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {spError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-6 py-3 rounded-2xl font-bold text-sm">
+              <i className="fa-solid fa-circle-exclamation mr-2"></i>{spError}
+            </div>
+          )}
+
+          {spLoading && (
+            <div className="py-12 text-center text-slate-400">
+              <i className="fa-solid fa-spinner fa-spin text-2xl text-blue-500 mb-2"></i>
+              <div className="text-sm font-bold">Loading supplier ledger...</div>
+            </div>
+          )}
+
+          {selectedSupplierId && supplierLedger && !spLoading && (
+            <>
+              {/* Summary Cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                {[
+                  { label: 'Total Committed', value: supplierLedger.totalCommitted, color: 'blue', icon: 'fa-file-contract' },
+                  { label: 'Total Delivered', value: supplierLedger.totalDelivered, color: 'emerald', icon: 'fa-truck-ramp-box' },
+                  { label: 'Total Paid', value: supplierLedger.totalPaid, color: 'violet', icon: 'fa-money-bill-wave' },
+                  { label: 'Balance', value: supplierLedger.balance, color: supplierLedger.balance > 0 ? 'red' : 'emerald', icon: 'fa-scale-balanced' },
+                  { label: 'Pending delivery', value: supplierLedger.pendingObligations, color: 'amber', icon: 'fa-hourglass-half' },
+                ].map((card, i) => (
+                  <div key={i} className={`rounded-2xl border p-5 bg-${card.color}-50 border-${card.color}-100`}>
+                    <div className={`text-[10px] font-black uppercase tracking-widest text-${card.color}-400 mb-2 flex items-center gap-2`}>
+                      <i className={`fa-solid ${card.icon}`}></i> {card.label}
+                    </div>
+                    <div className={`text-xl font-black text-${card.color}-700 tracking-tight`}>
+                      {(card.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Record Payment Form */}
+              <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 space-y-4">
+                <h3 className="text-sm font-black text-slate-700 uppercase tracking-tight flex items-center gap-2">
+                  <i className="fa-solid fa-credit-card text-blue-500"></i> Record New Payment
+                </h3>
+                {supplierLedger.balance <= 0 && (
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold">
+                    <i className="fa-solid fa-check-circle mr-1"></i> This supplier is fully paid or overpaid.
+                  </div>
+                )}
+                <div className="flex flex-col lg:flex-row gap-4">
+                  <div className="flex-1">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Date</label>
+                    <input
+                      type="date"
+                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
+                      value={spDate} onChange={e => setSpDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Amount (L.E.)</label>
+                    <input
+                      type="number" step="0.01" placeholder="0.00"
+                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
+                      value={spAmount} onChange={e => setSpAmount(e.target.value)}
+                    />
+                    {spAmount && parseFloat(spAmount) > supplierLedger.balance && supplierLedger.balance > 0 && (
+                      <div className="text-[10px] font-bold text-amber-600 mt-1">
+                        <i className="fa-solid fa-triangle-exclamation mr-1"></i> Exceeds outstanding balance by {(parseFloat(spAmount) - supplierLedger.balance).toLocaleString()} L.E.
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-2 lg:w-1/3">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Payment Reference / Memo</label>
+                    <input
+                      type="text" placeholder="Payment reference..."
+                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
+                      value={spMemo} onChange={e => setSpMemo(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      onClick={handleRecordPayment}
+                      disabled={spLoading || !spAmount}
+                      className={`px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg ${
+                        spLoading || !spAmount ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-200'
+                      }`}
+                    >
+                      {spLoading ? <><i className="fa-solid fa-spinner fa-spin mr-2"></i> Processing</> : <><i className="fa-solid fa-paper-plane mr-2"></i> Record</>}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment History */}
+              {supplierLedger.payments && supplierLedger.payments.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-tight flex items-center gap-2">
+                    <i className="fa-solid fa-clock-rotate-left text-violet-500"></i> Payment History
+                  </h3>
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest">Date</th>
+                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest">Amount</th>
+                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest">Memo</th>
+                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest">Recorded By</th>
+                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {supplierLedger.payments.map((p: any) => (
+                          <React.Fragment key={p.id}>
+                            <tr className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setExpandedPaymentId(expandedPaymentId === p.id ? null : p.id)}>
+                              <td className="px-6 py-4 text-xs font-bold text-slate-600">{new Date(p.date).toLocaleDateString()}</td>
+                              <td className="px-6 py-4 text-sm font-black text-slate-800">{p.amount.toLocaleString(undefined, {minimumFractionDigits:2})} L.E.</td>
+                              <td className="px-6 py-4 text-xs font-medium text-slate-500">{p.memo || '-'}</td>
+                              <td className="px-6 py-4 text-xs font-bold text-slate-500">{p.user || '-'}</td>
+                              <td className="px-6 py-4 text-right">
+                                <i className={`fa-solid fa-chevron-${expandedPaymentId === p.id ? 'up' : 'down'} text-slate-400 text-[10px]`}></i>
+                              </td>
+                            </tr>
+                            {expandedPaymentId === p.id && p.allocations && p.allocations.length > 0 && (
+                              <tr>
+                                <td colSpan={5} className="bg-blue-50/50 px-8 py-4">
+                                  <div className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">FIFO Allocation Breakdown</div>
+                                  <table className="w-full text-left">
+                                    <thead>
+                                      <tr>
+                                        <th className="px-3 py-2 text-[9px] font-black uppercase text-slate-400">Order#</th>
+                                        <th className="px-3 py-2 text-[9px] font-black uppercase text-slate-400">Item</th>
+                                        <th className="px-3 py-2 text-[9px] font-black uppercase text-slate-400">Allocated</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {p.allocations.map((a: any, ai: number) => (
+                                        <tr key={ai} className="border-t border-blue-100/50">
+                                          <td className="px-3 py-2 text-xs font-mono font-bold text-blue-600">{a.orderNumber || a.componentNumber || '-'}</td>
+                                          <td className="px-3 py-2 text-xs font-medium text-slate-600">{a.description || '-'}</td>
+                                          <td className="px-3 py-2 text-xs font-black text-slate-800">{a.allocatedAmount?.toLocaleString(undefined, {minimumFractionDigits:2})} L.E.</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Component Orders (FIFO) */}
+              {supplierLedger.components && supplierLedger.components.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-tight flex items-center gap-2">
+                    <i className="fa-solid fa-boxes-stacked text-amber-500"></i> Component Orders (FIFO)
+                  </h3>
+                  <div className="border border-slate-200 rounded-2xl overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest">Order#</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest">PO#</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest">Description</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Qty</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Unit Cost</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Total</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Delivered Val</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Allocated</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Unallocated</th>
+                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {supplierLedger.components.map((c: any, ci: number) => (
+                          <tr key={ci} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-4 py-3 font-mono font-bold text-blue-600">{c.orderNumber || '-'}</td>
+                            <td className="px-4 py-3 font-bold text-slate-500">{c.poNumber || '-'}</td>
+                            <td className="px-4 py-3 font-medium text-slate-700 max-w-[200px] truncate">{c.description}</td>
+                            <td className="px-4 py-3 font-bold text-slate-700 text-right">{c.quantity}</td>
+                            <td className="px-4 py-3 font-bold text-slate-700 text-right">{(c.unitCost || 0).toLocaleString()}</td>
+                            <td className="px-4 py-3 font-black text-slate-800 text-right">{(c.totalCost || 0).toLocaleString()}</td>
+                            <td className="px-4 py-3 font-bold text-emerald-600 text-right">{(c.deliveredValue || 0).toLocaleString()}</td>
+                            <td className="px-4 py-3 font-bold text-violet-600 text-right">{(c.allocatedPayments || 0).toLocaleString()}</td>
+                            <td className="px-4 py-3 font-black text-right">{((c.deliveredValue || 0) - (c.allocatedPayments || 0)).toLocaleString()}</td>
+                            <td className="px-4 py-3"><span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${c.status === 'CONSUMED' || c.status === 'Manufactured' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-amber-50 text-amber-600 border border-amber-100'}`}>{c.status}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {selectedSupplierId && !supplierLedger && !spLoading && (
+            <div className="py-16 text-center text-slate-400">
+              <i className="fa-solid fa-box-open text-4xl mb-4"></i>
+              <div className="font-bold text-sm">No data found for this supplier.</div>
+            </div>
+          )}
+
+          {!selectedSupplierId && (
+            <div className="py-16 text-center text-slate-300">
+              <i className="fa-solid fa-hand-pointer text-5xl mb-4"></i>
+              <div className="font-bold text-sm text-slate-400">Select a supplier above to view their payment ledger.</div>
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
         <table className="w-full text-left">
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
@@ -1027,6 +1318,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
           )
         }
       </div >
+      )}
 
       {decisionModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">

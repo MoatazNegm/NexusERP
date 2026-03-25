@@ -11,7 +11,7 @@ interface AIAssistantProps {
   config: AppConfig;
 }
 
-const Mermaid = ({ chart }: { chart: string }) => {
+const Mermaid = React.memo(({ chart }: { chart: string }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [svg, setSvg] = useState('');
 
@@ -21,13 +21,23 @@ const Mermaid = ({ chart }: { chart: string }) => {
         setSvg(result.svg);
       }).catch(err => {
         console.error('Mermaid Render Error:', err);
-        setSvg(`<p style="color:red; font-size:10px;">Failed to render chart: ${err.message}</p>`);
+        const isFetchError = err.message?.toLowerCase().includes('failed to fetch') || err.message?.toLowerCase().includes('dynamically imported module');
+        if (isFetchError) {
+          setSvg(`
+            <div style="padding: 12px; border: 1px dashed #ef4444; border-radius: 8px; background: #fef2f2; font-size: 11px; color: #991b1b;">
+              <p><strong>System Update Detected:</strong> Build assets have shifted.</p>
+              <p style="margin-top: 4px;">Please <strong>Hard Refresh (Ctrl + F5)</strong> your browser to recalibrate the intelligence engine.</p>
+            </div>
+          `);
+        } else {
+          setSvg(`<p style="color:red; font-size:10px;">Failed to render chart: ${err.message}</p>`);
+        }
       });
     }
   }, [chart]);
 
   return <div ref={ref} dangerouslySetInnerHTML={{ __html: svg }} className="my-4 overflow-x-auto" />;
-};
+});
 
 export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -103,7 +113,17 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
         date: o.orderDate,
         value: valueExclTax,
         itemCount: o.items.length,
-        items: o.items.map(i => i.description).join(', ')
+        items: o.items.map(i => ({
+          description: i.description,
+          qty: i.quantity,
+          mfgQty: i.manufacturedQty || 0,
+          hubQty: i.hubReceivedQty || 0,
+          pendingShip: (i.approvedForDispatchQty || 0) - (i.dispatchedQty || 0),
+          inTransit: (i.shippedQty || 0) - (i.deliveredQty || 0),
+          delivered: i.deliveredQty || 0,
+          components: (i.components || []).map(c => `${c.description} (${c.quantity} ${c.unit})`)
+        })),
+        recentLogs: (o.logs || []).slice(-5).map(l => `[${l.timestamp.split('T')[1].slice(0, 5)}] ${l.message}`)
       };
     });
   }, [orders]);
@@ -126,21 +146,24 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
       const currentDate = new Date().toISOString().split('T')[0];
 
       const context = `
-        ROLE: You are the Nexus ERP Strategic Assistant. You are a precise, brief, and helpful financial analyst.
+        ROLE: You are the Nexus ERP Strategic Assistant. You are a precise, brief, and helpful operational and financial analyst.
         SYSTEM DATE: ${currentDate}
-        DATA SCOPE: You have access to the full order ledger provided below.
+        DATA SCOPE: You have access to the full order ledger including financial values, shipment progress, and component breakdown.
         
         LEDGER DATA (JSON): ${JSON.stringify(orderLedgerSummary)}
-
+ 
         GUIDELINES:
         1. BE BRIEF. If the answer is a single value or order, give it directly.
         2. FORMATTING: 
-           - For single orders, use: **Order No.** [ID], **PO** [PO], **Customer** [Name], **Value** [Amount] L.E., **Details**: [Item List].
+           - For single orders, use: **Order No.** [ID], **PO** [PO], **Customer** [Name], **Value** [Amount] L.E., **Status**: [Status].
+           - Detail breakdown: Use bullet points for items, showing **MFG**, **HUB**, and **DELIVERED** quantities for each.
+           - Components: List components if asked or if relevant to "status" (e.g., if waiting for parts).
            - For multiple items or comparisons, ALWAYS use a proper Markdown Table.
            - CRITICAL: Tables MUST have a blank line before and after them to render correctly. Each row must be on a new line.
         3. CALCULATIONS: If asked for the "largest fulfilled", filter for status 'FULFILLED' and sort by 'value'.
-        4. TIME SENSITIVITY: Use the SYSTEM DATE to interpret "last 3 months", "this year", etc.
-        5. CHARTS & DRAWINGS:
+        4. LOGISTICS TRACKING: You can see exactly how many pieces are in the Hub, In Transit, or Delivered. Use these specific counters.
+        5. TIME SENSITIVITY: Use the SYSTEM DATE to interpret "last 3 months", "this year", etc.
+        6. CHARTS & DRAWINGS:
            - You SUPPORT rendering charts using Mermaid.js.
            - If a user asks for a chart, drawing, flowchart, or graph, provide the Mermaid code block starting with \`\`\`mermaid.
            - Supported: Flowcharts (graph TD), Pie Charts (pie), Gantt Charts (gantt), Sequence Diagrams (sequenceDiagram).
@@ -197,6 +220,26 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
       setIsTyping(false);
     }
   };
+
+  const markdownComponents = useMemo(() => ({
+    code({ node, inline, className, children, ...props }: any) {
+      const match = /language-(\w+)/.exec(className || '');
+      if (!inline && match && match[1] === 'mermaid') {
+        return <Mermaid chart={String(children).replace(/\n$/, '')} />;
+      }
+      return !inline && match ? (
+        <div className="mockup-code">
+          <code className={className} {...props}>
+            {children}
+          </code>
+        </div>
+      ) : (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      );
+    }
+  }), []);
 
   const [position, setPosition] = useState<{ top: number, left: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -284,25 +327,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
                   }`}>
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
-                    components={{
-                      code({ node, inline, className, children, ...props }: any) {
-                        const match = /language-(\w+)/.exec(className || '');
-                        if (!inline && match && match[1] === 'mermaid') {
-                          return <Mermaid chart={String(children).replace(/\n$/, '')} />;
-                        }
-                        return !inline && match ? (
-                          <div className="mockup-code">
-                            <code className={className} {...props}>
-                              {children}
-                            </code>
-                          </div>
-                        ) : (
-                          <code className={className} {...props}>
-                            {children}
-                          </code>
-                        );
-                      }
-                    }}
+                    components={markdownComponents as any}
                   >
                     {msg.content}
                   </ReactMarkdown>

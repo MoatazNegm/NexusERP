@@ -19,6 +19,7 @@ import { ProfitabilityReport } from './components/ProfitabilityReport';
 import { AIAssistant } from './components/AIAssistant';
 import { OrderReport } from './components/OrderReport';
 import { SystemLogs } from './components/SystemLogs';
+import { MinimumsModule } from './components/MinimumsModule';
 import { Login } from './components/Login';
 import { dataService } from './services/dataService';
 import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, UserGroup } from './types';
@@ -26,7 +27,10 @@ import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, User
 // Backend handles threshold calculation (isOverdue flag)
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('nexus_user');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [config, setConfig] = useState<AppConfig>(INITIAL_CONFIG);
 
@@ -46,6 +50,14 @@ const App: React.FC = () => {
   const [connectionError, setConnectionError] = useState(false);
 
   const effectivelyCollapsed = isSidebarCollapsed && !isSidebarHovered;
+
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('nexus_user', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('nexus_user');
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -138,6 +150,13 @@ const App: React.FC = () => {
     }
   }, [currentUser]);
 
+  const isManager = useMemo(() => {
+    return currentUser && currentUser.groupIds && currentUser.groupIds.some(gid => {
+      const group = userGroups.find(g => g.id === gid);
+      return group && (group.name === 'Managers' || group.name === 'superusers');
+    });
+  }, [currentUser, userGroups]);
+
   const navItems = useMemo(() => {
     // Determine the active role mapping from the backend configuration.
     // Fallback to empty mapping if config doesn't provide it during initialization.
@@ -156,15 +175,17 @@ const App: React.FC = () => {
       { id: 'suppliers', icon: 'fa-truck-field', label: 'Suppliers', roles: mapping['suppliers'] || ['procurement'] as UserRole[], module: 'suppliers' as keyof AppConfig['modules'] },
       { id: 'reporting', icon: 'fa-chart-column', label: 'Profitability', roles: mapping['reporting'] || ['management'] as UserRole[], module: 'finance' as keyof AppConfig['modules'] },
       { id: 'govEInvoice', icon: 'fa-file-invoice-dollar', label: 'Gov.EInvoice', roles: mapping['govEInvoice'] || ['Gov.EInvoice'] as UserRole[], module: 'govEInvoice' as keyof AppConfig['modules'] },
+      { id: 'minimums', icon: 'fa-percent', label: 'Minimums', roles: ['management'] as UserRole[], hidden: !isManager },
       { id: 'systemLogs', icon: 'fa-shield-halved', label: 'System Audit', roles: ['admin'] as UserRole[] },
       { id: 'settings', icon: 'fa-gears', label: 'Settings', roles: ['admin'] as UserRole[] },
     ];
-    return items.filter(item => {
+    return items.filter((item: any) => {
       const roleAllowed = item.roles.some((r: UserRole) => hasRole(r));
       const moduleAllowed = !item.module || config.modules[item.module];
-      return roleAllowed && moduleAllowed;
+      const isHidden = item.hidden === true;
+      return roleAllowed && moduleAllowed && !isHidden;
     });
-  }, [effectiveRoles, config.modules]);
+  }, [effectiveRoles, config.modules, isManager]);
 
   // View Access Enforcement: Redirect if activeView is not in navItems (missing permission)
   useEffect(() => {
@@ -321,7 +342,7 @@ const App: React.FC = () => {
               <OrderReport config={config} dashboardFilter={dashboardStatusFilter} />
             </div>
 
-            {selectedOrderForModal && <OrderDetailsModal order={selectedOrderForModal} onClose={() => setSelectedOrderForModal(null)} />}
+            {selectedOrderForModal && <OrderDetailsModal order={selectedOrderForModal} config={config} onClose={() => setSelectedOrderForModal(null)} />}
           </div>
         );
       case 'orders': return <OrderManagement config={config} refreshKey={refreshKey} currentUser={currentUser} />;
@@ -336,6 +357,7 @@ const App: React.FC = () => {
       case 'reporting': return <ProfitabilityReport orders={orders} config={config} />;
       case 'systemLogs': return <SystemLogs refreshKey={refreshKey} />;
       case 'govEInvoice': return <GovEInvoiceModule refreshKey={refreshKey} currentUser={currentUser} />;
+      case 'minimums': return <MinimumsModule currentUser={currentUser} refreshKey={refreshKey} />;
       case 'settings': return <DataMaintenance config={config} onConfigUpdate={setConfig} onRefresh={() => setRefreshKey(p => p + 1)} currentUser={currentUser} isAdmin={hasRole('admin')} />;
       default: return null;
     }
@@ -502,5 +524,5 @@ const App: React.FC = () => {
   );
 };
 
-export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice';
+export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice' | 'minimums';
 export default App;

@@ -72,6 +72,7 @@ export interface Customer {
   isHold?: boolean;
   holdReason?: string;
   appliesWithholdingTax?: boolean;
+  minimumMarginPct?: number;
   logs?: LogEntry[];
 }
 
@@ -98,6 +99,25 @@ export interface Supplier {
   blacklistReason?: string;
   priceList?: SupplierPart[];
   logs?: LogEntry[];
+}
+
+export interface SupplierPaymentAllocation {
+  componentId: string;
+  orderId: string;
+  orderNumber: string;
+  itemDescription: string;
+  amount: number;
+}
+
+export interface SupplierPayment {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  amount: number;
+  date: string;
+  memo: string;
+  user: string;
+  allocations: SupplierPaymentAllocation[];
 }
 
 export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' | 'ORDERED' | 'ORDERED_FOR_STOCK' | 'RECEIVED' | 'RESERVED' | 'IN_MANUFACTURING' | 'MANUFACTURED' | 'CANCELLED';

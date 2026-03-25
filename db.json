@@ -21,8 +21,14 @@
           "timestamp": "2026-03-09T22:37:40.745Z",
           "message": "Merged 2 duplicate records. Migrated 1 orders.",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-19T22:03:59.723Z",
+          "message": "Profile updated",
+          "user": "System"
         }
-      ]
+      ],
+      "minimumMarginPct": 55
     },
     {
       "id": "customers_1773740477509",
@@ -1409,6 +1415,102 @@
           "message": "Shipment Released from Hub: 10 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
           "status": "MANUFACTURING",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-18T14:13:57.337Z",
+          "message": "[SYSTEM] Gov. E-Invoice Request Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-18T14:13:57.921Z",
+          "message": "[SYSTEM] deliveryWarningDays Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-18T14:13:57.921Z",
+          "message": "[SYSTEM] deliveryWarningDays Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-18T14:13:57.921Z",
+          "message": "[SYSTEM] deliveryWarningDays Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-18T14:13:58.487Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-18T14:13:58.487Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-18T14:13:58.488Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-19T00:00:58.028Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-19T00:00:58.028Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-19T00:00:58.028Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-24T20:25:32.277Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-24T20:25:32.278Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-24T20:25:32.278Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T09:53:25.346Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T09:53:25.346Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T09:53:25.346Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0002",
@@ -1999,6 +2101,76 @@
         "aly_adam@quickstor.net",
         "zeyad_mamdouh@psp-co.org"
       ]
+    },
+    {
+      "id": "nt_1773843237336_rq9u",
+      "journalKey": "einvoice_sla_orders_1773753262020",
+      "orderId": "orders_1773753262020",
+      "type": "einvoice_sla",
+      "sentAt": "2026-03-18T14:13:57.336Z",
+      "recipients": [
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1773843237921_bx34",
+      "journalKey": "delivery_passed_orders_1773753262020",
+      "orderId": "orders_1773753262020",
+      "type": "delivery_passed",
+      "sentAt": "2026-03-18T14:13:57.921Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1773843238487_53m0",
+      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms_2026-03-18",
+      "orderId": "orders_1773753262020",
+      "type": "comp_orderedLimitHrs",
+      "sentAt": "2026-03-18T14:13:58.487Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1773878458028_73jg",
+      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms_2026-03-19",
+      "orderId": "orders_1773753262020",
+      "type": "comp_orderedLimitHrs",
+      "sentAt": "2026-03-19T00:00:58.028Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774383932277_7puv",
+      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms_2026-03-24",
+      "orderId": "orders_1773753262020",
+      "type": "comp_orderedLimitHrs",
+      "sentAt": "2026-03-24T20:25:32.277Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774432405346_8a0f",
+      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms_2026-03-25",
+      "orderId": "orders_1773753262020",
+      "type": "comp_orderedLimitHrs",
+      "sentAt": "2026-03-25T09:53:25.346Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
     }
   ],
   "settings": [
@@ -2101,7 +2273,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:a63f517e656c89f28e3acc98b91669b0:b697746b102535824fe8097161f682167a8c6411e89ac25f806351b5d47af6d9",
+        "password": "ENC:7d9582f940dadf8f2b921e6f38091cd9:8c92655616615be6317114127145a045f0b8de4ff3944c6555a54e8963a0878b",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -2158,7 +2330,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:c9280fe2edada4951005946e7c6bc206:7dad9140898169858d8704743dfe894904f16aca0470259ef2c27c09df0409f8d8a9b06d59a08a79904d127f45fcecc6",
+        "apiKey": "ENC:038ada43bd5454083d79b11efdb00d82:0fc9efb402058b12c727d44cf4596431dbf9d6681f61c1901e93fd3077fbe0c17f7854245d4579b3a0be11c0d203c6bb",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -2184,7 +2356,7 @@
         "userGroups_1770927056150"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:2882e61cce96d6beaa0febec8bc48f5d:dd5a5a15e534627e4d01b56477422f59e5bbecff776f55fcb23eeb5baf87f137cea7fe0d133d1a0279dfc97bcde1603c",
+        "apiKey": "ENC:2b8744e22d37ee882584538f58060c77:528d4e185ee52d2cfc46182e9c7806739ce2db9cd6c805ed4e615d72811613126b02ce41bb7b0e2f5453aadaca450b11",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {
@@ -2216,6 +2388,58 @@
       "finance": true,
       "factory": true,
       "govEInvoice": true
+    }
+  ],
+  "supplierPayments": [
+    {
+      "id": "sp_1773959709764_4b8d",
+      "supplierId": "suppliers_1771146860410",
+      "supplierName": "xupp2",
+      "amount": 30,
+      "date": "2026-03-19T22:35:09.764Z",
+      "memo": "slsk0sleks ",
+      "user": "System",
+      "allocations": [
+        {
+          "componentId": "comp_1773753473905_ceepl",
+          "orderId": "orders_1773753262020",
+          "orderNumber": "INT-2024-0002",
+          "itemDescription": "desc3",
+          "amount": 30
+        }
+      ]
+    },
+    {
+      "id": "sp_1773959994999_gkgg",
+      "supplierId": "suppliers_1771146860410",
+      "supplierName": "xupp2",
+      "amount": 50.032,
+      "date": "2026-03-19T00:00:00.000Z",
+      "memo": "PAY-20260319-A15L",
+      "user": "System",
+      "allocations": [
+        {
+          "componentId": "comp_1773753473905_ceepl",
+          "orderId": "orders_1773753262020",
+          "orderNumber": "INT-2024-0002",
+          "itemDescription": "desc3",
+          "amount": 3
+        },
+        {
+          "componentId": "comp_1773753481652_9hp4w",
+          "orderId": "orders_1773753262020",
+          "orderNumber": "INT-2024-0002",
+          "itemDescription": "desc4",
+          "amount": 4
+        },
+        {
+          "componentId": "comp_1773753488946_w2sms",
+          "orderId": "orders_1773753262020",
+          "orderNumber": "INT-2024-0002",
+          "itemDescription": "desc5",
+          "amount": 43.03
+        }
+      ]
     }
   ]
 }
