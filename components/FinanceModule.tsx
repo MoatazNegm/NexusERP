@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User } from '../types';
+import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus } from '../types';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 
 interface FinanceModuleProps {
@@ -9,7 +9,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'margins' | 'billing' | 'entities' | 'tax_clearances' | 'supplier_payments';
+type FinanceTab = 'orders' | 'margins' | 'billing' | 'entities' | 'tax_clearances' | 'supplier_reporting' | 'ledger';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   const status = order.status;
@@ -72,11 +72,254 @@ const ThresholdSentinel: React.FC<{ order: CustomerOrder, config: AppConfig }> =
   );
 };
 
+interface GeneralLedgerViewProps {
+  entries: any[];
+  onRefresh: () => void;
+  currentUser: User;
+  searchQuery: string;
+}
+
+const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, onRefresh, currentUser, searchQuery }) => {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [type, setType] = useState<'COST' | 'ADDITION'>('COST');
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const totals = useMemo(() => {
+    return entries.reduce((acc, curr) => {
+      if (curr.type === 'ADDITION') acc.additions += curr.amount;
+      else acc.costs += curr.amount;
+      return acc;
+    }, { additions: 0, costs: 0 });
+  }, [entries]);
+
+  const filteredEntries = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return [...entries].reverse();
+    return entries.filter(e => 
+      e.description.toLowerCase().includes(q) || 
+      e.category?.toLowerCase().includes(q) ||
+      e.user?.toLowerCase().includes(q)
+    ).reverse();
+  }, [entries, searchQuery]);
+
+  const handleAddEntry = async () => {
+    if (!amount || !description) { setError('Amount and description are mandatory'); return; }
+    const amt = parseFloat(amount);
+    if (isNaN(amt) || amt <= 0) { setError('Enter a valid positive amount'); return; }
+
+    setLoading(true);
+    setError(null);
+    try {
+      await dataService.addLedgerEntry({
+        date: new Date().toISOString(),
+        type,
+        amount: amt,
+        description,
+        category,
+        user: currentUser.username
+      });
+      setShowAddModal(false);
+      setAmount('');
+      setDescription('');
+      setCategory('');
+      onRefresh();
+    } catch (e: any) {
+      setError(e.message || 'Failed to add entry');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-emerald-50 border border-emerald-100 p-6 rounded-[2rem] shadow-sm">
+          <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600 mb-2 flex items-center gap-2">
+            <i className="fa-solid fa-plus-circle"></i> Total Additions
+          </div>
+          <div className="text-3xl font-black text-emerald-800 tracking-tight">
+            {totals.additions.toLocaleString()} <span className="text-sm">L.E.</span>
+          </div>
+        </div>
+        <div className="bg-rose-50 border border-rose-100 p-6 rounded-[2rem] shadow-sm">
+          <div className="text-[10px] font-black uppercase tracking-widest text-rose-600 mb-2 flex items-center gap-2">
+            <i className="fa-solid fa-minus-circle"></i> Total Costs
+          </div>
+          <div className="text-3xl font-black text-rose-800 tracking-tight">
+            {totals.costs.toLocaleString()} <span className="text-sm">L.E.</span>
+          </div>
+        </div>
+        <div className="bg-blue-50 border border-blue-100 p-6 rounded-[2rem] shadow-sm">
+          <div className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-2 flex items-center gap-2">
+            <i className="fa-solid fa-scale-balanced"></i> Net Balance
+          </div>
+          <div className="text-3xl font-black text-blue-800 tracking-tight">
+            {(totals.additions - totals.costs).toLocaleString()} <span className="text-sm">L.E.</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-between items-center">
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+          <i className="fa-solid fa-book text-slate-400"></i> General Ledger Transactions
+        </h3>
+        <button 
+          onClick={() => setShowAddModal(true)}
+          className="px-6 py-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg flex items-center gap-2"
+        >
+          <i className="fa-solid fa-plus"></i> Add New Entry
+        </button>
+      </div>
+
+      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
+            <tr>
+              <th className="px-8 py-5">Date</th>
+              <th className="px-8 py-5">Description / Category</th>
+              <th className="px-8 py-5">Type</th>
+              <th className="px-8 py-5 text-right">Amount</th>
+              <th className="px-8 py-5">User</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {filteredEntries.map(entry => (
+              <tr key={entry.id} className="hover:bg-slate-50/50 transition-colors">
+                <td className="px-8 py-5 text-xs font-bold text-slate-500">
+                  {new Date(entry.date).toLocaleDateString()}
+                </td>
+                <td className="px-8 py-5">
+                  <div className="font-black text-slate-800 text-sm">{entry.description}</div>
+                  {entry.category && <div className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{entry.category}</div>}
+                </td>
+                <td className="px-8 py-5">
+                  <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
+                    entry.type === 'ADDITION' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-rose-50 text-rose-600 border-rose-100'
+                  }`}>
+                    {entry.type}
+                  </span>
+                </td>
+                <td className={`px-8 py-5 text-right font-black text-sm ${
+                  entry.type === 'ADDITION' ? 'text-emerald-600' : 'text-rose-600'
+                }`}>
+                  {entry.type === 'ADDITION' ? '+' : '-'}{entry.amount.toLocaleString()} L.E.
+                </td>
+                <td className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">
+                  {entry.user}
+                </td>
+              </tr>
+            ))}
+            {filteredEntries.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-8 py-20 text-center text-slate-300 italic font-black uppercase tracking-widest text-xs">
+                  No ledger records matching your criteria
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {showAddModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg p-10 animate-in zoom-in-95 border border-slate-100">
+            <div className="flex items-center gap-6 mb-8">
+              <div className="w-16 h-16 rounded-3xl bg-blue-50 text-blue-600 flex items-center justify-center text-3xl shadow-inner">
+                <i className="fa-solid fa-file-invoice-dollar"></i>
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">New Ledger Entry</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Manual financial adjustment</p>
+              </div>
+            </div>
+
+            {error && <div className="mb-6 p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3"><i className="fa-solid fa-circle-exclamation"></i>{error}</div>}
+
+            <div className="space-y-6">
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setType('COST')}
+                  className={`flex-1 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${
+                    type === 'COST' ? 'bg-rose-50 border-rose-500 text-rose-700' : 'bg-slate-50 border-slate-100 text-slate-400'
+                  }`}
+                >
+                  <i className="fa-solid fa-minus-circle mr-2"></i> Cost / Expense
+                </button>
+                <button 
+                  onClick={() => setType('ADDITION')}
+                  className={`flex-1 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${
+                    type === 'ADDITION' ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-400'
+                  }`}
+                >
+                  <i className="fa-solid fa-plus-circle mr-2"></i> Addition / Income
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Amount (L.E.)</label>
+                <input 
+                  type="number" step="0.01" autoFocus
+                  className="w-full p-4 border rounded-2xl bg-slate-50 font-black text-2xl outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
+                  value={amount} onChange={e => setAmount(e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Description</label>
+                <input 
+                  type="text"
+                  className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
+                  value={description} onChange={e => setDescription(e.target.value)}
+                  placeholder="What is this for?"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Category (Optional)</label>
+                <input 
+                  type="text"
+                  className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
+                  value={category} onChange={e => setCategory(e.target.value)}
+                  placeholder="e.g. Utilities, Petty Cash, Bonus"
+                />
+              </div>
+            </div>
+
+            <div className="mt-10 flex gap-3">
+              <button 
+                onClick={() => setShowAddModal(false)} 
+                className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleAddEntry} 
+                disabled={loading}
+                className="flex-[2] py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center justify-center gap-2 hover:bg-black transition-all"
+              >
+                {loading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check"></i>}
+                Record Entry
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey, currentUser }) => {
   const [activeTab, setActiveTab] = useState<FinanceTab>('orders');
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [whtPeriod, setWhtPeriod] = useState<'this_year' | 'last_year'>('this_year');
@@ -131,7 +374,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Supplier Payments state
-  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>(['all']);
+  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
   const [supplierLedger, setSupplierLedger] = useState<any>(null);
   const [spAmount, setSpAmount] = useState('');
   const [spMemo, setSpMemo] = useState('');
@@ -160,18 +404,21 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
   useEffect(() => {
     fetchData();
+    loadSupplierLedger(['all']);
   }, [refreshKey]);
 
   const fetchData = async () => {
     try {
-      const [o, c, s] = await Promise.all([
+      const [o, c, s, l] = await Promise.all([
         dataService.getOrders(),
         dataService.getCustomers(),
-        dataService.getSuppliers()
+        dataService.getSuppliers(),
+        dataService.getLedgerEntries()
       ]);
       setOrders(o);
       setCustomers(c);
       setSuppliers(s);
+      setLedgerEntries(l);
     } catch (e) {
       console.error("Finance sync error:", e);
     } finally {
@@ -179,12 +426,13 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
     }
   };
 
-  const loadSupplierLedger = async (supplierId: string) => {
-    if (!supplierId) { setSupplierLedger(null); return; }
+  const loadSupplierLedger = async (ids: string[]) => {
+    if (ids.length === 0) { setSupplierLedger(null); return; }
     setSpLoading(true);
     setSpError(null);
     try {
-      const raw = await dataService.getSupplierLedger(supplierId);
+      const param = ids.includes('all') ? 'all' : ids.join(',');
+      const raw = await dataService.getSupplierLedger(param);
       // Flatten the response so UI can read summary fields directly
       setSupplierLedger({
         ...raw.summary,
@@ -201,16 +449,17 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   };
 
   const handleRecordPayment = async () => {
-    if (!selectedSupplierId || !spAmount) return;
+    const singleId = selectedSupplierIds.length === 1 ? selectedSupplierIds[0] : null;
+    if (!singleId || singleId === 'all' || !spAmount) return;
     const amount = parseFloat(spAmount);
     if (isNaN(amount) || amount <= 0) { setSpError('Enter a valid amount'); return; }
     setSpLoading(true);
     setSpError(null);
     try {
-      await dataService.recordSupplierPayment(selectedSupplierId, amount, spMemo, spDate);
+      await dataService.recordSupplierPayment(singleId, amount, spMemo, spDate);
       setSpAmount('');
       setSpMemo(generatePaymentRef());
-      await loadSupplierLedger(selectedSupplierId);
+      await loadSupplierLedger(selectedSupplierIds);
     } catch (e: any) {
       setSpError(e.message || 'Failed to record payment');
     } finally {
@@ -632,14 +881,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
         <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
-          {(['orders', 'margins', 'billing', 'entities', 'tax_clearances', 'supplier_payments'] as const).map(tab => (
+          {(['orders', 'margins', 'billing', 'entities', 'tax_clearances', 'supplier_reporting', 'ledger'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-8 py-3 rounded-xl text-[10px] whitespace-nowrap font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
               {tab === 'margins' && orders.some(o => o.status === OrderStatus.NEGATIVE_MARGIN) && <span className="mr-2 w-2 h-2 rounded-full bg-rose-50 inline-block animate-pulse"></span>}
-              {tab.replace(/([A-Z_])/g, ' $1').replace('_', ' ')}
+              {tab === 'supplier_reporting' ? 'Supplier Financial Report' : tab.replace(/([A-Z_])/g, ' $1').replace('_', ' ')}
             </button>
           ))}
         </div>
@@ -664,7 +913,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         ) : (
           <div className="relative w-full lg:w-96">
             <input
-              type="text" placeholder="Filter Ledger..."
+              type="text" placeholder="Search entries..."
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
               value={search} onChange={e => setSearch(e.target.value)}
             />
@@ -673,27 +922,98 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         )}
       </div>
 
+      {activeTab === 'ledger' && (
+        <GeneralLedgerView 
+          entries={ledgerEntries} 
+          onRefresh={fetchData} 
+          currentUser={currentUser}
+          searchQuery={search}
+        />
+      )}
 
-      {activeTab === 'supplier_payments' ? (
+
+      {activeTab === 'supplier_reporting' ? (
         <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh] p-8 space-y-8">
+          {/* Print Header */}
+          <div className="print-only mb-8 text-center border-b-2 border-slate-900 pb-6">
+            <h1 className="text-3xl font-black uppercase tracking-tighter">Supplier Financial Report</h1>
+            <p className="text-sm font-bold text-slate-600 mt-1 uppercase tracking-[0.3em]">
+              {selectedSupplierIds.includes('all') 
+                ? 'ALL SUPPLIERS' 
+                : (() => {
+                    const names = (suppliers || []).filter(s => s && selectedSupplierIds.includes(s.id)).map(s => s.name);
+                    return names.length > 0 ? names.join(', ') : 'Selected Suppliers';
+                  })()}
+            </p>
+          </div>
           {/* Supplier Selector */}
           <div className="flex flex-col lg:flex-row gap-6 items-start">
             <div className="flex-1 w-full">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Select Supplier</label>
-              <select
-                className="w-full px-5 py-3 bg-white border-2 border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
-                value={selectedSupplierId}
-                onChange={e => { 
-                  setSelectedSupplierId(e.target.value); 
-                  loadSupplierLedger(e.target.value); 
-                  if (e.target.value) setSpMemo(generatePaymentRef());
-                }}
-              >
-                <option value="">-- Choose a Supplier --</option>
-                {suppliers.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Select Suppliers</label>
+              <div className="relative w-full md:w-96">
+                <button
+                  onClick={() => setShowSupplierDropdown(!showSupplierDropdown)}
+                  className="w-full px-5 py-3 bg-white border-2 border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-blue-500 transition-all text-left flex justify-between items-center"
+                >
+                  <span>
+                    {selectedSupplierIds.includes('all')
+                      ? 'ALL SUPPLIERS'
+                      : selectedSupplierIds.length === 0
+                        ? '-- CHOOSE SUPPLIERS --'
+                        : (() => {
+                            if (!suppliers) return '-- CHOOSE SUPPLIERS --';
+                            const names = (suppliers || []).filter(s => s && selectedSupplierIds.includes(s.id)).map(s => s.name);
+                            if (names.length === 0) return `${selectedSupplierIds.length} SUPPLIERS SELECTED`;
+                            if (names.length <= 2) return names.join(', ');
+                            return `${names.slice(0, 2).join(', ')} + ${names.length - 2} more`;
+                          })()}
+                  </span>
+                  <i className={`fa-solid fa-chevron-${showSupplierDropdown ? 'up' : 'down'} text-[10px] text-slate-400`}></i>
+                </button>
+
+                {showSupplierDropdown && (
+                  <div className="absolute z-50 mt-2 w-full bg-white border border-slate-200 shadow-2xl rounded-2xl p-4 space-y-2 max-h-60 overflow-y-auto animate-in fade-in zoom-in-95 duration-200">
+                    <label className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-xl cursor-pointer transition-colors group">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        checked={selectedSupplierIds.includes('all')}
+                        onChange={() => {
+                          const next = ['all'];
+                          setSelectedSupplierIds(next);
+                          loadSupplierLedger(next);
+                          setShowSupplierDropdown(false);
+                          setSpMemo(generatePaymentRef());
+                        }}
+                      />
+                      <span className="text-[10px] font-black uppercase text-slate-700 group-hover:text-blue-600">ALL SUPPLIERS</span>
+                    </label>
+                    <div className="h-px bg-slate-100 my-2"></div>
+                    {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map(s => (
+                      <label key={s.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-xl cursor-pointer transition-colors group">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          checked={selectedSupplierIds.includes(s.id)}
+                          onChange={() => {
+                            let next = [...selectedSupplierIds].filter(id => id !== 'all');
+                            if (next.includes(s.id)) {
+                              next = next.filter(id => id !== s.id);
+                            } else {
+                              next.push(s.id);
+                            }
+                            if (next.length === 0) next = [];
+                            setSelectedSupplierIds(next);
+                            loadSupplierLedger(next);
+                            if (next.length === 1) setSpMemo(generatePaymentRef());
+                          }}
+                        />
+                        <span className="text-[10px] font-black uppercase text-slate-700 group-hover:text-blue-600">{s.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -710,80 +1030,103 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             </div>
           )}
 
-          {selectedSupplierId && supplierLedger && !spLoading && (
-            <>
-              {/* Summary Cards */}
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-                {[
-                  { label: 'Total Committed', value: supplierLedger.totalCommitted, color: 'blue', icon: 'fa-file-contract' },
-                  { label: 'Total Delivered', value: supplierLedger.totalDelivered, color: 'emerald', icon: 'fa-truck-ramp-box' },
-                  { label: 'Total Paid', value: supplierLedger.totalPaid, color: 'violet', icon: 'fa-money-bill-wave' },
-                  { label: 'Balance', value: supplierLedger.balance, color: supplierLedger.balance > 0 ? 'red' : 'emerald', icon: 'fa-scale-balanced' },
-                  { label: 'Pending delivery', value: supplierLedger.pendingObligations, color: 'amber', icon: 'fa-hourglass-half' },
-                ].map((card, i) => (
-                  <div key={i} className={`rounded-2xl border p-5 bg-${card.color}-50 border-${card.color}-100`}>
-                    <div className={`text-[10px] font-black uppercase tracking-widest text-${card.color}-400 mb-2 flex items-center gap-2`}>
-                      <i className={`fa-solid ${card.icon}`}></i> {card.label}
+          {selectedSupplierIds.length > 0 && supplierLedger && !spLoading && (
+            <div className="space-y-8 animate-in fade-in duration-500">
+              {/* Record New Payment - Only for single selection */}
+              {selectedSupplierIds.length === 1 && selectedSupplierIds[0] !== 'all' && (
+                <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 space-y-4 shadow-inner">
+                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-tight flex items-center gap-2">
+                    <i className="fa-solid fa-credit-card text-blue-500"></i> Record New Payment
+                  </h3>
+                  {supplierLedger.balance <= 0 && (
+                    <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold">
+                      <i className="fa-solid fa-check-circle mr-1"></i> This supplier is fully paid or overpaid.
                     </div>
-                    <div className={`text-xl font-black text-${card.color}-700 tracking-tight`}>
-                      {(card.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.
+                  )}
+                  <div className="flex flex-col lg:flex-row gap-4">
+                    <div className="flex-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Date</label>
+                      <input
+                        type="date"
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
+                        value={spDate} onChange={e => setSpDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Amount (L.E.)</label>
+                      <input
+                        type="number" step="0.01" placeholder="0.00"
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
+                        value={spAmount} onChange={e => setSpAmount(e.target.value)}
+                      />
+                      {spAmount && parseFloat(spAmount) > supplierLedger.balance && supplierLedger.balance > 0 && (
+                        <div className="text-[10px] font-bold text-amber-600 mt-1">
+                          <i className="fa-solid fa-triangle-exclamation mr-1"></i> Exceeds outstanding balance by {(parseFloat(spAmount) - supplierLedger.balance).toLocaleString()} L.E.
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-2 lg:w-1/3">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Payment Reference / Memo</label>
+                      <input
+                        type="text" placeholder="Payment reference..."
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
+                        value={spMemo} onChange={e => setSpMemo(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        onClick={handleRecordPayment}
+                        disabled={spLoading || !spAmount}
+                        className={`px-8 py-4 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg ${
+                          spLoading || !spAmount ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-200'
+                        }`}
+                      >
+                         {spLoading ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : <i className="fa-solid fa-paper-plane mr-2"></i>}
+                         Record
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
 
-              {/* Record Payment Form */}
-              <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 space-y-4">
-                <h3 className="text-sm font-black text-slate-700 uppercase tracking-tight flex items-center gap-2">
-                  <i className="fa-solid fa-credit-card text-blue-500"></i> Record New Payment
-                </h3>
-                {supplierLedger.balance <= 0 && (
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold">
-                    <i className="fa-solid fa-check-circle mr-1"></i> This supplier is fully paid or overpaid.
-                  </div>
-                )}
-                <div className="flex flex-col lg:flex-row gap-4">
-                  <div className="flex-1">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Date</label>
-                    <input
-                      type="date"
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
-                      value={spDate} onChange={e => setSpDate(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Amount (L.E.)</label>
-                    <input
-                      type="number" step="0.01" placeholder="0.00"
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
-                      value={spAmount} onChange={e => setSpAmount(e.target.value)}
-                    />
-                    {spAmount && parseFloat(spAmount) > supplierLedger.balance && supplierLedger.balance > 0 && (
-                      <div className="text-[10px] font-bold text-amber-600 mt-1">
-                        <i className="fa-solid fa-triangle-exclamation mr-1"></i> Exceeds outstanding balance by {(parseFloat(spAmount) - supplierLedger.balance).toLocaleString()} L.E.
+              {/* Summary Cards */}
+              <div className="grid grid-cols-6 gap-4">
+                {[
+                  { label: 'Total Ordered', value: supplierLedger.totalCommitted, color: 'blue', icon: 'fa-file-contract' },
+                  { label: 'Total Received Value', value: supplierLedger.totalDelivered, color: 'emerald', icon: 'fa-truck-ramp-box' },
+                  { label: 'Paid to Supplier', value: supplierLedger.totalPaid, color: 'violet', icon: 'fa-money-bill-wave' },
+                  {
+                    label: 'Received Balance',
+                    value: (supplierLedger.totalPaid || 0) - (supplierLedger.totalDelivered || 0),
+                    color: ((supplierLedger.totalPaid || 0) - (supplierLedger.totalDelivered || 0)) < 0 ? 'red' : 'emerald',
+                    icon: 'fa-scale-balanced',
+                    hint: '(Negative means he needs more money for received items)'
+                  },
+                  { label: 'Future Expected Payment', value: supplierLedger.pendingObligations, color: 'amber', icon: 'fa-hourglass-half', hint: '(Value of items not yet delivered)' },
+                  {
+                    label: 'Overall Balance',
+                    value: (supplierLedger.totalCommitted || 0) - (supplierLedger.totalPaid || 0),
+                    color: ((supplierLedger.totalCommitted || 0) - (supplierLedger.totalPaid || 0)) < 0 ? 'red' : 'slate',
+                    icon: 'fa-sigma',
+                    hint: '(Positive: Owed | Negative: Overpaid)'
+                  },
+                ].map((card, i) => (
+                  <div key={i} className={`rounded-2xl border p-5 bg-${card.color}-50 border-${card.color}-100 flex flex-col justify-between`}>
+                    <div>
+                      <div className={`text-[10px] font-black uppercase tracking-widest text-${card.color}-400 mb-2 flex items-center gap-2`}>
+                        <i className={`fa-solid ${card.icon}`}></i> {card.label}
+                      </div>
+                      <div className={`text-xl font-black text-${card.color}-700 tracking-tight`}>
+                        {(card.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.
+                      </div>
+                    </div>
+                    {card.hint && (
+                      <div className={`text-[8px] font-bold text-${card.color}-400 mt-2 italic lowercase`}>
+                        {card.hint}
                       </div>
                     )}
                   </div>
-                  <div className="flex-2 lg:w-1/3">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Payment Reference / Memo</label>
-                    <input
-                      type="text" placeholder="Payment reference..."
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
-                      value={spMemo} onChange={e => setSpMemo(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <button
-                      onClick={handleRecordPayment}
-                      disabled={spLoading || !spAmount}
-                      className={`px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg ${
-                        spLoading || !spAmount ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-200'
-                      }`}
-                    >
-                      {spLoading ? <><i className="fa-solid fa-spinner fa-spin mr-2"></i> Processing</> : <><i className="fa-solid fa-paper-plane mr-2"></i> Record</>}
-                    </button>
-                  </div>
-                </div>
+                ))}
               </div>
 
               {/* Payment History */}
@@ -794,49 +1137,54 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   </h3>
                   <div className="border border-slate-200 rounded-2xl overflow-hidden">
                     <table className="w-full text-left">
-                      <thead className="bg-slate-50">
+                      <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                         <tr>
-                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest">Date</th>
-                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest">Amount</th>
-                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest">Memo</th>
-                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest">Recorded By</th>
-                          <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-400 tracking-widest w-10"></th>
+                          <th className="px-6 py-4">Date</th>
+                          <th className="px-6 py-4">Amount</th>
+                          <th className="px-6 py-4">Memo</th>
+                          <th className="px-6 py-4">Recorded By</th>
+                          <th className="px-6 py-4 w-10"></th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-slate-100 italic">
                         {supplierLedger.payments.map((p: any) => (
                           <React.Fragment key={p.id}>
                             <tr className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setExpandedPaymentId(expandedPaymentId === p.id ? null : p.id)}>
                               <td className="px-6 py-4 text-xs font-bold text-slate-600">{new Date(p.date).toLocaleDateString()}</td>
-                              <td className="px-6 py-4 text-sm font-black text-slate-800">{p.amount.toLocaleString(undefined, {minimumFractionDigits:2})} L.E.</td>
-                              <td className="px-6 py-4 text-xs font-medium text-slate-500">{p.memo || '-'}</td>
-                              <td className="px-6 py-4 text-xs font-bold text-slate-500">{p.user || '-'}</td>
+                              <td className="px-6 py-4 text-sm font-black text-slate-800">{(p.amount || 0).toLocaleString()} L.E.</td>
+                              <td className="px-6 py-4 text-xs font-medium text-slate-500 truncate max-w-xs">{p.memo || '-'}</td>
+                              <td className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">{p.user || '-'}</td>
                               <td className="px-6 py-4 text-right">
                                 <i className={`fa-solid fa-chevron-${expandedPaymentId === p.id ? 'up' : 'down'} text-slate-400 text-[10px]`}></i>
                               </td>
                             </tr>
                             {expandedPaymentId === p.id && p.allocations && p.allocations.length > 0 && (
                               <tr>
-                                <td colSpan={5} className="bg-blue-50/50 px-8 py-4">
-                                  <div className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">FIFO Allocation Breakdown</div>
-                                  <table className="w-full text-left">
-                                    <thead>
-                                      <tr>
-                                        <th className="px-3 py-2 text-[9px] font-black uppercase text-slate-400">Order#</th>
-                                        <th className="px-3 py-2 text-[9px] font-black uppercase text-slate-400">Item</th>
-                                        <th className="px-3 py-2 text-[9px] font-black uppercase text-slate-400">Allocated</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {p.allocations.map((a: any, ai: number) => (
-                                        <tr key={ai} className="border-t border-blue-100/50">
-                                          <td className="px-3 py-2 text-xs font-mono font-bold text-blue-600">{a.orderNumber || a.componentNumber || '-'}</td>
-                                          <td className="px-3 py-2 text-xs font-medium text-slate-600">{a.description || '-'}</td>
-                                          <td className="px-3 py-2 text-xs font-black text-slate-800">{a.allocatedAmount?.toLocaleString(undefined, {minimumFractionDigits:2})} L.E.</td>
+                                <td colSpan={5} className="bg-slate-50/50 px-8 py-6">
+                                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                    Payment Allocation Breakdown
+                                  </div>
+                                  <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
+                                    <table className="w-full text-left">
+                                      <thead>
+                                        <tr className="bg-slate-50 border-b border-slate-100 text-[9px] font-black uppercase text-slate-400 italic">
+                                          <th className="px-4 py-3">PO#</th>
+                                          <th className="px-4 py-3">Description</th>
+                                          <th className="px-4 py-3 text-right">Allocated Amt</th>
                                         </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-50">
+                                        {p.allocations.map((a: any, ai: number) => (
+                                          <tr key={ai} className="hover:bg-slate-50/50 transition-colors text-xs font-bold">
+                                            <td className="px-4 py-3 font-mono text-blue-600 uppercase">{a.orderNumber || '-'}</td>
+                                            <td className="px-4 py-3 text-slate-600">{a.description}</td>
+                                            <td className="px-4 py-3 text-right text-slate-800">{a.amount.toLocaleString()} L.E.</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
                                 </td>
                               </tr>
                             )}
@@ -848,41 +1196,45 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                 </div>
               )}
 
-              {/* Component Orders (FIFO) */}
+              {/* Ledger Components */}
               {supplierLedger.components && supplierLedger.components.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-black text-slate-700 uppercase tracking-tight flex items-center gap-2">
-                    <i className="fa-solid fa-boxes-stacked text-amber-500"></i> Component Orders (FIFO)
+                    <i className="fa-solid fa-list-check text-emerald-500"></i> Financial Ledger (FIFO Orders)
                   </h3>
-                  <div className="border border-slate-200 rounded-2xl overflow-x-auto">
-                    <table className="w-full text-left">
-                      <thead className="bg-slate-50">
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                      <thead className="bg-slate-50 text-[9px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                         <tr>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest">Order#</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest">PO#</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest">Description</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Qty</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Unit Cost</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Total</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Delivered Val</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Allocated</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest text-right">Unallocated</th>
-                          <th className="px-4 py-3 text-[9px] font-black uppercase text-slate-400 tracking-widest">Status</th>
+                          <th className="px-6 py-4">PO#</th>
+                          <th className="px-6 py-4">Description</th>
+                          <th className="px-6 py-4 text-right">Qty</th>
+                          <th className="px-6 py-4 text-right">Unit cost</th>
+                          <th className="px-6 py-4 text-right">Total (PO)</th>
+                          <th className="px-6 py-4 text-right">Deliv. Val</th>
+                          <th className="px-6 py-4 text-right">Allocated</th>
+                          <th className="px-6 py-4 text-right">Balance</th>
+                          <th className="px-6 py-4">Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 text-xs">
+                      <tbody className="divide-y divide-slate-100">
                         {supplierLedger.components.map((c: any, ci: number) => (
-                          <tr key={ci} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="px-4 py-3 font-mono font-bold text-blue-600">{c.orderNumber || '-'}</td>
-                            <td className="px-4 py-3 font-bold text-slate-500">{c.poNumber || '-'}</td>
-                            <td className="px-4 py-3 font-medium text-slate-700 max-w-[200px] truncate">{c.description}</td>
-                            <td className="px-4 py-3 font-bold text-slate-700 text-right">{c.quantity}</td>
-                            <td className="px-4 py-3 font-bold text-slate-700 text-right">{(c.unitCost || 0).toLocaleString()}</td>
-                            <td className="px-4 py-3 font-black text-slate-800 text-right">{(c.totalCost || 0).toLocaleString()}</td>
-                            <td className="px-4 py-3 font-bold text-emerald-600 text-right">{(c.deliveredValue || 0).toLocaleString()}</td>
-                            <td className="px-4 py-3 font-bold text-violet-600 text-right">{(c.allocatedPayments || 0).toLocaleString()}</td>
-                            <td className="px-4 py-3 font-black text-right">{((c.deliveredValue || 0) - (c.allocatedPayments || 0)).toLocaleString()}</td>
-                            <td className="px-4 py-3"><span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${c.status === 'CONSUMED' || c.status === 'Manufactured' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-amber-50 text-amber-600 border border-amber-100'}`}>{c.status}</span></td>
+                          <tr key={ci} className="hover:bg-slate-50 transition-colors group">
+                            <td className="px-6 py-4">
+                              <div className="font-mono font-black text-blue-600 text-xs uppercase">{c.poNumber || 'N/A'}</div>
+                              <div className="text-[8px] font-bold text-slate-400 mt-0.5 uppercase tracking-tighter">{c.orderNumber}</div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="font-bold text-slate-800 text-xs truncate max-w-[200px]" title={c.description}>{c.description}</div>
+                              <div className="text-[8px] font-bold text-slate-400 uppercase italic mt-0.5">{c.supplierName}</div>
+                            </td>
+                            <td className="px-6 py-4 text-right font-bold text-slate-600">{c.quantity}</td>
+                            <td className="px-6 py-4 text-right font-bold text-slate-500 text-xs">{(c.unitCost || 0).toLocaleString()}</td>
+                            <td className="px-6 py-4 text-right font-black text-slate-800">{(c.totalCost || 0).toLocaleString()}</td>
+                            <td className="px-6 py-4 text-right font-bold text-emerald-600 text-xs">{(c.deliveredValue || 0).toLocaleString()}</td>
+                            <td className="px-6 py-4 text-right font-black text-violet-600 text-xs">{(c.allocatedPayments || 0).toLocaleString()}</td>
+                            <td className="px-6 py-4 text-right font-black text-rose-600">{((c.totalCost || 0) - (c.allocatedPayments || 0)).toLocaleString()}</td>
+                            <td className="px-6 py-4 text-xs font-black uppercase tracking-widest italic text-slate-400">{c.status}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -890,20 +1242,20 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   </div>
                 </div>
               )}
-            </>
-          )}
-
-          {selectedSupplierId && !supplierLedger && !spLoading && (
-            <div className="py-16 text-center text-slate-400">
-              <i className="fa-solid fa-box-open text-4xl mb-4"></i>
-              <div className="font-bold text-sm">No data found for this supplier.</div>
             </div>
           )}
 
-          {!selectedSupplierId && (
+          {selectedSupplierIds.length > 0 && !supplierLedger && !spLoading && (
+            <div className="py-16 text-center text-slate-400">
+              <i className="fa-solid fa-box-open text-4xl mb-4"></i>
+              <div className="font-bold text-sm uppercase tracking-widest">No detailed ledger data found</div>
+            </div>
+          )}
+
+          {selectedSupplierIds.length === 0 && (
             <div className="py-16 text-center text-slate-300">
-              <i className="fa-solid fa-hand-pointer text-5xl mb-4"></i>
-              <div className="font-bold text-sm text-slate-400">Select a supplier above to view their payment ledger.</div>
+              <i className="fa-solid fa-hand-pointer text-5xl mb-4 animate-bounce"></i>
+              <div className="font-bold text-sm text-slate-400 uppercase tracking-widest">Please select a supplier to continue audit</div>
             </div>
           )}
         </div>
@@ -1030,7 +1382,12 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                         if (col === 'context') return (
                           <td key={col} className="px-8 py-6">
                             <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
-                            <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
+                            <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2">
+                              {o.customerName}
+                              {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
+                                <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
+                              )}
+                            </div>
                             <div className="text-[9px] text-slate-400 font-bold mt-1 uppercase tracking-tighter">{o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}</div>
                           </td>
                         );
@@ -1099,7 +1456,12 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                       if (col === 'context') return (
                         <td key={col} className="px-8 py-6">
                           <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
-                          <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5">{o.customerName}</div>
+                          <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2">
+                            {o.customerName}
+                            {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
+                              <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
+                            )}
+                          </div>
                           {o.invoiceNumber && <div className="text-[9px] font-black text-emerald-600 uppercase mt-1">Tax Invoice: {o.invoiceNumber}</div>}
                         </td>
                       );

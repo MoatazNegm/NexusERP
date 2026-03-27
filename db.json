@@ -832,10 +832,11 @@
           "isAccepted": false,
           "manufacturedQty": 16000,
           "hubReceivedQty": 7100,
-          "approvedForDispatchQty": 1329,
+          "approvedForDispatchQty": 2029,
           "dispatchedQty": 1329,
           "shippedQty": 1319,
-          "deliveredQty": 319
+          "deliveredQty": 319,
+          "productionType": "TRADING"
         },
         {
           "id": "temp_1773753407144",
@@ -854,7 +855,7 @@
               "unit": "pcs",
               "unitCost": 11,
               "taxPercent": 14,
-              "source": "PROCUREMENT",
+              "source": "CONSUMED",
               "status": "RESERVED",
               "supplierPartNumber": "part3",
               "statusUpdatedAt": "2026-03-17T13:20:26.694Z",
@@ -867,7 +868,8 @@
               "poNumber": "PO-588158",
               "procurementStartedAt": "2026-03-17T13:19:52.590Z",
               "inventoryItemId": "inv_1773753618045_2nsiq",
-              "receivedQty": 3
+              "receivedQty": 3,
+              "consumedQty": 2
             },
             {
               "id": "comp_1773753481652_9hp4w",
@@ -876,7 +878,7 @@
               "unit": "pcs",
               "unitCost": 1,
               "taxPercent": 14,
-              "source": "PROCUREMENT",
+              "source": "CONSUMED",
               "status": "RESERVED",
               "supplierPartNumber": "part4",
               "statusUpdatedAt": "2026-03-17T13:35:44.636Z",
@@ -898,7 +900,7 @@
               "unit": "pcs",
               "unitCost": 22,
               "taxPercent": 14,
-              "source": "PROCUREMENT",
+              "source": "CONSUMED",
               "status": "ORDERED",
               "supplierPartNumber": "part5",
               "statusUpdatedAt": "2026-03-17T13:20:37.422Z",
@@ -914,7 +916,8 @@
               "receivedQty": 4
             }
           ],
-          "isAccepted": false
+          "isAccepted": false,
+          "productionType": "TRADING"
         }
       ],
       "logs": [
@@ -1511,6 +1514,108 @@
           "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
           "status": "MANUFACTURING",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:00:29.543Z",
+          "message": "Finance Partial Receipt for Dispatch: 700 Pieces of 64886429-VASELINE@20% POFF STKR N Material Number: 64886429 Tax Code: 64 Tax Code Name: Input rate - 14%",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:47:46.788Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:47:46.788Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:47:46.788Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:47:49.964Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:47:49.964Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:47:49.964Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T10:59:31.227Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T10:59:31.227Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T10:59:31.227Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:28:28.419Z",
+          "message": "[Factory] Consumed 2.00 units of desc3. (2.00/3 total)",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:28:28.420Z",
+          "message": "[Inventory] Released 3 units of CMP-INT-2024-0002-1-0 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:28:28.420Z",
+          "message": "[Inventory] Released 4 units of CMP-INT-2024-0002-1-1 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:28:28.420Z",
+          "message": "[Inventory] Released 5 units of CMP-INT-2024-0002-1-2 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T12:43:01.177Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T12:43:01.177Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T12:43:01.177Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0002",
@@ -1554,6 +1659,967 @@
           "podFilePath": "uploads/pod/pod-1773755623963-893684057.pdf"
         }
       ]
+    },
+    {
+      "id": "orders_1774439887663",
+      "customerReferenceNumber": "REF-LOG-1774439887517",
+      "customerName": "Test Customer",
+      "orderDate": "2026-03-25",
+      "items": [],
+      "paymentSlaDays": 30,
+      "logs": [
+        {
+          "timestamp": "2026-03-25T11:58:07.667Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "Tester"
+        },
+        {
+          "timestamp": "2026-03-25T11:58:07.668Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T11:58:58.491Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T11:58:58.491Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T11:58:58.491Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T11:58:58.491Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:59:45.092Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:59:45.092Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:59:45.092Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "LOGGED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0003",
+      "dataEntryTimestamp": "2026-03-25T11:58:07.667Z",
+      "status": "LOGGED",
+      "loggingComplianceViolation": false
+    },
+    {
+      "id": "orders_1774439887683",
+      "customerReferenceNumber": "REF-LOG-17744",
+      "customerName": "Test Customer Substring",
+      "orderDate": "2026-03-25",
+      "items": [],
+      "paymentSlaDays": 30,
+      "logs": [
+        {
+          "timestamp": "2026-03-25T11:58:07.683Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "Tester"
+        },
+        {
+          "timestamp": "2026-03-25T11:58:07.683Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T11:59:01.686Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T11:59:01.686Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T11:59:01.686Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T11:59:01.686Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:59:52.540Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:59:52.540Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T12:59:52.540Z",
+          "message": "[SYSTEM] Order Draft Window Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "LOGGED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0004",
+      "dataEntryTimestamp": "2026-03-25T11:58:07.683Z",
+      "status": "LOGGED",
+      "loggingComplianceViolation": false
+    },
+    {
+      "id": "orders_1774447073870",
+      "customerReferenceNumber": "TEST-INV-1",
+      "customerName": "Invoice Test Customer",
+      "orderDate": "2026-03-25T13:57:53.740Z",
+      "items": [
+        {
+          "id": "it_1774447073741",
+          "orderNumber": "L1",
+          "description": "Billable Item",
+          "quantity": 5,
+          "unit": "pcs",
+          "pricePerUnit": 200,
+          "taxPercent": 14,
+          "logs": [],
+          "components": [],
+          "productionType": "TRADING"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-03-25T13:57:53.871Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-03-25T13:57:53.872Z",
+          "message": "[AUTO] Initial Status: Status moved from NEW to LOGGED",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:57:53.919Z",
+          "message": "PO Received at Product Hub: Ready for Invoicing",
+          "status": "IN_PRODUCT_HUB",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-03-25T13:57:53.952Z",
+          "message": "Official Tax Invoice Generated: INV-260325-213",
+          "status": "INVOICED",
+          "user": "TestUser"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:43.245Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:43.245Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:43.245Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:43.245Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:05:43.353Z",
+          "message": "[SYSTEM] Hub Release Sync Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:05:43.353Z",
+          "message": "[SYSTEM] Hub Release Sync Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:05:43.353Z",
+          "message": "[SYSTEM] Hub Release Sync Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "INVOICED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0005",
+      "dataEntryTimestamp": "2026-03-25T13:57:53.871Z",
+      "status": "INVOICED",
+      "loggingComplianceViolation": false,
+      "invoiceNumber": "INV-260325-213"
+    },
+    {
+      "id": "orders_1774447099998",
+      "customerName": "Internal Stock",
+      "customerReferenceNumber": "STOCK-TEST-001",
+      "orderDate": "2026-03-25",
+      "paymentSlaDays": 0,
+      "items": [
+        {
+          "description": "Stock Replenishment",
+          "quantity": 1,
+          "unit": "pcs",
+          "pricePerUnit": 0,
+          "taxPercent": 0,
+          "isAccepted": false,
+          "components": [
+            {
+              "description": "Desc1",
+              "quantity": 10,
+              "unit": "pcs",
+              "unitCost": 10.5,
+              "source": "PROCUREMENT",
+              "inventoryItemId": "inv_1773742973194_nt61z",
+              "status": "RECEIVED",
+              "id": "c_1774447099999_0_0",
+              "componentNumber": "CMP-INT-2024-0006-ITEM-1",
+              "statusUpdatedAt": "2026-03-25T13:58:19.999Z"
+            }
+          ],
+          "logs": [],
+          "productionType": "TRADING"
+        }
+      ],
+      "status": "TECHNICAL_REVIEW",
+      "logs": [
+        {
+          "timestamp": "2026-03-25T13:58:19.998Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:19.999Z",
+          "message": "[AUTO] Initial Status: Status moved from LOGGED to TECHNICAL_REVIEW",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:20.011Z",
+          "message": "[AUTO] Stock Replenishment: 10 units of CMP-INT-2024-0001-0-0 added to Free Stock. Valuation updated to 10.5.",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:20.012Z",
+          "message": "[AUTO] BoM mutation detected on item 1. Technical approval revoked.",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:46.058Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:46.058Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:46.058Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:46.058Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:04:45.069Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:04:45.069Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:04:45.069Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T10:59:37.524Z",
+          "message": "[SYSTEM] Tech Review Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T10:59:37.524Z",
+          "message": "[SYSTEM] Tech Review Limit Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T10:59:37.524Z",
+          "message": "[SYSTEM] Tech Review Limit Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "TECHNICAL_REVIEW",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0006",
+      "dataEntryTimestamp": "2026-03-25T13:58:19.998Z",
+      "loggingComplianceViolation": false
+    },
+    {
+      "id": "orders_1774447110444",
+      "customerReferenceNumber": "PO-CONS-1774447110441",
+      "customerName": "Consumption Test Customer",
+      "status": "MANUFACTURING_COMPLETED",
+      "items": [
+        {
+          "description": "Test Item",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Test Component",
+              "quantity": 2,
+              "unitCost": 5,
+              "inventoryItemId": "inventory_1774447110428",
+              "source": "STOCK",
+              "status": "Manufactured",
+              "id": "c_1774447110444_0_0",
+              "componentNumber": "CMP-INT-2024-0007-ITEM-1",
+              "statusUpdatedAt": "2026-03-25T13:58:30.453Z"
+            }
+          ],
+          "logs": [],
+          "productionType": "TRADING",
+          "status": "Manufactured"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-03-25T13:58:30.444Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:30.453Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:49.782Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:49.782Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:49.782Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T13:58:49.782Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:05:49.317Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:05:49.317Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-25T14:05:49.317Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0007",
+      "dataEntryTimestamp": "2026-03-25T13:58:30.444Z"
+    },
+    {
+      "id": "orders_1774541019670",
+      "customerReferenceNumber": "PO-START-1774541019664",
+      "customerName": "Start Prod Customer",
+      "status": "MANUFACTURING",
+      "items": [
+        {
+          "description": "Product X",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Comp Y",
+              "quantity": 10,
+              "inventoryItemId": "inventory_1774541019653",
+              "source": "PROCUREMENT",
+              "status": "RESERVED",
+              "id": "c_1774541019670_0_0",
+              "componentNumber": "CMP-INT-2024-0008-ITEM-1",
+              "statusUpdatedAt": "2026-03-26T16:03:39.670Z"
+            }
+          ],
+          "logs": [],
+          "productionType": "TRADING"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-03-26T16:03:39.670Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:03:39.682Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:04:54.159Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:04:54.159Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:04:54.159Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:04:54.159Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:10:31.943Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:10:31.943Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:10:31.943Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:17:32.572Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:17:32.572Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:17:32.572Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0008",
+      "dataEntryTimestamp": "2026-03-26T16:03:39.670Z"
+    },
+    {
+      "id": "orders_1774541032920",
+      "customerReferenceNumber": "PO-START-1774541032915",
+      "customerName": "Start Prod Customer",
+      "status": "MANUFACTURING",
+      "items": [
+        {
+          "description": "Product X",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Comp Y",
+              "quantity": 10,
+              "inventoryItemId": "inventory_1774541032880",
+              "source": "CONSUMED",
+              "status": "RESERVED",
+              "id": "c_1774541032920_0_0",
+              "componentNumber": "CMP-INT-2024-0009-ITEM-1",
+              "statusUpdatedAt": "2026-03-26T16:03:52.920Z"
+            }
+          ],
+          "logs": [],
+          "productionType": "TRADING"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-03-26T16:03:52.920Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:03:52.930Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:03:52.930Z",
+          "message": "[Inventory] Released 10 units of PROD-START-1774541032810 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:04:59.641Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:04:59.641Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:04:59.641Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:04:59.641Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:31.507Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:31.507Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:31.507Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:34.268Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:34.268Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:34.268Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0009",
+      "dataEntryTimestamp": "2026-03-26T16:03:52.920Z"
+    },
+    {
+      "id": "orders_1774541480542",
+      "customerReferenceNumber": "PO-START-1774541480537",
+      "customerName": "Start Prod Customer",
+      "status": "MANUFACTURING",
+      "items": [
+        {
+          "description": "Product X",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Comp Y",
+              "quantity": 10,
+              "inventoryItemId": "inventory_1774541480528",
+              "source": "CONSUMED",
+              "status": "RESERVED",
+              "id": "c_1774541480542_0_0",
+              "componentNumber": "CMP-INT-2024-0010-ITEM-1",
+              "statusUpdatedAt": "2026-03-26T16:11:20.542Z"
+            }
+          ],
+          "logs": [],
+          "productionType": "TRADING"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-03-26T16:11:20.542Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:20.550Z",
+          "message": "Production Started: Released to Floor",
+          "status": "MANUFACTURING",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:20.550Z",
+          "message": "[Inventory] Released 10 units of PROD-START-1774541480471 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:39.990Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:39.990Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:39.990Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:39.990Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:17:36.150Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:17:36.150Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:17:36.150Z",
+          "message": "[SYSTEM] Waiting Factory Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:24:30.868Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:24:30.868Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:24:30.868Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0010",
+      "dataEntryTimestamp": "2026-03-26T16:11:20.542Z"
+    },
+    {
+      "id": "orders_1774541480869",
+      "customerReferenceNumber": "PO-CONS-1774541480864",
+      "customerName": "Consumption Test Customer",
+      "status": "MANUFACTURING_COMPLETED",
+      "items": [
+        {
+          "description": "Test Item",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Test Component",
+              "quantity": 2,
+              "unitCost": 5,
+              "inventoryItemId": "inventory_1774541480855",
+              "source": "CONSUMED",
+              "status": "Manufactured",
+              "id": "c_1774541480869_0_0",
+              "componentNumber": "CMP-INT-2024-0011-ITEM-1",
+              "statusUpdatedAt": "2026-03-26T16:11:20.886Z"
+            }
+          ],
+          "logs": [],
+          "productionType": "TRADING",
+          "status": "Manufactured"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-03-26T16:11:20.869Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:20.869Z",
+          "message": "[Inventory] Released 2 units of TEST-SKU-1774541480785 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:20.886Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:45.558Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:45.558Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:45.558Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:45.558Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:18:31.130Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:18:31.130Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:18:31.130Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0011",
+      "dataEntryTimestamp": "2026-03-26T16:11:20.869Z"
+    },
+    {
+      "id": "orders_1774541481214",
+      "customerReferenceNumber": "PO-V2-1774541481211",
+      "customerName": "V2 Test",
+      "status": "MANUFACTURING_COMPLETED",
+      "items": [
+        {
+          "description": "Product",
+          "quantity": 1,
+          "pricePerUnit": 100,
+          "components": [
+            {
+              "description": "Std Comp",
+              "quantity": 2,
+              "inventoryItemId": "inventory_1774541481191",
+              "source": "CONSUMED",
+              "status": "Manufactured",
+              "id": "c_1774541481214_0_0",
+              "componentNumber": "CMP-INT-2024-0012-ITEM-1",
+              "statusUpdatedAt": "2026-03-26T16:11:21.222Z"
+            },
+            {
+              "description": "Leg Comp",
+              "quantity": 2,
+              "inventoryItemId": "inventory_1774541481208",
+              "source": "CONSUMED",
+              "status": "Manufactured",
+              "id": "c_1774541481214_0_1",
+              "componentNumber": "CMP-INT-2024-0012-ITEM-2",
+              "statusUpdatedAt": "2026-03-26T16:11:21.222Z"
+            }
+          ],
+          "logs": [],
+          "productionType": "TRADING",
+          "status": "Manufactured"
+        }
+      ],
+      "logs": [
+        {
+          "timestamp": "2026-03-26T16:11:21.214Z",
+          "message": "Order acquisition recorded",
+          "status": "LOGGED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:21.214Z",
+          "message": "[Inventory] Released 2 units of STD-SKU-1774541481075 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:21.214Z",
+          "message": "[Inventory] Released 2 units of LEG-SKU-1774541481202 to Factory Floor.",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:21.221Z",
+          "message": "Production Finished: Ready for QC/Hub",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "TestScript"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:48.500Z",
+          "message": "[SYSTEM] New Order Notification Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:48.500Z",
+          "message": "[SYSTEM] New Order Notification Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:48.500Z",
+          "message": "[SYSTEM] New Order Notification Sent to Mohamad Negm (Mohamed.allam@psp-co.org) via group: Managers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:11:48.500Z",
+          "message": "[SYSTEM] New Order Notification Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:18:34.913Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:18:34.913Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-26T16:18:34.913Z",
+          "message": "[SYSTEM] Manufacturing Run Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING_COMPLETED",
+          "user": "System"
+        }
+      ],
+      "internalOrderNumber": "INT-2024-0012",
+      "dataEntryTimestamp": "2026-03-26T16:11:21.214Z"
     }
   ],
   "inventory": [
@@ -1561,11 +2627,11 @@
       "id": "inv_1773742973194_nt61z",
       "description": "Desc1",
       "sku": "CMP-INT-2024-0001-0-0",
-      "quantityInStock": 0,
-      "quantityReserved": 0,
+      "quantityInStock": 10,
+      "quantityReserved": 10,
       "category": "Uncategorized",
       "unit": "pcs",
-      "lastCost": 40,
+      "lastCost": 10.5,
       "minStockLevel": 0,
       "lastUpdated": "2026-03-17T10:22:53.194Z",
       "poNumber": "PO-742232",
@@ -1645,8 +2711,8 @@
       "id": "inv_1773753618045_2nsiq",
       "description": "desc3",
       "sku": "CMP-INT-2024-0002-1-0",
-      "quantityInStock": 3,
-      "quantityReserved": 3,
+      "quantityInStock": 0,
+      "quantityReserved": 0,
       "category": "Uncategorized",
       "unit": "pcs",
       "lastCost": 11,
@@ -1673,8 +2739,8 @@
       "id": "inv_1773753632719_tbw6s",
       "description": "desc4",
       "sku": "CMP-INT-2024-0002-1-1",
-      "quantityInStock": 4,
-      "quantityReserved": 4,
+      "quantityInStock": 0,
+      "quantityReserved": 0,
       "category": "Uncategorized",
       "unit": "pcs",
       "lastCost": 1,
@@ -1687,7 +2753,7 @@
       "id": "inv_1773753637422_d542v",
       "description": "desc5",
       "sku": "CMP-INT-2024-0002-1-2",
-      "quantityInStock": 4,
+      "quantityInStock": 0,
       "quantityReserved": 0,
       "category": "Uncategorized",
       "unit": "pcs",
@@ -1696,6 +2762,62 @@
       "lastUpdated": "2026-03-17T13:20:37.422Z",
       "poNumber": "PO-588158",
       "orderRef": "INT-2024-0002"
+    },
+    {
+      "id": "inventory_1774447110428",
+      "sku": "TEST-SKU-1774447110365",
+      "description": "Test Stock Item",
+      "quantityOnHand": 10,
+      "quantityReserved": 7,
+      "unitCost": 5
+    },
+    {
+      "id": "inventory_1774541019653",
+      "sku": "PROD-START-1774541019496",
+      "description": "Production Start Item",
+      "quantityInStock": 100,
+      "quantityReserved": 60,
+      "unitCost": 10
+    },
+    {
+      "id": "inventory_1774541032880",
+      "sku": "PROD-START-1774541032810",
+      "description": "Production Start Item",
+      "quantityInStock": 90,
+      "quantityReserved": 50,
+      "unitCost": 10
+    },
+    {
+      "id": "inventory_1774541480528",
+      "sku": "PROD-START-1774541480471",
+      "description": "Production Start Item",
+      "quantityInStock": 90,
+      "quantityReserved": 50,
+      "unitCost": 10
+    },
+    {
+      "id": "inventory_1774541480855",
+      "sku": "TEST-SKU-1774541480785",
+      "description": "Test Stock Item",
+      "quantityInStock": 8,
+      "quantityReserved": 5,
+      "unitCost": 5
+    },
+    {
+      "id": "inventory_1774541481191",
+      "sku": "STD-SKU-1774541481075",
+      "description": "Standard Item",
+      "quantityInStock": 8,
+      "quantityReserved": 5,
+      "unitCost": 10
+    },
+    {
+      "id": "inventory_1774541481208",
+      "sku": "LEG-SKU-1774541481202",
+      "description": "Legacy Item",
+      "quantityReserved": 5,
+      "unitCost": 10,
+      "quantityInStock": 8
     }
   ],
   "suppliers": [
@@ -2171,6 +3293,352 @@
         "aly_adam@quickstor.net",
         "zeyad_mamdouh@psp-co.org"
       ]
+    },
+    {
+      "id": "nt_n_1774439938491",
+      "journalKey": "new_order_orders_1774439887663",
+      "orderId": "orders_1774439887663",
+      "type": "new_order",
+      "sentAt": "2026-03-25T11:58:58.491Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774439941686",
+      "journalKey": "new_order_orders_1774439887683",
+      "orderId": "orders_1774439887683",
+      "type": "new_order",
+      "sentAt": "2026-03-25T11:59:01.686Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774442866788_hxbk",
+      "journalKey": "item_threshold_waitingFactoryLimitHrs_orders_1773753262020_temp_1773753255975_0",
+      "orderId": "orders_1773753262020",
+      "type": "item_threshold_waitingFactoryLimitHrs",
+      "sentAt": "2026-03-25T12:47:46.788Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774442869964_vhgi",
+      "journalKey": "item_threshold_pendingOfferLimitHrs_orders_1773753262020_temp_1773753407144",
+      "orderId": "orders_1773753262020",
+      "type": "item_threshold_pendingOfferLimitHrs",
+      "sentAt": "2026-03-25T12:47:49.964Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774443585092_62vh",
+      "journalKey": "threshold_orderEditTimeLimitHrs_orders_1774439887663",
+      "orderId": "orders_1774439887663",
+      "type": "threshold_orderEditTimeLimitHrs",
+      "sentAt": "2026-03-25T12:59:45.092Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774443592540_clql",
+      "journalKey": "threshold_orderEditTimeLimitHrs_orders_1774439887683",
+      "orderId": "orders_1774439887683",
+      "type": "threshold_orderEditTimeLimitHrs",
+      "sentAt": "2026-03-25T12:59:52.540Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774447123244",
+      "journalKey": "new_order_orders_1774447073870",
+      "orderId": "orders_1774447073870",
+      "type": "new_order",
+      "sentAt": "2026-03-25T13:58:43.244Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774447126058",
+      "journalKey": "new_order_orders_1774447099998",
+      "orderId": "orders_1774447099998",
+      "type": "new_order",
+      "sentAt": "2026-03-25T13:58:46.058Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774447129782",
+      "journalKey": "new_order_orders_1774447110444",
+      "orderId": "orders_1774447110444",
+      "type": "new_order",
+      "sentAt": "2026-03-25T13:58:49.782Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774447485069_y6om",
+      "journalKey": "item_threshold_waitingFactoryLimitHrs_orders_1774447099998_undefined",
+      "orderId": "orders_1774447099998",
+      "type": "item_threshold_waitingFactoryLimitHrs",
+      "sentAt": "2026-03-25T14:04:45.069Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774447543353_1kc3",
+      "journalKey": "threshold_hubReleasedLimitHrs_orders_1774447073870",
+      "orderId": "orders_1774447073870",
+      "type": "threshold_hubReleasedLimitHrs",
+      "sentAt": "2026-03-25T14:05:43.353Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774447549317_6bgg",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1774447110444",
+      "orderId": "orders_1774447110444",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-03-25T14:05:49.317Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774522771196_m4nn",
+      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms_2026-03-26",
+      "orderId": "orders_1773753262020",
+      "type": "comp_orderedLimitHrs",
+      "sentAt": "2026-03-26T10:59:31.227Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774522777524_rrs9",
+      "journalKey": "threshold_technicalReviewLimitHrs_orders_1774447099998",
+      "orderId": "orders_1774447099998",
+      "type": "threshold_technicalReviewLimitHrs",
+      "sentAt": "2026-03-26T10:59:37.524Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774541094159",
+      "journalKey": "new_order_orders_1774541019670",
+      "orderId": "orders_1774541019670",
+      "type": "new_order",
+      "sentAt": "2026-03-26T16:04:54.159Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774541099641",
+      "journalKey": "new_order_orders_1774541032920",
+      "orderId": "orders_1774541032920",
+      "type": "new_order",
+      "sentAt": "2026-03-26T16:04:59.641Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774541431943_e1uf",
+      "journalKey": "item_threshold_waitingFactoryLimitHrs_orders_1774541019670_undefined",
+      "orderId": "orders_1774541019670",
+      "type": "item_threshold_waitingFactoryLimitHrs",
+      "sentAt": "2026-03-26T16:10:31.943Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774541491507_r8mo",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1774541032920",
+      "orderId": "orders_1774541032920",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-03-26T16:11:31.507Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774541494268_pump",
+      "journalKey": "item_threshold_waitingFactoryLimitHrs_orders_1774541032920_undefined",
+      "orderId": "orders_1774541032920",
+      "type": "item_threshold_waitingFactoryLimitHrs",
+      "sentAt": "2026-03-26T16:11:34.268Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774541499990",
+      "journalKey": "new_order_orders_1774541480542",
+      "orderId": "orders_1774541480542",
+      "type": "new_order",
+      "sentAt": "2026-03-26T16:11:39.990Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774541505558",
+      "journalKey": "new_order_orders_1774541480869",
+      "orderId": "orders_1774541480869",
+      "type": "new_order",
+      "sentAt": "2026-03-26T16:11:45.558Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_n_1774541508500",
+      "journalKey": "new_order_orders_1774541481214",
+      "orderId": "orders_1774541481214",
+      "type": "new_order",
+      "sentAt": "2026-03-26T16:11:48.500Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "Mohamed.allam@psp-co.org",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774541852572_k6ah",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1774541019670",
+      "orderId": "orders_1774541019670",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-03-26T16:17:32.572Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774541856150_lxlg",
+      "journalKey": "item_threshold_waitingFactoryLimitHrs_orders_1774541480542_undefined",
+      "orderId": "orders_1774541480542",
+      "type": "item_threshold_waitingFactoryLimitHrs",
+      "sentAt": "2026-03-26T16:17:36.150Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774541911130_fl8f",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1774541480869",
+      "orderId": "orders_1774541480869",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-03-26T16:18:31.130Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774541914913_c4iv",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1774541481214",
+      "orderId": "orders_1774541481214",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-03-26T16:18:34.913Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774542270868_sume",
+      "journalKey": "threshold_mfgFinishLimitHrs_orders_1774541480542",
+      "orderId": "orders_1774541480542",
+      "type": "threshold_mfgFinishLimitHrs",
+      "sentAt": "2026-03-26T16:24:30.868Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774615381176_6nfq",
+      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms_2026-03-27",
+      "orderId": "orders_1773753262020",
+      "type": "comp_orderedLimitHrs",
+      "sentAt": "2026-03-27T12:43:01.177Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
     }
   ],
   "settings": [
@@ -2273,7 +3741,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:7d9582f940dadf8f2b921e6f38091cd9:8c92655616615be6317114127145a045f0b8de4ff3944c6555a54e8963a0878b",
+        "password": "ENC:3aba595e27ba863fff9a8db2bbbd37e6:f58e9544f0778b4e4122f6237d8427f7bf83fcda489db98fcaa21af917e83362",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -2330,7 +3798,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:038ada43bd5454083d79b11efdb00d82:0fc9efb402058b12c727d44cf4596431dbf9d6681f61c1901e93fd3077fbe0c17f7854245d4579b3a0be11c0d203c6bb",
+        "apiKey": "ENC:c5a9e7c2dc4bb54f084fd5d7b2c81564:9e4890efbff494f32a839d29c7881b0e9b45a17853d5deb776df8458763a9527ece9707186e3bc55cd48eec9fe51a709",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -2356,7 +3824,7 @@
         "userGroups_1770927056150"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:2b8744e22d37ee882584538f58060c77:528d4e185ee52d2cfc46182e9c7806739ce2db9cd6c805ed4e615d72811613126b02ce41bb7b0e2f5453aadaca450b11",
+        "apiKey": "ENC:72822d732d07e265fa32c27db1d4fe2c:d7c2001cc732d127fb2ad1b9054f589f625bbf3fcf68b661d9b52e1967c5f8d6991b852aaeaf6c5e3bf13741f006cb11",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {
@@ -2440,6 +3908,26 @@
           "amount": 43.03
         }
       ]
+    },
+    {
+      "id": "sp_1774544128250_jp8e",
+      "supplierId": "suppliers_1771146860410",
+      "supplierName": "xupp2",
+      "amount": 50,
+      "date": "2026-03-25T00:00:00.000Z",
+      "memo": "PAY-20260326-VA9B",
+      "user": "admin",
+      "allocations": []
+    }
+  ],
+  "ledger": [
+    {
+      "id": "ledger_1774625520264",
+      "type": "COST",
+      "amount": 100,
+      "description": "Test",
+      "user": "admin",
+      "date": "2026-03-27T17:27:30Z"
     }
   ]
 }

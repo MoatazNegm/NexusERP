@@ -15,7 +15,8 @@ import {
   User,
   EmailConfig,
   CompStatus,
-  SupplierPayment
+  SupplierPayment,
+  LedgerEntry
 } from '../types';
 import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
 
@@ -182,6 +183,11 @@ class DataService {
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Ledger fetch failed'); }
     return res.json();
   }
+  
+  async getLedgerEntries() { return this.get<LedgerEntry>('ledger'); }
+  async addLedgerEntry(entry: Omit<LedgerEntry, 'id'>) {
+    return this.post<LedgerEntry>('ledger', entry);
+  }
 
   async getInventory() { return this.get<InventoryItem>('inventory'); }
   async addInventoryItem(item: Omit<InventoryItem, 'id' | 'quantityReserved'>) {
@@ -224,6 +230,10 @@ class DataService {
 
   async toggleItemAcceptance(orderId: string, itemId: string) {
     return this.dispatchAction(orderId, 'toggle-acceptance', { itemId });
+  }
+
+  async setProductionType(orderId: string, itemId: string, type: 'MANUFACTURING' | 'TRADING') {
+    return this.dispatchAction(orderId, 'set-production-type', { itemId, type });
   }
 
   async addComponentToItem(orderId: string, itemId: string, comp: Omit<ManufacturingComponent, 'id' | 'statusUpdatedAt' | 'componentNumber'>) {
@@ -275,8 +285,8 @@ class DataService {
     return this.dispatchAction(id, 'receive-hub');
   }
 
-  async registerManufacturing(orderId: string, itemId: string, qty: number) {
-    return this.dispatchAction(orderId, 'register-manufacturing', { itemId, qty });
+  async registerManufacturing(orderId: string, itemId: string, qty: number, confirmRelease?: boolean) {
+    return this.dispatchAction(orderId, 'register-manufacturing', { itemId, qty, confirmRelease });
   }
 
   async consumeFactoryComponent(orderId: string, itemId: string, compId: string, qty: number) {

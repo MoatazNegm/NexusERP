@@ -77,6 +77,22 @@ const OrderStatus = {
     FULFILLED: 'FULFILLED'
 };
 
+// Per-item effective status: determines what workflow stage a line item is in based on its components
+const getItemEffectiveStatus = (item) => {
+    const comps = item.components || [];
+    if (comps.length === 0) return 'NO_COMPONENTS';
+    const statuses = comps.map(c => c.status || 'NEW');
+    // If any component still needs procurement action
+    if (statuses.some(s => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(s))) return 'WAITING_SUPPLIERS';
+    // If all components are reserved/received (ready to manufacture)
+    if (statuses.every(s => ['RESERVED', 'RECEIVED', 'CANCELLED', 'ORDERED_FOR_STOCK'].includes(s))) return 'WAITING_FACTORY';
+    // If any are actively being manufactured
+    if (statuses.some(s => s === 'IN_MANUFACTURING')) return 'MANUFACTURING';
+    // If all are manufactured
+    if (statuses.every(s => ['MANUFACTURED', 'CANCELLED'].includes(s))) return 'MANUFACTURED';
+    return 'MIXED';
+};
+
 const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     let totalRevenue = 0;
     let totalCost = 0;
@@ -310,7 +326,7 @@ const reconcileInventory = (oldOrder, newOrder, db) => {
         if (!order) return map;
         (order.items || []).forEach(item => {
             (item.components || []).forEach(comp => {
-                if (comp.inventoryItemId && (comp.source === 'STOCK' || comp.source === 'CONSUMED' || comp.status === 'RECEIVED' || comp.status === 'RESERVED')) {
+                if (comp.inventoryItemId && (comp.status === 'RECEIVED' || comp.status === 'RESERVED' || comp.source === 'STOCK') && comp.source !== 'CONSUMED') {
                     const current = map.get(comp.inventoryItemId) || 0;
                     map.set(comp.inventoryItemId, current + (comp.quantity || 0));
                 }
@@ -408,6 +424,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
 
     // 3. Process Items and Components
     order.items.forEach((item, idx) => {
+        if (!item.id) item.id = `item_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`;
         if (!item.logs) item.logs = [];
         if (!item.components) item.components = [];
 
@@ -425,11 +442,48 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             }
         }
 
+        // 3b. Trading Mirror Sync & Defaulting
+        if (!item.productionType) {
+            item.productionType = 'TRADING';
+        }
+
+        if (item.productionType === 'TRADING') {
+            // Ensure exactly one component that mirrors the item
+            if (!item.components || item.components.length === 0) {
+                item.components = [{
+                    id: `c_${Date.now()}_${idx}_0`,
+                    description: item.description,
+                    quantity: item.quantity,
+                    unit: item.unit || 'pcs',
+                    unitCost: 0,
+                    taxPercent: 14,
+                    source: 'PROCUREMENT',
+                    status: 'PENDING_OFFER',
+                    componentNumber: `CMP-${order.internalOrderNumber}-${idx + 1}-1`
+                }];
+            } else {
+                // Mirror sync: Only the first component is active in TRADING
+                const comp = item.components[0];
+                if (comp.description !== item.description || comp.quantity !== item.quantity) {
+                    comp.description = item.description;
+                    comp.quantity = item.quantity;
+                }
+                // Cap at 1 component for TRADING to prevent BoM pollution
+                if (item.components.length > 1) {
+                    item.components = [item.components[0]];
+                }
+            }
+        }
+
         item.components.forEach((comp, cIdx) => {
             if (!comp.id) comp.id = `c_${Date.now()}_${idx}_${cIdx}`;
             if (!comp.componentNumber) {
-                // Generate a friendly component number if missing
-                comp.componentNumber = `CMP-${order.internalOrderNumber}-${(item.id || 'ITEM').split('_').pop()}-${cIdx + 1}`;
+                // Priority: Supplier Part Number -> Generated ID
+                if (comp.supplierPartNumber) {
+                    comp.componentNumber = comp.supplierPartNumber;
+                } else {
+                    comp.componentNumber = `CMP-${order.internalOrderNumber}-${idx + 1}-${cIdx + 1}`;
+                }
             }
             if (!comp.status) comp.status = 'NEW';
             if (!comp.statusUpdatedAt) comp.statusUpdatedAt = new Date().toISOString();
@@ -482,6 +536,13 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         if (order.status === OrderStatus.WAITING_SUPPLIERS) {
             const hasItems = order.items && order.items.length > 0;
             if (hasItems) {
+                // Check if ANY procurement component still needs action
+                const anyStillInProcurement = order.items.some(item =>
+                    (item.components || []).some(comp =>
+                        comp.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)
+                    )
+                );
+
                 // Check for Standard Orders (At least one Reserved/Received to allow early manufacturing)
                 const anyReservedOrReceived = order.items.some(item =>
                     (item.components || []).some(comp => ['RESERVED', 'RECEIVED', 'IN_STOCK'].includes(comp.status))
@@ -492,25 +553,52 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     (item.components || []).every(comp => ['RECEIVED', 'IN_STOCK'].includes(comp.status))
                 );
 
-                const allReserved = order.items.every(item =>
-                    (item.components || []).every(comp => comp.status === 'RESERVED')
-                );
-
                 if (order.customerName === 'Internal Stock' && allReceived) {
                     const old = order.status;
                     order.status = OrderStatus.FULFILLED;
                     order.logs.push(createAuditLog(`[AUTO] Stock Replenishment Complete: All items in stock. Status moved from ${old} to ${order.status}`, order.status, 'System'));
-                } else if (order.customerName !== 'Internal Stock' && anyReservedOrReceived) {
+                } else if (order.customerName !== 'Internal Stock' && anyReservedOrReceived && !anyStillInProcurement) {
+                    // Only transition to WAITING_FACTORY when NO components are still awaiting procurement
                     const old = order.status;
                     order.status = OrderStatus.WAITING_FACTORY;
-                    order.logs.push(createAuditLog(`[AUTO] Early Manufacturing Start Enabled: At least one component reserved. Status moved from ${old} to ${order.status}`, order.status, 'System'));
+                    order.logs.push(createAuditLog(`[AUTO] All procurement complete. Manufacturing enabled. Status moved from ${old} to ${order.status}`, order.status, 'System'));
                 }
             }
         }
 
         // [AUTO] Manufacturing Start Logic (Release to Floor)
         if (order.status === OrderStatus.MANUFACTURING) {
-            // We no longer deduct stock upfront. Stock is deducted incrementally inside register-manufacturing.
+            (order.items || []).forEach(item => {
+                (item.components || []).forEach(comp => {
+                    // Deduct from stock if linked to inventory and not yet consumed
+                    // Allow both STOCK and PROCUREMENT sources to be consumed if they have an inventory ID
+                    if (comp.inventoryItemId && db.inventory && comp.source !== 'CONSUMED') {
+                        const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
+                        if (invItem) {
+                            const consumedQty = comp.quantity || 0;
+                            // Logic: Use quantityInStock (standard) or fallback to quantity (legacy)
+                            const currentStock = invItem.quantityInStock !== undefined ? invItem.quantityInStock : (invItem.quantity || 0);
+
+                            // Update Stock (physical)
+                            // Note: quantityReserved will be handled automatically by reconcileInventory 
+                            // because we change comp.source to 'CONSUMED' below.
+                            invItem.quantityInStock = Math.max(0, currentStock - consumedQty);
+
+                            // Clear legacy field if present to migrate
+                            if (invItem.quantity !== undefined) delete invItem.quantity;
+
+                            console.log(`[Inventory] [AUTO_MFG_START] Consumed ${consumedQty} of ${invItem.sku}. New InStock: ${invItem.quantityInStock}, New Reserved: ${invItem.quantityReserved}`);
+
+                            order.logs.push(createAuditLog(
+                                `[Inventory] Released ${consumedQty} units of ${invItem.sku} to Factory Floor.`,
+                                order.status,
+                                'System'
+                            ));
+                            comp.source = 'CONSUMED';
+                        }
+                    }
+                });
+            });
         }
 
         // [AUTO] Manufacturing Complete Logic
@@ -518,12 +606,26 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             (order.items || []).forEach(item => {
                 item.status = 'Manufactured';
                 (item.components || []).forEach(comp => {
-                    if (comp.status !== 'Manufactured') {
+                    if (comp.status !== OrderStatus.MANUFACTURED) {
                         comp.status = 'Manufactured';
                         comp.statusUpdatedAt = new Date().toISOString();
                     }
 
+                    // AUTO-CONSUME any remaining STOCK components that missed the start trigger or were added later
+                    if (comp.inventoryItemId && db.inventory && comp.source !== 'CONSUMED') {
+                        const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
+                        if (invItem) {
+                            const consumedQty = comp.quantity || 0;
+                            const currentStock = invItem.quantityInStock !== undefined ? invItem.quantityInStock : (invItem.quantity || 0);
 
+                            invItem.quantityInStock = Math.max(0, currentStock - consumedQty);
+                            // quantityReserved will be handled by reconcileInventory side-effect
+                            if (invItem.quantity !== undefined) delete invItem.quantity;
+                            
+                            comp.source = 'CONSUMED';
+                            console.log(`[Inventory] [AUTO_MFG_FINISH] Consumed ${consumedQty} of ${invItem.sku}.`);
+                        }
+                    }
                 });
             });
         }
@@ -569,7 +671,7 @@ const sendEmail = async (to, subject, body, config) => {
 
 // --- AUDIT SERVICE ---
 
-// Maps OrderStatus â†’ settings config key (hours-based time-in-status thresholds)
+// Maps OrderStatus Ã¢â€ â€™ settings config key (hours-based time-in-status thresholds)
 const STATUS_TO_THRESHOLD = {
     'LOGGED': 'orderEditTimeLimitHrs',
     'TECHNICAL_REVIEW': 'technicalReviewLimitHrs',
@@ -591,7 +693,7 @@ const STATUS_TO_THRESHOLD = {
     'PARTIAL_PAYMENT': null  // handled by special payment SLA check
 };
 
-// Maps Component CompStatus â†’ settings config key (procurement process thresholds)
+// Maps Component CompStatus Ã¢â€ â€™ settings config key (procurement process thresholds)
 const COMP_STATUS_TO_THRESHOLD = {
     'PENDING_OFFER': 'pendingOfferLimitHrs',
     'RFP_SENT': 'rfpSentLimitHrs',
@@ -818,6 +920,35 @@ const runThresholdAudit = async () => {
             }
         }
 
+        // B2. Line-item-aware threshold checks (for mixed status orders)
+        for (const item of (order.items || [])) {
+            const effectiveStatus = getItemEffectiveStatus(item);
+            // Only check if the item's effective status differs from the overall order status and isn't MIXED or NO_COMPONENTS
+            if (effectiveStatus !== order.status && !['MIXED', 'NO_COMPONENTS'].includes(effectiveStatus)) {
+                const itemThresholdKey = STATUS_TO_THRESHOLD[effectiveStatus];
+                if (itemThresholdKey) {
+                    const limitHrs = settings[itemThresholdKey];
+                    const groupIds = settings.thresholdNotifications?.[itemThresholdKey] || [];
+                    if (limitHrs > 0 && groupIds.length > 0) {
+                        // For items we use strict component-level timing, taking the latest status entry among its components
+                        const latestCompTime = Math.max(...(item.components || []).map(c => 
+                            c.statusUpdatedAt ? new Date(c.statusUpdatedAt).getTime() : 0
+                        ));
+                        if (latestCompTime > 0) {
+                            const elapsedHrs = (Date.now() - latestCompTime) / (1000 * 60 * 60);
+                            if (elapsedHrs > limitHrs) {
+                                const label = THRESHOLD_LABELS[itemThresholdKey] || itemThresholdKey;
+                                const itemJournalKey = `item_threshold_${itemThresholdKey}_${order.id}_${item.id}`;
+                                await sendAlertForOrder(order, itemJournalKey, `item_threshold_${itemThresholdKey}`, itemThresholdKey,
+                                    `[NEXUS] ${label} Exceeded (Line Item): ${order.internalOrderNumber}`,
+                                    `Line Item "${item.description}" in order ${order.internalOrderNumber} has effectively been in "${effectiveStatus}" for ${elapsedHrs.toFixed(1)} hours, exceeding the ${limitHrs}h limit (${label}).`);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // C. DYNAMIC: Component-level procurement threshold checks
         for (const item of (order.items || [])) {
             for (const comp of (item.components || [])) {
@@ -854,13 +985,13 @@ const runThresholdAudit = async () => {
 
 // --- APP SETUP ---
 const app = express();
-const PORT = process.env.PORT || 3005;
+const PORT = process.env.PORT || 3006;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 // Crash Logger for debugging frontend blank screens
 app.get('/api/log-crash', (req, res) => {
-    console.log('\n\n🚨 FRONTEND CRASH 🚨\n', req.query.err, '\n\n');
+    console.log('\n\nðŸš¨ FRONTEND CRASH ðŸš¨\n', req.query.err, '\n\n');
     res.send('ok');
 });
 
@@ -1141,7 +1272,7 @@ app.post('/api/v1/customers/merge', (req, res) => {
     }
 });
 
-const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules'];
+const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules', 'ledger'];
 COLLECTIONS.forEach(col => {
     app.get(`/api/v1/${col}`, getCollection(col));
     app.get(`/api/v1/${col}/:id`, getItemFromCollection(col));
@@ -1260,7 +1391,72 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
                 break;
 
+            case 'hard-delete-order':
+                if (!user.toLowerCase().includes('admin') && !user.toLowerCase().includes('manager')) {
+                    const caller = (db.users || []).find(u => u.username === user || u.name === user);
+                    if (!caller || (!caller.roles.includes('admin') && !caller.roles.includes('management'))) {
+                        throw new Error("Unauthorized: Only superusers or management can hard delete an order");
+                    }
+                }
+
+                // 1. Revert Inventory
+                order.items.forEach(item => {
+                    (item.components || []).forEach(comp => {
+                        const invItem = (db.inventory || []).find(i => i.id === comp.inventoryItemId);
+                        if (invItem) {
+                            if (comp.source === 'STOCK' && ['RESERVED', 'AVAILABLE'].includes(comp.status)) {
+                                invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - (comp.quantity || 0));
+                            } else if (['RECEIVED', 'IN_STOCK', 'CONSUMED', 'Manufactured'].includes(comp.status)) {
+                                if (comp.receivedQty && comp.receivedQty > 0) {
+                                    invItem.quantityInStock = Math.max(0, (invItem.quantityInStock || 0) - comp.receivedQty);
+                                }
+                                if (comp.consumedQty && comp.consumedQty > 0) {
+                                    invItem.quantityInStock = (invItem.quantityInStock || 0) + comp.consumedQty;
+                                }
+                            }
+                            invItem.lastUpdated = new Date().toISOString();
+                        }
+                    });
+                });
+
+                // 2. Revert Supplier Payments allocated to this order
+                if (db.supplierPayments) {
+                    db.supplierPayments = db.supplierPayments.filter(payment => {
+                        const hasOurOrder = payment.allocations?.some(a => a.orderId === order.id);
+                        const hasOtherOrder = payment.allocations?.some(a => a.orderId !== order.id);
+                        
+                        if (hasOurOrder && !hasOtherOrder) {
+                            return false; // Deleted entirely as it was exclusively for this PO
+                        } else if (hasOurOrder && hasOtherOrder) {
+                            const ourAmount = payment.allocations
+                                .filter(a => a.orderId === order.id)
+                                .reduce((sum, a) => sum + a.amount, 0);
+                            payment.amount = Math.max(0, payment.amount - ourAmount);
+                            payment.allocations = payment.allocations.filter(a => a.orderId !== order.id);
+                            return payment.amount > 0;
+                        }
+                        return true;
+                    });
+                }
+
+                // 3. Delete order and related traces completely
+                db.orders = db.orders.filter(o => o.id !== order.id);
+                if (db.notifications) {
+                    db.notifications = db.notifications.filter(n => n.orderId !== order.id);
+                }
+
+                if (writeDb(db)) return res.json({ message: "Order permanently deleted" });
+                else throw new Error("Database write failed");
+
             case 'reject-order':
+                const today = new Date().toISOString().split('T')[0];
+                const oldInternal = order.internalOrderNumber || '';
+                const oldCustRef = order.customerReferenceNumber || '';
+                
+                // Rename both internal and customer reference numbers
+                order.internalOrderNumber = `rej_${today}_${oldInternal}`;
+                order.customerReferenceNumber = `rej_${today}_${oldCustRef}`;
+                
                 order.status = OrderStatus.REJECTED;
                 // Release any reserved inventory back to free stock
                 order.items.forEach(item => {
@@ -1271,7 +1467,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     });
                 });
-                order.logs.push(createAuditLog(`ORDER REJECTED: ${payload?.reason || 'Business decision'}`, order.status, user));
+                order.logs.push(createAuditLog(`ORDER REJECTED: ${payload?.reason || 'Business decision'}. PO renamed from ${oldInternal} to ${order.internalOrderNumber}`, order.status, user));
                 break;
 
             case 'toggle-acceptance': {
@@ -1282,6 +1478,35 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.logs.push(createAuditLog(`Item ${taItem.orderNumber}: ${taItem.isAccepted ? 'Accepted' : 'Acceptance Revoked'}`, order.status, user));
                 break;
             }
+
+            case 'set-production-type': {
+                const sptItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (sptItemIdx === -1) throw new Error("Item not found");
+                const sptItem = order.items[sptItemIdx];
+                const newType = payload.type; // 'MANUFACTURING' | 'TRADING'
+                
+                sptItem.productionType = newType;
+                
+                if (newType === 'TRADING') {
+                    // Release any existing reservations before clearing for Trading
+                    (sptItem.components || []).forEach(comp => {
+                        if (comp.source === 'STOCK' && comp.inventoryItemId && ['RESERVED', 'AVAILABLE'].includes(comp.status)) {
+                            const invItem = (db.inventory || []).find(i => i.id === comp.inventoryItemId);
+                            if (invItem) {
+                                invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - comp.quantity);
+                                invItem.lastUpdated = new Date().toISOString();
+                            }
+                        }
+                    });
+                    // Clear components; processedOrderInternal will recreate the mirrored one automatically
+                    sptItem.components = [];
+                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to TRADING. Mirror sync enabled.`, order.status, user));
+                } else {
+                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to MANUFACTURING.`, order.status, user));
+                }
+                break;
+            }
+
 
             case 'receive-component': {
                 const itemIdx = order.items.findIndex(i => i.id === payload.itemId);
@@ -1311,7 +1536,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             }
 
             case 'convert-to-stock-order': {
-                // Mark a component as ordered for stock — no inventory entry yet
+                // Mark a component as ordered for stock â€” no inventory entry yet
                 // The inventory entry will be created when the part is physically received via Reception
                 const ctsItemIdx = order.items.findIndex(i => i.id === payload.itemId);
                 if (ctsItemIdx === -1) throw new Error("Item not found");
@@ -1321,7 +1546,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const ctsComp = order.items[ctsItemIdx].components[ctsCompIdx];
                 ctsComp.status = 'ORDERED_FOR_STOCK';
                 ctsComp.statusUpdatedAt = new Date().toISOString();
-                order.logs.push(createAuditLog(`Component "${ctsComp.description}" converted to stock order (PO: ${ctsComp.poNumber || 'N/A'}) — awaiting supplier delivery via Reception`, order.status, user));
+                order.logs.push(createAuditLog(`Component "${ctsComp.description}" converted to stock order (PO: ${ctsComp.poNumber || 'N/A'}) â€” awaiting supplier delivery via Reception`, order.status, user));
                 break;
             }
 
@@ -1338,9 +1563,16 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     statusUpdatedAt: new Date().toISOString()
                 };
 
-                // Generate component number
-                const compCount = acItem.components.length;
-                newComp.componentNumber = `CMP-${order.internalOrderNumber}-${acItemIdx}-${compCount}`;
+                // Generate component number ONLY if not provided
+                if (!newComp.componentNumber) {
+                    // Priority: Supplier Part Number -> Generated ID
+                    if (newComp.supplierPartNumber) {
+                        newComp.componentNumber = newComp.supplierPartNumber;
+                    } else {
+                        const compCount = acItem.components.length;
+                        newComp.componentNumber = `CMP-${order.internalOrderNumber}-${acItemIdx}-${compCount + 1}`;
+                    }
+                }
 
                 // If STOCK source, check availability and reserve
                 if (newComp.source === 'STOCK' && newComp.inventoryItemId) {
@@ -1394,14 +1626,33 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             }
 
             case 'cancel-component-po': {
-                // Cancel a supplier PO for a specific component
+                // Cancel a supplier PO and reset component for re-procurement
                 const ccItemIdx = order.items.findIndex(i => i.id === payload.itemId);
                 if (ccItemIdx === -1) throw new Error("Item not found");
                 const ccComp = order.items[ccItemIdx].components?.find(c => c.id === payload.compId);
                 if (!ccComp) throw new Error("Component not found");
-                ccComp.status = 'CANCELLED';
+                const oldPoNumber = ccComp.poNumber || 'N/A';
+                const oldSupplier = ccComp.supplierName || ccComp.supplierId || 'N/A';
+                // Reset to PENDING_OFFER so it re-enters the procurement pipeline
+                ccComp.status = 'PENDING_OFFER';
                 ccComp.statusUpdatedAt = new Date().toISOString();
-                order.logs.push(createAuditLog(`Supplier PO cancelled for: ${ccComp.description} (PO: ${ccComp.poNumber || 'N/A'})`, order.status, user));
+                ccComp.procurementStartedAt = new Date().toISOString();
+                // Clear supplier-related fields
+                delete ccComp.supplierId;
+                delete ccComp.supplierName;
+                delete ccComp.poNumber;
+                delete ccComp.awardId;
+                delete ccComp.sendPoId;
+                delete ccComp.rfpId;
+                delete ccComp.rfpSupplierIds;
+                ccComp.unitCost = 0;
+                order.logs.push(createAuditLog(`Supplier PO cancelled for: ${ccComp.description} (PO: ${oldPoNumber}, Supplier: ${oldSupplier}). Component reset to PENDING_OFFER for re-procurement.`, order.status, user));
+                // If order was past WAITING_SUPPLIERS, revert it since a component now needs procurement
+                if ([OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING].includes(order.status)) {
+                    const old = order.status;
+                    order.status = OrderStatus.WAITING_SUPPLIERS;
+                    order.logs.push(createAuditLog(`[AUTO] Order reverted from ${old} to WAITING_SUPPLIERS: component requires re-procurement.`, order.status, 'System'));
+                }
                 break;
             }
 
@@ -1570,6 +1821,33 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 mItem.manufacturedQty = prevQty + actualPayloadQty;
                 order.logs.push(createAuditLog(`Manufactured ${actualPayloadQty} ${mItem.unit} of ${mItem.description} (${mItem.manufacturedQty}/${targetQty})`, order.status, user));
 
+                // Component Release Logic: If fully manufactured and user confirmed release
+                if (mItem.manufacturedQty >= targetQty && payload.confirmRelease) {
+                    (mItem.components || []).forEach(comp => {
+                        const allocated = comp.quantity || 0;
+                        const consumed = comp.consumedQty || 0;
+                        const remaining = Math.max(0, allocated - consumed);
+
+                        if (remaining > 0) {
+                            if (comp.source === 'STOCK' && comp.inventoryItemId) {
+                                // Release reservation
+                                const invItem = (db.inventory || []).find(inv => inv.id === comp.inventoryItemId);
+                                if (invItem) {
+                                    invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - remaining);
+                                    invItem.lastUpdated = new Date().toISOString();
+                                }
+                            } else if (comp.source === 'PROCUREMENT' && (comp.status === 'RESERVED' || comp.status === 'RECEIVED')) {
+                                // Return procurement to general stock
+                                updateInventoryItem(db, comp, 'RECEIVE', order, remaining);
+                            }
+                            
+                            // Adjust quantity to match consumed to preserve history
+                            comp.quantity = consumed;
+                            order.logs.push(createAuditLog(`[Factory] Released ${remaining.toFixed(2)} units of ${comp.description} back to stock.`, order.status, user));
+                        }
+                    });
+                }
+
                 // Auto-transition if all items are fully manufactured
                 if (order.items.every(i => (i.manufacturedQty || 0) >= i.quantity)) {
                     order.status = OrderStatus.MANUFACTURING_COMPLETED;
@@ -1603,7 +1881,6 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             throw new Error(`Insufficient stock for component ${cfcComp.description}. Available: ${currentStock}, Requested: ${cfcConsumedQty}`);
                         }
                         cfcInvItem.quantityInStock = Math.max(0, currentStock - cfcConsumedQty);
-                        cfcInvItem.quantityReserved = Math.max(0, (cfcInvItem.quantityReserved || 0) - cfcConsumedQty);
                         if (cfcInvItem.quantity !== undefined) delete cfcInvItem.quantity;
                         console.log(`[Inventory] [CONSUME_COMP] Consumed ${cfcConsumedQty.toFixed(2)} of ${cfcInvItem.sku}. InStock: ${cfcInvItem.quantityInStock.toFixed(2)}, Reserved: ${cfcInvItem.quantityReserved.toFixed(2)}`);
                     }
@@ -2147,16 +2424,25 @@ app.post('/api/v1/supplierPayments', (req, res) => {
 app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
     try {
         const db = readDb();
-        const { supplierId } = req.params;
-        const supplier = (db.suppliers || []).find(s => s.id === supplierId);
-        if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+        const { supplierId: rawId } = req.params;
+        const isAll = rawId === 'all';
+        const selectedIds = isAll ? [] : rawId.split(',');
+        
+        // Find supplier names for the response
+        let supplierInfo = { id: rawId, name: isAll ? "All Suppliers" : "" };
+        if (!isAll) {
+            const suppliers = (db.suppliers || []).filter(s => selectedIds.includes(s.id));
+            if (suppliers.length === 0) return res.status(404).json({ error: "No valid suppliers found" });
+            supplierInfo.name = suppliers.map(s => s.name).join(', ');
+        }
 
-        // Gather all components for this supplier
+        // Gather all components for the selected supplier(s)
         const components = [];
         (db.orders || []).forEach(order => {
             order.items.forEach(item => {
                 (item.components || []).forEach(comp => {
-                    if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId &&
+                    const matchesSupplier = isAll || selectedIds.includes(comp.supplierId);
+                    if (matchesSupplier && (comp.source === 'PROCUREMENT' || comp.source === 'CONSUMED') &&
                         !['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)) {
                         const totalCost = (comp.quantity || 0) * (comp.unitCost || 0);
                         const receivedQty = comp.receivedQty || 0;
@@ -2166,6 +2452,8 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
 
                         components.push({
                             componentId: comp.id,
+                            supplierId: comp.supplierId,
+                            supplierName: (db.suppliers || []).find(s => s.id === comp.supplierId)?.name || 'Unknown',
                             orderId: order.id,
                             orderNumber: order.internalOrderNumber,
                             description: comp.description,
@@ -2191,8 +2479,9 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
         // Calculate already-allocated amounts per component
         const allocatedPerComponent = {};
         (db.supplierPayments || []).forEach(payment => {
-            if (payment.supplierId === supplierId) {
-                payment.allocations.forEach(alloc => {
+            const matchesSupplier = isAll || selectedIds.includes(payment.supplierId);
+            if (matchesSupplier) {
+                (payment.allocations || []).forEach(alloc => {
                     allocatedPerComponent[alloc.componentId] = (allocatedPerComponent[alloc.componentId] || 0) + alloc.amount;
                 });
             }
@@ -2204,19 +2493,20 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
             c.unallocatedBalance = Math.max(0, c.totalCost - c.allocatedPayments);
         });
 
-        // Get all payments for this supplier
-        const payments = (db.supplierPayments || []).filter(p => p.supplierId === supplierId);
+        // Get all payments for the selected supplier(s)
+        const payments = (db.supplierPayments || []).filter(p => isAll || selectedIds.includes(p.supplierId));
 
         // Summary
         const totalCommitted = components.reduce((s, c) => s + c.totalCost, 0);
         const totalDelivered = components.reduce((s, c) => s + c.deliveredValue, 0);
         const totalPending = components.reduce((s, c) => s + c.pendingValue, 0);
         const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-        const balance = totalDelivered - totalPaid; // positive = we owe, negative = overpaid
+        const balance = totalDelivered - totalPaid;
+        const overallBalance = totalCommitted - totalPaid;
 
         res.json({
-            supplier: { id: supplier.id, name: supplier.name },
-            summary: { totalCommitted, totalDelivered, totalPending, totalPaid, balance },
+            supplier: supplierInfo,
+            summary: { totalCommitted, totalDelivered, totalPending, totalPaid, balance, overallBalance },
             components,
             payments
         });
