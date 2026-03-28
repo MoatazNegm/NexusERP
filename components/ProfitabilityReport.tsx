@@ -154,9 +154,15 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
   }, [ledgerEntries, analysisRange]);
 
   const weightedOverhead = totalManualLedgerExpenses * (contributionWeight / 100);
-  const relevantProfit = analysisTotals.revenue - (analysisTotals.cost + weightedOverhead);
-  const relevantRoiPct = (analysisTotals.cost + weightedOverhead) > 0 
-    ? (relevantProfit / (analysisTotals.cost + weightedOverhead)) * 100 
+  const totalProjectExpenses = analysisTotals.cost + weightedOverhead;
+  const relevantProfit = analysisTotals.revenue - totalProjectExpenses;
+  
+  const relevantRoiPct = totalProjectExpenses > 0 
+    ? (relevantProfit / totalProjectExpenses) * 100 
+    : 0;
+
+  const weightedPlPct = analysisTotals.revenue > 0
+    ? (relevantProfit / analysisTotals.revenue) * 100
     : 0;
 
   // --- RENDERING HELPERS ---
@@ -332,7 +338,18 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
               <div className="text-4xl font-black">{relevantRoiPct.toFixed(1)}%</div>
               <p className="text-[7px] font-bold text-emerald-100/60 mt-2 uppercase leading-tight">
                 Formula: (Total Revenue - Total Expenses) / Total Expenses<br/>
-                *Total Expenses = Direct Costs + Weighted Ledger Overhead
+                *Total Expenses = Direct Costs + Weighted Overhead
+              </p>
+            </div>
+            <div className="bg-emerald-700 p-6 rounded-[2rem] shadow-2xl text-white relative overflow-hidden group">
+              <div className="absolute -right-4 -bottom-4 opacity-10 rotate-45 group-hover:rotate-0 transition-transform">
+                <i className="fa-solid fa-percent text-8xl"></i>
+              </div>
+              <p className="text-[10px] font-black text-emerald-200 uppercase tracking-widest mb-1">Weighted P/L (%)</p>
+              <div className="text-4xl font-black">{weightedPlPct.toFixed(1)}%</div>
+              <p className="text-[7px] font-bold text-emerald-100/60 mt-2 uppercase leading-tight">
+                Formula: (Total Revenue - Total Expenses) / Total Revenue<br/>
+                *Total Expenses = Direct Costs + Weighted Overhead
               </p>
             </div>
           </div>
