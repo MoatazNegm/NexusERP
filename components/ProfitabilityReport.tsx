@@ -331,8 +331,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
               <p className="text-[10px] font-black text-emerald-200 uppercase tracking-widest mb-1">Current Relevant ROI</p>
               <div className="text-4xl font-black">{relevantRoiPct.toFixed(1)}%</div>
               <p className="text-[7px] font-bold text-emerald-100/60 mt-2 uppercase leading-tight">
-                Formula: (Net Profit - Weighted Overhead) / (Direct Costs + Weighted Overhead)<br/>
-                *Shows the percentage gain over every L.E. spent
+                Formula: (Total Revenue - Total Expenses) / Total Expenses<br/>
+                *Total Expenses = Direct Costs + Weighted Ledger Overhead
               </p>
             </div>
           </div>
