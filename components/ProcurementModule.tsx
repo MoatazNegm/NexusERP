@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User } from '../types';
+import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { PartHistory } from './PartHistory';
@@ -76,8 +76,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [rfpTemplateRef, rfpPrintData, setRfpPrintData] = [useRef<HTMLDivElement>(null), ...useState<{ order: CustomerOrder, comps: ManufacturingComponent[] } | null>(null)];
   const [isDownloadingRfp, setIsDownloadingRfp] = useState(false);
   const [awardSupplierId, setAwardSupplierId] = useState<string>('');
-  const [awardCosts, setAwardCosts] = useState<Record<string, number>>({});
-  const [awardTaxPercent, setAwardTaxPercent] = useState<number>(14);
+  const [awardCosts, setAwardCosts] = useState<Record<string, string>>({});
+  const [awardTaxPercent, setAwardTaxPercent] = useState<string>('14');
   const [poNumberInput, setPoNumberInput] = useState<string>('');
   const [resetReason, setResetReason] = useState<string>('');
   const [compHistory, setCompHistory] = useState<any[] | null>(null);
@@ -327,10 +327,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
           setIsActionLoading('bulk-award');
           const targetIds = selectedCompIds.length > 0 ? selectedCompIds : [comp.id!];
-          const componentsToDispatch = targetIds.map(compId => ({
-            id: compId,
-            unitCost: awardCosts[compId] || 0
-          }));
+          const componentsToDispatch = targetIds.map(compId => {
+            const unitCost = parseFloat(awardCosts[compId] || '0') || 0;
+            return {
+              id: compId,
+              unitCost
+            };
+          });
 
           const supplier = suppliers.find(s => s.id === awardSupplierId);
           if (!supplier) throw new Error("Selected supplier not found.");
@@ -339,7 +342,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
             components: componentsToDispatch,
             supplierId: awardSupplierId,
             supplierName: supplier.name,
-            taxPercent: awardTaxPercent,
+            taxPercent: parseFloat(awardTaxPercent) || 0,
           });
         } else if (type === 'RESET') {
           updates.status = 'PENDING_OFFER';
@@ -363,7 +366,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setRfpSelection([]);
     setAwardSupplierId('');
     setAwardCosts({});
-    setAwardTaxPercent(14);
+    setAwardTaxPercent('14');
     setPoNumberInput('');
     setResetReason('');
     setPendingResolutions(null);
@@ -433,16 +436,17 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     if (selectedComps.length > 0) {
       selectedComps.forEach(m => {
         const qty = m.comp.quantity || 0;
-        const unitCost = awardCosts[m.comp.id!] || 0;
+        const unitCost = parseFloat(awardCosts[m.comp.id!] || '0');
         totalExclTax += (qty * unitCost);
       });
     } else if (activeAction?.comp) {
       const qty = activeAction.comp.quantity || 0;
-      const unitCost = awardCosts[activeAction.comp.id!] || 0;
+      const unitCost = parseFloat(awardCosts[activeAction.comp.id!] || '0');
       totalExclTax += (qty * unitCost);
     }
 
-    const taxAmount = totalExclTax * (awardTaxPercent / 100);
+    const taxRate = parseFloat(awardTaxPercent) || 0;
+    const taxAmount = totalExclTax * (taxRate / 100);
     return {
       totalExclTax,
       taxAmount,
@@ -717,6 +721,12 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
                 const readyForPo = allAwardedOrOrdered && anyReadyToOrder;
 
+                const itemsInFactoryCount = o.items.filter(i => {
+                  const eff = getItemEffectiveStatus(i);
+                  return ['WAITING_FACTORY', 'MANUFACTURING', 'MANUFACTURED'].includes(eff);
+                }).length;
+                const totalItems = o.items.length;
+
                 return (
                   <div key={o.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden">
                     {/* Order Header */}
@@ -726,7 +736,15 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           <i className="fa-solid fa-file-lines"></i>
                         </div>
                         <div>
-                          <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest">{o.internalOrderNumber}</div>
+                          <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest flex items-center gap-2">
+                            {o.internalOrderNumber}
+                            {itemsInFactoryCount > 0 && (
+                              <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
+                                <i className="fa-solid fa-bolt mr-1"></i>
+                                {itemsInFactoryCount}/{totalItems} items factory-ready
+                              </span>
+                            )}
+                          </div>
                           <div className="font-black text-slate-800">{o.customerName}</div>
                           <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} components to procure</div>
                         </div>
@@ -873,8 +891,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                   setMultiComps(displayComps);
                                   setSelectedCompIds([c.id!]); // Default to only current one selected
                                   setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
-                                  setAwardCosts({ [c.id!]: c.unitCost || 0 });
-                                  setAwardTaxPercent(c.taxPercent || 14);
+                                  setAwardCosts({ [c.id!]: (c.unitCost || 0).toString() });
+                                  setAwardTaxPercent((c.taxPercent || 14).toString());
                                 }}
                                   className="px-6 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
                                 >Award Tender</button>
@@ -1103,7 +1121,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                             type="number" step="any" min="0" placeholder="0.00"
                                             className="w-24 px-3 py-1.5 bg-white border border-amber-200 rounded-xl font-black text-amber-900 text-right text-sm outline-none focus:border-amber-400 transition-all"
                                             value={awardCosts[mc.id!] || ''}
-                                            onChange={e => setAwardCosts(prev => ({ ...prev, [mc.id!]: parseFloat(e.target.value) || 0 }))}
+                                            onChange={e => setAwardCosts(prev => ({ ...prev, [mc.id!]: e.target.value }))}
                                           />
                                           <span className="text-[9px] font-black text-amber-600">L.E.</span>
                                         </div>
@@ -1134,7 +1152,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                               <input
                                 type="number" step="any"
                                 className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-xl outline-none focus:bg-white focus:border-blue-500 transition-all"
-                                value={awardTaxPercent} onChange={e => setAwardTaxPercent(parseFloat(e.target.value) || 0)}
+                                value={awardTaxPercent} onChange={e => setAwardTaxPercent(e.target.value)}
                               />
                             </div>
                           </div>

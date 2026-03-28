@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User } from '../types';
+import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
 import { PartHistory } from './PartHistory';
 
 interface TechnicalReviewModuleProps {
@@ -534,6 +534,17 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                       </td>
                       <td className="px-8 py-6">
                         <div className="font-black text-slate-800 text-sm tracking-tight">{o.customerName}</div>
+                        {o.status === OrderStatus.WAITING_SUPPLIERS && (() => {
+                          const itemsInFactoryCount = o.items.filter(i => {
+                            const eff = getItemEffectiveStatus(i);
+                            return ['WAITING_FACTORY', 'MANUFACTURING', 'MANUFACTURED'].includes(eff);
+                          }).length;
+                          return itemsInFactoryCount > 0 ? (
+                            <div className="text-[9px] font-bold text-orange-600 mt-1 uppercase" title={`${itemsInFactoryCount} of ${o.items.length} line items have all components ready for the factory.`}>
+                              <i className="fa-solid fa-bolt mr-1"></i> {itemsInFactoryCount}/{o.items.length} Items Factory-Ready
+                            </div>
+                          ) : null;
+                        })()}
                       </td>
                       <td className="px-8 py-6">
                         <div className="text-xs font-black text-slate-600">{o.items.length} Positions</div>
@@ -650,12 +661,47 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                           </div>
                         </div>
 
-                        {!selectedItem.isAccepted && (
+                        {(!selectedItem.isAccepted || selectedItem.productionType === 'MANUFACTURING') && (
                           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6">
                             <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Add Components / Services</h4>
-                              <div className="text-[10px] font-bold text-blue-600 uppercase tracking-tight"><i className="fa-solid fa-brain-circuit mr-1"></i> Sourcing Engine Active</div>
+                              <div className="flex items-center gap-6">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Workflow Mode</h4>
+                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                  <button
+                                    onClick={() => dataService.setProductionType(selectedOrder.id, selectedItem.id, 'TRADING').then(o => { 
+                                      setSelectedOrder(o); 
+                                      setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); 
+                                    })}
+                                    className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${selectedItem.productionType === 'TRADING' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                  >
+                                    <i className="fa-solid fa-cart-shopping mr-2"></i> Trading
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length) {
+                                        if (!confirm("Switching to Manufacturing will keep existing components but allow adding custom ones. Continue?")) return;
+                                      }
+                                      dataService.setProductionType(selectedOrder.id, selectedItem.id, 'MANUFACTURING').then(o => { 
+                                        setSelectedOrder(o); 
+                                        setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); 
+                                      });
+                                    }}
+                                    className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${selectedItem.productionType === 'MANUFACTURING' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                  >
+                                    <i className="fa-solid fa-gears mr-2"></i> Manufacturing
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="text-[10px] font-bold text-blue-600 uppercase tracking-tight">
+                                <i className="fa-solid fa-brain-circuit mr-1"></i> {selectedItem.productionType === 'TRADING' ? 'Trading Mirror Active' : 'Sourcing Engine Active'}
+                              </div>
                             </div>
+                            
+                            {selectedItem.productionType === 'MANUFACTURING' && (
+                              <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Add Components / Services</h4>
+                              </div>
+                            )}
                             <div className="flex flex-col md:flex-row gap-4">
                               <div className="w-full md:w-24 space-y-1.5">
                                 <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Quantity</label>
@@ -677,16 +723,17 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     onChange={e => { setPartNumSearch(e.target.value); setShowCompSuggestions(true); }}
                                     onFocus={() => setShowCompSuggestions(true)}
                                   />
+                                  <div className="absolute -bottom-4 left-1 text-[8px] font-bold text-slate-400 uppercase">Auto-generated if left blank</div>
                                   <div className="relative flex-1">
-                                    <input
-                                      type="text"
+                                    <textarea
                                       placeholder="Enter component SKU or Name..."
-                                      className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all"
+                                      className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all resize-none"
+                                      rows={3}
                                       value={compSearch}
                                       onChange={e => { setCompSearch(e.target.value); setShowCompSuggestions(true); }}
                                       onFocus={() => setShowCompSuggestions(true)}
                                     />
-                                    <i className="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"></i>
+                                    <i className="fa-solid fa-search absolute left-4 top-5 text-slate-300"></i>
                                   </div>
 
                                   {showCompSuggestions && (invResults.length > 0 || historyResults.length > 0 || supplierResults.length > 0 || (compSearch || partNumSearch)) && (
@@ -783,6 +830,20 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 </div>
                               </div>
                             </div>
+                            {selectedItem.productionType === 'TRADING' && (
+                              <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                                    <i className="fa-solid fa-repeat animate-spin-slow"></i>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] font-black text-blue-900 uppercase">Trading Mode Active</div>
+                                    <div className="text-xs text-blue-600 font-medium italic">Component is automatically mirrored from the line item descriptor.</div>
+                                  </div>
+                                </div>
+                                <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-white px-3 py-1 rounded-lg border border-blue-50">Locked for Trading</div>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -809,7 +870,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     <div className="font-black text-slate-800 text-xs">{c.description}</div>
                                     <div className="flex flex-col gap-0.5 mt-1">
                                       <div className="font-mono text-[9px] text-blue-500">{c.componentNumber}</div>
-                                      {c.supplierPartNumber && <div className="font-mono text-[9px] text-amber-600 font-bold uppercase tracking-widest">MFR P/N: {c.supplierPartNumber}</div>}
+                                      {c.supplierPartNumber && c.supplierPartNumber !== c.componentNumber && <div className="font-mono text-[9px] text-amber-600 font-bold uppercase tracking-widest">MFR P/N: {c.supplierPartNumber}</div>}
                                     </div>
                                   </td>
                                   <td className="px-6 py-4">

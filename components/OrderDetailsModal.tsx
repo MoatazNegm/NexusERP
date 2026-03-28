@@ -111,6 +111,17 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [expandedTab, setExpandedTab] = useState<'bom' | 'logs'>('bom');
   const [isOverdue, setIsOverdue] = useState(false);
+  
+  // Hard Delete State
+  const [showHardDeleteConfirm, setShowHardDeleteConfirm] = useState(false);
+  const [hardDeleteReason, setHardDeleteReason] = useState('');
+  const [hardDeleteConfirm1, setHardDeleteConfirm1] = useState(false);
+  const [hardDeleteConfirm2, setHardDeleteConfirm2] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const savedUserStr = localStorage.getItem('nexus_user');
+  const currentUser = savedUserStr ? JSON.parse(savedUserStr) : null;
+  const isSuperUser = currentUser?.roles?.includes('admin') || currentUser?.roles?.includes('management');
 
   useEffect(() => {
     const checkOverdue = async () => {
@@ -148,6 +159,20 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
       alert("Failed to generate PDF");
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleHardDelete = async () => {
+    if (!hardDeleteReason.trim() || !hardDeleteConfirm1 || !hardDeleteConfirm2) return;
+    setIsDeleting(true);
+    try {
+      await dataService.dispatchAction(order.id, 'hard-delete-order', { reason: hardDeleteReason });
+      alert("Order permanently deleted and traces completely erased.");
+      // Hard reload since data is completely wiped behind the scenes, ensuring the frontend pulls fresh DB without caching issues.
+      window.location.reload();
+    } catch (e: any) {
+      alert("Failed to hard delete: " + e.message);
+      setIsDeleting(false);
     }
   };
 
@@ -261,6 +286,17 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {isSuperUser && (
+              <button 
+                onClick={() => setShowHardDeleteConfirm(!showHardDeleteConfirm)}
+                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                  showHardDeleteConfirm ? 'bg-red-600 text-white shadow-lg shadow-red-200' : 'bg-red-50 text-red-600 hover:bg-red-100 hover:shadow-inner'
+                }`}
+              >
+                <i className="fa-solid fa-trash-can mr-2"></i>
+                {showHardDeleteConfirm ? 'Cancel Deletion' : 'Hard Delete PO'}
+              </button>
+            )}
             {showInvoiceButton && (
               <button
                 onClick={handleDownloadInvoice}
@@ -274,6 +310,52 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
             <button onClick={onClose} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-800 transition-all active:scale-90"><i className="fa-solid fa-xmark text-lg"></i></button>
           </div>
         </div>
+
+        {showHardDeleteConfirm && (
+          <div className="bg-red-50 border-b-2 border-red-200 p-6 flex flex-col items-center justify-center space-y-4 animate-in slide-in-from-top-4 z-20">
+            <h4 className="text-xl font-black text-red-900 uppercase tracking-widest flex items-center gap-3">
+              <i className="fa-solid fa-triangle-exclamation text-red-600 text-2xl"></i>
+              Critical Action: Permanent Deletion
+            </h4>
+            <div className="max-w-xl text-center text-sm font-bold text-red-700">
+              This action will completely erase the order, its trace, line items, and revert financial/inventory allocations. This cannot be undone by ANY user.
+            </div>
+            <div className="w-full max-w-xl flex flex-col gap-3 bg-white p-6 rounded-2xl border border-red-100 shadow-sm mt-2">
+              <input 
+                type="text"
+                placeholder="Required: State the reason for complete deletion..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 mb-2"
+                value={hardDeleteReason}
+                onChange={(e) => setHardDeleteReason(e.target.value)}
+              />
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input 
+                  type="checkbox"
+                  className="w-4 h-4 rounded text-red-600 focus:ring-red-500 border-slate-300 pointer-events-none"
+                  checked={hardDeleteConfirm1}
+                  onChange={(e) => setHardDeleteConfirm1(e.target.checked)}
+                />
+                <span className="text-xs font-bold text-slate-700 group-hover:text-red-600 transition-colors">I confirm the Superuser action to permanently delete this PO.</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input 
+                  type="checkbox"
+                  className="w-4 h-4 rounded text-red-600 focus:ring-red-500 border-slate-300 pointer-events-none"
+                  checked={hardDeleteConfirm2}
+                  onChange={(e) => setHardDeleteConfirm2(e.target.checked)}
+                />
+                <span className="text-xs font-bold text-slate-700 group-hover:text-red-600 transition-colors">I confirm this action was explicitly approved by Management.</span>
+              </label>
+            </div>
+            <button 
+              onClick={handleHardDelete}
+              disabled={!hardDeleteConfirm1 || !hardDeleteConfirm2 || !hardDeleteReason.trim() || isDeleting}
+              className="px-8 py-3 mt-2 bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700 text-white font-black uppercase text-xs rounded-xl shadow-lg shadow-red-200 transition-all focus:ring-4 focus:ring-red-100"
+            >
+              {isDeleting ? 'Erasing...' : 'Confirm & Execute Hard Delete'}
+            </button>
+          </div>
+        )}
 
         <div className="flex-1 overflow-hidden flex">
           <div className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar">

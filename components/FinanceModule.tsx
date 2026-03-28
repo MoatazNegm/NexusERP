@@ -74,12 +74,14 @@ const ThresholdSentinel: React.FC<{ order: CustomerOrder, config: AppConfig }> =
 
 interface GeneralLedgerViewProps {
   entries: any[];
+  orders: CustomerOrder[];
+  supplierPayments: any[];
   onRefresh: () => void;
   currentUser: User;
   searchQuery: string;
 }
 
-const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, onRefresh, currentUser, searchQuery }) => {
+const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, supplierPayments, onRefresh, currentUser, searchQuery }) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState<'COST' | 'ADDITION'>('COST');
@@ -88,23 +90,63 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, onRefres
   const [category, setCategory] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  const unifiedEntries = useMemo(() => {
+    const all: any[] = [];
+    
+    // 1. Manual entries
+    entries.forEach(e => all.push({ ...e, source: 'Manual' }));
+
+    // 2. Customer payments
+    orders.forEach(o => {
+      (o.payments || []).forEach((p, idx) => {
+        all.push({
+          id: `cust_${o.id}_${idx}`,
+          date: p.date,
+          type: 'ADDITION',
+          amount: p.amount,
+          description: `Payment: ${o.customerName}`,
+          category: o.internalOrderNumber,
+          user: p.user || 'System',
+          source: 'Customer'
+        });
+      });
+    });
+
+    // 3. Supplier payments
+    supplierPayments.forEach(sp => {
+      all.push({
+        id: `supp_${sp.id}`,
+        date: sp.date,
+        type: 'COST',
+        amount: sp.amount,
+        description: `Paid: ${sp.supplierName}`,
+        category: sp.memo || 'Supplier Payment',
+        user: sp.user || 'System',
+        source: 'Supplier'
+      });
+    });
+
+    return all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [entries, orders, supplierPayments]);
+
   const totals = useMemo(() => {
-    return entries.reduce((acc, curr) => {
+    return unifiedEntries.reduce((acc, curr) => {
       if (curr.type === 'ADDITION') acc.additions += curr.amount;
       else acc.costs += curr.amount;
       return acc;
     }, { additions: 0, costs: 0 });
-  }, [entries]);
+  }, [unifiedEntries]);
 
   const filteredEntries = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return [...entries].reverse();
-    return entries.filter(e => 
+    if (!q) return unifiedEntries;
+    return unifiedEntries.filter(e => 
       e.description.toLowerCase().includes(q) || 
       e.category?.toLowerCase().includes(q) ||
-      e.user?.toLowerCase().includes(q)
-    ).reverse();
-  }, [entries, searchQuery]);
+      e.user?.toLowerCase().includes(q) ||
+      e.source?.toLowerCase().includes(q)
+    );
+  }, [unifiedEntries, searchQuery]);
 
   const handleAddEntry = async () => {
     if (!amount || !description) { setError('Amount and description are mandatory'); return; }
@@ -182,6 +224,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, onRefres
             <tr>
               <th className="px-8 py-5">Date</th>
               <th className="px-8 py-5">Description / Category</th>
+              <th className="px-8 py-5">Source</th>
               <th className="px-8 py-5">Type</th>
               <th className="px-8 py-5 text-right">Amount</th>
               <th className="px-8 py-5">User</th>
@@ -196,6 +239,15 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, onRefres
                 <td className="px-8 py-5">
                   <div className="font-black text-slate-800 text-sm">{entry.description}</div>
                   {entry.category && <div className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{entry.category}</div>}
+                </td>
+                <td className="px-8 py-5">
+                  <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
+                    entry.source === 'Manual' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
+                    entry.source === 'Customer' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
+                    'bg-rose-50 text-rose-600 border-rose-100'
+                  }`}>
+                    {entry.source}
+                  </span>
                 </td>
                 <td className="px-8 py-5">
                   <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
@@ -320,6 +372,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
+  const [supplierPayments, setSupplierPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [whtPeriod, setWhtPeriod] = useState<'this_year' | 'last_year'>('this_year');
@@ -409,16 +462,18 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
   const fetchData = async () => {
     try {
-      const [o, c, s, l] = await Promise.all([
+      const [o, c, s, l, sp] = await Promise.all([
         dataService.getOrders(),
         dataService.getCustomers(),
         dataService.getSuppliers(),
-        dataService.getLedgerEntries()
+        dataService.getLedgerEntries(),
+        dataService.getSupplierPayments()
       ]);
       setOrders(o);
       setCustomers(c);
       setSuppliers(s);
       setLedgerEntries(l);
+      setSupplierPayments(sp);
     } catch (e) {
       console.error("Finance sync error:", e);
     } finally {
@@ -925,6 +980,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       {activeTab === 'ledger' && (
         <GeneralLedgerView 
           entries={ledgerEntries} 
+          orders={orders}
+          supplierPayments={supplierPayments}
           onRefresh={fetchData} 
           currentUser={currentUser}
           searchQuery={search}
@@ -1259,7 +1316,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             </div>
           )}
         </div>
-      ) : (
+      ) : activeTab !== 'ledger' ? (
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
         <table className="w-full text-left">
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
@@ -1679,8 +1736,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             </div>
           )
         }
-      </div >
-      )}
+      </div>
+      ) : null}
 
       {decisionModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">

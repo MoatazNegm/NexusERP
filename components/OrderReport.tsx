@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, OrderStatus, AppConfig } from '../types';
+import { CustomerOrder, OrderStatus, AppConfig, getItemEffectiveStatus } from '../types';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle, getPartialStateMetrics } from '../constants';
 import { OrderDetailsModal } from './OrderDetailsModal';
 
@@ -229,7 +229,12 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
                 <td className="px-6 py-4 whitespace-nowrap text-slate-500 text-xs font-medium">{order.orderDate}</td>
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2">
-                    <div className="font-bold text-slate-800">{order.customerName}</div>
+                    <div className="font-bold text-slate-800 flex items-center gap-2">
+                      {order.customerName}
+                      {order.items.some(i => getItemEffectiveStatus(i) !== order.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
+                        <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
+                      )}
+                    </div>
                     {order.loggingComplianceViolation && (
                       <div className="group/warn relative">
                         <i className="fa-solid fa-triangle-exclamation text-rose-500 text-[10px] animate-pulse"></i>

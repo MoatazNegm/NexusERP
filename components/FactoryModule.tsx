@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, OrderStatus, AppConfig, User } from '../types';
+import { CustomerOrder, OrderStatus, AppConfig, User, getItemEffectiveStatus } from '../types';
 import { STATUS_CONFIG } from '../constants';
 
 interface FactoryModuleProps {
@@ -25,7 +25,10 @@ export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey
       dataService.getOrders(),
       dataService.getInventory()
     ]);
-    setOrders(allOrders.filter(o => [OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING].includes(o.status)));
+    setOrders(allOrders.filter(o => 
+      [OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING].includes(o.status) ||
+      (o.status === OrderStatus.WAITING_SUPPLIERS && o.items.some(i => ['WAITING_FACTORY', 'MANUFACTURING', 'MANUFACTURED'].includes(getItemEffectiveStatus(i))))
+    ));
     setInventoryState(allInv);
   };
 
@@ -45,14 +48,32 @@ export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey
 
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
+    const item = order.items.find(i => i.id === itemId);
+    if (!item) return;
 
     setProcessingId(`${orderId}-${itemId}`);
     try {
+      // Check if this manufacture completes the item AND if there are unconsumed components
+      const target = item.quantity;
+      const current = item.manufacturedQty || 0;
+      let confirmRelease = false;
+
+      if (current + qty >= target) {
+        const hasUnconsumed = (item.components || []).some(c => (c.consumedQty || 0) < (c.quantity || 0));
+        if (hasUnconsumed) {
+          if (!confirm("You are marking this item as fully manufactured, but some components are not fully consumed. Do you want to release the remaining components back to stock?\n\nClick OK to confirm manufacturing and release components, or Cancel to stop.")) {
+             setProcessingId(null);
+             return;
+          }
+          confirmRelease = true;
+        }
+      }
+
       // Auto-start production if still in STAGED status
       if (order.status === OrderStatus.WAITING_FACTORY) {
         await dataService.startProduction(orderId);
       }
-      await dataService.registerManufacturing(orderId, itemId, qty);
+      await dataService.registerManufacturing(orderId, itemId, qty, confirmRelease);
       setMfgInputs(prev => ({ ...prev, [`${orderId}-${itemId}`]: '' }));
       await fetchOrders();
     } catch (e: any) {
@@ -96,11 +117,23 @@ export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Active manufacturing floor control</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {orders.map(o => (
+          {orders.map(o => {
+            const itemsInProcurementCount = o.items.filter(i => getItemEffectiveStatus(i) === 'WAITING_SUPPLIERS').length;
+            const totalItems = o.items.length;
+
+            return (
             <div key={o.id} className="p-6 bg-slate-50 border border-slate-100 rounded-3xl group hover:border-blue-400 transition-all flex flex-col">
               <div className="flex justify-between items-start mb-4">
                 <div>
-                  <div className="font-mono text-xs font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
+                  <div className="font-mono text-xs font-black text-blue-600 uppercase flex items-center gap-2">
+                    {o.internalOrderNumber}
+                    {itemsInProcurementCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-sans text-[9px] uppercase tracking-normal border border-slate-300" title={`${itemsInProcurementCount} of ${totalItems} line items are still in procurement.`}>
+                        <i className="fa-solid fa-wrench mr-1"></i>
+                        {itemsInProcurementCount}/{totalItems} in procurement
+                      </span>
+                    )}
+                  </div>
                   <div className="text-lg font-black text-slate-800 tracking-tight">{o.customerName}</div>
                 </div>
                 <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${o.status === OrderStatus.MANUFACTURING ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-slate-400 border-slate-200'}`}>
@@ -279,7 +312,7 @@ export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey
                 )}
               </div>
             </div>
-          ))}
+          )})}
           {orders.length === 0 && (
             <div className="md:col-span-2 p-20 text-center text-slate-300 italic font-black uppercase tracking-[0.3em] text-xs">No active production runs.</div>
           )}

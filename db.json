@@ -1616,6 +1616,24 @@
           "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
           "status": "MANUFACTURING",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-28T13:52:53.529Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-28T13:52:53.529Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "MANUFACTURING",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-28T13:52:53.529Z",
+          "message": "[SYSTEM] Supplier Fulfillment Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "MANUFACTURING",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0002",
@@ -1811,7 +1829,20 @@
           "pricePerUnit": 200,
           "taxPercent": 14,
           "logs": [],
-          "components": [],
+          "components": [
+            {
+              "id": "c_1774626541766_0_0",
+              "description": "Billable Item",
+              "quantity": 5,
+              "unit": "pcs",
+              "unitCost": 0,
+              "taxPercent": 14,
+              "source": "PROCUREMENT",
+              "status": "PENDING_OFFER",
+              "componentNumber": "CMP-INT-2024-0005-1-1",
+              "statusUpdatedAt": "2026-03-27T15:49:01.766Z"
+            }
+          ],
           "productionType": "TRADING"
         }
       ],
@@ -1881,13 +1912,64 @@
           "message": "[SYSTEM] Hub Release Sync Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
           "status": "INVOICED",
           "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T15:49:01.763Z",
+          "message": "Full payment reconciled. Awaiting final delivery completion to FULFILL.",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T15:55:18.505Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T15:55:18.505Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T15:55:18.505Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T15:55:21.582Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to admin (erpalerts@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T15:55:21.582Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to aly adam (aly_adam@quickstor.net) via group: superusers",
+          "status": "INVOICED",
+          "user": "System"
+        },
+        {
+          "timestamp": "2026-03-27T15:55:21.582Z",
+          "message": "[SYSTEM] Pending Offer Limit Alert Sent to ziad (zeyad_mamdouh@psp-co.org) via group: operations",
+          "status": "INVOICED",
+          "user": "System"
         }
       ],
       "internalOrderNumber": "INT-2024-0005",
       "dataEntryTimestamp": "2026-03-25T13:57:53.871Z",
       "status": "INVOICED",
       "loggingComplianceViolation": false,
-      "invoiceNumber": "INV-260325-213"
+      "invoiceNumber": "INV-260325-213",
+      "payments": [
+        {
+          "amount": 1140.0000000000002,
+          "date": "2026-03-27T15:49:01.763Z",
+          "user": "System",
+          "memo": "Verified customer payment for INT-2024-0005",
+          "receiptNumber": "RCV-001"
+        }
+      ]
     },
     {
       "id": "orders_1774447099998",
@@ -3639,6 +3721,42 @@
         "aly_adam@quickstor.net",
         "zeyad_mamdouh@psp-co.org"
       ]
+    },
+    {
+      "id": "nt_1774626918505_luvs",
+      "journalKey": "item_threshold_pendingOfferLimitHrs_orders_1774447073870_it_1774447073741",
+      "orderId": "orders_1774447073870",
+      "type": "item_threshold_pendingOfferLimitHrs",
+      "sentAt": "2026-03-27T15:55:18.505Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774626921582_h0po",
+      "journalKey": "comp_pendingOfferLimitHrs_orders_1774447073870_it_1774447073741_c_1774626541766_0_0",
+      "orderId": "orders_1774447073870",
+      "type": "comp_pendingOfferLimitHrs",
+      "sentAt": "2026-03-27T15:55:21.582Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
+    },
+    {
+      "id": "nt_1774705973529_ppgk",
+      "journalKey": "comp_orderedLimitHrs_orders_1773753262020_temp_1773753407144_comp_1773753488946_w2sms_2026-03-28",
+      "orderId": "orders_1773753262020",
+      "type": "comp_orderedLimitHrs",
+      "sentAt": "2026-03-28T13:52:53.529Z",
+      "recipients": [
+        "erpalerts@quickstor.net",
+        "aly_adam@quickstor.net",
+        "zeyad_mamdouh@psp-co.org"
+      ]
     }
   ],
   "settings": [
@@ -3741,7 +3859,7 @@
         "smtpServer": "mail.quickstor.net",
         "smtpPort": 465,
         "username": "erpalerts@quickstor.net",
-        "password": "ENC:3aba595e27ba863fff9a8db2bbbd37e6:f58e9544f0778b4e4122f6237d8427f7bf83fcda489db98fcaa21af917e83362",
+        "password": "ENC:bd997a5b0fe0ff8a085737a49f5da0fa:fd884ea57bdec66c58a1cf5c1000780b43cf8957939a1ef0e916bb73b35fd66e",
         "senderName": "Nexus System Alert",
         "senderEmail": "erpalerts@quickstor.net",
         "useSsl": true
@@ -3798,7 +3916,7 @@
       },
       "aiProvider": "gemini",
       "openaiConfig": {
-        "apiKey": "ENC:c5a9e7c2dc4bb54f084fd5d7b2c81564:9e4890efbff494f32a839d29c7881b0e9b45a17853d5deb776df8458763a9527ece9707186e3bc55cd48eec9fe51a709",
+        "apiKey": "ENC:7cb54242f6afa8078ee121f5c22f128d:cf9b30416635bc874274583f3ff63cc541a6a5b9b2b58ad8e4de9190a21358b5f2d7108f35aee3ad1b8af21b7f5c4c72",
         "baseUrl": "https://api.deepseek.com/v1",
         "modelName": "deepseek-chat"
       },
@@ -3824,7 +3942,7 @@
         "userGroups_1770927056150"
       ],
       "geminiConfig": {
-        "apiKey": "ENC:72822d732d07e265fa32c27db1d4fe2c:d7c2001cc732d127fb2ad1b9054f589f625bbf3fcf68b661d9b52e1967c5f8d6991b852aaeaf6c5e3bf13741f006cb11",
+        "apiKey": "ENC:471294a0e32280ebc091d8f65e14df68:7504711668de148ab9aefc9a47a9572fbb0d7c68661bb4155cec296b14433c0c8afd2141c7d5ce64007faf1f9a9be471",
         "modelName": "gemini-2.5-flash-lite"
       },
       "chartConfig": {
