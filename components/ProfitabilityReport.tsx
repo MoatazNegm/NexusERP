@@ -154,8 +154,9 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
   }, [ledgerEntries, analysisRange]);
 
   const weightedOverhead = totalManualLedgerExpenses * (contributionWeight / 100);
-  const relevantRoiValue = (analysisTotals.cost + weightedOverhead) > 0 
-    ? (analysisTotals.revenue / (analysisTotals.cost + weightedOverhead)) 
+  const relevantProfit = analysisTotals.revenue - (analysisTotals.cost + weightedOverhead);
+  const relevantRoiPct = (analysisTotals.cost + weightedOverhead) > 0 
+    ? (relevantProfit / (analysisTotals.cost + weightedOverhead)) * 100 
     : 0;
 
   // --- RENDERING HELPERS ---
@@ -328,10 +329,10 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                 <i className="fa-solid fa-scale-balanced text-8xl"></i>
               </div>
               <p className="text-[10px] font-black text-emerald-200 uppercase tracking-widest mb-1">Current Relevant ROI</p>
-              <div className="text-4xl font-black">{relevantRoiValue.toFixed(2)}<span className="text-xs ml-1 opacity-60">x</span></div>
+              <div className="text-4xl font-black">{relevantRoiPct.toFixed(1)}%</div>
               <p className="text-[7px] font-bold text-emerald-100/60 mt-2 uppercase leading-tight">
-                Formula: Revenue / (Direct Costs + Weighted Ledger Overhead)<br/>
-                *Overhead is apportioned by customer profit weight
+                Formula: (Net Profit - Weighted Overhead) / (Direct Costs + Weighted Overhead)<br/>
+                *Shows the percentage gain over every L.E. spent
               </p>
             </div>
           </div>
