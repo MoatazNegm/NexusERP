@@ -129,14 +129,6 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     return all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [entries, orders, supplierPayments]);
 
-  const totals = useMemo(() => {
-    return unifiedEntries.reduce((acc, curr) => {
-      if (curr.type === 'ADDITION') acc.additions += curr.amount;
-      else acc.costs += curr.amount;
-      return acc;
-    }, { additions: 0, costs: 0 });
-  }, [unifiedEntries]);
-
   const filteredEntries = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return unifiedEntries;
@@ -147,6 +139,14 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       e.source?.toLowerCase().includes(q)
     );
   }, [unifiedEntries, searchQuery]);
+
+  const totals = useMemo(() => {
+    return filteredEntries.reduce((acc, curr) => {
+      if (curr.type === 'ADDITION') acc.additions += curr.amount;
+      else acc.costs += curr.amount;
+      return acc;
+    }, { additions: 0, costs: 0 });
+  }, [filteredEntries]);
 
   const handleAddEntry = async () => {
     if (!amount || !description) { setError('Amount and description are mandatory'); return; }
