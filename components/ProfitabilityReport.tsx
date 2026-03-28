@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { CustomerOrder, AppConfig, OrderStatus, Customer, Supplier } from '../types';
+import { CustomerOrder, AppConfig, OrderStatus, Customer, Supplier, LedgerEntry } from '../types';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 
@@ -21,7 +21,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
   // Tab 2 (Analysis) State
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('all');
   const [selectedPeriod, setSelectedPeriod] = useState<Period>('this_year');
-  const [customers, setCustomers] = useState<Customer[]>([]);
+   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
 
   // Tab 3 (Supplier) State
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -35,6 +36,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
   useEffect(() => {
     dataService.getCustomers().then(setCustomers);
     dataService.getSuppliers().then(setSuppliers);
+    dataService.getLedgerEntries().then(setLedgerEntries);
     loadSupplierLedger(['all']);
   }, []);
 
@@ -141,6 +143,20 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
   }, { revenue: 0, cost: 0, profit: 0 }), [analysisOrdersFiltered]);
 
   const contributionWeight = companyAnalysisProfit > 0 ? (analysisTotals.profit / companyAnalysisProfit) * 100 : 0;
+
+  const totalManualLedgerExpenses = useMemo(() => {
+    return ledgerEntries.reduce((sum, entry) => {
+      if (entry.type !== 'COST') return sum;
+      const entryDate = new Date(entry.date);
+      if (analysisRange && (entryDate < analysisRange.start || entryDate > analysisRange.end)) return sum;
+      return sum + entry.amount;
+    }, 0);
+  }, [ledgerEntries, analysisRange]);
+
+  const weightedOverhead = totalManualLedgerExpenses * (contributionWeight / 100);
+  const relevantRoiValue = (analysisTotals.cost + weightedOverhead) > 0 
+    ? (analysisTotals.revenue / (analysisTotals.cost + weightedOverhead)) 
+    : 0;
 
   // --- RENDERING HELPERS ---
   const togglePrint = (active: boolean) => {
@@ -306,6 +322,17 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
               </div>
               <p className="text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-1">Company Profit Weight</p>
               <div className="text-4xl font-black">{contributionWeight.toFixed(1)}%</div>
+            </div>
+            <div className="bg-emerald-600 p-6 rounded-[2rem] shadow-2xl text-white relative overflow-hidden group">
+              <div className="absolute -right-4 -bottom-4 opacity-10 -rotate-12 group-hover:rotate-0 transition-transform">
+                <i className="fa-solid fa-scale-balanced text-8xl"></i>
+              </div>
+              <p className="text-[10px] font-black text-emerald-200 uppercase tracking-widest mb-1">Current Relevant ROI</p>
+              <div className="text-4xl font-black">{relevantRoiValue.toFixed(2)}<span className="text-xs ml-1 opacity-60">x</span></div>
+              <p className="text-[7px] font-bold text-emerald-100/60 mt-2 uppercase leading-tight">
+                Formula: Revenue / (Direct Costs + Weighted Ledger Overhead)<br/>
+                *Overhead is apportioned by customer profit weight
+              </p>
             </div>
           </div>
 
