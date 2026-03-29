@@ -37,6 +37,7 @@ export interface User {
   roles: UserRole[];
   groupIds?: string[];
   avatar?: string;
+  logs?: LogEntry[];
 }
 
 export type AIProvider = 'gemini' | 'openai';
@@ -189,6 +190,7 @@ export interface InventoryItem {
   location?: string;
   poNumber?: string;
   orderRef?: string;
+  logs?: LogEntry[];
 }
 
 export interface ProcurementLine {

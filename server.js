@@ -1112,7 +1112,7 @@ const addToCollection = (col) => (req, res) => {
         reconcileInventory(null, newItem, db);
     }
 
-    if (col === 'customers' || col === 'suppliers') {
+    if (['customers', 'suppliers', 'inventory', 'users', 'userGroups', 'settings'].includes(col)) {
         if (!newItem.logs) newItem.logs = [createAuditLog('Entity registered', undefined, user)];
         if (col === 'suppliers' && !newItem.priceList) newItem.priceList = [];
     }
@@ -1157,6 +1157,11 @@ const updateInCollection = (col) => (req, res) => {
         if (updated.isBlacklisted !== oldItem.isBlacklisted) {
             updated.logs.push(createAuditLog(`${updated.isBlacklisted ? 'Blacklisted' : 'Blacklist Removed'}: ${updated.blacklistReason || 'Manual update'}`, undefined, user));
         }
+    }
+
+    if (['inventory', 'users', 'userGroups', 'settings'].includes(col)) {
+        if (!updated.logs) updated.logs = [];
+        updated.logs.push(createAuditLog('Record updated', undefined, user));
     }
 
     db[col][index] = updated;

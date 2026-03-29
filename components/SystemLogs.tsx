@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, User, UserGroup, LogEntry } from '../types';
+import { CustomerOrder, User, UserGroup, LogEntry, Customer, Supplier, InventoryItem } from '../types';
 
 interface FlattenedLog extends LogEntry {
-   sourceType: 'ORDER' | 'ITEM' | 'COMPONENT';
+   sourceType: 'ORDER' | 'ITEM' | 'COMPONENT' | 'CUSTOMER' | 'SUPPLIER' | 'INVENTORY' | 'USER' | 'SETTING';
    poRef: string;
    customerName: string;
    userFullName: string;
@@ -13,10 +13,14 @@ interface FlattenedLog extends LogEntry {
    compRef?: string;
    compNum?: string;
    userGroups: string[];
+   entityName?: string;
 }
 
 export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) => {
    const [orders, setOrders] = useState<CustomerOrder[]>([]);
+   const [customers, setCustomers] = useState<Customer[]>([]);
+   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+   const [inventory, setInventory] = useState<InventoryItem[]>([]);
    const [users, setUsers] = useState<User[]>([]);
    const [groups, setGroups] = useState<UserGroup[]>([]);
    const [loading, setLoading] = useState(true);
@@ -27,18 +31,24 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
    const [selectedUser, setSelectedUser] = useState<string>('all');
    const [selectedGroup, setSelectedGroup] = useState<string>('all');
    const [selectedPo, setSelectedPo] = useState<string>('all');
-   const [sourceFilter, setSourceFilter] = useState<'all' | 'ORDER' | 'ITEM' | 'COMPONENT'>('all');
+   const [sourceFilter, setSourceFilter] = useState<'all' | 'ORDER' | 'ITEM' | 'COMPONENT' | 'CUSTOMER' | 'SUPPLIER' | 'INVENTORY' | 'USER' | 'SETTING'>('all');
 
    useEffect(() => {
       const load = async () => {
-         const [o, u, g] = await Promise.all([
+         const [o, u, g, c, s, i] = await Promise.all([
             dataService.getOrders(),
             dataService.getUsers(),
-            dataService.getUserGroups()
+            dataService.getUserGroups(),
+            dataService.getCustomers(),
+            dataService.getSuppliers(),
+            dataService.getInventory()
          ]);
          setOrders(o);
          setUsers(u);
          setGroups(g);
+         setCustomers(c);
+         setSuppliers(s);
+         setInventory(i);
          setLoading(false);
       };
       load();
@@ -47,17 +57,22 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
    const allLogs = useMemo(() => {
       const list: FlattenedLog[] = [];
 
+      const getUserInfo = (username?: string) => {
+         const userObj = users.find(u => u.username === username);
+         const userGroups = userObj?.groupIds?.map(gid => groups.find(g => g.id === gid)?.name || '') || [];
+         return { fullName: userObj?.name || 'System', userGroups };
+      };
+
+      // 1. Order level logs
       orders.forEach(order => {
-         // Order level logs
          order.logs?.forEach(log => {
-            const userObj = users.find(u => u.username === log.user);
-            const userGroups = userObj?.groupIds?.map(gid => groups.find(g => g.id === gid)?.name || '') || [];
+            const { fullName, userGroups } = getUserInfo(log.user);
             list.push({
                ...log,
                sourceType: 'ORDER',
                poRef: order.internalOrderNumber,
                customerName: order.customerName,
-               userFullName: userObj?.name || 'System',
+               userFullName: fullName,
                userGroups
             });
          });
@@ -65,13 +80,8 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
          // Item & Component level logs
          order.items?.forEach(item => {
             item.logs?.forEach(log => {
-               const userObj = users.find(u => u.username === log.user);
-               const userGroups = userObj?.groupIds?.map(gid => groups.find(g => g.id === gid)?.name || '') || [];
-
-               // Identify if it's a component action by looking for descriptors in message or related objects
+               const { fullName, userGroups } = getUserInfo(log.user);
                const isCompAction = log.message.toLowerCase().includes('component') || log.message.toLowerCase().includes('bom');
-
-               // Try to extract component info from message like "Added component "Steel Frame"..."
                let extractedComp = '';
                const compMatch = log.message.match(/"([^"]+)"/);
                if (isCompAction && compMatch) extractedComp = compMatch[1];
@@ -81,7 +91,7 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
                   sourceType: isCompAction ? 'COMPONENT' : 'ITEM',
                   poRef: order.internalOrderNumber,
                   customerName: order.customerName,
-                  userFullName: userObj?.name || 'System',
+                  userFullName: fullName,
                   itemRef: item.description,
                   itemId: item.orderNumber,
                   compRef: extractedComp || undefined,
@@ -91,8 +101,72 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
          });
       });
 
+      // 2. Customer Logs
+      customers.forEach(cust => {
+         cust.logs?.forEach(log => {
+            const { fullName, userGroups } = getUserInfo(log.user);
+            list.push({
+               ...log,
+               sourceType: 'CUSTOMER',
+               poRef: 'CUSTOMER_MGMT',
+               customerName: cust.name,
+               userFullName: fullName,
+               userGroups,
+               entityName: cust.name
+            });
+         });
+      });
+
+      // 3. Supplier Logs
+      suppliers.forEach(supp => {
+         supp.logs?.forEach(log => {
+            const { fullName, userGroups } = getUserInfo(log.user);
+            list.push({
+               ...log,
+               sourceType: 'SUPPLIER',
+               poRef: 'SUPPLIER_REL',
+               customerName: supp.name,
+               userFullName: fullName,
+               userGroups,
+               entityName: supp.name
+            });
+         });
+      });
+
+      // 4. Inventory Logs
+      inventory.forEach(inv => {
+         inv.logs?.forEach(log => {
+            const { fullName, userGroups } = getUserInfo(log.user);
+            list.push({
+               ...log,
+               sourceType: 'INVENTORY',
+               poRef: inv.sku || 'INV_SKU',
+               customerName: 'Internal Stock',
+               userFullName: fullName,
+               userGroups,
+               entityName: inv.description
+            });
+         });
+      });
+
+      // 5. User Logs
+      users.forEach(u => {
+         u.logs?.forEach(log => {
+            const { fullName, userGroups } = getUserInfo(log.user);
+            list.push({
+               ...log,
+               sourceType: 'USER',
+               poRef: 'USER_ADMIN',
+               customerName: 'System Security',
+               userFullName: fullName,
+               userGroups,
+               entityName: `@${u.username}`
+            });
+         });
+      });
+
       return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-   }, [orders, users, groups]);
+   }, [orders, users, groups, customers, suppliers, inventory]);
 
    const filteredLogs = useMemo(() => {
       const query = search.toLowerCase().trim();
@@ -102,7 +176,7 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
             log.poRef.toLowerCase().includes(query) ||
             log.customerName.toLowerCase().includes(query) ||
             (log.user || '').toLowerCase().includes(query) ||
-            log.userFullName.toLowerCase().includes(query) ||
+            (log.userFullName.toLowerCase().includes(query) || (log.entityName?.toLowerCase() || '').includes(query)) ||
             (log.itemRef?.toLowerCase() || '').includes(query) ||
             (log.itemId?.toLowerCase() || '').includes(query) ||
             (log.compRef?.toLowerCase() || '').includes(query);
@@ -166,6 +240,10 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
                   <option value="ORDER">Strategic (Orders)</option>
                   <option value="ITEM">Tactical (Line Items)</option>
                   <option value="COMPONENT">Granular (Components)</option>
+                  <option value="CUSTOMER">Engagement (Customers)</option>
+                  <option value="SUPPLIER">Supply Chain (Suppliers)</option>
+                  <option value="INVENTORY">Asset (Inventory)</option>
+                  <option value="USER">Identity (Users)</option>
                </select>
                <select
                   className="p-4 border-2 border-slate-100 rounded-2xl bg-white outline-none focus:border-blue-500 font-black text-[10px] uppercase tracking-wider"
@@ -244,6 +322,15 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
                                     <div className="text-[10px] font-black text-amber-200/80 leading-tight">{log.compRef}</div>
                                  </div>
                               )}
+
+                              {log.entityName && !log.itemRef && !log.compRef && (
+                                 <div className="mt-3 p-2 bg-blue-600/5 rounded-lg border border-blue-600/10 space-y-1">
+                                    <div className="text-[8px] font-black text-blue-500 uppercase flex items-center gap-1.5">
+                                       <i className="fa-solid fa-cube opacity-40"></i> Linked Entity
+                                    </div>
+                                    <div className="text-[10px] font-black text-blue-200/80 leading-tight">{log.entityName}</div>
+                                 </div>
+                              )}
                            </td>
                            <td className="px-8 py-6">
                               <div className="bg-white/5 p-4 rounded-xl border border-white/5">
@@ -266,7 +353,11 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
                            <td className="px-8 py-6 text-right">
                               <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md border ${log.sourceType === 'ORDER' ? 'bg-blue-600/10 text-blue-400 border-blue-600/20' :
                                     log.sourceType === 'ITEM' ? 'bg-indigo-600/10 text-indigo-400 border-indigo-600/20' :
-                                       'bg-amber-600/10 text-amber-400 border-amber-600/20'
+                                       log.sourceType === 'COMPONENT' ? 'bg-amber-600/10 text-amber-400 border-amber-600/20' :
+                                          log.sourceType === 'CUSTOMER' ? 'bg-emerald-600/10 text-emerald-400 border-emerald-600/20' :
+                                             log.sourceType === 'SUPPLIER' ? 'bg-rose-600/10 text-rose-400 border-rose-600/20' :
+                                                log.sourceType === 'INVENTORY' ? 'bg-purple-600/10 text-purple-400 border-purple-600/20' :
+                                                   'bg-slate-600/10 text-slate-400 border-slate-600/20'
                                  }`}>
                                  {log.sourceType}
                               </span>
