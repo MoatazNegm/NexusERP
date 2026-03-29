@@ -24,6 +24,25 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 class DataService {
   private appStartTime = Date.now();
+  
+  private getCurrentUser(): string {
+    if (typeof window === 'undefined') return 'System';
+    const saved = localStorage.getItem('nexus_user');
+    if (!saved) return 'System';
+    try {
+      const user = JSON.parse(saved);
+      return user.username || 'System';
+    } catch {
+      return 'System';
+    }
+  }
+
+  private getHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      'x-user': this.getCurrentUser()
+    };
+  }
 
   // --- GENERIC CRUD HANDLERS ---
   // ... (get, post, put, delete remain same, skipping to user methods)
@@ -44,7 +63,7 @@ class DataService {
   async changePassword(userId: string, oldPass: string, newPass: string) {
     const res = await fetch(`${BACKEND_URL}/api/v1/change-password`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders(),
       body: JSON.stringify({ userId, oldPassword: oldPass, newPassword: newPass })
     });
 
@@ -55,22 +74,17 @@ class DataService {
     return true;
   }
   private async get<T>(endpoint: string): Promise<T[]> {
-    const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}`);
+    const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}`, {
+      headers: { 'x-user': this.getCurrentUser() }
+    });
     if (!res.ok) throw new Error(`Failed to fetch ${endpoint}: ${res.statusText}`);
     return await res.json();
   }
 
   private async post<T>(endpoint: string, data: any): Promise<T> {
-    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
-      ? JSON.parse(localStorage.getItem('nexus_user')!).username
-      : 'System';
-
     const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user': user
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(data)
     });
     if (!res.ok) throw new Error(`Failed to create in ${endpoint}: ${res.statusText}`);
@@ -78,16 +92,9 @@ class DataService {
   }
 
   private async put<T>(endpoint: string, id: string, data: any): Promise<T> {
-    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
-      ? JSON.parse(localStorage.getItem('nexus_user')!).username
-      : 'System';
-
     const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}/${id}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user': user
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(data)
     });
     if (!res.ok) throw new Error(`Failed to update ${endpoint}/${id}: ${res.statusText}`);
@@ -95,7 +102,10 @@ class DataService {
   }
 
   private async delete(endpoint: string, id: string): Promise<void> {
-    const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}/${id}`, { 
+      method: 'DELETE',
+      headers: { 'x-user': this.getCurrentUser() }
+    });
     if (!res.ok) throw new Error(`Failed to delete ${endpoint}/${id}: ${res.statusText}`);
   }
 
@@ -112,16 +122,9 @@ class DataService {
     return this.put('customers', id, { isHold, holdReason: reason });
   }
   async mergeCustomers(primaryId: string, secondaryIds: string[]) {
-    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
-      ? JSON.parse(localStorage.getItem('nexus_user')!).username
-      : 'System';
-
     const res = await fetch(`${BACKEND_URL}/api/v1/customers/merge`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user': user
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({ primaryId, secondaryIds })
     });
 
@@ -162,23 +165,17 @@ class DataService {
 
   async getSupplierPayments() { return this.get<SupplierPayment>('supplierPayments'); }
   async recordSupplierPayment(supplierId: string, amount: number, memo: string, date?: string) {
-    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
-      ? JSON.parse(localStorage.getItem('nexus_user')!).username
-      : 'System';
     const res = await fetch(`${BACKEND_URL}/api/v1/supplierPayments`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user': user },
+      headers: this.getHeaders(),
       body: JSON.stringify({ supplierId, amount, memo, date })
     });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Payment failed'); }
     return res.json();
   }
   async getSupplierLedger(supplierId: string) {
-    const user = (typeof window !== 'undefined' && localStorage.getItem('nexus_user'))
-      ? JSON.parse(localStorage.getItem('nexus_user')!).username
-      : 'System';
     const res = await fetch(`${BACKEND_URL}/api/v1/supplier-ledger/${supplierId}`, {
-      headers: { 'x-user': user }
+      headers: { 'x-user': this.getCurrentUser() }
     });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Ledger fetch failed'); }
     return res.json();
@@ -210,14 +207,9 @@ class DataService {
 
   async dispatchAction(orderId: string, action: string, payload?: any) {
     const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
-    const user = JSON.parse(localStorage.getItem('currentUser') || '{}').username || 'System';
-
     const response = await fetch(`${backendUrl}/api/v1/orders/${orderId}/dispatch-action`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user': user
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({ action, payload })
     });
 
@@ -315,6 +307,7 @@ class DataService {
 
     const response = await fetch(`${BACKEND_URL}/api/upload-pod`, {
       method: 'POST',
+      headers: { 'x-user': this.getCurrentUser() },
       body: formData
     });
 
@@ -334,6 +327,7 @@ class DataService {
 
     const response = await fetch(`${BACKEND_URL}/api/upload-einvoice`, {
       method: 'POST',
+      headers: { 'x-user': this.getCurrentUser() },
       body: formData
     });
 
@@ -351,7 +345,9 @@ class DataService {
     const params = new URLSearchParams();
     if (description) params.append('description', description);
     if (partNumber) params.append('partNumber', partNumber);
-    const response = await fetch(`${BACKEND_URL}/api/v1/procurement/history?${params.toString()}`);
+    const response = await fetch(`${BACKEND_URL}/api/v1/procurement/history?${params.toString()}`, {
+      headers: { 'x-user': this.getCurrentUser() }
+    });
     if (!response.ok) throw new Error("Failed to fetch component history");
     return await response.json();
   }
@@ -503,7 +499,11 @@ class DataService {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
       const response = await fetch(`${backendUrl}/api/v1/relay/dispatch`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ARTIFACT_TOKEN' },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Authorization': 'Bearer ARTIFACT_TOKEN',
+          'x-user': this.getCurrentUser()
+        },
         body: JSON.stringify({
           Host: config.smtpServer,
           Port: config.smtpPort,
@@ -573,7 +573,9 @@ class DataService {
   // We can implement 'exportSecureBackup' by fetching all data from API.
   async exportSecureBackup(config: AppConfig, passcode: string): Promise<Blob> {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/v1/backup`);
+      const response = await fetch(`${BACKEND_URL}/api/v1/backup`, {
+        headers: { 'x-user': this.getCurrentUser() }
+      });
       if (!response.ok) throw new Error("Failed to fetch backup from server");
 
       const data = await response.json();
@@ -603,7 +605,7 @@ class DataService {
 
       const response = await fetch(`${BACKEND_URL}/api/v1/restore`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getHeaders(),
         body: JSON.stringify(data)
       });
 
@@ -622,7 +624,7 @@ class DataService {
   async clearAllData() {
     const res = await fetch(`${BACKEND_URL}/api/v1/wipe`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
+      headers: this.getHeaders()
     });
     if (!res.ok) {
       const err = await res.json();
@@ -632,7 +634,9 @@ class DataService {
   }
 
   async exportFullSystemBackup(passcode: string): Promise<Blob> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/full-backup?password=${encodeURIComponent(passcode)}`);
+    const response = await fetch(`${BACKEND_URL}/api/v1/full-backup?password=${encodeURIComponent(passcode)}`, {
+      headers: { 'x-user': this.getCurrentUser() }
+    });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.error || "Full backup failed");
@@ -646,6 +650,7 @@ class DataService {
     formData.append('password', passcode);
     const response = await fetch(`${BACKEND_URL}/api/v1/full-restore`, {
       method: 'POST',
+      headers: { 'x-user': this.getCurrentUser() },
       body: formData
     });
     if (!response.ok) {
