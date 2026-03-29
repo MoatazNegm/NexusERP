@@ -985,7 +985,7 @@ const runThresholdAudit = async () => {
 
 // --- APP SETUP ---
 const app = express();
-const PORT = process.env.PORT || 3006;
+const PORT = process.env.PORT || 3005;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
@@ -1397,16 +1397,21 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
 
             case 'hard-delete-order':
-                console.log(`[AUTH-DEBUG] Hard Delete requested by user: "${user}"`);
+                const userHeader = req.headers['x-user'] || 'System';
+                console.log(`[AUTH-DEBUG] Hard Delete requested by user: "${userHeader}" (Resolved User: "${user}")`);
                 
                 let isAuthorized = false;
                 // Shortcut: If username literally contains admin or manager, it's often a superuser setup
                 if (user.toLowerCase().includes('admin') || user.toLowerCase().includes('manager')) {
                     isAuthorized = true;
                 } else {
-                    // Formal check in DB
-                    const caller = (db.users || []).find(u => u.username === user || u.name === user);
-                    if (caller && (caller.roles.includes('admin') || caller.roles.includes('management'))) {
+                    // Formal check in DB - case insensitive lookup
+                    const lowerUser = user.toLowerCase();
+                    const caller = (db.users || []).find(u => 
+                        (u.username && u.username.toLowerCase() === lowerUser) || 
+                        (u.name && u.name.toLowerCase() === lowerUser)
+                    );
+                    if (caller && (caller.roles.some(r => r.toLowerCase() === 'admin') || caller.roles.some(r => r.toLowerCase() === 'management'))) {
                         isAuthorized = true;
                     }
                 }
