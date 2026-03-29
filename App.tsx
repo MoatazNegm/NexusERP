@@ -245,7 +245,7 @@ const App: React.FC = () => {
                 <div className="p-4"><div className="text-2xl font-black text-slate-800">{dashboardMetrics.totalRevenue.toLocaleString()} L.E.</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Open Contract Value</div></div>
               </DashboardCard>
               <DashboardCard id="margin" title="Portfolio Margin" icon="fa-chart-pie" onClose={() => { }}>
-                <div className="p-4"><div className="text-2xl font-black text-emerald-600">+{dashboardMetrics.marginPct.toFixed(1)}%</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Average Yield</div></div>
+                <div className="p-4"><div className="text-2xl font-black text-emerald-600">{dashboardMetrics.marginPct.toFixed(1)}%</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Average Yield</div></div>
               </DashboardCard>
               <DashboardCard id="active" title="Active Records" icon="fa-folder-tree" onClose={() => { }}>
                 <div className="p-4"><div className="text-2xl font-black text-blue-600">{orders.filter(o => ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)).length}</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Orders in Pipeline</div></div>

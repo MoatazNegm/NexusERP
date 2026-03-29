@@ -1164,7 +1164,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             </div>
                             <div className="flex justify-between items-center text-amber-400">
                               <span className="text-[10px] font-black uppercase tracking-widest">Tax Amount ({awardTaxPercent}%)</span>
-                              <span className="font-bold">+{awardCalculations.taxAmount.toLocaleString()} L.E.</span>
+                              <span className="font-bold">{awardCalculations.taxAmount.toLocaleString()} L.E.</span>
                             </div>
                             <div className="h-px bg-white/10 my-2"></div>
                             <div className="flex justify-between items-center">

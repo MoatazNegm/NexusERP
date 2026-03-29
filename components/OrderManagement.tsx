@@ -662,7 +662,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   <div className="absolute top-0 right-0 p-8 opacity-5"><i className="fa-solid fa-coins text-9xl"></i></div>
                   <div className="flex flex-col md:flex-row gap-12 relative z-10">
                     <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest">Subtotal Value</div><div className="text-3xl font-black">{totals.subtotal.toLocaleString()} <span className="text-sm opacity-30">L.E.</span></div></div>
-                    <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-rose-400">Total VAT (14%)</div><div className="text-3xl font-black text-rose-400">+{totals.taxTotal.toLocaleString()}</div></div>
+                    <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-rose-400">Total VAT (14%)</div><div className="text-3xl font-black text-rose-400">{totals.taxTotal.toLocaleString()}</div></div>
                     <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-emerald-400">Grand Transaction Total</div><div className="text-4xl font-black text-emerald-400">{totals.total.toLocaleString()}</div></div>
                   </div>
                   <button

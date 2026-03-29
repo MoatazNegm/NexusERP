@@ -209,7 +209,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
               </div>
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Realized Margin</div>
-                <div className="text-2xl font-black text-emerald-600">+{(auditActiveTotals.margin + auditFulfilledTotals.margin).toLocaleString()} <span className="text-xs font-bold opacity-30 text-slate-400">L.E.</span></div>
+                <div className="text-2xl font-black text-emerald-600">{(auditActiveTotals.margin + auditFulfilledTotals.margin).toLocaleString()} <span className="text-xs font-bold opacity-30 text-slate-400">L.E.</span></div>
               </div>
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Global Audit Yield</div>

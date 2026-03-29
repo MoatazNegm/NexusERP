@@ -1397,11 +1397,23 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
 
             case 'hard-delete-order':
-                if (!user.toLowerCase().includes('admin') && !user.toLowerCase().includes('manager')) {
+                console.log(`[AUTH-DEBUG] Hard Delete requested by user: "${user}"`);
+                
+                let isAuthorized = false;
+                // Shortcut: If username literally contains admin or manager, it's often a superuser setup
+                if (user.toLowerCase().includes('admin') || user.toLowerCase().includes('manager')) {
+                    isAuthorized = true;
+                } else {
+                    // Formal check in DB
                     const caller = (db.users || []).find(u => u.username === user || u.name === user);
-                    if (!caller || (!caller.roles.includes('admin') && !caller.roles.includes('management'))) {
-                        throw new Error("Unauthorized: Only superusers or management can hard delete an order");
+                    if (caller && (caller.roles.includes('admin') || caller.roles.includes('management'))) {
+                        isAuthorized = true;
                     }
+                }
+
+                if (!isAuthorized) {
+                    console.error(`[AUTH-FAILURE] Unauthorized hard-delete attempt by "${user}"`);
+                    throw new Error("Unauthorized: Only superusers or management can hard delete an order");
                 }
 
                 // 1. Revert Inventory
