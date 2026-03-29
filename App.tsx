@@ -409,7 +409,7 @@ const App: React.FC = () => {
         className={`${effectivelyCollapsed ? 'w-20' : 'w-72'} bg-slate-900 text-slate-300 flex flex-col fixed h-full z-[60] transition-all duration-300 shadow-2xl border-r border-white/5`}
       >
         <div className="p-6 mb-2">
-          <div className="flex items-center justify-between w-full">
+          <div className="flex items-start justify-between w-full">
             <div className={`flex items-center transition-all duration-300 ${effectivelyCollapsed ? 'flex-col gap-2 w-full justify-center' : 'gap-4'}`}>
               <div className={`flex items-center justify-center transition-all duration-300 ${effectivelyCollapsed ? 'w-10 h-10' : 'w-20 h-20'}`}>
                 {config.settings.companyLogo ? (
@@ -429,7 +429,7 @@ const App: React.FC = () => {
                   </span>
                   <div className="flex items-center gap-0 mt-1 opacity-70">
                     <span className="text-[6px] text-blue-400 uppercase font-black tracking-[0.2em] whitespace-nowrap">ERP system powered by</span>
-                    <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[22px] w-auto brightness-200 contrast-125 -my-2" />
+                    <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[18px] w-auto brightness-200 contrast-125 scale-[1.7] origin-left" />
                   </div>
                 </div>
               )}
@@ -437,9 +437,9 @@ const App: React.FC = () => {
             {!effectivelyCollapsed && (
               <button 
                 onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
-                className="w-8 h-8 rounded-xl hover:bg-white/10 flex items-center justify-center transition-all bg-white/5 border border-white/5"
+                className="w-8 h-8 flex items-center justify-center hover:opacity-100 transition-all opacity-40 bg-transparent border-none self-start mt-4 -mr-2"
               >
-                <i className={`fa-solid ${isSidebarCollapsed ? 'fa-chevron-right' : 'fa-chevron-left'} text-[10px] text-slate-500`}></i>
+                <i className={`fa-solid ${isSidebarCollapsed ? 'fa-chevron-right' : 'fa-chevron-left'} text-[5px] text-white`}></i>
               </button>
             )}
           </div>

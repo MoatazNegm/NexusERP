@@ -60,7 +60,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, config }) => {
               </h1>
               <div className="flex items-center justify-center gap-0 mt-2 opacity-60">
                 <span className="text-[6px] text-blue-400 uppercase font-black tracking-[0.25em] whitespace-nowrap">ERP system powered by</span>
-                <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[28px] w-auto brightness-200 contrast-125 -my-3" />
+                <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[28px] w-auto brightness-200 contrast-125 scale-[1.2] origin-left" />
               </div>
             </div>
 
@@ -117,7 +117,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, config }) => {
             <p className="text-[9px] text-slate-600 mt-2">v2.5.0 Secure Build — © 2024 {config.settings.companyName || 'Nexus Operations'}</p>
             <div className="flex items-center justify-center gap-0 mt-4 opacity-50">
               <span className="text-[7px] text-blue-500 uppercase font-black tracking-[0.3em] whitespace-nowrap">A product licensed by</span>
-              <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[40px] w-auto brightness-200 contrast-125 -my-4" />
+              <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[40px] w-auto brightness-200 contrast-125 scale-[1.2] origin-left" />
             </div>
           </div>
         </div>
