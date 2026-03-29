@@ -399,7 +399,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (!currentUser) return <Login onLogin={setCurrentUser} />;
+  if (!currentUser) return <Login onLogin={setCurrentUser} config={config} />;
 
   return (
     <div className={`min-h-screen flex bg-slate-50`}>
@@ -408,15 +408,43 @@ const App: React.FC = () => {
         onMouseLeave={() => setIsSidebarHovered(false)}
         className={`${effectivelyCollapsed ? 'w-20' : 'w-72'} bg-slate-900 text-slate-300 flex flex-col fixed h-full z-[60] transition-all duration-300 shadow-2xl border-r border-white/5`}
       >
-        <div className="p-6 flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center font-black text-xl text-white shadow-lg shadow-blue-900/50">N</div>
-            {!effectivelyCollapsed && <span className="font-black text-xl tracking-tighter text-white">NEXUS<span className="text-blue-500 font-light">ERP</span></span>}
+        <div className="p-6 mb-2">
+          <div className="flex items-center justify-between w-full">
+            <div className={`flex items-center transition-all duration-300 ${effectivelyCollapsed ? 'flex-col gap-2 w-full justify-center' : 'gap-4'}`}>
+              <div className={`flex items-center justify-center transition-all duration-300 ${effectivelyCollapsed ? 'w-10 h-10' : 'w-20 h-20'}`}>
+                {config.settings.companyLogo ? (
+                  <img 
+                    src={config.settings.companyLogo} 
+                    alt="Logo" 
+                    className="max-w-full max-h-full object-contain drop-shadow-xl" 
+                  />
+                ) : (
+                  <div className="w-full h-full bg-blue-600 rounded-2xl flex items-center justify-center font-black text-2xl text-white shadow-lg shadow-blue-900/50">N</div>
+                )}
+              </div>
+              {!effectivelyCollapsed && (
+                <div className="flex flex-col min-w-0">
+                  <span className="font-black text-xl tracking-tighter text-white uppercase truncate max-w-[150px] leading-tight">
+                    {config.settings.companyName || 'NEXUS ERP'}
+                  </span>
+                  <div className="flex items-center gap-0 mt-1 opacity-70">
+                    <span className="text-[6px] text-blue-400 uppercase font-black tracking-[0.2em] whitespace-nowrap">ERP system powered by</span>
+                    <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[22px] w-auto brightness-200 contrast-125 -my-2" />
+                  </div>
+                </div>
+              )}
+            </div>
+            {!effectivelyCollapsed && (
+              <button 
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                className="w-8 h-8 rounded-xl hover:bg-white/10 flex items-center justify-center transition-all bg-white/5 border border-white/5"
+              >
+                <i className={`fa-solid ${isSidebarCollapsed ? 'fa-chevron-right' : 'fa-chevron-left'} text-[10px] text-slate-500`}></i>
+              </button>
+            )}
           </div>
-          {!effectivelyCollapsed && (
-            <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="w-8 h-8 rounded-xl hover:bg-white/10 flex items-center justify-center transition-colors">
-              <i className={`fa-solid ${isSidebarCollapsed ? 'fa-chevron-right' : 'fa-chevron-left'} text-[10px]`}></i>
-            </button>
+          {effectivelyCollapsed && (
+            <div className="w-full h-px bg-white/5 mt-6"></div>
           )}
         </div>
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">
