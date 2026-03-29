@@ -1,13 +1,14 @@
 
 import React, { useState } from 'react';
-import { User } from '../types';
+import { User, AppConfig } from '../types';
 import { dataService } from '../services/dataService';
 
 interface LoginProps {
   onLogin: (user: User) => void;
+  config: AppConfig;
 }
 
-export const Login: React.FC<LoginProps> = ({ onLogin }) => {
+export const Login: React.FC<LoginProps> = ({ onLogin, config }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -46,13 +47,19 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
       <div className="w-full max-w-md relative z-10">
         <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-[2.5rem] p-10 shadow-2xl">
-          <div className="text-center mb-10">
-            <div className="inline-flex w-16 h-16 bg-blue-600 rounded-2xl items-center justify-center text-white text-3xl font-black mb-6 shadow-xl shadow-blue-900/40">
-              N
+            <div className="flex flex-col items-center gap-2 mb-6">
+              {config.settings.companyLogo ? (
+                <img src={config.settings.companyLogo} alt="Logo" className="h-20 w-auto object-contain drop-shadow-2xl" />
+              ) : (
+                <div className="inline-flex w-16 h-16 bg-blue-600 rounded-2xl items-center justify-center text-white text-3xl font-black shadow-xl shadow-blue-900/40">
+                  N
+                </div>
+              )}
             </div>
-            <h1 className="text-2xl font-black text-white tracking-tight">NEXUS<span className="text-blue-500">ERP</span></h1>
-            <p className="text-slate-400 text-sm mt-2 font-medium">Enterprise Resource Planning Core</p>
-          </div>
+            <h1 className="text-2xl font-black text-white tracking-tight uppercase">
+              {config.settings.companyName || 'NEXUS ERP'}
+            </h1>
+            <p className="text-blue-500 text-[9px] font-black uppercase tracking-[0.4em] mt-2">powered by Quickstor</p>
 
           <form onSubmit={handleLogin} className="space-y-6">
             <div className="space-y-2">
@@ -104,7 +111,11 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           <div className="mt-10 pt-8 border-t border-slate-800 text-center">
             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Authorized Access Only</p>
-            <p className="text-[9px] text-slate-600 mt-2">v2.5.0 Secure Build — © 2024 Nexus Operations</p>
+            <p className="text-[9px] text-slate-600 mt-2">v2.5.0 Secure Build — © 2024 {config.settings.companyName || 'Nexus Operations'}</p>
+            <div className="flex items-center justify-center gap-1.5 mt-4 opacity-50">
+              <span className="text-[7px] text-blue-500 uppercase font-black tracking-[0.3em] whitespace-nowrap">A product licensed by</span>
+              <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[8px] w-auto brightness-200 contrast-125" />
+            </div>
           </div>
         </div>
       </div>
