@@ -164,6 +164,13 @@ const readDb = () => {
             } else {
                 return {};
             }
+        } else {
+            // Create a local backup of the current db.json on startup to prevent accidental data loss
+            try {
+                fs.copyFileSync(DB_PATH, DB_PATH + '.local.bak');
+            } catch (e) {
+                console.error("Failed to create local db backup", e);
+            }
         }
         const data = fs.readFileSync(DB_PATH, 'utf8');
         return JSON.parse(data);
