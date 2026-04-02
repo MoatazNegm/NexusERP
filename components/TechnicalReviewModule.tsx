@@ -64,6 +64,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [compQty, setCompQty] = useState(1);
   const [showCompSuggestions, setShowCompSuggestions] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'asc' });
+
 
   // Rollback state
   const [rollbackReason, setRollbackReason] = useState<string | null>(null);
@@ -128,8 +130,52 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
       return matchPO || matchCustomer || matchRef || matchItems;
     });
-    return filtered.sort((a, b) => (a.orderDate || a.dataEntryTimestamp || '').localeCompare(b.orderDate || b.dataEntryTimestamp || ''));
-  }, [searchQuery, orders]);
+
+    return filtered.sort((a, b) => {
+      let aVal: any = '';
+      let bVal: any = '';
+
+      switch (sortConfig.key) {
+        case 'id':
+          aVal = a.internalOrderNumber || '';
+          bVal = b.internalOrderNumber || '';
+          break;
+        case 'orderDate':
+          aVal = a.orderDate || a.dataEntryTimestamp || '';
+          bVal = b.orderDate || b.dataEntryTimestamp || '';
+          break;
+        case 'customer':
+          aVal = a.customerName || '';
+          bVal = b.customerName || '';
+          break;
+        case 'lineCount':
+          aVal = a.items.length;
+          bVal = b.items.length;
+          break;
+        default:
+          aVal = a.orderDate || a.dataEntryTimestamp || '';
+          bVal = b.orderDate || b.dataEntryTimestamp || '';
+      }
+
+      if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [searchQuery, orders, sortConfig]);
+
+  const requestSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const SortIcon = ({ column }: { column: string }) => {
+    if (sortConfig.key !== column) return <i className="fa-solid fa-sort ml-2 opacity-20 group-hover:opacity-100 transition-opacity"></i>;
+    return <i className={`fa-solid fa-sort-${sortConfig.direction === 'asc' ? 'up' : 'down'} ml-2 text-blue-600`}></i>;
+  };
+
 
   const historyData = useMemo(() => {
     const history: Record<string, {
@@ -510,15 +556,23 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
             <table className="w-full text-left">
               <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest">
                 <tr>
-                  <th className="px-8 py-5">PO Identifier</th>
-                  <th className="px-8 py-5">PO Received</th>
-                  <th className="px-8 py-5">Customer Entity</th>
-                  <th className="px-8 py-5">Line Count</th>
-
+                  <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('id')}>
+                    PO Identifier <SortIcon column="id" />
+                  </th>
+                  <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('orderDate')}>
+                    PO Received <SortIcon column="orderDate" />
+                  </th>
+                  <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('customer')}>
+                    Customer Entity <SortIcon column="customer" />
+                  </th>
+                  <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('lineCount')}>
+                    Line Count <SortIcon column="lineCount" />
+                  </th>
                   <th className="px-8 py-5">SLA Threshold</th>
                   <th className="px-8 py-5 text-right">BoM Status</th>
                 </tr>
               </thead>
+
               <tbody className="divide-y divide-slate-50">
                 {queueOrders.map(o => {
                   const acceptedCount = o.items.filter(it => it.isAccepted).length;
