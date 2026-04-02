@@ -101,6 +101,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [resolutionChoices, setResolutionChoices] = useState<Record<string, CompResolution>>({});
   const [pendingRollbackOrder, setPendingRollbackOrder] = useState<CustomerOrder | null>(null);
   const [allOrders, setAllOrders] = useState<CustomerOrder[]>([]);
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'asc' });
+
 
   useEffect(() => { fetchData(); }, [refreshKey]);
 
@@ -131,8 +133,53 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         });
       });
     });
-    return Array.from(map.values());
-  }, [orders]);
+    
+    // Convert to array and Apply Sorting
+    return Array.from(map.values()).sort((a, b) => {
+      let aVal: any = '';
+      let bVal: any = '';
+
+      switch (sortConfig.key) {
+        case 'internalOrderNumber':
+          aVal = a.order.internalOrderNumber || '';
+          bVal = b.order.internalOrderNumber || '';
+          break;
+        case 'orderDate':
+          aVal = a.order.orderDate || a.order.dataEntryTimestamp || '';
+          bVal = b.order.orderDate || b.order.dataEntryTimestamp || '';
+          break;
+        case 'customer':
+          aVal = a.order.customerName || '';
+          bVal = b.order.customerName || '';
+          break;
+        case 'customerReferenceNumber':
+          aVal = a.order.customerReferenceNumber || '';
+          bVal = b.order.customerReferenceNumber || '';
+          break;
+        default:
+          aVal = a.order.orderDate || a.order.dataEntryTimestamp || '';
+          bVal = b.order.orderDate || b.order.dataEntryTimestamp || '';
+      }
+
+      if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [orders, sortConfig]);
+
+  const requestSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const SortIcon = ({ column }: { column: string }) => {
+    if (sortConfig.key !== column) return <i className="fa-solid fa-sort ml-2 opacity-20"></i>;
+    return <i className={`fa-solid fa-sort-${sortConfig.direction === 'asc' ? 'up' : 'down'} ml-2 text-blue-600`}></i>;
+  };
+
 
   const totalComponents = orderGroups.reduce((sum, g) => sum + g.comps.length, 0);
 
@@ -706,12 +753,38 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           </div>
 
           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-            <div className="flex justify-between items-center mb-10">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
               <div>
-                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Procurement & Sourcing Control</h2>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Strategic Supply Chain Orchestration • {totalComponents} Items across {orderGroups.length} Orders</p>
+                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Strategic Procurement Operations</h2>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1.5 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                  Supply Chain Orchestration • {totalComponents} Items across {orderGroups.length} Orders
+                </p>
+              </div>
+
+              {/* Sorting Bar */}
+              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 self-end md:self-auto">
+                <span className="text-[9px] font-black uppercase text-slate-400 px-3 tracking-widest whitespace-nowrap">Priority Sort:</span>
+                <div className="flex gap-1">
+                  {[
+                    { key: 'orderDate', label: 'PO Received' },
+                    { key: 'customer', label: 'Entity' },
+                    { key: 'customerReferenceNumber', label: 'PO #' },
+                    { key: 'internalOrderNumber', label: 'Int ID' }
+                  ].map(btn => (
+                    <button
+                      key={btn.key}
+                      onClick={() => requestSort(btn.key)}
+                      className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${sortConfig.key === btn.key ? 'bg-white text-blue-600 shadow-md ring-1 ring-blue-50' : 'text-slate-400 hover:text-slate-600'}`}
+                    >
+                      {btn.label}
+                      <SortIcon column={btn.key} />
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
+
 
             <div className="space-y-8">
               {orderGroups.map(({ order: o, comps }) => {
