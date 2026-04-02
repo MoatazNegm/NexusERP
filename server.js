@@ -156,7 +156,15 @@ const isOrderFullyDelivered = (order) => {
 // --- DATABASE HANDLERS ---
 const readDb = () => {
     try {
-        if (!fs.existsSync(DB_PATH)) return {};
+        if (!fs.existsSync(DB_PATH)) {
+            const stubPath = path.join(__dirname, 'db.stub.json');
+            if (fs.existsSync(stubPath)) {
+                fs.copyFileSync(stubPath, DB_PATH);
+                console.log("Initialized db.json from db.stub.json");
+            } else {
+                return {};
+            }
+        }
         const data = fs.readFileSync(DB_PATH, 'utf8');
         return JSON.parse(data);
     } catch (err) {
@@ -447,7 +455,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             item.productionType = 'TRADING';
         }
 
-        if (item.productionType === 'TRADING') {
+        if (item.productionType === 'TRADING' || item.productionType === 'OUTSOURCING') {
             // Ensure exactly one component that mirrors the item
             if (!item.components || item.components.length === 0) {
                 item.components = [{
@@ -1505,11 +1513,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const sptItemIdx = order.items.findIndex(i => i.id === payload.itemId);
                 if (sptItemIdx === -1) throw new Error("Item not found");
                 const sptItem = order.items[sptItemIdx];
-                const newType = payload.type; // 'MANUFACTURING' | 'TRADING'
+                const newType = payload.type; // 'MANUFACTURING' | 'TRADING' | 'OUTSOURCING'
                 
                 sptItem.productionType = newType;
                 
-                if (newType === 'TRADING') {
+                if (newType === 'TRADING' || newType === 'OUTSOURCING') {
                     // Release any existing reservations before clearing for Trading
                     (sptItem.components || []).forEach(comp => {
                         if (comp.source === 'STOCK' && comp.inventoryItemId && ['RESERVED', 'AVAILABLE'].includes(comp.status)) {
@@ -1522,7 +1530,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     });
                     // Clear components; processedOrderInternal will recreate the mirrored one automatically
                     sptItem.components = [];
-                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to TRADING. Mirror sync enabled.`, order.status, user));
+                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}. Mirror sync enabled.`, order.status, user));
                 } else {
                     order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to MANUFACTURING.`, order.status, user));
                 }

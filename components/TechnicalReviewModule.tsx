@@ -677,8 +677,17 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     <i className="fa-solid fa-cart-shopping mr-2"></i> Trading
                                   </button>
                                   <button
+                                    onClick={() => dataService.setProductionType(selectedOrder.id, selectedItem.id, 'OUTSOURCING').then(o => { 
+                                      setSelectedOrder(o); 
+                                      setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); 
+                                    })}
+                                    className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${selectedItem.productionType === 'OUTSOURCING' ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                  >
+                                    <i className="fa-solid fa-handshake mr-2"></i> Outsourcing
+                                  </button>
+                                  <button
                                     onClick={() => {
-                                      if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length) {
+                                      if ((selectedItem.productionType === 'TRADING' || selectedItem.productionType === 'OUTSOURCING') && selectedItem.components?.length) {
                                         if (!confirm("Switching to Manufacturing will keep existing components but allow adding custom ones. Continue?")) return;
                                       }
                                       dataService.setProductionType(selectedOrder.id, selectedItem.id, 'MANUFACTURING').then(o => { 
@@ -693,7 +702,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 </div>
                               </div>
                               <div className="text-[10px] font-bold text-blue-600 uppercase tracking-tight">
-                                <i className="fa-solid fa-brain-circuit mr-1"></i> {selectedItem.productionType === 'TRADING' ? 'Trading Mirror Active' : 'Sourcing Engine Active'}
+                                <i className="fa-solid fa-brain-circuit mr-1"></i> {(selectedItem.productionType === 'TRADING' || selectedItem.productionType === 'OUTSOURCING') ? (selectedItem.productionType === 'TRADING' ? 'Trading Mirror Active' : 'Contract Sourcing Sync') : 'Sourcing Engine Active'}
                               </div>
                             </div>
                             
@@ -830,18 +839,18 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 </div>
                               </div>
                             </div>
-                            {selectedItem.productionType === 'TRADING' && (
+                            {(selectedItem.productionType === 'TRADING' || selectedItem.productionType === 'OUTSOURCING') && (
                               <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                   <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
                                     <i className="fa-solid fa-repeat animate-spin-slow"></i>
                                   </div>
                                   <div>
-                                    <div className="text-[10px] font-black text-blue-900 uppercase">Trading Mode Active</div>
+                                    <div className="text-[10px] font-black text-blue-900 uppercase">{selectedItem.productionType === 'TRADING' ? 'Trading Mode Active' : 'Outsourcing Mode Active'}</div>
                                     <div className="text-xs text-blue-600 font-medium italic">Component is automatically mirrored from the line item descriptor.</div>
                                   </div>
                                 </div>
-                                <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-white px-3 py-1 rounded-lg border border-blue-50">Locked for Trading</div>
+                                <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-white px-3 py-1 rounded-lg border border-blue-50">Locked for {selectedItem.productionType === 'TRADING' ? 'Trading' : 'Outsourcing'}</div>
                               </div>
                             )}
                           </div>

@@ -224,7 +224,7 @@ class DataService {
     return this.dispatchAction(orderId, 'toggle-acceptance', { itemId });
   }
 
-  async setProductionType(orderId: string, itemId: string, type: 'MANUFACTURING' | 'TRADING') {
+  async setProductionType(orderId: string, itemId: string, type: 'MANUFACTURING' | 'TRADING' | 'OUTSOURCING') {
     return this.dispatchAction(orderId, 'set-production-type', { itemId, type });
   }
 
@@ -397,10 +397,17 @@ class DataService {
     if (params.query) {
       const q = params.query.toLowerCase();
       orders = orders.filter((o: CustomerOrder) =>
-        o.internalOrderNumber.toLowerCase().includes(q) ||
-        o.customerName.toLowerCase().includes(q) ||
-        o.customerReferenceNumber.toLowerCase().includes(q) ||
-        o.items.some(i => i.description.toLowerCase().includes(q))
+        (o.internalOrderNumber || '').toLowerCase().includes(q) ||
+        (o.customerName || '').toLowerCase().includes(q) ||
+        (o.customerReferenceNumber || '').toLowerCase().includes(q) ||
+        o.items.some(i => 
+          (i.id || '').toLowerCase().includes(q) ||
+          (i.description || '').toLowerCase().includes(q) ||
+          (i.components || []).some(c => 
+            (c.componentNumber || '').toLowerCase().includes(q) ||
+            (c.description || '').toLowerCase().includes(q)
+          )
+        )
       );
     }
     return orders;

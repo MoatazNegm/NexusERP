@@ -270,8 +270,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         }));
       }
       setMessage({ type: 'success', text: 'Vision mapping complete.' });
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Intelligence extraction failed.' });
+    } catch (err: any) {
+      console.error("AI Error:", err);
+      setMessage({ type: 'error', text: `Extraction failed: ${err.message}` });
     }
     setIsScanning(false);
   };

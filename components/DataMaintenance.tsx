@@ -18,9 +18,16 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
 
+  const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' });
+  const [aiDraftOpenAI, setAiDraftOpenAI] = useState(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
+  const [isSavingAI, setIsSavingAI] = useState(false);
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
   const [showPasscodeModal, setShowPasscodeModal] = useState<{ type: 'export' | 'import' | 'full-export' | 'full-import', file?: File } | null>(null);
   const [passcode, setPasscode] = useState('');
+  const [backupFileName, setBackupFileName] = useState('');
+
 
   const [groups, setGroups] = useState<UserGroup[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -59,6 +66,12 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     setGroups(g);
     setUsers(u);
   };
+
+  useEffect(() => {
+    setAiDraftGemini(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' });
+    setAiDraftOpenAI(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
+  }, [config.settings.geminiConfig, config.settings.openaiConfig]);
+
 
   const updateSetting = (section: 'modules' | 'settings', key: string, value: any) => {
     const newConfig = {
@@ -167,8 +180,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `nexus-archive-${new Date().toISOString().slice(0, 10)}.nxback`;
+      link.download = backupFileName.endsWith('.nxback') ? backupFileName : `${backupFileName}.nxback`;
       link.click();
+
       setMessage({ type: 'success', text: 'Encrypted backup generated.' });
       setPasscode('');
     } catch (e) {
@@ -186,8 +200,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `nexus-full-archive-${new Date().toISOString().slice(0, 10)}.nxarchive`;
+      link.download = backupFileName.endsWith('.nxarchive') ? backupFileName : `${backupFileName}.nxarchive`;
       link.click();
+
       setMessage({ type: 'success', text: 'Secure full system archive generated successfully.' });
       setPasscode('');
     } catch (e) {
@@ -469,15 +484,15 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">API Key</label>
                     <div className="relative">
                       <input
-                        type="password"
-                        className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
-                        value={config.settings.geminiConfig?.apiKey || ''}
-                        onChange={e => {
-                          const newConfig = { ...config.settings.geminiConfig, apiKey: e.target.value };
-                          updateSetting('settings', 'geminiConfig', newConfig);
-                        }}
+                        type={showGeminiKey ? "text" : "password"}
+                        className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all pr-12"
+                        value={aiDraftGemini.apiKey}
+                        onChange={e => setAiDraftGemini(prev => ({ ...prev, apiKey: e.target.value.trim() }))}
                         placeholder="Enter your Gemini API Key..."
                       />
+                      <button type="button" onClick={() => setShowGeminiKey(!showGeminiKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-indigo-600 transition-colors">
+                        <i className={`fa-solid ${showGeminiKey ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                      </button>
                     </div>
                     <p className="text-[9px] text-slate-400 font-medium ml-1">Key is stored locally in your secure configuration.</p>
                   </div>
@@ -486,13 +501,31 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <input
                       type="text"
                       className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
-                      value={config.settings.geminiConfig?.modelName || 'gemini-1.5-flash'}
-                      onChange={e => {
-                        const newConfig = { ...config.settings.geminiConfig, modelName: e.target.value };
-                        updateSetting('settings', 'geminiConfig', newConfig);
-                      }}
+                      value={aiDraftGemini.modelName}
+                      onChange={e => setAiDraftGemini(prev => ({ ...prev, modelName: e.target.value }))}
                       placeholder="e.g. gemini-1.5-flash"
                     />
+                  </div>
+                  <div className="pt-4">
+                    <button 
+                      disabled={isSavingAI}
+                      onClick={async () => {
+                        setIsSavingAI(true);
+                        try {
+                          updateSetting('settings', 'geminiConfig', aiDraftGemini);
+                          const newConfig = { ...config, settings: { ...config.settings, geminiConfig: aiDraftGemini } };
+                          await dataService.updateSettings(newConfig.settings);
+                          setMessage({ type: 'success', text: 'Gemini Configuration Saved Successfully.' });
+                        } catch (e) {
+                          setMessage({ type: 'error', text: 'Error saving to backend.' });
+                        } finally {
+                          setIsSavingAI(false);
+                        }
+                      }}
+                      className={`px-8 py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg shadow-indigo-200 transition-all ${isSavingAI ? 'opacity-70 cursor-wait' : 'hover:bg-indigo-700'}`}
+                    >
+                      {isSavingAI ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Saving...</> : 'Save Configuration'}
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -503,16 +536,18 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   </div>
                   <div className="space-y-2">
                     <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">API Key</label>
-                    <input
-                      type="password"
-                      className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
-                      value={config.settings.openaiConfig.apiKey}
-                      onChange={e => {
-                        const newConfig = { ...config.settings.openaiConfig, apiKey: e.target.value };
-                        updateSetting('settings', 'openaiConfig', newConfig);
-                      }}
-                      placeholder="sk-..."
-                    />
+                    <div className="relative">
+                      <input
+                        type={showOpenAIKey ? "text" : "password"}
+                        className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all pr-12"
+                        value={aiDraftOpenAI.apiKey}
+                        onChange={e => setAiDraftOpenAI(prev => ({ ...prev, apiKey: e.target.value.trim() }))}
+                        placeholder="sk-..."
+                      />
+                      <button type="button" onClick={() => setShowOpenAIKey(!showOpenAIKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-600 transition-colors">
+                        <i className={`fa-solid ${showOpenAIKey ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -520,11 +555,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       <input
                         type="text"
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
-                        value={config.settings.openaiConfig.baseUrl}
-                        onChange={e => {
-                          const newConfig = { ...config.settings.openaiConfig, baseUrl: e.target.value };
-                          updateSetting('settings', 'openaiConfig', newConfig);
-                        }}
+                        value={aiDraftOpenAI.baseUrl}
+                        onChange={e => setAiDraftOpenAI(prev => ({ ...prev, baseUrl: e.target.value }))}
                         placeholder="https://api.openai.com/v1"
                       />
                     </div>
@@ -533,14 +565,32 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       <input
                         type="text"
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
-                        value={config.settings.openaiConfig.modelName}
-                        onChange={e => {
-                          const newConfig = { ...config.settings.openaiConfig, modelName: e.target.value };
-                          updateSetting('settings', 'openaiConfig', newConfig);
-                        }}
+                        value={aiDraftOpenAI.modelName}
+                        onChange={e => setAiDraftOpenAI(prev => ({ ...prev, modelName: e.target.value }))}
                         placeholder="gpt-4o"
                       />
                     </div>
+                  </div>
+                  <div className="pt-4">
+                    <button 
+                      disabled={isSavingAI}
+                      onClick={async () => {
+                        setIsSavingAI(true);
+                        try {
+                          updateSetting('settings', 'openaiConfig', aiDraftOpenAI);
+                          const newConfig = { ...config, settings: { ...config.settings, openaiConfig: aiDraftOpenAI } };
+                          await dataService.updateSettings(newConfig.settings);
+                          setMessage({ type: 'success', text: 'OpenAI Configuration Saved Successfully.' });
+                        } catch (e) {
+                          setMessage({ type: 'error', text: 'Error saving to backend.' });
+                        } finally {
+                          setIsSavingAI(false);
+                        }
+                      }}
+                      className={`px-8 py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg shadow-emerald-200 transition-all ${isSavingAI ? 'opacity-70 cursor-wait' : 'hover:bg-emerald-700'}`}
+                    >
+                      {isSavingAI ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Saving...</> : 'Save Configuration'}
+                    </button>
                   </div>
                 </div>
 
@@ -1147,7 +1197,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed italic">Recommended for server migrations or disaster recovery. Bundles `db.json` and the entire `uploads/` directory into a single archive.</p>
                 <div className="grid grid-cols-2 gap-4 pt-2">
-                  <button onClick={() => setShowPasscodeModal({ type: 'full-export' })} disabled={isProcessing} className="py-4 bg-white border border-sky-200 text-sky-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-sky-50 transition-colors disabled:opacity-50">
+                  <button onClick={() => {
+                    setBackupFileName(`nexus-full-archive-${new Date().toISOString().slice(0, 10)}`);
+                    setShowPasscodeModal({ type: 'full-export' });
+                  }} disabled={isProcessing} className="py-4 bg-white border border-sky-200 text-sky-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-sky-50 transition-colors disabled:opacity-50">
                     {isProcessing ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : ''}Download Archive
                   </button>
                   <button onClick={() => fullBackupInputRef.current?.click()} disabled={isProcessing} className="py-4 bg-sky-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:bg-sky-700 transition-all disabled:opacity-50">
@@ -1170,7 +1223,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 space-y-4">
                   <h4 className="text-sm font-black text-slate-700 uppercase">System JSON Records</h4>
                   <p className="text-xs text-slate-500 leading-relaxed">Generates an AES-256 encrypted snapshot of database records (excludes physical files).</p>
-                  <button onClick={() => setShowPasscodeModal({ type: 'export' })} className="w-full py-4 bg-white border border-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-slate-50 transition-colors">Export Snapshot</button>
+                  <button onClick={() => {
+                    setBackupFileName(`nexus-archive-${new Date().toISOString().slice(0, 10)}`);
+                    setShowPasscodeModal({ type: 'export' });
+                  }} className="w-full py-4 bg-white border border-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-slate-50 transition-colors">Export Snapshot</button>
                 </div>
                 <div className="p-8 bg-blue-50/30 rounded-[2.5rem] border border-blue-100 space-y-4">
                   <h4 className="text-sm font-black text-slate-700 uppercase">Import JSON Snapshot</h4>
@@ -1218,6 +1274,19 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   ? 'Enter the administrative passphrase used to encrypt this archive to proceed.'
                   : 'Set a highly secure passphrase. You will need this to decrypt the archive later.'}
               </p>
+
+              {(showPasscodeModal.type === 'export' || showPasscodeModal.type === 'full-export') && (
+                <div className="mb-4 space-y-1">
+                  <label className="text-[10px] uppercase font-black tracking-widest text-slate-400">Archive Name</label>
+                  <input
+                    type="text"
+                    className="w-full p-4 bg-slate-50 border rounded-2xl text-center text-sm font-bold outline-none focus:border-blue-500 transition-all"
+                    value={backupFileName}
+                    onChange={e => setBackupFileName(e.target.value)}
+                  />
+                </div>
+              )}
+
               <input
                 type="password"
                 autoFocus

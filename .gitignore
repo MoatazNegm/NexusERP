@@ -26,6 +26,11 @@ dist-ssr
 # Uploads
 uploads/
 
+# Databases & Backups
+db.json
+
+
+
 # Test Scripts
 test_*.js
 verify_*.js

@@ -169,7 +169,7 @@ export interface CustomerOrderItem {
   logs: LogEntry[];
   isAccepted?: boolean;
   components?: ManufacturingComponent[];
-  productionType?: 'MANUFACTURING' | 'TRADING';
+  productionType?: 'MANUFACTURING' | 'TRADING' | 'OUTSOURCING';
   manufacturedQty?: number;
   hubReceivedQty?: number;
   approvedForDispatchQty?: number;
