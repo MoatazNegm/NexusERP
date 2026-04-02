@@ -355,7 +355,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           return;
         }
 
-        await dataService.addOrder({
+        const newOrder = await dataService.addOrder({
           customerName,
           customerReferenceNumber,
           orderDate,
@@ -365,7 +365,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           targetDeliveryDate,
           items: items as any
         });
-        setMessage({ type: 'success', text: 'Acquisition committed.' });
+        setMessage({ 
+          type: 'success', 
+          text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}` 
+        });
       }
       await fetchData();
       resetForm();
