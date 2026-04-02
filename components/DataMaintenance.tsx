@@ -68,9 +68,15 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   };
 
   useEffect(() => {
-    setAiDraftGemini(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' });
-    setAiDraftOpenAI(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
+    // Only reset drafts if they are empty, preventing mid-typing erasures.
+    if (!aiDraftGemini.apiKey && config.settings.geminiConfig?.apiKey) {
+      setAiDraftGemini(config.settings.geminiConfig);
+    }
+    if (!aiDraftOpenAI.apiKey && config.settings.openaiConfig?.apiKey) {
+      setAiDraftOpenAI(config.settings.openaiConfig); 
+    }
   }, [config.settings.geminiConfig, config.settings.openaiConfig]);
+
 
 
   const updateSetting = (section: 'modules' | 'settings', key: string, value: any) => {
@@ -481,7 +487,14 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">Gemini Configuration</h4>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">API Key</label>
+                    <div className="flex items-center justify-between ml-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">API Key</label>
+                      {config.settings.geminiConfig?.apiKey && (
+                        <span className="text-[8px] font-black text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">
+                           Active: {showGeminiKey ? config.settings.geminiConfig.apiKey : '••••' + config.settings.geminiConfig.apiKey.slice(-4)}
+                        </span>
+                      )}
+                    </div>
                     <div className="relative">
                       <input
                         type={showGeminiKey ? "text" : "password"}
@@ -497,7 +510,12 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <p className="text-[9px] text-slate-400 font-medium ml-1">Key is stored locally in your secure configuration.</p>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Model Name</label>
+                    <div className="flex items-center justify-between ml-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Model Name</label>
+                      <span className="text-[8px] font-black text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">
+                         Active: {config.settings.geminiConfig?.modelName || 'gemini-1.5-flash'}
+                      </span>
+                    </div>
                     <input
                       type="text"
                       className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
@@ -535,7 +553,14 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">OpenAI / Compatible Configuration</h4>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">API Key</label>
+                    <div className="flex items-center justify-between ml-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">API Key</label>
+                      {config.settings.openaiConfig?.apiKey && (
+                        <span className="text-[8px] font-black text-emerald-400 bg-emerald-50 px-2 py-0.5 rounded-full uppercase">
+                           Active: {showOpenAIKey ? config.settings.openaiConfig.apiKey : '••••' + config.settings.openaiConfig.apiKey.slice(-4)}
+                        </span>
+                      )}
+                    </div>
                     <div className="relative">
                       <input
                         type={showOpenAIKey ? "text" : "password"}
@@ -551,7 +576,12 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Base URL</label>
+                      <div className="flex items-center justify-between ml-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Base URL</label>
+                        <span className="text-[8px] font-black text-emerald-400 bg-emerald-50 px-2 py-0.5 rounded-full uppercase truncate max-w-[100px]">
+                           Active: {config.settings.openaiConfig?.baseUrl || 'N/A'}
+                        </span>
+                      </div>
                       <input
                         type="text"
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
@@ -561,7 +591,12 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Model Name</label>
+                      <div className="flex items-center justify-between ml-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Model Name</label>
+                        <span className="text-[8px] font-black text-emerald-400 bg-emerald-50 px-2 py-0.5 rounded-full uppercase">
+                           Active: {config.settings.openaiConfig?.modelName || 'gpt-4o'}
+                        </span>
+                      </div>
                       <input
                         type="text"
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
