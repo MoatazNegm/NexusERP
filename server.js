@@ -167,20 +167,30 @@ const isOrderFullyDelivered = (order) => {
 // --- DATABASE HANDLERS ---
 const readDb = () => {
     try {
+        const BAK_PATH = DB_PATH + '.local.bak';
+
         if (!fs.existsSync(DB_PATH)) {
-            const stubPath = path.join(__dirname, 'db.stub.json');
-            if (fs.existsSync(stubPath)) {
-                fs.copyFileSync(stubPath, DB_PATH);
-                console.log("Initialized db.json from db.stub.json");
-            } else {
-                return {};
+            // Priority 1: Check if we have a local safety backup (prevents data loss on env reset/git pull)
+            if (fs.existsSync(BAK_PATH)) {
+                fs.copyFileSync(BAK_PATH, DB_PATH);
+                console.log(`[System] CRITICAL: db.json was missing! Restored from local backup (.local.bak) to prevent data loss.`);
+            } 
+            // Priority 2: Fallback to the production stub if no backup exists
+            else {
+                const stubPath = path.join(__dirname, 'db.stub.json');
+                if (fs.existsSync(stubPath)) {
+                    fs.copyFileSync(stubPath, DB_PATH);
+                    console.log("[System] Initialized db.json from db.stub.json (no local backup found)");
+                } else {
+                    return {};
+                }
             }
         } else {
-            // Create a local backup of the current db.json on startup to prevent accidental data loss
+            // Create/Refresh the local backup on every successful server start for future safety
             try {
-                fs.copyFileSync(DB_PATH, DB_PATH + '.local.bak');
+                fs.copyFileSync(DB_PATH, BAK_PATH);
             } catch (e) {
-                console.error("Failed to create local db backup", e);
+                console.error("Failed to refresh local db backup", e);
             }
         }
         const data = fs.readFileSync(DB_PATH, 'utf8');
