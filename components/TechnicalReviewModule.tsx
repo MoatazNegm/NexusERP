@@ -62,7 +62,10 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [compSearch, setCompSearch] = useState('');
   const [partNumSearch, setPartNumSearch] = useState('');
   const [compQty, setCompQty] = useState(1);
+  const [compDuration, setCompDuration] = useState('');
+  const [compScope, setCompScope] = useState('');
   const [showCompSuggestions, setShowCompSuggestions] = useState(false);
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'asc' });
 
@@ -316,7 +319,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
           unitCost: inv.lastCost,
           taxPercent: 14,
           source: 'PROCUREMENT',
-          status: 'PENDING_OFFER'
+          status: 'PENDING_OFFER',
+          contractDuration: compDuration,
+          scopeOfWork: compScope || inv.description
         });
 
         setSelectedOrder(finalOrder);
@@ -325,12 +330,15 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
       setCompSearch('');
       setPartNumSearch('');
+      setCompDuration('');
+      setCompScope('');
       setShowCompSuggestions(false);
       fetchData();
     } catch (e: any) {
       alert(e.message || 'Failed to add component');
     }
   };
+
 
   const handleAddSupplierPart = async (supp: Supplier, part: SupplierPart) => {
     if (!selectedOrder || !selectedItem) return;
@@ -344,15 +352,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       supplierId: supp.id,
       supplierPartId: part.id,
       supplierPartNumber: part.partNumber,
+      contractNumber: selectedItem.productionType === 'OUTSOURCING' ? part.partNumber : undefined,
+      contractDuration: compDuration,
+      scopeOfWork: compScope || part.description,
       status: 'PENDING_OFFER'
     });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setCompSearch('');
     setPartNumSearch('');
+    setCompDuration('');
+    setCompScope('');
     setShowCompSuggestions(false);
     fetchData();
   };
+
 
   const handleAddCustomProcurement = async () => {
     if (!selectedOrder || !selectedItem || (!compSearch.trim() && !partNumSearch.trim())) return;
@@ -364,15 +378,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       taxPercent: 14,
       source: 'PROCUREMENT',
       status: 'PENDING_OFFER',
-      supplierPartNumber: partNumSearch.trim() || undefined
+      supplierPartNumber: partNumSearch.trim() || undefined,
+      contractNumber: selectedItem.productionType === 'OUTSOURCING' ? partNumSearch.trim() : undefined,
+      contractDuration: compDuration,
+      scopeOfWork: compScope || compSearch.trim()
     });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setCompSearch('');
     setPartNumSearch('');
+    setCompDuration('');
+    setCompScope('');
     setShowCompSuggestions(false);
     fetchData();
   };
+
 
   const handleToggleAcceptance = async (item: CustomerOrderItem) => {
     if (!selectedOrder) return;
@@ -786,22 +806,24 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 />
                               </div>
                               <div className="flex-1 space-y-1.5">
-                                <label className="text-[9px] font-black text-slate-400 uppercase ml-1">Search Sourcing Catalogs (Stock or Market)</label>
+                                <label className={`text-[9px] font-black uppercase ml-1 transition-all ${selectedItem.productionType === 'OUTSOURCING' ? 'text-violet-600' : 'text-slate-400'}`}>
+                                  {selectedItem.productionType === 'OUTSOURCING' ? 'Contract / Ref Num' : 'Search Sourcing Catalogs (Stock or Market)'}
+                                </label>
                                 <div className="flex gap-2 relative">
                                   <input
                                     type="text"
-                                    placeholder="Mfr. Part Number..."
-                                    className="w-1/3 p-4 border-2 text-blue-800 border-blue-50 rounded-2xl text-sm font-mono outline-none focus:border-blue-500 transition-all placeholder:font-sans placeholder:text-slate-300"
+                                    placeholder={selectedItem.productionType === 'OUTSOURCING' ? 'Contract Number...' : 'Mfr. Part Number...'}
+                                    className={`w-1/3 p-4 border-2 rounded-2xl text-sm font-mono outline-none transition-all placeholder:font-sans placeholder:text-slate-300 ${selectedItem.productionType === 'OUTSOURCING' ? 'border-violet-100 text-violet-800 focus:border-violet-500' : 'border-blue-50 text-blue-800 focus:border-blue-500'}`}
                                     value={partNumSearch}
                                     onChange={e => { setPartNumSearch(e.target.value); setShowCompSuggestions(true); }}
                                     onFocus={() => setShowCompSuggestions(true)}
                                   />
-                                  <div className="absolute -bottom-4 left-1 text-[8px] font-bold text-slate-400 uppercase">Auto-generated if left blank</div>
-                                  <div className="relative flex-1">
+                                  <div className="absolute -bottom-4 left-1 text-[8px] font-bold text-slate-400 uppercase">Auto-generated ID if left blank</div>
+                                  <div className="relative flex-1 group">
                                     <textarea
-                                      placeholder="Enter component SKU or Name..."
-                                      className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all resize-none"
-                                      rows={3}
+                                      placeholder={selectedItem.productionType === 'OUTSOURCING' ? "Enter Service or Contract Description..." : "Enter component SKU or Name..."}
+                                      className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all resize-none min-h-[58px]"
+                                      rows={1}
                                       value={compSearch}
                                       onChange={e => { setCompSearch(e.target.value); setShowCompSuggestions(true); }}
                                       onFocus={() => setShowCompSuggestions(true)}
@@ -845,7 +867,6 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                           <button
                                             key={h.description + lastOrder?.orderNo}
                                             onMouseDown={() => {
-                                              // Extract info from history to assist input, or just set search to use it
                                               setCompSearch(h.description);
                                               if (h.componentNumber) setPartNumSearch(h.componentNumber);
                                               setShowCompSuggestions(false);
@@ -903,6 +924,31 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 </div>
                               </div>
                             </div>
+
+                            {selectedItem.productionType === 'OUTSOURCING' && (
+                              <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300 w-full mt-4">
+                                <div className="space-y-1.5 px-1">
+                                  <label className="text-[9px] font-black text-violet-400 uppercase ml-1">Contract Duration</label>
+                                  <input
+                                    type="text"
+                                    placeholder="e.g. 12 Months, Annual..."
+                                    className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-bold outline-none focus:border-violet-500 transition-all bg-violet-50/20"
+                                    value={compDuration}
+                                    onChange={e => setCompDuration(e.target.value)}
+                                  />
+                                </div>
+                                <div className="space-y-1.5 px-1">
+                                  <label className="text-[9px] font-black text-violet-400 uppercase ml-1">Scope of Work Summary</label>
+                                  <textarea
+                                    placeholder="Detailed scope..."
+                                    className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-bold outline-none focus:border-violet-500 transition-all bg-violet-50/20 resize-none h-[58px]"
+                                    value={compScope}
+                                    onChange={e => setCompScope(e.target.value)}
+                                  />
+                                </div>
+                              </div>
+                            )}
+
                             {selectedItem.productionType === 'TRADING' && (
                               <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
                                 <div className="flex items-center gap-3">
@@ -941,11 +987,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               {selectedItem.components?.map(c => (
                                 <tr key={c.id} className="group hover:bg-slate-50/50 transition-colors">
                                   <td className="px-6 py-4">
-                                    <div className="font-black text-slate-800 text-xs">{c.description}</div>
-                                    <div className="flex flex-col gap-0.5 mt-1">
-                                      <div className="font-mono text-[9px] text-blue-500">{c.componentNumber}</div>
-                                      {c.supplierPartNumber && c.supplierPartNumber !== c.componentNumber && <div className="font-mono text-[9px] text-amber-600 font-bold uppercase tracking-widest">MFR P/N: {c.supplierPartNumber}</div>}
+                                    <div className="font-black text-slate-800 text-xs">
+                                      {selectedItem.productionType === 'OUTSOURCING' && c.scopeOfWork ? c.scopeOfWork : c.description}
                                     </div>
+                                    <div className="flex flex-col gap-0.5 mt-1">
+                                      <div className="font-mono text-[9px] text-blue-500">
+                                        {selectedItem.productionType === 'OUTSOURCING' ? (c.contractNumber || c.componentNumber) : c.componentNumber}
+                                      </div>
+                                      {selectedItem.productionType === 'OUTSOURCING' && c.contractDuration && (
+                                        <div className="text-[8px] font-black text-violet-600 uppercase bg-violet-50 px-2 py-0.5 rounded-lg w-fit mt-1">Duration: {c.contractDuration}</div>
+                                      )}
+                                      {selectedItem.productionType !== 'OUTSOURCING' && c.supplierPartNumber && c.supplierPartNumber !== c.componentNumber && (
+                                        <div className="font-mono text-[9px] text-amber-600 font-bold uppercase tracking-widest">MFR P/N: {c.supplierPartNumber}</div>
+                                      )}
+                                    </div>
+
                                   </td>
                                   <td className="px-6 py-4">
                                     <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${c.source === 'STOCK' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>{c.source}</span>

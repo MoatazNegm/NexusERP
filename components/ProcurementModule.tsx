@@ -571,14 +571,22 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
                           <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
                           <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
-                            <div className="font-black text-xs leading-relaxed">{comp.description}</div>
-                            {comp.componentNumber && <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>}
+                            <div className="font-black text-xs leading-relaxed">{comp.scopeOfWork || comp.description}</div>
+                            {comp.contractDuration && (
+                              <div className="text-[10px] font-black text-violet-600 uppercase mt-1">Duration: {comp.contractDuration}</div>
+                            )}
+                            {comp.componentNumber && !comp.contractNumber && (
+                              <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>
+                            )}
                           </div>
-                          <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">{externalPartNum}</div>
+                          <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">
+                            {comp.contractNumber || externalPartNum}
+                          </div>
                           <div className="col-span-2 p-4 font-black">
                             {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
                           </div>
                         </div>
+
                       );
                     })
                   ) : (
@@ -590,14 +598,22 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
                             <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
                             <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
-                              <div className="font-black text-xs leading-relaxed">{comp.description}</div>
-                              {comp.componentNumber && <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>}
+                              <div className="font-black text-xs leading-relaxed">{comp.scopeOfWork || comp.description}</div>
+                              {comp.contractDuration && (
+                                <div className="text-[10px] font-black text-violet-600 uppercase mt-1">Duration: {comp.contractDuration}</div>
+                              )}
+                              {comp.componentNumber && !comp.contractNumber && (
+                                <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>
+                              )}
                             </div>
-                            <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">{externalPartNum}</div>
+                            <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">
+                              {comp.contractNumber || externalPartNum}
+                            </div>
                             <div className="col-span-2 p-4 font-black">
                               {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
                             </div>
                           </div>
+
                         );
                       })
                   )}
@@ -680,12 +696,18 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   {poPrintData.items.map(({ comp }, idx) => (
                     <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 text-center font-black">
                       <div className="col-span-4 p-4 border-r-2 border-slate-900 text-left text-sm flex flex-col justify-center">
-                        <span>{comp.description}</span>
-                        {comp.componentNumber && <span className="text-[8px] text-slate-400 font-bold mt-0.5">(Internal P#: {comp.componentNumber})</span>}
+                        <span>{comp.scopeOfWork || comp.description}</span>
+                        {comp.contractDuration && (
+                          <span className="text-[9px] text-violet-600 font-bold mt-1 uppercase">Duration: {comp.contractDuration}</span>
+                        )}
+                        {comp.componentNumber && !comp.contractNumber && (
+                          <span className="text-[8px] text-slate-400 font-bold mt-0.5">(Internal P#: {comp.componentNumber})</span>
+                        )}
                       </div>
                       <div className="col-span-2 p-4 border-r-2 border-slate-900 flex items-center justify-center font-mono text-xs text-blue-800 break-all">
-                        {comp.supplierPartNumber || ''}
+                        {comp.contractNumber || comp.supplierPartNumber || ''}
                       </div>
+
                       <div className="col-span-1 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
                         {comp.unitCost.toLocaleString()}
                       </div>

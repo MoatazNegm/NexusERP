@@ -156,7 +156,11 @@ export interface ManufacturingComponent {
   procurementStartedAt?: string;
   consumedQty?: number;
   receivedQty?: number;
+  contractNumber?: string;
+  contractDuration?: string;
+  scopeOfWork?: string;
 }
+
 
 export interface CustomerOrderItem {
   id: string;
