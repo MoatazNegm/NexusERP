@@ -97,6 +97,7 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     let totalRevenue = 0;
     let totalCost = 0;
     let hasComponents = false;
+    let hasActiveTechReview = false;
     let anyAccepted = false;
 
     (items || []).forEach(it => {
@@ -104,6 +105,16 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
         if (it.isAccepted) anyAccepted = true;
         if (it.components && it.components.length > 0) {
             hasComponents = true;
+            
+            if (it.productionType === 'MANUFACTURING') {
+                hasActiveTechReview = true;
+            } else {
+                const isModified = it.components.length > 1 || it.components.some(c => 
+                    c.unitCost > 0 || c.supplierId || c.source === 'STOCK' || (c.status && c.status !== 'PENDING_OFFER' && c.status !== 'NEW')
+                );
+                if (isModified) hasActiveTechReview = true;
+            }
+
             it.components.forEach(c => {
                 totalCost += ((c.quantity || 0) * (c.unitCost || 0));
             });
@@ -120,13 +131,13 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     if (hasComponents && markupPct < minMargin) return OrderStatus.NEGATIVE_MARGIN;
 
     // Priority 2: Technical Workflow Transition
-    if ((hasComponents || anyAccepted) && currentStatus === OrderStatus.LOGGED) {
+    if ((hasActiveTechReview || anyAccepted) && currentStatus === OrderStatus.LOGGED) {
         return OrderStatus.TECHNICAL_REVIEW;
     }
 
     // Priority 3: Recovery from Negative Margin
     if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || markupPct >= minMargin)) {
-        return OrderStatus.TECHNICAL_REVIEW;
+        return (hasActiveTechReview || anyAccepted) ? OrderStatus.TECHNICAL_REVIEW : OrderStatus.LOGGED;
     }
 
     return currentStatus;
