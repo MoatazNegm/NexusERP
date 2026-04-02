@@ -511,8 +511,10 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
               <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest">
                 <tr>
                   <th className="px-8 py-5">PO Identifier</th>
+                  <th className="px-8 py-5">PO Received</th>
                   <th className="px-8 py-5">Customer Entity</th>
                   <th className="px-8 py-5">Line Count</th>
+
                   <th className="px-8 py-5">SLA Threshold</th>
                   <th className="px-8 py-5 text-right">BoM Status</th>
                 </tr>
@@ -532,6 +534,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                         <div className="font-mono text-xs font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
                         <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Ref: {o.customerReferenceNumber || 'N/A'}</div>
                       </td>
+                      <td className="px-8 py-6">
+                        <div className="text-xs font-black text-slate-700">{o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}</div>
+                        <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">FIFO Rank</div>
+                      </td>
+
                       <td className="px-8 py-6">
                         <div className="font-black text-slate-800 text-sm tracking-tight">{o.customerName}</div>
                         {o.status === OrderStatus.WAITING_SUPPLIERS && (() => {
