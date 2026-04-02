@@ -106,7 +106,7 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
         if (it.components && it.components.length > 0) {
             hasComponents = true;
             
-            if (it.productionType === 'MANUFACTURING') {
+            if (it.productionType === 'MANUFACTURING' || it.productionType === 'OUTSOURCING') {
                 hasActiveTechReview = true;
             } else {
                 const isModified = it.components.length > 1 || it.components.some(c => 
@@ -114,6 +114,7 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
                 );
                 if (isModified) hasActiveTechReview = true;
             }
+
 
             it.components.forEach(c => {
                 totalCost += ((c.quantity || 0) * (c.unitCost || 0));
@@ -483,7 +484,8 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             item.productionType = 'TRADING';
         }
 
-        if (item.productionType === 'TRADING' || item.productionType === 'OUTSOURCING') {
+        if (item.productionType === 'TRADING') {
+
             // Ensure exactly one component that mirrors the item
             if (!item.components || item.components.length === 0) {
                 item.components = [{
@@ -1545,7 +1547,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 
                 sptItem.productionType = newType;
                 
-                if (newType === 'TRADING' || newType === 'OUTSOURCING') {
+                if (newType === 'TRADING') {
                     // Release any existing reservations before clearing for Trading
                     (sptItem.components || []).forEach(comp => {
                         if (comp.source === 'STOCK' && comp.inventoryItemId && ['RESERVED', 'AVAILABLE'].includes(comp.status)) {
@@ -1558,10 +1560,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     });
                     // Clear components; processedOrderInternal will recreate the mirrored one automatically
                     sptItem.components = [];
-                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}. Mirror sync enabled.`, order.status, user));
+                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to TRADING. Mirror sync enabled.`, order.status, user));
                 } else {
-                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to MANUFACTURING.`, order.status, user));
+                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}.`, order.status, user));
                 }
+
                 break;
             }
 
