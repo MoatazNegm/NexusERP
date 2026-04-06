@@ -62,7 +62,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [compSearch, setCompSearch] = useState('');
   const [partNumSearch, setPartNumSearch] = useState('');
   const [compQty, setCompQty] = useState(1);
-  const [compDuration, setCompDuration] = useState('');
+  const [compDurationVal, setCompDurationVal] = useState<number | string>('');
+  const [compDurationUnit, setCompDurationUnit] = useState<'Months' | 'Years'>('Months');
   const [compScope, setCompScope] = useState('');
   const [showCompSuggestions, setShowCompSuggestions] = useState(false);
 
@@ -312,6 +313,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
         // 2. Procure the rest
         const remainder = compQty - (available > 0 ? available : 0);
+        const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
         const finalOrder = await dataService.addComponentToItem(currentOrder.id, selectedItem.id, {
           description: inv.description,
           quantity: remainder,
@@ -320,7 +322,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
           taxPercent: 14,
           source: 'PROCUREMENT',
           status: 'PENDING_OFFER',
-          contractDuration: compDuration,
+          contractDuration: finalDuration,
           scopeOfWork: compScope || inv.description
         });
 
@@ -330,7 +332,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
       setCompSearch('');
       setPartNumSearch('');
-      setCompDuration('');
+      setCompDurationVal('');
+      setCompDurationUnit('Months');
       setCompScope('');
       setShowCompSuggestions(false);
       fetchData();
@@ -342,6 +345,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
   const handleAddSupplierPart = async (supp: Supplier, part: SupplierPart) => {
     if (!selectedOrder || !selectedItem) return;
+    const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
       description: part.description,
       quantity: compQty,
@@ -353,7 +357,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       supplierPartId: part.id,
       supplierPartNumber: part.partNumber,
       contractNumber: selectedItem.productionType === 'OUTSOURCING' ? part.partNumber : undefined,
-      contractDuration: compDuration,
+      contractDuration: finalDuration,
       scopeOfWork: compScope || part.description,
       status: 'PENDING_OFFER'
     });
@@ -361,7 +365,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setCompSearch('');
     setPartNumSearch('');
-    setCompDuration('');
+    setCompDurationVal('');
+    setCompDurationUnit('Months');
     setCompScope('');
     setShowCompSuggestions(false);
     fetchData();
@@ -370,6 +375,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
   const handleAddCustomProcurement = async () => {
     if (!selectedOrder || !selectedItem || (!compSearch.trim() && !partNumSearch.trim())) return;
+    const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
       description: compSearch.trim() || 'Custom Part',
       quantity: compQty,
@@ -380,14 +386,15 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       status: 'PENDING_OFFER',
       supplierPartNumber: partNumSearch.trim() || undefined,
       contractNumber: selectedItem.productionType === 'OUTSOURCING' ? partNumSearch.trim() : undefined,
-      contractDuration: compDuration,
+      contractDuration: finalDuration,
       scopeOfWork: compScope || compSearch.trim()
     });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
     setCompSearch('');
     setPartNumSearch('');
-    setCompDuration('');
+    setCompDurationVal('');
+    setCompDurationUnit('Months');
     setCompScope('');
     setShowCompSuggestions(false);
     fetchData();
@@ -759,10 +766,15 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     <i className="fa-solid fa-cart-shopping mr-2"></i> Trading
                                   </button>
                                   <button
-                                    onClick={() => dataService.setProductionType(selectedOrder.id, selectedItem.id, 'OUTSOURCING').then(o => { 
-                                      setSelectedOrder(o); 
-                                      setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); 
-                                    })}
+                                    onClick={() => {
+                                      if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length) {
+                                        if (!confirm("Switching to Outsourcing will remove the automatically generated mirror component. Continue?")) return;
+                                      }
+                                      dataService.setProductionType(selectedOrder.id, selectedItem.id, 'OUTSOURCING').then(o => { 
+                                        setSelectedOrder(o); 
+                                        setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); 
+                                      });
+                                    }}
                                     className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${selectedItem.productionType === 'OUTSOURCING' ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                                   >
                                     <i className="fa-solid fa-handshake mr-2"></i> Outsourcing
@@ -770,7 +782,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                   <button
                                     onClick={() => {
                                       if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length) {
-                                        if (!confirm("Switching to Custom BoM will keep existing components but allow adding custom ones. Continue?")) return;
+                                        if (!confirm("Switching to Manufacturing will remove the automatically generated mirror component. Continue?")) return;
                                       }
                                       dataService.setProductionType(selectedOrder.id, selectedItem.id, 'MANUFACTURING').then(o => { 
                                         setSelectedOrder(o); 
@@ -925,29 +937,43 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               </div>
                             </div>
 
-                            {selectedItem.productionType === 'OUTSOURCING' && (
-                              <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300 w-full mt-4">
-                                <div className="space-y-1.5 px-1">
-                                  <label className="text-[9px] font-black text-violet-400 uppercase ml-1">Contract Duration</label>
-                                  <input
-                                    type="text"
-                                    placeholder="e.g. 12 Months, Annual..."
-                                    className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-bold outline-none focus:border-violet-500 transition-all bg-violet-50/20"
-                                    value={compDuration}
-                                    onChange={e => setCompDuration(e.target.value)}
-                                  />
+                            <div className="flex flex-col md:flex-row gap-4 animate-in fade-in slide-in-from-top-2 duration-300 w-full mt-4">
+                              <div className="w-full md:w-32 space-y-1.5 px-1">
+                                <div className="flex justify-between items-center ml-1">
+                                  <label className="text-[9px] font-black text-violet-400 uppercase">Duration</label>
+                                  <div className="flex bg-violet-50 p-0.5 rounded-lg border border-violet-100 scale-90 origin-right">
+                                    <button
+                                      onClick={() => setCompDurationUnit('Months')}
+                                      className={`px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase transition-all ${compDurationUnit === 'Months' ? 'bg-white text-violet-600 shadow-sm border border-violet-100' : 'text-slate-400 hover:text-slate-600'}`}
+                                    >
+                                      Mo
+                                    </button>
+                                    <button
+                                      onClick={() => setCompDurationUnit('Years')}
+                                      className={`px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase transition-all ${compDurationUnit === 'Years' ? 'bg-white text-violet-600 shadow-sm border border-violet-100' : 'text-slate-400 hover:text-slate-600'}`}
+                                    >
+                                      Yr
+                                    </button>
+                                  </div>
                                 </div>
-                                <div className="space-y-1.5 px-1">
-                                  <label className="text-[9px] font-black text-violet-400 uppercase ml-1">Scope of Work Summary</label>
-                                  <textarea
-                                    placeholder="Detailed scope..."
-                                    className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-bold outline-none focus:border-violet-500 transition-all bg-violet-50/20 resize-none h-[58px]"
-                                    value={compScope}
-                                    onChange={e => setCompScope(e.target.value)}
-                                  />
-                                </div>
+                                <input
+                                  type="number"
+                                  placeholder="0"
+                                  className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-black outline-none focus:border-violet-500 transition-all bg-violet-50/20 text-center"
+                                  value={compDurationVal}
+                                  onChange={e => setCompDurationVal(e.target.value)}
+                                />
                               </div>
-                            )}
+                              <div className="flex-1 space-y-1.5 px-1">
+                                <label className="text-[9px] font-black text-violet-400 uppercase ml-1">Scope of Work Summary</label>
+                                <textarea
+                                  placeholder="Detailed scope..."
+                                  className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-bold outline-none focus:border-violet-500 transition-all bg-violet-50/20 resize-none h-[58px]"
+                                  value={compScope}
+                                  onChange={e => setCompScope(e.target.value)}
+                                />
+                              </div>
+                            </div>
 
                             {selectedItem.productionType === 'TRADING' && (
                               <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">

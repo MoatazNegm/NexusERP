@@ -1544,6 +1544,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (sptItemIdx === -1) throw new Error("Item not found");
                 const sptItem = order.items[sptItemIdx];
                 const newType = payload.type; // 'MANUFACTURING' | 'TRADING' | 'OUTSOURCING'
+                const oldType = sptItem.productionType || 'TRADING';
                 
                 sptItem.productionType = newType;
                 
@@ -1562,7 +1563,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     sptItem.components = [];
                     order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to TRADING. Mirror sync enabled.`, order.status, user));
                 } else {
-                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}.`, order.status, user));
+                    if (oldType === 'TRADING') {
+                        // The user switched OUT of TRADING. We must wipe the default mirror entry that was added.
+                        sptItem.components = [];
+                        order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}. Removed TRADING mirror component.`, order.status, user));
+                    } else {
+                        order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}.`, order.status, user));
+                    }
                 }
 
                 break;
