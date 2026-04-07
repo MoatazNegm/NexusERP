@@ -14,12 +14,19 @@ const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
       return;
     }
     const img = new Image();
+    img.crossOrigin = 'anonymous'; 
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth * 2 || 400;
-      canvas.height = img.naturalHeight * 2 || 200;
+      // Set high resolution (2000px width) while maintaining aspect ratio
+      const targetWidth = 1000;
+      const ratio = (img.naturalHeight / img.naturalWidth) || 0.5;
+      canvas.width = targetWidth;
+      canvas.height = targetWidth * ratio;
+      
       const ctx = canvas.getContext('2d');
       if (ctx) {
+        ctx.fillStyle = '#ffffff'; // Ensure white background for transparency conversion
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         resolve(canvas.toDataURL('image/png'));
       } else {
@@ -83,7 +90,7 @@ const CompThreshold: React.FC<{ component: ManufacturingComponent, config: AppCo
 export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, refreshKey, currentUser }) => {
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [activeTab, setActiveTab] = useState<'procurement' | 'history'>('procurement');
+  const [activeTab, setActiveTab] = useState<'purchases' | 'outsourcing' | 'history'>('purchases');
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null);
   const poTemplateRef = useRef<HTMLDivElement>(null);
   const [poPrintData, setPoPrintData] = useState<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier } | null>(null);
@@ -153,11 +160,12 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setSuppliers(s);
   };
 
-  // Group procurement components by order
-  const orderGroups = useMemo(() => {
+  // Group procurement components by order, split by productionType
+  const purchaseGroups = useMemo(() => {
     const map = new Map<string, { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }>();
     orders.forEach(o => {
       o.items.forEach(i => {
+        if (i.productionType === 'OUTSOURCING') return; // Skip in this tab
         i.components?.forEach(c => {
           if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(c.status || '')) {
             if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
@@ -167,33 +175,46 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       });
     });
     
-    // Convert to array and Apply Sorting
     return Array.from(map.values()).sort((a, b) => {
       let aVal: any = '';
       let bVal: any = '';
-
       switch (sortConfig.key) {
-        case 'internalOrderNumber':
-          aVal = a.order.internalOrderNumber || '';
-          bVal = b.order.internalOrderNumber || '';
-          break;
-        case 'orderDate':
-          aVal = a.order.orderDate || a.order.dataEntryTimestamp || '';
-          bVal = b.order.orderDate || b.order.dataEntryTimestamp || '';
-          break;
-        case 'customer':
-          aVal = a.order.customerName || '';
-          bVal = b.order.customerName || '';
-          break;
-        case 'customerReferenceNumber':
-          aVal = a.order.customerReferenceNumber || '';
-          bVal = b.order.customerReferenceNumber || '';
-          break;
-        default:
-          aVal = a.order.orderDate || a.order.dataEntryTimestamp || '';
-          bVal = b.order.orderDate || b.order.dataEntryTimestamp || '';
+        case 'internalOrderNumber': aVal = a.order.internalOrderNumber || ''; bVal = b.order.internalOrderNumber || ''; break;
+        case 'orderDate': aVal = a.order.orderDate || a.order.dataEntryTimestamp || ''; bVal = b.order.orderDate || b.order.dataEntryTimestamp || ''; break;
+        case 'customer': aVal = a.order.customerName || ''; bVal = b.order.customerName || ''; break;
+        case 'customerReferenceNumber': aVal = a.order.customerReferenceNumber || ''; bVal = b.order.customerReferenceNumber || ''; break;
+        default: aVal = a.order.orderDate || a.order.dataEntryTimestamp || ''; bVal = b.order.orderDate || b.order.dataEntryTimestamp || '';
       }
+      if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [orders, sortConfig]);
 
+  const outsourcingGroups = useMemo(() => {
+    const map = new Map<string, { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }>();
+    orders.forEach(o => {
+      o.items.forEach(i => {
+        if (i.productionType !== 'OUTSOURCING') return; // Skip in this tab
+        i.components?.forEach(c => {
+          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(c.status || '')) {
+            if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
+            map.get(o.id)!.comps.push({ item: i, comp: c });
+          }
+        });
+      });
+    });
+    
+    return Array.from(map.values()).sort((a, b) => {
+      let aVal: any = '';
+      let bVal: any = '';
+      switch (sortConfig.key) {
+        case 'internalOrderNumber': aVal = a.order.internalOrderNumber || ''; bVal = b.order.internalOrderNumber || ''; break;
+        case 'orderDate': aVal = a.order.orderDate || a.order.dataEntryTimestamp || ''; bVal = b.order.orderDate || b.order.dataEntryTimestamp || ''; break;
+        case 'customer': aVal = a.order.customerName || ''; bVal = b.order.customerName || ''; break;
+        case 'customerReferenceNumber': aVal = a.order.customerReferenceNumber || ''; bVal = b.order.customerReferenceNumber || ''; break;
+        default: aVal = a.order.orderDate || a.order.dataEntryTimestamp || ''; bVal = b.order.orderDate || b.order.dataEntryTimestamp || '';
+      }
       if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
@@ -214,7 +235,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   };
 
 
-  const totalComponents = orderGroups.reduce((sum, g) => sum + g.comps.length, 0);
+  const totalComponents = purchaseGroups.reduce((sum, g) => sum + g.comps.length, 0) + outsourcingGroups.reduce((sum, g) => sum + g.comps.length, 0);
 
   const awardSuppliersList = useMemo(() => {
     if (activeAction?.type === 'AWARD' && activeAction.comp?.rfpSupplierIds?.length) {
@@ -539,10 +560,16 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       {/* Tab Bar */}
       <div className="flex gap-1 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 w-fit">
         <button
-          onClick={() => setActiveTab('procurement')}
-          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'procurement' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+          onClick={() => setActiveTab('purchases')}
+          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'purchases' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
         >
-          <i className="fa-solid fa-truck-field mr-2"></i> Procurement
+          <i className="fa-solid fa-truck-field mr-2"></i> Component Purchases
+        </button>
+        <button
+          onClick={() => setActiveTab('outsourcing')}
+          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'outsourcing' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+        >
+          <i className="fa-solid fa-handshake-angle mr-2"></i> Outsourcing
         </button>
         <button
           onClick={() => setActiveTab('history')}
@@ -564,11 +591,15 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '48px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {rasterizedLogo && (
-                      <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', display: 'block' }} />
+                      <div style={{ height: '64px', display: 'flex', alignItems: 'flex-start' }}>
+                        <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '200px', objectFit: 'contain' }} />
+                      </div>
                     )}
-                    <div style={{ fontSize: '18px', fontWeight: 900, color: '#1e3a8a', textTransform: 'uppercase', letterSpacing: '-0.025em' }}>{config.settings.companyName || 'Nexus ERP'}</div>
-                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>
-                      {config.settings.companyAddress || 'Headquarters'}
+                    <div style={{ direction: 'rtl', textAlign: 'right', alignSelf: 'flex-start' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#1e3a8a', textTransform: 'uppercase', letterSpacing: '-0.025em' }}>{config.settings.companyName || 'Nexus ERP'}</div>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', whiteSpace: 'pre-line', lineHeight: '1.6' }}>
+                        {config.settings.companyAddress || 'Headquarters'}
+                      </div>
                     </div>
                   </div>
                   <div className="text-right flex flex-col items-end gap-1">
@@ -663,10 +694,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {rasterizedLogo && (
-                      <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', display: 'block' }} />
+                      <div style={{ height: '64px', display: 'flex', alignItems: 'flex-start' }}>
+                        <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '200px', objectFit: 'contain' }} />
+                      </div>
                     )}
-                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName}</div>
-                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress}</div>
+                    <div style={{ direction: 'rtl', textAlign: 'right', alignSelf: 'flex-start' }}>
+                      <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName}</div>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress}</div>
+                    </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                   </div>
@@ -809,10 +844,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
               <div>
-                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Strategic Procurement Operations</h2>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1.5 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-                  Supply Chain Orchestration • {totalComponents} Items across {orderGroups.length} Orders
+                <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-4">
+                  {activeTab === 'outsourcing' ? 'Outsourcing Workflow' : 'Commercial Procurement'}
+                </h2>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                  {activeTab === 'outsourcing' 
+                    ? `Operational Services • ${outsourcingGroups.length} Orders Pending Action` 
+                    : `Supply Chain Orchestration • ${purchaseGroups.length} Orders Pending Action`}
                 </p>
               </div>
 
@@ -841,7 +879,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
 
             <div className="space-y-8">
-              {orderGroups.map(({ order: o, comps }) => {
+              {(activeTab === 'outsourcing' ? outsourcingGroups : purchaseGroups).map(({ order: o, comps }) => {
                 const allAwardedOrOrdered = comps.every(({ comp: cc }) => ['AWARDED', 'ORDERED', 'RECEIVED'].includes(cc.status || ''));
                 const anyReadyToOrder = comps.some(({ comp: cc }) => cc.status === 'AWARDED');
                 const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
@@ -868,12 +906,12 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             {itemsInFactoryCount > 0 && (
                               <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
                                 <i className="fa-solid fa-bolt mr-1"></i>
-                                {itemsInFactoryCount}/{totalItems} items factory-ready
+{itemsInFactoryCount}/{totalItems} items factory-ready
                               </span>
                             )}
                           </div>
                           <div className="font-black text-slate-800">{o.customerName}</div>
-                          <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} components to procure</div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} components</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
@@ -1097,10 +1135,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   </div>
                 );
               })}
-              {orderGroups.length === 0 && (
+              {((activeTab === 'outsourcing' ? outsourcingGroups : purchaseGroups).length === 0) && (
                 <div className="p-24 text-center text-slate-300 italic uppercase text-xs font-black tracking-widest flex flex-col items-center gap-4">
-                  <i className="fa-solid fa-clipboard-check text-5xl opacity-10"></i>
-                  Global procurement pipeline is empty.
+                  <i className={`fa-solid ${activeTab === 'outsourcing' ? 'fa-handshake-angle' : 'fa-clipboard-check'} text-5xl opacity-10`}></i>
+                  {activeTab === 'outsourcing' ? 'No active outsourcing tasks.' : 'Commercial procurement pipeline is empty.'}
                 </div>
               )}
             </div>

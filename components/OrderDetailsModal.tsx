@@ -1,10 +1,39 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { CustomerOrder, LogEntry, ManufacturingComponent, OrderStatus, AppConfig } from '../types';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+
+// Converts SVG data URL to PNG data URL for html2canvas compatibility
+const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!logoDataUrl || !logoDataUrl.startsWith('data:image/svg')) {
+      resolve(logoDataUrl);
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = 'anonymous'; 
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const targetWidth = 1000;
+      const ratio = (img.naturalHeight / img.naturalWidth) || 0.5;
+      canvas.width = targetWidth;
+      canvas.height = targetWidth * ratio;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      } else {
+        resolve(logoDataUrl);
+      }
+    };
+    img.onerror = () => resolve(logoDataUrl);
+    img.src = logoDataUrl;
+  });
+};
 
 const LogTimeline: React.FC<{ logs: LogEntry[], title?: string }> = ({ logs, title }) => (
   <div className="space-y-4">
@@ -137,6 +166,13 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
   const isFinanceBlocked = order.status === OrderStatus.IN_HOLD || isOverdue;
   const invoiceTemplateRef = React.useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
+
+  useEffect(() => {
+    if (config?.settings.companyLogo) {
+      rasterizeLogo(config.settings.companyLogo).then(setRasterizedLogo);
+    }
+  }, [config?.settings.companyLogo]);
 
   const handleDownloadInvoice = async () => {
     if (!invoiceTemplateRef.current) return;
@@ -191,8 +227,15 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
         <div ref={invoiceTemplateRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>Nexus ERP</div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>Cairo, Egypt</div>
+              {rasterizedLogo && (
+                <div style={{ height: '64px', display: 'flex', alignItems: 'flex-start' }}>
+                  <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '200px', objectFit: 'contain' }} />
+                </div>
+              )}
+              <div style={{ direction: 'rtl', textAlign: 'right', alignSelf: 'flex-start' }}>
+                <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config?.settings.companyName || 'Nexus ERP'}</div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config?.settings.companyAddress || 'Cairo, Egypt'}</div>
+              </div>
             </div>
             <div style={{ textAlign: 'right' }}>
             </div>

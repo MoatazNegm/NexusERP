@@ -112,6 +112,11 @@ class DataService {
   // --- ENTITY METHODS ---
 
   async getCustomers() { return this.get<Customer>('customers'); }
+  async isCustomerOverdue(customerName: string): Promise<boolean> {
+    const customers = await this.getCustomers();
+    const cust = customers.find(c => c.name === customerName);
+    return cust ? !!cust.isHold : false;
+  }
   async addCustomer(cust: Omit<Customer, 'id' | 'logs'>) {
     return this.post<Customer>('customers', cust);
   }

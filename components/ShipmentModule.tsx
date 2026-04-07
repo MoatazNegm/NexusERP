@@ -12,12 +12,17 @@ const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
       return;
     }
     const img = new Image();
+    img.crossOrigin = 'anonymous'; 
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth * 2 || 400;
-      canvas.height = img.naturalHeight * 2 || 200;
+      const targetWidth = 1000;
+      const ratio = (img.naturalHeight / img.naturalWidth) || 0.5;
+      canvas.width = targetWidth;
+      canvas.height = targetWidth * ratio;
       const ctx = canvas.getContext('2d');
       if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         resolve(canvas.toDataURL('image/png'));
       } else {
@@ -467,14 +472,14 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '48px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                 {rasterizedLogo && (
-                                    <img
-                                        src={rasterizedLogo}
-                                        alt={config.settings.companyName}
-                                        style={{ maxWidth: '200px', maxHeight: '64px', display: 'block', marginBottom: '8px' }}
-                                    />
+                                    <div style={{ height: '64px', display: 'flex', alignItems: 'flex-start' }}>
+                                        <img src={rasterizedLogo} alt={config.settings.companyName} style={{ maxHeight: '100%', maxWidth: '200px', objectFit: 'contain' }} />
+                                    </div>
                                 )}
-                                <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a', textTransform: 'uppercase' }}>{config.settings.companyName}</div>
-                                <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748b', maxWidth: '300px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress}</div>
+                                <div style={{ direction: 'rtl', textAlign: 'right', alignSelf: 'flex-start' }}>
+                                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a', textTransform: 'uppercase' }}>{config.settings.companyName}</div>
+                                    <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748b', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress}</div>
+                                </div>
                             </div>
                             <div style={{ textAlign: 'right' }}>
                                 <div style={{ fontSize: '32px', fontWeight: 900, color: '#e2e8f0', textTransform: 'uppercase', marginBottom: '8px' }}>Delivery Note</div>

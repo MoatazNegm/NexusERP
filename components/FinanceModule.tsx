@@ -13,12 +13,17 @@ const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
       return;
     }
     const img = new Image();
+    img.crossOrigin = 'anonymous'; 
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth * 2 || 400;
-      canvas.height = img.naturalHeight * 2 || 200;
+      const targetWidth = 1000;
+      const ratio = (img.naturalHeight / img.naturalWidth) || 0.5;
+      canvas.width = targetWidth;
+      canvas.height = targetWidth * ratio;
       const ctx = canvas.getContext('2d');
       if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         resolve(canvas.toDataURL('image/png'));
       } else {
@@ -789,10 +794,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   {rasterizedLogo && (
-                    <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', display: 'block' }} />
+                    <div style={{ height: '64px', display: 'flex', alignItems: 'flex-start' }}>
+                      <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '200px', objectFit: 'contain' }} />
+                    </div>
                   )}
-                  <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName || 'Nexus ERP'}</div>
-                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress || 'Cairo, Egypt'}</div>
+                  <div style={{ direction: 'rtl', textAlign: 'right', alignSelf: 'flex-start' }}>
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName || 'Nexus ERP'}</div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress || 'Cairo, Egypt'}</div>
+                  </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                 </div>
@@ -880,10 +889,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   {rasterizedLogo && (
-                    <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', display: 'block' }} />
+                    <div style={{ height: '64px', display: 'flex', alignItems: 'flex-start' }}>
+                      <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '200px', objectFit: 'contain' }} />
+                    </div>
                   )}
-                  <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName || 'Nexus ERP'}</div>
-                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress || 'Cairo, Egypt'}</div>
+                  <div style={{ direction: 'rtl', textAlign: 'right', alignSelf: 'flex-start' }}>
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName || 'Nexus ERP'}</div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress || 'Cairo, Egypt'}</div>
+                  </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                 </div>
