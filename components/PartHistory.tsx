@@ -29,20 +29,21 @@ interface PartRow {
     statusUpdatedAt: string;
     procurementStartedAt: string;
     source: string;
+    productionType: string;
     orderLogs: { timestamp: string; message: string; status?: string; user?: string }[];
 }
 
 type ColKey = keyof Pick<PartRow, 'internalPN' | 'mfrPN' | 'description' | 'qty' | 'purchaseDate' | 'usageDate' | 'price' | 'supplier'>;
 
-const DEFAULT_COLUMNS: { key: ColKey; label: string; labelAr: string }[] = [
-    { key: 'internalPN', label: 'Internal P#', labelAr: 'الرقم الداخلي' },
-    { key: 'mfrPN', label: 'Mfr/Supplier P#', labelAr: 'رقم المصنع' },
-    { key: 'description', label: 'Description', labelAr: 'الوصف' },
-    { key: 'qty', label: 'Qty', labelAr: 'الكمية' },
-    { key: 'purchaseDate', label: 'Date of Purchase', labelAr: 'تاريخ الشراء' },
-    { key: 'usageDate', label: 'Date of Usage', labelAr: 'تاريخ الاستخدام' },
-    { key: 'price', label: 'Price', labelAr: 'السعر' },
-    { key: 'supplier', label: 'Supplier', labelAr: 'المورد' },
+const DEFAULT_COLUMNS: { key: ColKey; label: string; contractLabel: string; labelAr: string }[] = [
+    { key: 'internalPN', label: 'Internal P#', contractLabel: 'Service ID', labelAr: 'الرقم الداخلي' },
+    { key: 'mfrPN', label: 'Mfr/Supplier P#', contractLabel: 'Contract Ref', labelAr: 'رقم المصنع' },
+    { key: 'description', label: 'Description', contractLabel: 'Scope of Work', labelAr: 'الوصف' },
+    { key: 'qty', label: 'Qty', contractLabel: 'Qty / Goal', labelAr: 'الكمية' },
+    { key: 'purchaseDate', label: 'Date of Purchase', contractLabel: 'Contract Date', labelAr: 'تاريخ الشراء' },
+    { key: 'usageDate', label: 'Date of Usage', contractLabel: 'Completion Date', labelAr: 'تاريخ الاستخدام' },
+    { key: 'price', label: 'Price', contractLabel: 'Contract Value', labelAr: 'السعر' },
+    { key: 'supplier', label: 'Supplier', contractLabel: 'Contractor', labelAr: 'المورد' },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -64,6 +65,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
     const [sortAsc, setSortAsc] = useState(false);
     const [dragCol, setDragCol] = useState<ColKey | null>(null);
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState<'parts' | 'contracts'>('parts');
 
     // Flatten all components from all orders into PartRow[]
     const allParts = useMemo<PartRow[]>(() => {
@@ -105,6 +107,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                         statusUpdatedAt: comp.statusUpdatedAt || '',
                         procurementStartedAt: comp.procurementStartedAt || '',
                         source: comp.source || '',
+                        productionType: item.productionType || 'MANUFACTURING',
                         orderLogs: (order.logs || []).filter(l =>
                             (l.message || '').toLowerCase().includes((comp.description || '').toLowerCase().substring(0, 15)) ||
                             (l.message || '').toLowerCase().includes((comp.componentNumber || '').toLowerCase()) ||
@@ -120,11 +123,16 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
         return rows;
     }, [orders, suppliers]);
 
-    // Filter
+    // Filter by type
+    const typedParts = useMemo(() => {
+        return allParts.filter(p => activeTab === 'contracts' ? p.productionType === 'OUTSOURCING' : p.productionType !== 'OUTSOURCING');
+    }, [allParts, activeTab]);
+
+    // Filter by search
     const filtered = useMemo(() => {
         const q = search.toLowerCase().trim();
-        if (!q) return allParts;
-        return allParts.filter(r =>
+        if (!q) return typedParts;
+        return typedParts.filter(r =>
             r.internalPN.toLowerCase().includes(q) ||
             r.mfrPN.toLowerCase().includes(q) ||
             r.description.toLowerCase().includes(q) ||
@@ -132,7 +140,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
             r.orderRef.toLowerCase().includes(q) ||
             r.customerName.toLowerCase().includes(q)
         );
-    }, [allParts, search]);
+    }, [typedParts, search]);
 
     // Sort
     const sorted = useMemo(() => {
@@ -218,11 +226,29 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
             <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                     <div>
-                        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Part History</h2>
+                        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">
+                            {activeTab === 'contracts' ? 'Outsourcing Contract History' : 'Part & Component History'}
+                        </h2>
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">
-                            Complete Component Registry • {allParts.length} Records • Drag column headers to reorder
+                            Complete {activeTab === 'contracts' ? 'Contract' : 'Part'} Registry • {typedParts.length} Records • Drag column headers to reorder
                         </p>
                     </div>
+
+                    <div className="flex gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100">
+                        <button
+                            onClick={() => setActiveTab('parts')}
+                            className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'parts' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        >
+                            Parts
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('contracts')}
+                            className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'contracts' ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        >
+                            Contracts
+                        </button>
+                    </div>
+
                     <div className="relative w-full md:w-96">
                         <input
                             type="text"
@@ -255,7 +281,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                     >
                                         <div className="flex items-center gap-2">
                                             <i className="fa-solid fa-grip-vertical text-[8px] text-slate-300"></i>
-                                            <span>{colMeta[key].label}</span>
+                                            <span>{activeTab === 'contracts' ? colMeta[key].contractLabel : colMeta[key].label}</span>
                                             {sortKey === key && (
                                                 <i className={`fa-solid ${sortAsc ? 'fa-sort-up' : 'fa-sort-down'} text-blue-500`}></i>
                                             )}

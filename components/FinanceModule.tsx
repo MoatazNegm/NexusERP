@@ -2,6 +2,33 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus } from '../types';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
+
+// Converts SVG data URL to PNG data URL for html2canvas compatibility
+const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!logoDataUrl || !logoDataUrl.startsWith('data:image/svg')) {
+      resolve(logoDataUrl);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth * 2 || 400;
+      canvas.height = img.naturalHeight * 2 || 200;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      } else {
+        resolve(logoDataUrl);
+      }
+    };
+    img.onerror = () => resolve(logoDataUrl);
+    img.src = logoDataUrl;
+  });
+};
 
 interface FinanceModuleProps {
   config: AppConfig;
@@ -380,6 +407,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'desc' });
   const [columnOrder, setColumnOrder] = useState<string[]>(['context', 'date', 'revenue', 'markup', 'status', 'actions']);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+  const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
+
+  // Pre-rasterize SVG logo to PNG for html2canvas compatibility
+  useEffect(() => {
+    if (config.settings.companyLogo) {
+      rasterizeLogo(config.settings.companyLogo).then(setRasterizedLogo);
+    }
+  }, [config.settings.companyLogo]);
 
   const handleSort = (key: string) => {
     setSortConfig(prev => ({
@@ -689,10 +724,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       if (!printOrderRef.current) return;
       setIsDownloading(true);
       try {
-        const h2c = (await import('html2canvas')).default;
-        const canvas = await h2c(printOrderRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+        const canvas = await html2canvas(printOrderRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
         const imgData = canvas.toDataURL('image/png');
-        const { jsPDF } = await import('jspdf');
         const pdf = new jsPDF('p', 'mm', 'a4');
         const imgWidth = pdf.internal.pageSize.getWidth();
         const imgHeight = (canvas.height * imgWidth) / canvas.width;
@@ -700,12 +733,12 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         pdf.save(`Invoice-${order.invoiceNumber || order.internalOrderNumber}.pdf`);
       } catch (e) {
         console.error("PDF Fail", e);
-        alert("Failed to generate PDF");
+        alert("Failed to generate PDF. Check console for details.");
       } finally {
         setIsDownloading(false);
         setPrintOrder(null);
       }
-    }, 500);
+    }, 600);
   };
 
   const getPrintTotal = () => {
@@ -719,10 +752,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
     const timer = setTimeout(async () => {
       if (!paymentInvoiceRef.current) return;
       try {
-        const h2c = (await import('html2canvas')).default;
-        const canvas = await h2c(paymentInvoiceRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+        const canvas = await html2canvas(paymentInvoiceRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
         const imgData = canvas.toDataURL('image/png');
-        const { jsPDF } = await import('jspdf');
         const pdf = new jsPDF('p', 'mm', 'a4');
         const imgWidth = pdf.internal.pageSize.getWidth();
         const imgHeight = (canvas.height * imgWidth) / canvas.width;
@@ -741,6 +772,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         pdf.save(`Receipt-${paymentInvoiceData.order.internalOrderNumber}-${paymentInvoiceData.receiptNumber}.pdf`);
       } catch (e) {
         console.error('Payment Invoice PDF failed:', e);
+        alert("Failed to generate Receipt PDF. Check console for details.");
       } finally {
         setPaymentInvoiceData(null);
       }
@@ -750,62 +782,76 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Hidden Full Invoice Template */}
-      <div className="fixed -left-[3000px] top-0 overflow-visible">
-        {printOrder && (
-          <div ref={printOrderRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
-            <div className="flex justify-between items-start mb-10">
-              <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">
-                {config.settings.companyLogo ? <img src={config.settings.companyLogo} className="w-full h-full object-contain" /> : 'LOGO'}
-              </div>
-              <div className="text-right">
-                <h1 className="text-3xl font-black mb-1">{config.settings.companyName || 'Nexus ERP'}</h1>
-                <p className="text-xl font-bold text-slate-600">{config.settings.companyAddress || 'Cairo, Egypt'}</p>
-              </div>
-            </div>
-            <div className="border-t-2 border-b-2 border-slate-200 py-3 mb-8 flex justify-center items-center">
-              <h2 className="text-xl font-black uppercase flex items-center gap-6"><span>TAX INVOICE / فاتورة ضريبية</span></h2>
-            </div>
-            <div className="grid grid-cols-2 gap-8 mb-10">
-              <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
-                <div className="grid grid-cols-3"><div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">Customer:</div><div className="col-span-2 p-3 font-black text-sm uppercase">{printOrder.customerName}</div></div>
-                <div className="grid grid-cols-3"><div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">Invoice No:</div><div className="col-span-2 p-3 font-mono font-black text-blue-600 text-xs">{printOrder.invoiceNumber || 'DRAFT'}</div></div>
-              </div>
-              <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
-                <div className="grid grid-cols-3"><div className="col-span-2 p-3 font-black text-sm text-center tracking-widest">{new Date().toLocaleDateString()}</div><div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-xs">Date:</div></div>
-                <div className="p-3 bg-slate-50 text-center font-bold text-[10px]">Tax Authority - Cairo</div>
-                <div className="grid grid-cols-3"><div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">522 803 435</div><div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">Tax ID:</div></div>
-              </div>
-            </div>
-            <div className="border-2 border-slate-900 mb-10 min-h-[400px] flex flex-col">
-              <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
-                <div className="col-span-6 p-3 border-r-2 border-slate-900">Description</div>
-                <div className="col-span-1 p-3 border-r-2 border-slate-900">Price</div>
-                <div className="col-span-1 p-3 border-r-2 border-slate-900">Qty</div>
-                <div className="col-span-2 p-3 border-r-2 border-slate-900">Tax %</div>
-                <div className="col-span-2 p-3">Total</div>
-              </div>
-              {printOrder.items.map(item => (
-                <div key={item.id} className="grid grid-cols-12 border-b-2 border-slate-900 text-center font-black text-sm">
-                  <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">{item.description}</div>
-                  <div className="col-span-1 p-4 border-r-2 border-slate-900">{item.pricePerUnit.toLocaleString()}</div>
-                  <div className="col-span-1 p-4 border-r-2 border-slate-900">{item.quantity}</div>
-                  <div className="col-span-2 p-4 border-r-2 border-slate-900">{item.taxPercent}%</div>
-                  <div className="col-span-2 p-4">{((item.quantity * item.pricePerUnit) * (1 + item.taxPercent / 100)).toLocaleString()}</div>
+        {/* Hidden Full Invoice Template */}
+        <div className="fixed -left-[3000px] top-0 overflow-visible">
+          {printOrder && (
+            <div ref={printOrderRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {rasterizedLogo && (
+                    <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', display: 'block' }} />
+                  )}
+                  <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName || 'Nexus ERP'}</div>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress || 'Cairo, Egypt'}</div>
                 </div>
-              ))}
-            </div>
-            <div className="flex justify-end">
-              <div className="w-64 border-2 border-slate-900 divide-y-2 divide-slate-900 font-black">
-                <div className="grid grid-cols-2 bg-slate-100">
-                  <div className="p-3 border-r-2 border-slate-900 text-sm uppercase">GRAND TOTAL</div>
-                  <div className="p-3 text-right text-xl">{getPrintTotal().toLocaleString()} L.E.</div>
+                <div style={{ textAlign: 'right' }}>
                 </div>
               </div>
+              <div className="border-t-2 border-b-2 py-3 mb-8 flex justify-center items-center" style={{ borderColor: '#e2e8f0' }}>
+                <h2 className="text-xl font-black uppercase flex items-center gap-6" style={{ color: '#0f172a' }}><span>TAX INVOICE / فاتورة ضريبية</span></h2>
+              </div>
+              <div className="grid grid-cols-2 gap-8 mb-10">
+                <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Customer:</div>
+                    <div className="col-span-2 p-3 font-black text-sm uppercase" style={{ color: '#0f172a' }}>{printOrder.customerName}</div>
+                  </div>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Invoice No:</div>
+                    <div className="col-span-2 p-3 font-mono font-black text-xs" style={{ color: '#2563eb' }}>{printOrder.invoiceNumber || 'DRAFT'}</div>
+                  </div>
+                </div>
+                <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-2 p-3 font-black text-sm text-center tracking-widest" style={{ color: '#0f172a' }}>{new Date().toLocaleDateString()}</div>
+                    <div className="col-span-1 p-3 border-l-2 font-bold text-xs" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Date:</div>
+                  </div>
+                  <div className="p-3 text-center font-bold text-[10px]" style={{ backgroundColor: '#f8fafc', color: '#0f172a' }}>Tax Authority - Cairo</div>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest" style={{ color: '#0f172a' }}>522 803 435</div>
+                    <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Tax ID:</div>
+                  </div>
+                </div>
+              </div>
+              <div className="border-2 mb-10 min-h-[400px] flex flex-col" style={{ borderColor: '#0f172a' }}>
+                <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>
+                  <div className="col-span-6 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Description</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Price</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Qty</div>
+                  <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Tax %</div>
+                  <div className="col-span-2 p-3">Total</div>
+                </div>
+                {printOrder.items.map(item => (
+                  <div key={item.id} className="grid grid-cols-12 border-b-2 text-center font-black text-sm" style={{ borderColor: '#0f172a', color: '#0f172a' }}>
+                    <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>{item.description}</div>
+                    <div className="col-span-1 p-4 border-r-2" style={{ borderColor: '#0f172a' }}>{item.pricePerUnit.toLocaleString()}</div>
+                    <div className="col-span-1 p-4 border-r-2" style={{ borderColor: '#0f172a' }}>{item.quantity}</div>
+                    <div className="col-span-2 p-4 border-r-2" style={{ borderColor: '#0f172a' }}>{item.taxPercent}%</div>
+                    <div className="col-span-2 p-4">{((item.quantity * item.pricePerUnit) * (1 + item.taxPercent / 100)).toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <div className="w-64 border-2 divide-y-2 font-black" style={{ borderColor: '#0f172a' }}>
+                  <div className="grid grid-cols-2" style={{ backgroundColor: '#f1f5f9' }}>
+                    <div className="p-3 border-r-2 text-sm uppercase" style={{ borderColor: '#0f172a', color: '#0f172a' }}>GRAND TOTAL</div>
+                    <div className="p-3 text-right text-xl" style={{ color: '#0f172a' }}>{getPrintTotal().toLocaleString()} L.E.</div>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
       {/* Hidden Payment Receipt/Invoice Template */}
       <div className="fixed -left-[3000px] top-0 overflow-visible">
@@ -829,56 +875,76 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
           const totalPaidBefore = prevPay.reduce((s: number, p: any) => s + p.amount, 0);
 
           return (
-            <div ref={paymentInvoiceRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
+            <div ref={paymentInvoiceRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
               {/* Header */}
-              <div className="flex justify-between items-start mb-10">
-                <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">
-                  {config.settings.companyLogo ? <img src={config.settings.companyLogo} className="w-full h-full object-contain" /> : 'LOGO'}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {rasterizedLogo && (
+                    <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', display: 'block' }} />
+                  )}
+                  <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName || 'Nexus ERP'}</div>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress || 'Cairo, Egypt'}</div>
                 </div>
-                <div className="text-right">
-                  <h1 className="text-3xl font-black mb-1">{config.settings.companyName || 'Nexus ERP'}</h1>
-                  <p className="text-xl font-bold text-slate-600">{config.settings.companyAddress || 'Cairo, Egypt'}</p>
+                <div style={{ textAlign: 'right' }}>
                 </div>
               </div>
 
               {/* Title Bar */}
-              <div className={`border-t-2 border-b-2 py-3 mb-8 flex justify-center items-center ${isFinal ? 'border-emerald-400 bg-emerald-50' : 'border-blue-400 bg-blue-50'}`}>
-                <h2 className={`text-xl font-black uppercase flex items-center gap-6 ${isFinal ? 'text-emerald-800' : 'text-blue-800'}`}>
+              <div className="border-t-2 border-b-2 py-3 mb-8 flex justify-center items-center" style={{ borderColor: isFinal ? '#34d399' : '#60a5fa', backgroundColor: isFinal ? '#ecfdf5' : '#eff6ff' }}>
+                <h2 className="text-xl font-black uppercase flex items-center gap-6" style={{ color: isFinal ? '#065f46' : '#1e40af' }}>
                   <span>{isFinal ? 'FINAL PAYMENT RECEIPT / إيصال سداد نهائي' : 'PARTIAL PAYMENT RECEIPT / إيصال سداد جزئي'}</span>
                 </h2>
               </div>
 
               {/* Info Grid */}
               <div className="grid grid-cols-2 gap-8 mb-10">
-                <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
-                  <div className="grid grid-cols-3"><div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">Customer:</div><div className="col-span-2 p-3 font-black text-sm uppercase">{pOrder.customerName}</div></div>
-                  <div className="grid grid-cols-3"><div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">Invoice No:</div><div className="col-span-2 p-3 font-mono font-black text-blue-600 text-xs">{pOrder.invoiceNumber || 'N/A'}</div></div>
-                  <div className="grid grid-cols-3"><div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">Receipt No:</div><div className="col-span-2 p-3 font-mono font-black text-emerald-600 text-xs">{pReceipt}</div></div>
+                <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Customer:</div>
+                    <div className="col-span-2 p-3 font-black text-sm uppercase" style={{ color: '#0f172a' }}>{pOrder.customerName}</div>
+                  </div>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Invoice No:</div>
+                    <div className="col-span-2 p-3 font-mono font-black text-xs" style={{ color: '#2563eb' }}>{pOrder.invoiceNumber || 'N/A'}</div>
+                  </div>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Receipt No:</div>
+                    <div className="col-span-2 p-3 font-mono font-black text-xs" style={{ color: '#059669' }}>{pReceipt}</div>
+                  </div>
                 </div>
-                <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
-                  <div className="grid grid-cols-3"><div className="col-span-2 p-3 font-black text-sm text-center tracking-widest">{new Date().toLocaleDateString()}</div><div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-xs">Date:</div></div>
-                  <div className="grid grid-cols-3"><div className="col-span-2 p-3 font-mono font-black text-xs text-center">{pOrder.internalOrderNumber}</div><div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">Order Ref:</div></div>
-                  <div className="grid grid-cols-3"><div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">522 803 435</div><div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">Tax ID:</div></div>
+                <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-2 p-3 font-black text-sm text-center tracking-widest" style={{ color: '#0f172a' }}>{new Date().toLocaleDateString()}</div>
+                    <div className="col-span-1 p-3 border-l-2 font-bold text-xs" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Date:</div>
+                  </div>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-2 p-3 font-mono font-black text-xs text-center" style={{ color: '#0f172a' }}>{pOrder.internalOrderNumber}</div>
+                    <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Order Ref:</div>
+                  </div>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest" style={{ color: '#0f172a' }}>522 803 435</div>
+                    <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Tax ID:</div>
+                  </div>
                 </div>
               </div>
 
               {/* Line Items Table */}
-              <div className="border-2 border-slate-900 mb-8 flex flex-col">
-                <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
-                  <div className="col-span-5 p-3 border-r-2 border-slate-900">Description</div>
-                  <div className="col-span-1 p-3 border-r-2 border-slate-900">Unit Price</div>
-                  <div className="col-span-1 p-3 border-r-2 border-slate-900">Qty (Pro-Rata)</div>
-                  <div className="col-span-1 p-3 border-r-2 border-slate-900">Tax %</div>
-                  <div className="col-span-2 p-3 border-r-2 border-slate-900">Tax Amount</div>
+              <div className="border-2 mb-8 flex flex-col" style={{ borderColor: '#0f172a' }}>
+                <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>
+                  <div className="col-span-5 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Description</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Unit Price</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Qty (Pro-Rata)</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Tax %</div>
+                  <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Tax Amount</div>
                   <div className="col-span-2 p-3">Line Total</div>
                 </div>
                 {proratedItems.map((item: any) => (
-                  <div key={item.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm">
-                    <div className="col-span-5 p-3 border-r-2 border-slate-900 text-left font-bold text-xs">{item.description}</div>
-                    <div className="col-span-1 p-3 border-r-2 border-slate-900 font-black">{item.pricePerUnit.toLocaleString()}</div>
-                    <div className="col-span-1 p-3 border-r-2 border-slate-900 font-black">{item.proratedQty.toFixed(2)}</div>
-                    <div className="col-span-1 p-3 border-r-2 border-slate-900 font-bold text-slate-500">{item.taxPercent}%</div>
-                    <div className="col-span-2 p-3 border-r-2 border-slate-900 font-black text-amber-700">{item.proratedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  <div key={item.id} className="grid grid-cols-12 border-b text-center text-sm" style={{ borderColor: '#e2e8f0', color: '#0f172a' }}>
+                    <div className="col-span-5 p-3 border-r-2 text-left font-bold text-xs" style={{ borderColor: '#0f172a' }}>{item.description}</div>
+                    <div className="col-span-1 p-3 border-r-2 font-black" style={{ borderColor: '#0f172a' }}>{item.pricePerUnit.toLocaleString()}</div>
+                    <div className="col-span-1 p-3 border-r-2 font-black" style={{ borderColor: '#0f172a' }}>{item.proratedQty.toFixed(2)}</div>
+                    <div className="col-span-1 p-3 border-r-2 font-bold" style={{ borderColor: '#0f172a', color: '#64748b' }}>{item.taxPercent}%</div>
+                    <div className="col-span-2 p-3 border-r-2 font-black" style={{ borderColor: '#0f172a', color: '#b45309' }}>{item.proratedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="col-span-2 p-3 font-black">{item.proratedGross.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                 ))}
@@ -886,34 +952,34 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
               {/* Totals */}
               <div className="flex justify-end mb-8">
-                <div className="w-80 border-2 border-slate-900 divide-y-2 divide-slate-900 font-black">
+                <div className="w-80 border-2 divide-y-2 font-black" style={{ borderColor: '#0f172a' }}>
                   <div className="grid grid-cols-2">
-                    <div className="p-3 border-r-2 border-slate-900 text-xs uppercase bg-slate-50">Subtotal (Excl. Tax)</div>
-                    <div className="p-3 text-right text-sm">{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                    <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Subtotal (Excl. Tax)</div>
+                    <div className="p-3 text-right text-sm" style={{ color: '#0f172a' }}>{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
                   </div>
                   <div className="grid grid-cols-2">
-                    <div className="p-3 border-r-2 border-slate-900 text-xs uppercase bg-slate-50">Total Tax</div>
-                    <div className="p-3 text-right text-sm text-amber-700">{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                    <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Total Tax</div>
+                    <div className="p-3 text-right text-sm" style={{ color: '#b45309' }}>{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
                   </div>
-                  <div className={`grid grid-cols-2 ${isFinal ? 'bg-emerald-50' : 'bg-blue-50'}`}>
-                    <div className="p-3 border-r-2 border-slate-900 text-sm uppercase">AMOUNT PAID</div>
-                    <div className={`p-3 text-right text-xl ${isFinal ? 'text-emerald-700' : 'text-blue-700'}`}>{pAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                  <div className="grid grid-cols-2" style={{ backgroundColor: isFinal ? '#ecfdf5' : '#eff6ff' }}>
+                    <div className="p-3 border-r-2 text-sm uppercase" style={{ borderColor: '#0f172a', color: '#0f172a' }}>AMOUNT PAID</div>
+                    <div className="p-3 text-right text-xl" style={{ color: isFinal ? '#047857' : '#1d4ed8' }}>{pAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
                   </div>
                 </div>
               </div>
 
               {/* Payment History */}
               {prevPay.length > 0 && (
-                <div className="border-t-2 border-slate-200 pt-6 mb-6">
-                  <div className="text-xs font-black uppercase text-slate-400 tracking-widest mb-3">Previous Payments on this Order</div>
-                  <div className="border border-slate-200 rounded">
+                <div className="border-t-2 pt-6 mb-6" style={{ borderColor: '#e2e8f0' }}>
+                  <div className="text-xs font-black uppercase tracking-widest mb-3" style={{ color: '#94a3b8' }}>Previous Payments on this Order</div>
+                  <div className="border rounded" style={{ borderColor: '#e2e8f0' }}>
                     {prevPay.map((p: any, idx: number) => (
-                      <div key={idx} className="flex justify-between px-4 py-2 text-xs font-bold border-b border-slate-100 last:border-0">
-                        <span className="text-slate-500">{p.receiptNumber || `#${idx + 1}`} — {new Date(p.date).toLocaleDateString()}</span>
-                        <span className="text-slate-800">{p.amount.toLocaleString()} L.E.</span>
+                      <div key={idx} className="flex justify-between px-4 py-2 text-xs font-bold border-b last:border-0" style={{ borderColor: '#f1f5f9' }}>
+                        <span style={{ color: '#64748b' }}>{p.receiptNumber || `#${idx + 1}`} — {new Date(p.date).toLocaleDateString()}</span>
+                        <span style={{ color: '#1e293b' }}>{p.amount.toLocaleString()} L.E.</span>
                       </div>
                     ))}
-                    <div className="flex justify-between px-4 py-2 text-xs font-black bg-slate-50 border-t border-slate-200">
+                    <div className="flex justify-between px-4 py-2 text-xs font-black border-t" style={{ backgroundColor: '#f8fafc', borderColor: '#e2e8f0', color: '#0f172a' }}>
                       <span>Total Previously Paid</span>
                       <span>{totalPaidBefore.toLocaleString()} L.E.</span>
                     </div>
@@ -922,14 +988,15 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               )}
 
               {/* Balance Summary */}
-              <div className="flex justify-between items-center p-4 bg-slate-50 border-2 border-slate-200 rounded mt-4">
-                <div className="text-xs font-black uppercase text-slate-500">Order Total: {grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.</div>
-                <div className="text-xs font-black uppercase text-slate-500">Total Paid: {(totalPaidBefore + pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.</div>
-                <div className={`text-sm font-black uppercase ${isFinal ? 'text-emerald-600' : 'text-amber-600'}`}>
+              <div className="flex justify-between items-center p-4 border-2 rounded mt-4" style={{ backgroundColor: '#f8fafc', borderColor: '#e2e8f0' }}>
+                <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>Order Total: {grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.</div>
+                <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>Total Paid: {(totalPaidBefore + pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.</div>
+                <div className="text-sm font-black uppercase" style={{ color: isFinal ? '#059669' : '#d97706' }}>
                   {isFinal ? 'FULLY SETTLED ✓' : `Outstanding: ${Math.max(0, grossTotal - totalPaidBefore - pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.`}
                 </div>
               </div>
             </div>
+
           );
         })()}
       </div>

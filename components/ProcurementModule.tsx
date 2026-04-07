@@ -6,6 +6,31 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { PartHistory } from './PartHistory';
 
+// Converts SVG data URL to PNG data URL for html2canvas compatibility
+const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!logoDataUrl || !logoDataUrl.startsWith('data:image/svg')) {
+      resolve(logoDataUrl); // Already raster or empty
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth * 2 || 400;
+      canvas.height = img.naturalHeight * 2 || 200;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      } else {
+        resolve(logoDataUrl);
+      }
+    };
+    img.onerror = () => resolve(logoDataUrl);
+    img.src = logoDataUrl;
+  });
+};
+
 interface ProcurementModuleProps {
   config: AppConfig;
   refreshKey?: number;
@@ -62,6 +87,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null);
   const poTemplateRef = useRef<HTMLDivElement>(null);
   const [poPrintData, setPoPrintData] = useState<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier } | null>(null);
+  const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
+
+  // Pre-rasterize SVG logo to PNG for html2canvas compatibility
+  useEffect(() => {
+    if (config.settings.companyLogo) {
+      rasterizeLogo(config.settings.companyLogo).then(setRasterizedLogo);
+    }
+  }, [config.settings.companyLogo]);
 
   // Modal States
   const [activeAction, setActiveAction] = useState<{
@@ -527,40 +560,39 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           <div style={{ position: 'absolute', top: '-9999px', left: '-9999px' }}>
             {/* RFP PDF Template */}
             {(rfpPrintData || (activeAction?.type === 'RFP' && activeAction.order && rfpCompSelection.length > 0)) && (
-              <div ref={rfpTemplateRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
-                <div className="flex justify-between items-start mb-12">
-                  <div className="flex flex-col gap-2">
-                    {config.settings.companyLogo ? (
-                      <img src={config.settings.companyLogo} alt="Company Logo" className="h-16 object-contain" />
-                    ) : (
-                      <div className="text-2xl font-black tracking-tighter text-blue-900 uppercase">{config.settings.companyName || 'Nexus ERP'}</div>
+              <div ref={rfpTemplateRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '48px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {rasterizedLogo && (
+                      <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', display: 'block' }} />
                     )}
-                    <div className="text-xs font-bold text-slate-500 mt-2 max-w-[250px] whitespace-pre-line leading-relaxed">
+                    <div style={{ fontSize: '18px', fontWeight: 900, color: '#1e3a8a', textTransform: 'uppercase', letterSpacing: '-0.025em' }}>{config.settings.companyName || 'Nexus ERP'}</div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>
                       {config.settings.companyAddress || 'Headquarters'}
                     </div>
                   </div>
                   <div className="text-right flex flex-col items-end gap-1">
-                    <div className="text-4xl font-black text-slate-900 uppercase tracking-tighter mb-2">Request For Proposal</div>
+                    <div className="text-4xl font-black uppercase tracking-tighter mb-2" style={{ color: '#0f172a' }}>Request For Proposal</div>
                     <div className="flex items-center gap-3">
-                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</div>
+                      <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#94a3b8' }}>Date</div>
                       <div className="font-mono text-sm font-black">{new Date().toLocaleDateString()}</div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Ref</div>
-                      <div className="font-mono text-sm font-black text-blue-700">RFP-{rfpPrintData ? rfpPrintData.order.internalOrderNumber : activeAction!.order.internalOrderNumber}</div>
+                      <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#94a3b8' }}>Ref</div>
+                      <div className="font-mono text-sm font-black" style={{ color: '#1d4ed8' }}>RFP-{rfpPrintData ? rfpPrintData.order.internalOrderNumber : activeAction!.order.internalOrderNumber}</div>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-900 mb-10 text-sm font-bold leading-relaxed text-slate-700">
+                <div className="p-6 rounded-2xl border-2 mb-10 text-sm font-bold leading-relaxed" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#334155' }}>
                   <p>Please provide your best commercial offer and lead time for the components listed below. Ensure your quotation clearly states unit prices and total amounts, excluding taxes. If applicable, please attach technical data sheets or compliance certificates.</p>
                 </div>
 
-                <div className="border-2 border-slate-900 mb-8 flex flex-col">
-                  <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
-                    <div className="col-span-1 p-3 border-r-2 border-slate-900">#</div>
-                    <div className="col-span-6 p-3 border-r-2 border-slate-900 text-left">Component Description & Specifications</div>
-                    <div className="col-span-3 p-3 border-r-2 border-slate-900">Supplier/Mfr Part #</div>
+                <div className="border-2 mb-8 flex flex-col" style={{ borderColor: '#0f172a' }}>
+                  <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc' }}>
+                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>#</div>
+                    <div className="col-span-6 p-3 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>Component Description & Specifications</div>
+                    <div className="col-span-3 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Supplier/Mfr Part #</div>
                     <div className="col-span-2 p-3">Quantity</div>
                   </div>
 
@@ -568,22 +600,22 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                     rfpPrintData.comps.map((comp, idx) => {
                       const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
                       return (
-                        <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
-                          <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
-                          <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
+                        <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
+                          <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
+                          <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
                             <div className="font-black text-xs leading-relaxed">{comp.scopeOfWork || comp.description}</div>
                             {comp.contractDuration && (
-                              <div className="text-[10px] font-black text-violet-600 uppercase mt-1">Duration: {comp.contractDuration}</div>
+                              <div className="text-[10px] font-black uppercase mt-1" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration}</div>
                             )}
                             {comp.componentNumber && !comp.contractNumber && (
-                              <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>
+                              <div className="text-[9px] font-bold mt-1 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
                             )}
                           </div>
-                          <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">
+                          <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
                             {comp.contractNumber || externalPartNum}
                           </div>
                           <div className="col-span-2 p-4 font-black">
-                            {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
+                            {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
                           </div>
                         </div>
 
@@ -595,22 +627,22 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       .map((comp, idx) => {
                         const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
                         return (
-                          <div key={comp.id} className="grid grid-cols-12 border-b border-slate-200 text-center text-sm last:border-b-0">
-                            <div className="col-span-1 p-4 border-r-2 border-slate-900 font-mono font-bold text-slate-400">{idx + 1}</div>
-                            <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">
+                          <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
+                            <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
+                            <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
                               <div className="font-black text-xs leading-relaxed">{comp.scopeOfWork || comp.description}</div>
                               {comp.contractDuration && (
-                                <div className="text-[10px] font-black text-violet-600 uppercase mt-1">Duration: {comp.contractDuration}</div>
+                                <div className="text-[10px] font-black uppercase mt-1" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration}</div>
                               )}
                               {comp.componentNumber && !comp.contractNumber && (
-                                <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-widest">(Internal P#: {comp.componentNumber})</div>
+                                <div className="text-[9px] font-bold mt-1 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
                               )}
                             </div>
-                            <div className="col-span-3 p-4 border-r-2 border-slate-900 font-mono font-bold text-xs text-blue-800">
+                            <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
                               {comp.contractNumber || externalPartNum}
                             </div>
                             <div className="col-span-2 p-4 font-black">
-                              {comp.quantity} <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">{comp.unit}</span>
+                              {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
                             </div>
                           </div>
 
@@ -619,7 +651,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   )}
                 </div>
 
-                <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 text-center mt-20 pt-8 border-t-2 border-slate-900">
+                <div className="text-[9px] font-black uppercase tracking-widest text-center mt-20 pt-8 border-t-2" style={{ color: '#94a3b8', borderColor: '#0f172a' }}>
                   Generated by {config.settings.companyName || 'Nexus ERP'} Procurement Operations
                 </div>
               </div>
@@ -627,94 +659,94 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
             {/* PO PDF Template */}
             {poPrintData && (
-              <div ref={poTemplateRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
-                <div className="flex justify-between items-start mb-10">
-                  <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">
-                    {config.settings.companyLogo ? (
-                      <img src={config.settings.companyLogo} className="w-full h-full object-contain" />
-                    ) : 'LOGO'}
+              <div ref={poTemplateRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {rasterizedLogo && (
+                      <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', display: 'block' }} />
+                    )}
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName}</div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress}</div>
                   </div>
-                  <div className="text-right">
-                    <h1 className="text-3xl font-black mb-1">{config.settings.companyName}</h1>
-                    <p className="text-xl font-bold text-slate-600">{config.settings.companyAddress}</p>
+                  <div style={{ textAlign: 'right' }}>
                   </div>
                 </div>
 
-                <div className="border-t-2 border-b-2 border-slate-200 py-3 mb-8 flex justify-center items-center">
+                <div className="border-t-2 border-b-2 py-3 mb-8 flex justify-center items-center" style={{ borderColor: '#e2e8f0' }}>
                   <h2 className="text-xl font-black uppercase flex items-center gap-6">
                     <span>رقم الشراء : {poPrintData.items[0]?.comp.poNumber}</span>
                   </h2>
                 </div>
 
                 <div className="grid grid-cols-2 gap-8 mb-10">
-                  <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
-                    <div className="grid grid-cols-3">
-                      <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">المطلوب من:</div>
+                  <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
+                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
+                      <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>المطلوب من:</div>
                       <div className="col-span-2 p-3 font-black text-sm uppercase">{poPrintData.supplier.name}</div>
                     </div>
-                    <div className="grid grid-cols-3">
-                      <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">العنوان :</div>
+                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
+                      <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>العنوان :</div>
                       <div className="col-span-2 p-3 text-xs font-bold">{poPrintData.supplier.address || 'N/A'}</div>
                     </div>
-                    <div className="grid grid-cols-3">
-                      <div className="col-span-1 p-3 bg-slate-50 border-r-2 border-slate-900 font-bold text-xs text-right">رقم طلب العميل</div>
-                      <div className="col-span-2 p-3 font-mono font-black text-blue-600 text-xs">{poPrintData.order.internalOrderNumber}</div>
+                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
+                      <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>رقم طلب العميل</div>
+                      <div className="col-span-2 p-3 font-mono font-black text-xs" style={{ color: '#2563eb' }}>{poPrintData.order.internalOrderNumber}</div>
                     </div>
                   </div>
 
-                  <div className="border-2 border-slate-900 divide-y-2 divide-slate-900">
-                    <div className="grid grid-cols-3">
+                  <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
+                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
                       <div className="col-span-2 p-3 font-black text-sm text-center tracking-widest">
                         {new Date(poPrintData.items[0]?.comp.statusUpdatedAt).toLocaleDateString()}
                       </div>
-                      <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-xs">التاريخ :</div>
+                      <div className="col-span-1 p-3 border-l-2 font-bold text-xs" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>التاريخ :</div>
                     </div>
-                    <div className="p-3 bg-slate-50 text-center font-bold text-[10px]">
+                    <div className="p-3 text-center font-bold text-[10px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>
                       مأموريه ضرائب الشركات المساهمه - القاهره
                     </div>
-                    <div className="grid grid-cols-3">
+                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
                       <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">522 803 435</div>
-                      <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">رقم التسجيل الضريبي :</div>
+                      <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>رقم التسجيل الضريبي :</div>
                     </div>
-                    <div className="grid grid-cols-3">
+                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
                       <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">00 212 00389 5</div>
-                      <div className="col-span-1 p-3 bg-slate-50 border-l-2 border-slate-900 font-bold text-[9px]">رقم الملف الضريبي :</div>
+                      <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>رقم الملف الضريبي :</div>
                     </div>
                   </div>
                 </div>
 
-                <div className="border-2 border-slate-900 mb-10 min-h-[400px] flex flex-col">
-                  <div className="grid grid-cols-12 border-b-2 border-slate-900 bg-slate-50 text-[11px] font-black uppercase text-center">
-                    <div className="col-span-4 p-3 border-r-2 border-slate-900">Description (الوصف)</div>
-                    <div className="col-span-2 p-3 border-r-2 border-slate-900">Part No.<br />رقم القطعة</div>
-                    <div className="col-span-1 p-3 border-r-2 border-slate-900">Price LE<br />السعر</div>
-                    <div className="col-span-1 p-3 border-r-2 border-slate-900">quantities<br />الكميه</div>
-                    <div className="col-span-2 p-3 border-r-2 border-slate-900">unit<br />الوحده</div>
+                <div className="border-2 mb-10 min-h-[400px] flex flex-col" style={{ borderColor: '#0f172a' }}>
+                  <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc' }}>
+                    <div className="col-span-4 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Description (الوصف)</div>
+                    <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Part No.<br />رقم القطعة</div>
+                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Price LE<br />السعر</div>
+                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>quantities<br />الكميه</div>
+                    <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>unit<br />الوحده</div>
                     <div className="col-span-2 p-3">Value القيمه</div>
                   </div>
 
                   {poPrintData.items.map(({ comp }, idx) => (
-                    <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 text-center font-black">
-                      <div className="col-span-4 p-4 border-r-2 border-slate-900 text-left text-sm flex flex-col justify-center">
+                    <div key={idx} className="grid grid-cols-12 border-b-2 text-center font-black" style={{ borderColor: '#0f172a' }}>
+                      <div className="col-span-4 p-4 border-r-2 text-left text-sm flex flex-col justify-center" style={{ borderColor: '#0f172a' }}>
                         <span>{comp.scopeOfWork || comp.description}</span>
                         {comp.contractDuration && (
-                          <span className="text-[9px] text-violet-600 font-bold mt-1 uppercase">Duration: {comp.contractDuration}</span>
+                          <span className="text-[9px] font-bold mt-1 uppercase" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration}</span>
                         )}
                         {comp.componentNumber && !comp.contractNumber && (
-                          <span className="text-[8px] text-slate-400 font-bold mt-0.5">(Internal P#: {comp.componentNumber})</span>
+                          <span className="text-[8px] font-bold mt-0.5" style={{ color: '#94a3b8' }}>(Internal P#: {comp.componentNumber})</span>
                         )}
                       </div>
-                      <div className="col-span-2 p-4 border-r-2 border-slate-900 flex items-center justify-center font-mono text-xs text-blue-800 break-all">
+                      <div className="col-span-2 p-4 border-r-2 flex items-center justify-center font-mono text-xs break-all" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
                         {comp.contractNumber || comp.supplierPartNumber || ''}
                       </div>
 
-                      <div className="col-span-1 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
+                      <div className="col-span-1 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
                         {comp.unitCost.toLocaleString()}
                       </div>
-                      <div className="col-span-1 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
+                      <div className="col-span-1 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
                         {comp.quantity}
                       </div>
-                      <div className="col-span-2 p-4 border-r-2 border-slate-900 flex items-center justify-center text-sm">
+                      <div className="col-span-2 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
                         {comp.unit === 'pcs' ? 'قطعة' : comp.unit}
                       </div>
                       <div className="col-span-2 p-4 flex items-center justify-center text-base">
@@ -724,33 +756,33 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   ))}
 
                   {Array.from({ length: Math.max(0, 8 - poPrintData.items.length) }).map((_, idx) => (
-                    <div key={idx} className="grid grid-cols-12 border-b-2 border-slate-900 h-10">
-                      <div className="col-span-4 border-r-2 border-slate-900"></div>
-                      <div className="col-span-2 border-r-2 border-slate-900"></div>
-                      <div className="col-span-1 border-r-2 border-slate-900"></div>
-                      <div className="col-span-1 border-r-2 border-slate-900"></div>
-                      <div className="col-span-2 border-r-2 border-slate-900"></div>
+                    <div key={idx} className="grid grid-cols-12 border-b-2 h-10" style={{ borderColor: '#0f172a' }}>
+                      <div className="col-span-4 border-r-2" style={{ borderColor: '#0f172a' }}></div>
+                      <div className="col-span-2 border-r-2" style={{ borderColor: '#0f172a' }}></div>
+                      <div className="col-span-1 border-r-2" style={{ borderColor: '#0f172a' }}></div>
+                      <div className="col-span-1 border-r-2" style={{ borderColor: '#0f172a' }}></div>
+                      <div className="col-span-2 border-r-2" style={{ borderColor: '#0f172a' }}></div>
                       <div className="col-span-2"></div>
                     </div>
                   ))}
                 </div>
 
                 <div className="flex justify-between items-end">
-                  <div className="w-64 border-2 border-slate-900 divide-y-2 divide-slate-900 font-black">
-                    <div className="grid grid-cols-2">
-                      <div className="p-3 bg-slate-50 border-r-2 border-slate-900 text-xs uppercase">Subtotal</div>
+                  <div className="w-64 border-2 divide-y-2 font-black" style={{ borderColor: '#0f172a' }}>
+                    <div className="grid grid-cols-2" style={{ borderColor: '#0f172a' }}>
+                      <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>Subtotal</div>
                       <div className="p-3 text-right">
                         {poPrintData.items.reduce((sum, { comp }) => sum + (comp.quantity * comp.unitCost), 0).toLocaleString()}
                       </div>
                     </div>
-                    <div className="grid grid-cols-2">
-                      <div className="p-3 bg-slate-50 border-r-2 border-slate-900 text-[10px] uppercase">Tax</div>
+                    <div className="grid grid-cols-2" style={{ borderColor: '#0f172a' }}>
+                      <div className="p-3 border-r-2 text-[10px] uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>Tax</div>
                       <div className="p-3 text-right">
                         {poPrintData.items.reduce((sum, { comp }) => sum + ((comp.quantity * comp.unitCost) * ((comp.taxPercent || 0) / 100)), 0).toLocaleString()}
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 bg-slate-100">
-                      <div className="p-3 border-r-2 border-slate-900 text-sm uppercase">TOTAL</div>
+                    <div className="grid grid-cols-2" style={{ backgroundColor: '#f1f5f9', borderColor: '#0f172a' }}>
+                      <div className="p-3 border-r-2 text-sm uppercase" style={{ borderColor: '#0f172a' }}>TOTAL</div>
                       <div className="p-3 text-right text-xl">
                         {poPrintData.items.reduce((sum, { comp }) => {
                           const base = comp.quantity * comp.unitCost;

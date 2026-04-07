@@ -4,6 +4,31 @@ import { CustomerOrder, OrderStatus, AppConfig, User, CustomerOrderItem } from '
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
+// Converts SVG data URL to PNG data URL for html2canvas compatibility
+const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!logoDataUrl || !logoDataUrl.startsWith('data:image/svg')) {
+      resolve(logoDataUrl);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth * 2 || 400;
+      canvas.height = img.naturalHeight * 2 || 200;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      } else {
+        resolve(logoDataUrl);
+      }
+    };
+    img.onerror = () => resolve(logoDataUrl);
+    img.src = logoDataUrl;
+  });
+};
+
 interface ShipmentModuleProps {
     config: AppConfig;
     refreshKey?: number;
@@ -53,6 +78,14 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
     const [printingOrder, setPrintingOrder] = useState<CustomerOrder | null>(null);
     const [confirmingDeliveryId, setConfirmingDeliveryId] = useState<string | null>(null);
     const podUploadRef = useRef<HTMLInputElement>(null);
+    const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
+
+    // Pre-rasterize SVG logo to PNG for html2canvas compatibility
+    useEffect(() => {
+        if (config.settings.companyLogo) {
+            rasterizeLogo(config.settings.companyLogo).then(setRasterizedLogo);
+        }
+    }, [config.settings.companyLogo]);
 
     useEffect(() => {
         fetchData();
@@ -108,10 +141,10 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                     generatePdf();
                 } else {
                     console.error("Ref not found after timeout");
-                    alert("Error: Template not generated. Please try again.");
+                    alert("Error: Template not generated in time. Please try again.");
                     setPrintingOrder(null);
                 }
-            }, 500);
+            }, 600);
         }
     }, [printingOrder]);
 
@@ -429,28 +462,24 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
             {/* Hidden Delivery Note Template */}
             {printingOrder && (
                 <div className="fixed -left-[3000px] top-0">
-                    <div ref={deliveryNoteRef} className="bg-white p-12 text-slate-900 font-sans" style={{ width: '800px', minHeight: '1100px', letterSpacing: '0px', fontVariantLigatures: 'normal', direction: 'ltr' }}>
+                    <div ref={deliveryNoteRef} className="p-12 font-sans" style={{ width: '800px', minHeight: '1100px', letterSpacing: '0px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
                         {/* Header */}
-                        <div className="flex justify-between items-start mb-12">
-                            <div>
-                                <h2 className="text-4xl font-black text-slate-200 uppercase mb-2" style={{ letterSpacing: '0px' }}>Delivery Note</h2>
-                                <div className="text-sm font-bold text-slate-400 uppercase">#{printingOrder.internalOrderNumber}</div>
-                                <div className="text-xs font-bold text-slate-400 mt-1">Date: {new Date().toLocaleDateString()}</div>
-                            </div>
-                            <div className="text-right flex flex-col items-end min-h-[160px]">
-                                {config.settings.companyLogo ? (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '48px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                {rasterizedLogo && (
                                     <img
-                                        src={config.settings.companyLogo}
+                                        src={rasterizedLogo}
                                         alt={config.settings.companyName}
-                                        className="w-56 h-36 object-contain mb-4"
+                                        style={{ maxWidth: '200px', maxHeight: '64px', display: 'block', marginBottom: '8px' }}
                                     />
-                                ) : (
-                                    <div className="w-24 h-24 bg-slate-900 text-white rounded-full flex items-center justify-center text-3xl font-black mb-4">
-                                        {config.settings.companyName.substring(0, 2).toUpperCase()}
-                                    </div>
                                 )}
-                                <h1 className="text-2xl font-black text-slate-900 uppercase leading-tight" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyName}</h1>
-                                <p className="text-sm font-medium text-slate-500 max-w-[300px]" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{config.settings.companyAddress}</p>
+                                <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a', textTransform: 'uppercase' }}>{config.settings.companyName}</div>
+                                <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748b', maxWidth: '300px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress}</div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '32px', fontWeight: 900, color: '#e2e8f0', textTransform: 'uppercase', marginBottom: '8px' }}>Delivery Note</div>
+                                <div style={{ fontSize: '14px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>#{printingOrder.internalOrderNumber}</div>
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', marginTop: '4px' }}>Date: {new Date().toLocaleDateString()}</div>
                             </div>
                         </div>
 

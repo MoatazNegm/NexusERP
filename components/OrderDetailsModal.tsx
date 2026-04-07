@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { CustomerOrder, LogEntry, ManufacturingComponent, OrderStatus, AppConfig } from '../types';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const LogTimeline: React.FC<{ logs: LogEntry[], title?: string }> = ({ logs, title }) => (
   <div className="space-y-4">
@@ -139,27 +141,31 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
   const handleDownloadInvoice = async () => {
     if (!invoiceTemplateRef.current) return;
     setIsDownloading(true);
-    try {
-      const canvas = await (await import('html2canvas')).default(invoiceTemplateRef.current, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff'
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const { jsPDF } = await import('jspdf');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-      pdf.save(`Invoice-${order.invoiceNumber || order.internalOrderNumber}.pdf`);
-    } catch (err) {
-      console.error("PDF generation failed:", err);
-      alert("Failed to generate PDF");
-    } finally {
-      setIsDownloading(false);
-    }
+    
+    // Add stable rendering delay
+    setTimeout(async () => {
+      try {
+        if (!invoiceTemplateRef.current) return;
+        const canvas = await html2canvas(invoiceTemplateRef.current, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff'
+        });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const imgWidth = pageWidth;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+        pdf.save(`Invoice-${order.invoiceNumber || order.internalOrderNumber}.pdf`);
+      } catch (err) {
+        console.error("PDF generation failed:", err);
+        alert("Failed to generate PDF. Check console for details.");
+      } finally {
+        setIsDownloading(false);
+      }
+    }, 600);
   };
 
   const handleHardDelete = async () => {
@@ -182,12 +188,13 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
       {/* Hidden Invoice Template */}
       <div className="fixed -left-[2000px] top-0 overflow-visible">
-        <div ref={invoiceTemplateRef} className="bg-white p-12 text-slate-900" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'none' }}>
-          <div className="flex justify-between items-start mb-10">
-            <div className="w-24 h-24 border-4 border-slate-800 rounded-full flex items-center justify-center font-black text-2xl tracking-tighter">LOGO</div>
-            <div className="text-right">
-              <h1 className="text-3xl font-black mb-1">Nexus ERP</h1>
-              <p className="text-xl font-bold text-slate-600">Cairo, Egypt</p>
+        <div ref={invoiceTemplateRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>Nexus ERP</div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', maxWidth: '250px', whiteSpace: 'pre-line', lineHeight: '1.6' }}>Cairo, Egypt</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
             </div>
           </div>
           <div className="border-t-2 border-b-2 border-slate-200 py-3 mb-8 flex justify-center items-center">

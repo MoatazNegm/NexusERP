@@ -1398,6 +1398,20 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             case 'finalize-study':
                 if (order.items.some(it => !it.isAccepted)) throw new Error("All items must be accepted before finalizing study");
                 order.status = OrderStatus.WAITING_SUPPLIERS;
+                
+                // Transition all NEW procurement components to PENDING_OFFER so Procurement sees them
+                order.items.forEach(item => {
+                    (item.components || []).forEach(comp => {
+                        if (comp.source === 'PROCUREMENT' && ['NEW', 'PENDING_OFFER'].includes(comp.status)) {
+                            comp.status = 'PENDING_OFFER';
+                            if (!comp.procurementStartedAt) {
+                                comp.procurementStartedAt = new Date().toISOString();
+                            }
+                            comp.statusUpdatedAt = new Date().toISOString();
+                        }
+                    });
+                });
+
                 order.logs.push(createAuditLog('Technical study finalized and pushed to Procurement', order.status, user));
                 break;
 
