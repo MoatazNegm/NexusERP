@@ -1233,10 +1233,17 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             </div>
                           </div>
                           <div className="border border-slate-100 rounded-2xl p-2 max-h-48 overflow-y-auto custom-scrollbar space-y-1">
-                            {activeAction.order.items.flatMap(ci => (ci.components || []).filter(cc =>
-                              cc.source === 'PROCUREMENT' &&
-                              (['PENDING_OFFER', 'RFP_SENT'].includes(cc.status || ''))
-                            )).map(comp => (
+                            {activeAction.order.items
+                              .filter(ci => {
+                                // Filter items by current tab's productionType
+                                if (activeTab === 'outsourcing') return ci.productionType === 'OUTSOURCING';
+                                if (activeTab === 'purchases') return ci.productionType !== 'OUTSOURCING';
+                                return true; // 'history' tab
+                              })
+                              .flatMap(ci => (ci.components || []).filter(cc =>
+                                cc.source === 'PROCUREMENT' &&
+                                (['PENDING_OFFER', 'RFP_SENT'].includes(cc.status || ''))
+                              )).map(comp => (
                               <label key={comp.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-slate-50 border-slate-100 hover:border-slate-300'}`}>
                                 <input
                                   type="checkbox"
