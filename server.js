@@ -83,7 +83,7 @@ const getItemEffectiveStatus = (item) => {
     if (comps.length === 0) return 'NO_COMPONENTS';
     const statuses = comps.map(c => c.status || 'NEW');
     // If any component still needs procurement action
-    if (statuses.some(s => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(s))) return 'WAITING_SUPPLIERS';
+    if (statuses.some(s => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'].includes(s))) return 'WAITING_SUPPLIERS';
     // If all components are reserved/received (ready to manufacture)
     if (statuses.every(s => ['RESERVED', 'RECEIVED', 'CANCELLED', 'ORDERED_FOR_STOCK'].includes(s))) return 'WAITING_FACTORY';
     // If any are actively being manufactured
@@ -1790,7 +1790,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.items.forEach(item => {
                     item.components?.forEach(comp => {
                         if (payload.components.includes(comp.id)) {
-                            comp.status = 'ORDERED';
+                            // For outsourcing items, set to WAITING_CONTRACT_START; for regular procurement, set to ORDERED
+                            if (item.productionType === 'OUTSOURCING') {
+                                comp.status = 'WAITING_CONTRACT_START';
+                                comp.contractStartDate = payload.contractStartDate || undefined;
+                            } else {
+                                comp.status = 'ORDERED';
+                            }
                             comp.sendPoId = sendPoId;
                             comp.poNumber = payload.poNumber;
                             comp.procurementStartedAt = new Date().toISOString();
@@ -1808,10 +1814,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 let updatedCount = 0;
                 order.items.forEach(item => {
                     item.components?.forEach(comp => {
-                        if (comp.sendPoId === payload.sendPoId && comp.status === 'ORDERED') {
+                        if (comp.sendPoId === payload.sendPoId && (comp.status === 'ORDERED' || comp.status === 'WAITING_CONTRACT_START')) {
                             comp.status = 'AWARDED';
                             delete comp.sendPoId;
                             delete comp.poNumber;
+                            delete comp.contractStartDate;
                             comp.statusUpdatedAt = new Date().toISOString();
                             updatedCount++;
                         }

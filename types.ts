@@ -131,7 +131,7 @@ export interface LedgerEntry {
   user: string;
 }
 
-export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' | 'ORDERED' | 'ORDERED_FOR_STOCK' | 'RECEIVED' | 'RESERVED' | 'IN_MANUFACTURING' | 'MANUFACTURED' | 'CANCELLED';
+export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' | 'ORDERED' | 'ORDERED_FOR_STOCK' | 'WAITING_CONTRACT_START' | 'RECEIVED' | 'RESERVED' | 'IN_MANUFACTURING' | 'MANUFACTURED' | 'CANCELLED';
 
 export interface ManufacturingComponent {
   id?: string;
@@ -159,6 +159,7 @@ export interface ManufacturingComponent {
   contractNumber?: string;
   contractDuration?: string;
   scopeOfWork?: string;
+  contractStartDate?: string;
 }
 
 
@@ -326,7 +327,7 @@ export const getItemEffectiveStatus = (item: CustomerOrderItem): string => {
   if (comps.length === 0) return 'NO_COMPONENTS';
   const statuses = comps.map(c => c.status || 'NEW');
   // If any component still needs procurement action
-  if (statuses.some(s => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(s))) return 'WAITING_SUPPLIERS';
+  if (statuses.some(s => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'].includes(s))) return 'WAITING_SUPPLIERS';
   // If all components are reserved/received (ready to manufacture)
   if (statuses.every(s => ['RESERVED', 'RECEIVED', 'CANCELLED', 'ORDERED_FOR_STOCK'].includes(s))) return 'WAITING_FACTORY';
   // If any are actively being manufactured

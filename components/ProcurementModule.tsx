@@ -50,6 +50,7 @@ const getCompLimit = (status: CompStatus, settings: any) => {
     case 'RFP_SENT': return settings.rfpSentLimitHrs;
     case 'AWARDED': return settings.issuePoLimitHrs;
     case 'ORDERED': return settings.orderedLimitHrs;
+    case 'WAITING_CONTRACT_START': return settings.orderedLimitHrs;
     default: return 0;
   }
 };
@@ -119,6 +120,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [awardCosts, setAwardCosts] = useState<Record<string, string>>({});
   const [awardTaxPercent, setAwardTaxPercent] = useState<string>('14');
   const [poNumberInput, setPoNumberInput] = useState<string>('');
+  const [contractStartDate, setContractStartDate] = useState<string>('');
   const [resetReason, setResetReason] = useState<string>('');
   const [compHistory, setCompHistory] = useState<any[] | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -397,13 +399,28 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         if (!poNumberInput.trim()) throw new Error("PO Number is required");
         if (selectedCompIds.length === 0) throw new Error("At least one component must be selected");
 
+        // Check if any selected components are from outsourced items
+        const anyOutsourced = multiComps.some(({ item: mi, comp: mc }) => 
+          selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING'
+        );
+        
+        if (anyOutsourced && !contractStartDate.trim()) {
+          throw new Error("Contract Start Date is required for outsourcing items");
+        }
+
         setIsActionLoading('bulk-po');
         const componentsToDispatch = selectedCompIds;
 
-        await dataService.dispatchAction(order.id, 'issue-po-batch', {
+        const payload: any = {
           components: componentsToDispatch,
           poNumber: poNumberInput
-        });
+        };
+        
+        if (contractStartDate) {
+          payload.contractStartDate = contractStartDate;
+        }
+
+        await dataService.dispatchAction(order.id, 'issue-po-batch', payload);
       } else if (type === 'CANCEL_PO_BATCH') {
         if (!resetReason.trim()) throw new Error("Cancellation reason is required");
 
@@ -469,6 +486,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setAwardCosts({});
     setAwardTaxPercent('14');
     setPoNumberInput('');
+    setContractStartDate('');
     setResetReason('');
     setPendingResolutions(null);
     setResolutionChoices({});
@@ -880,10 +898,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
             <div className="space-y-8">
               {(activeTab === 'outsourcing' ? outsourcingGroups : purchaseGroups).map(({ order: o, comps }) => {
-                const allAwardedOrOrdered = comps.every(({ comp: cc }) => ['AWARDED', 'ORDERED', 'RECEIVED'].includes(cc.status || ''));
+                const allAwardedOrOrdered = comps.every(({ comp: cc }) => ['AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED'].includes(cc.status || ''));
                 const anyReadyToOrder = comps.some(({ comp: cc }) => cc.status === 'AWARDED');
-                const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
-                const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'RECEIVED');
+                const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'WAITING_CONTRACT_START' || cc.status === 'RECEIVED');
+                const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'WAITING_CONTRACT_START' || cc.status === 'RECEIVED');
                 const readyForPo = allAwardedOrOrdered && anyReadyToOrder;
 
                 const itemsInFactoryCount = o.items.filter(i => {
@@ -971,17 +989,19 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         <div key={c.id} className="flex flex-col lg:flex-row justify-between items-center p-6 hover:bg-blue-50/30 transition-all group">
                           <div className="flex gap-6 items-center w-full lg:w-auto">
                             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${c.status === 'ORDERED' ? 'bg-emerald-50 text-emerald-600' :
+                              c.status === 'WAITING_CONTRACT_START' ? 'bg-purple-50 text-purple-600' :
                               c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
                               }`}>
-                              <i className={`fa-solid ${c.status === 'ORDERED' ? 'fa-truck-fast' : c.status === 'AWARDED' ? 'fa-file-signature' : 'fa-diagram-project'}`}></i>
+                              <i className={`fa-solid ${c.status === 'ORDERED' ? 'fa-truck-fast' : c.status === 'WAITING_CONTRACT_START' ? 'fa-calendar-check' : c.status === 'AWARDED' ? 'fa-file-signature' : 'fa-diagram-project'}`}></i>
                             </div>
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
                                 {c.supplierPartNumber && <span className="text-[10px] font-black text-amber-600 font-mono tracking-widest uppercase border border-amber-200 bg-amber-50 px-1 rounded">MFR P/N: {c.supplierPartNumber}</span>}
                                 <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${c.status === 'ORDERED' ? 'bg-emerald-600 text-white' :
+                                  c.status === 'WAITING_CONTRACT_START' ? 'bg-purple-600 text-white' :
                                   c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
-                                  }`}>{(c.status || '').replace('_', ' ')}</span>
+                                  }`}>{(c.status || '').replace(/_/g, ' ')}</span>
                                 {c.rfpId && ['RFP_SENT', 'AWARDED'].includes(c.status || '') && (
                                   <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
                                     BATCH: {c.rfpId.substring(0, 6)}
@@ -1126,6 +1146,36 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                 <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
                                   <i className="fa-solid fa-truck-fast mr-1"></i>In Transit
                                 </span>
+                              </div>
+                            )}
+                            {c.status === 'WAITING_CONTRACT_START' && (
+                              <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
+                                <button
+                                  onClick={() => handleDownloadPO(o, c)}
+                                  className="px-5 py-2.5 bg-white border-2 border-purple-600 text-purple-600 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-purple-50 transition-all flex items-center gap-2"
+                                >
+                                  <i className="fa-solid fa-file-pdf"></i> Download PO
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const samePoBatch = comps.filter(x =>
+                                      x.comp.poNumber === c.poNumber &&
+                                      x.comp.status === 'WAITING_CONTRACT_START' &&
+                                      (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
+                                    );
+                                    setMultiComps(samePoBatch);
+                                    setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
+                                    setResetReason('');
+                                    setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
+                                  }}
+                                  disabled={isActionLoading != null}
+                                  className="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-rose-700 transition-all flex items-center gap-2"
+                                >
+                                  <i className="fa-solid fa-ban"></i> Cancel Order
+                                </button>
+                                <div className="text-[10px] font-black text-purple-600 uppercase tracking-[0.15em] px-2 whitespace-nowrap">
+                                  <i className="fa-solid fa-calendar-check mr-1"></i>Waiting Contract: {c.contractStartDate ? new Date(c.contractStartDate).toLocaleDateString() : 'TBD'}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -1383,6 +1433,18 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             value={poNumberInput} onChange={e => setPoNumberInput(e.target.value)}
                           />
                         </div>
+
+                        {multiComps.some(({ item: mi, comp: mc }) => selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING') && (
+                          <div className="space-y-2 p-4 bg-purple-50 rounded-2xl border border-purple-100">
+                            <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1">Contract Start Date (Outsourcing)</label>
+                            <input
+                              type="date"
+                              className="w-full p-4 bg-white border-2 border-purple-200 rounded-2xl font-black text-purple-600 outline-none focus:border-purple-500 transition-all"
+                              value={contractStartDate} 
+                              onChange={e => setContractStartDate(e.target.value)}
+                            />
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1503,9 +1565,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                               <span>Supplier: {rec.supplierName}</span>
                               <span>Qty: {rec.quantity}</span>
                             </div>
-                            <div className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded mt-1.5 w-fit border ${rec.status === 'ORDERED' ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-amber-600 bg-amber-50 border-amber-100'
+                            <div className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded mt-1.5 w-fit border ${rec.status === 'ORDERED' ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : rec.status === 'WAITING_CONTRACT_START' ? 'text-purple-600 bg-purple-50 border-purple-100' : 'text-amber-600 bg-amber-50 border-amber-100'
                               }`}>
-                              {rec.status === 'ORDERED' ? 'PO Issued — Awaiting Delivery' : 'Awarded — Pending PO Issuance'}
+                              {rec.status === 'ORDERED' ? 'PO Issued — Awaiting Delivery' : rec.status === 'WAITING_CONTRACT_START' ? 'Awaiting Contract Start' : 'Awarded — Pending PO Issuance'}
                             </div>
                           </div>
                         </div>
