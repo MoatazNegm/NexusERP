@@ -899,10 +899,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
             <div className="space-y-8">
               {(activeTab === 'outsourcing' ? outsourcingGroups : purchaseGroups).map(({ order: o, comps }) => {
                 const allAwardedOrOrdered = comps.every(({ comp: cc }) => ['AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED'].includes(cc.status || ''));
+                const allAwarded = comps.every(({ comp: cc }) => cc.status === 'AWARDED');
                 const anyReadyToOrder = comps.some(({ comp: cc }) => cc.status === 'AWARDED');
                 const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'WAITING_CONTRACT_START' || cc.status === 'RECEIVED');
                 const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'WAITING_CONTRACT_START' || cc.status === 'RECEIVED');
-                const readyForPo = allAwardedOrOrdered && anyReadyToOrder;
+                const readyForPo = allAwarded;
 
                 const itemsInFactoryCount = o.items.filter(i => {
                   const eff = getItemEffectiveStatus(i);
@@ -974,10 +975,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             <i className="fa-solid fa-file-invoice"></i> Issue PO for All
                           </button>
                         )}
-                        {!allAwardedOrOrdered && !allOrderedOrHigher && (
+                        {!allAwarded && !allOrderedOrHigher && (
                           <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
                             <i className="fa-solid fa-hourglass-half"></i>
-                            Awaiting all awards for PO
+                            All components must be awarded for PO
                           </div>
                         )}
                       </div>
@@ -1085,10 +1086,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             )}
                             {c.status === 'AWARDED' && (
                               <div className="flex flex-col items-end gap-1.5">
-                                {!allAwardedOrOrdered && (
-                                  <span className="text-[8px] font-black text-slate-400 uppercase">Waiting for other awards</span>
+                                {!allAwarded && (
+                                  <span className="text-[8px] font-black text-slate-400 uppercase">All components must be awarded first</span>
                                 )}
-                                {allAwardedOrOrdered && (
+                                {allAwarded && (
                                   <button
                                     disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
                                     onClick={async () => {
