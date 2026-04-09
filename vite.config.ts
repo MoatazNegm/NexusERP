@@ -8,6 +8,9 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3005,
       host: '0.0.0.0',
+      watch: {
+        ignored: ['**/db.json', '**/db.json.local.bak']
+      },
       proxy: {
         '/api': {
           target: 'http://localhost:3006',
