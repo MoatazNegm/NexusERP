@@ -121,6 +121,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [awardTaxPercent, setAwardTaxPercent] = useState<string>('14');
   const [poNumberInput, setPoNumberInput] = useState<string>('');
   const [contractStartDate, setContractStartDate] = useState<string>('');
+  const [allowPastContractStart, setAllowPastContractStart] = useState<boolean>(false);
   const [resetReason, setResetReason] = useState<string>('');
   const [compHistory, setCompHistory] = useState<any[] | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -408,6 +409,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           throw new Error("Contract Start Date is required for outsourcing items");
         }
 
+        if (anyOutsourced && contractStartDate.trim() && !allowPastContractStart) {
+          const today = new Date().toISOString().split('T')[0];
+          if (contractStartDate < today) {
+            throw new Error("Contract Start Date cannot be in the past unless explicitly allowed.");
+          }
+        }
+
         setIsActionLoading('bulk-po');
         const componentsToDispatch = selectedCompIds;
 
@@ -487,6 +495,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setAwardTaxPercent('14');
     setPoNumberInput('');
     setContractStartDate('');
+    setAllowPastContractStart(false);
     setResetReason('');
     setPendingResolutions(null);
     setResolutionChoices({});
@@ -1443,14 +1452,24 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         </div>
 
                         {multiComps.some(({ item: mi, comp: mc }) => selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING') && (
-                          <div className="space-y-2 p-4 bg-purple-50 rounded-2xl border border-purple-100">
+                          <div className="space-y-3 p-4 bg-purple-50 rounded-2xl border border-purple-100">
                             <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1">Contract Start Date (Outsourcing)</label>
                             <input
                               type="date"
+                              min={!allowPastContractStart ? new Date().toISOString().split('T')[0] : undefined}
                               className="w-full p-4 bg-white border-2 border-purple-200 rounded-2xl font-black text-purple-600 outline-none focus:border-purple-500 transition-all"
-                              value={contractStartDate} 
+                              value={contractStartDate}
                               onChange={e => setContractStartDate(e.target.value)}
                             />
+                            <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-purple-600">
+                              <input
+                                type="checkbox"
+                                checked={allowPastContractStart}
+                                onChange={e => setAllowPastContractStart(e.target.checked)}
+                                className="w-4 h-4 rounded border-purple-300 text-purple-600 focus:ring-purple-500"
+                              />
+                              Allow a past contract start date
+                            </label>
                           </div>
                         )}
                       </div>
