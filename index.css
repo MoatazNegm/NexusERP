@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+/* Force sRGB color space for html2canvas compatibility (v1.4.1 doesn't support oklch) */
+.po-print-template {
+  color-scheme: light;
+  --tw-color-space: display-p3;
+}
+
+.po-print-template,
+.po-print-template * {
+  color-interpolation: srgb !important;
+  color-rendering: sRGB !important;
+  image-rendering: auto !important;
+}
+
 /* Global Styles */
 body {
     background-color: #f8fafc;

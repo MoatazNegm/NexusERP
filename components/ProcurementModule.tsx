@@ -14,7 +14,7 @@ const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
       return;
     }
     const img = new Image();
-    img.crossOrigin = 'anonymous'; 
+    img.crossOrigin = 'anonymous';
     img.onload = () => {
       const canvas = document.createElement('canvas');
       // Set high resolution (2000px width) while maintaining aspect ratio
@@ -36,6 +36,15 @@ const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
     img.onerror = () => resolve(logoDataUrl);
     img.src = logoDataUrl;
   });
+};
+
+const sanitizeFileName = (value: string) => {
+  return value
+    .replace(/[\/\?%\*:|"<>]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 120)
+    .replace(/^-+|-+$/g, '');
 };
 
 interface ProcurementModuleProps {
@@ -291,7 +300,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
-      await new Promise(resolve => setTimeout(resolve, 180));
+      await new Promise(resolve => setTimeout(resolve, 600));
       await (document.fonts?.ready || Promise.resolve());
 
       if (cancelled || !poTemplateRef.current) {
@@ -302,13 +311,52 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       }
 
       try {
-        const h2c = (await import('html2canvas')).default;
-        const canvas = await h2c(poTemplateRef.current, {
+        const printTarget = poTemplateRef.current;
+        if (!printTarget) {
+          throw new Error('PO template element not found');
+        }
+
+        // Clone and sanitize the element to remove oklch color functions (html2canvas v1.4 limitation)
+        const clonedElement = printTarget.cloneNode(true) as HTMLElement;
+        clonedElement.style.position = 'fixed';
+        clonedElement.style.left = '-9999px';
+        clonedElement.style.top = '-9999px';
+        document.body.appendChild(clonedElement);
+
+        // Recursively convert oklch colors to rgb equivalents for html2canvas compatibility
+        const sanitizeColors = (element: HTMLElement) => {
+          const style = window.getComputedStyle(element);
+          const props = ['color', 'backgroundColor', 'borderColor', 'outlineColor'];
+          
+          for (const prop of props) {
+            const value = style.getPropertyValue(prop);
+            if (value?.includes('oklch')) {
+              // Fallback to readable default colors instead of oklch
+              if (prop === 'backgroundColor') {
+                element.style.backgroundColor = '#ffffff';
+              } else if (prop === 'borderColor') {
+                element.style.borderColor = '#e2e8f0';
+              } else if (prop === 'color') {
+                element.style.color = '#0f172a';
+              }
+            }
+          }
+          
+          for (let i = 0; i < element.children.length; i++) {
+            sanitizeColors(element.children[i] as HTMLElement);
+          }
+        };
+        
+        sanitizeColors(clonedElement);
+
+        const canvas = await html2canvas(clonedElement, {
           scale: 2,
           useCORS: true,
           logging: false,
           backgroundColor: '#ffffff'
         });
+
+        document.body.removeChild(clonedElement);
 
         const imgData = canvas.toDataURL('image/png');
         const pdf = new jsPDF('p', 'mm', 'a4');
@@ -317,12 +365,16 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
         pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-        pdf.save(`PO-${poPrintData.items[0]?.comp.poNumber}-${poPrintData.order.internalOrderNumber}.pdf`);
+        const poNumber = poPrintData.items[0]?.comp.poNumber || 'UNKNOWN';
+        const safeOrderNumber = sanitizeFileName(poPrintData.order.internalOrderNumber || 'ORDER');
+        pdf.save(`PO-${sanitizeFileName(poNumber)}-${safeOrderNumber}.pdf`);
       } catch (err: any) {
         console.error("PDF generation failed:", err, err?.stack, {
           poPrintDataExists: !!poPrintData,
           templatePresent: !!poTemplateRef.current,
-          itemsLength: poPrintData?.items.length
+          itemsLength: poPrintData?.items.length,
+          poNumber: poPrintData?.items[0]?.comp.poNumber,
+          internalOrderNumber: poPrintData?.order.internalOrderNumber
         });
         alert("Failed to generate PDF. Check console for details.");
       } finally {
@@ -758,7 +810,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
             {/* PO PDF Template */}
             {poPrintData && (
-              <div ref={poTemplateRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
+              <div ref={poTemplateRef} className="po-print-template p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {rasterizedLogo && (
