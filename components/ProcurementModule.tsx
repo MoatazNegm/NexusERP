@@ -130,6 +130,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [awardCosts, setAwardCosts] = useState<Record<string, string>>({});
   const [awardTaxPercent, setAwardTaxPercent] = useState<string>('14');
   const [poNumberInput, setPoNumberInput] = useState<string>('');
+  const [contractNumber, setContractNumber] = useState<string>('');
   const [contractStartDate, setContractStartDate] = useState<string>('');
   const [allowPastContractStart, setAllowPastContractStart] = useState<boolean>(false);
   const [resetReason, setResetReason] = useState<string>('');
@@ -552,6 +553,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         if (contractStartDate) {
           payload.contractStartDate = contractStartDate;
         }
+        
+        if (contractNumber) {
+          payload.contractNumber = contractNumber;
+        }
 
         await dataService.dispatchAction(order.id, 'issue-po-batch', payload);
       } else if (type === 'CANCEL_PO_BATCH') {
@@ -619,6 +624,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setAwardCosts({});
     setAwardTaxPercent('14');
     setPoNumberInput('');
+    setContractNumber('');
     setContractStartDate('');
     setAllowPastContractStart(false);
     setResetReason('');
@@ -921,7 +927,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   </div>
 
                   {/* Table Rows */}
-                  {poPrintData.items.map(({ comp }, idx) => (
+                  {poPrintData.items.map(({ item: orderItem, comp }, idx) => {
+                    const isOutsourcing = orderItem?.productionType === 'OUTSOURCING';
+                    return (
                     <div key={idx} style={{ display: 'grid', gridTemplateColumns: '0.8fr 2.5fr 1.2fr 0.8fr 0.8fr 1fr 1fr', gap: 0, borderBottom: idx < poPrintData.items.length - 1 ? '1px solid #0f172a' : 'none' }}>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>{idx + 1}</div>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 600, textAlign: 'left', borderRight: '1px solid #e2e8f0' }}>
@@ -929,27 +937,25 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         {comp.detailedDescription && (
                           <div style={{ fontSize: '8px', color: '#64748b', marginTop: '2px' }}>{comp.detailedDescription}</div>
                         )}
-                        {comp.contractDuration && (
-                          <div style={{ fontSize: '8px', color: '#7c3aed', fontWeight: 700, marginTop: '2px' }}>Duration: {comp.contractDuration}</div>
-                        )}
                       </div>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0', color: '#2563eb' }}>
-                        {comp.contractNumber || '-'}
+                        {comp.contractNumber || 'N/A'}
                       </div>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
                         {comp.quantity}
                       </div>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
-                        {comp.unit === 'pcs' ? 'قطعة' : comp.unit}
+                        {isOutsourcing ? (comp.contractDuration || '-') : (comp.unit === 'pcs' ? 'قطعة' : comp.unit)}
                       </div>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
-                        {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString('en-US') : '-'}
+                        {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString('en-US') : 'N/A'}
                       </div>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'right' }}>
                         {(comp.quantity * comp.unitCost).toLocaleString('en-US')} LE
                       </div>
                     </div>
-                  ))}
+                  );
+                  })
 
                   {/* Empty Rows */}
                   {Array.from({ length: Math.max(0, 5 - poPrintData.items.length) }).map((_, idx) => (
@@ -1602,7 +1608,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
                         {multiComps.some(({ item: mi, comp: mc }) => selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING') && (
                           <div className="space-y-3 p-4 bg-purple-50 rounded-2xl border border-purple-100">
-                            <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1">Contract Start Date (Outsourcing)</label>
+                            <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1">Contract/Service Number (Outsourcing)</label>
+                            <input
+                              className="w-full p-4 bg-white border-2 border-purple-200 rounded-2xl font-black text-purple-600 outline-none focus:border-purple-500 transition-all uppercase tracking-widest"
+                              placeholder="Enter supplier contract or service reference number"
+                              value={contractNumber}
+                              onChange={e => setContractNumber(e.target.value)}
+                            />
+                            <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1 mt-4">Contract Start Date (Outsourcing)</label>
                             <input
                               type="date"
                               min={!allowPastContractStart ? today : undefined}
