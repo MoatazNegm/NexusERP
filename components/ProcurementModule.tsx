@@ -290,6 +290,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       setIsPoPdfGenerating(true);
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      await new Promise(resolve => setTimeout(resolve, 180));
+      await (document.fonts?.ready || Promise.resolve());
 
       if (cancelled || !poTemplateRef.current) {
         if (!cancelled) alert("Failed to render PO preview. Please try again.");
@@ -299,7 +302,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       }
 
       try {
-        const canvas = await html2canvas(poTemplateRef.current, {
+        const h2c = (await import('html2canvas')).default;
+        const canvas = await h2c(poTemplateRef.current, {
           scale: 2,
           useCORS: true,
           logging: false,
@@ -314,9 +318,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
         pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
         pdf.save(`PO-${poPrintData.items[0]?.comp.poNumber}-${poPrintData.order.internalOrderNumber}.pdf`);
-      } catch (err) {
-        console.error("PDF generation failed:", err);
-        alert("Failed to generate PDF. Check console.");
+      } catch (err: any) {
+        console.error("PDF generation failed:", err, err?.stack, {
+          poPrintDataExists: !!poPrintData,
+          templatePresent: !!poTemplateRef.current,
+          itemsLength: poPrintData?.items.length
+        });
+        alert("Failed to generate PDF. Check console for details.");
       } finally {
         if (!cancelled) {
           setPoPrintData(null);
