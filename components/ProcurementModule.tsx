@@ -842,142 +842,178 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
             {/* PO PDF Template */}
             {poPrintData && (
-              <div ref={poTemplateRef} className="po-print-template p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div ref={poTemplateRef} className="po-print-template p-10" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
+                
+                {/* Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '30px', paddingBottom: '20px', borderBottom: '3px solid #0f172a' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
                     {rasterizedLogo && (
-                      <div style={{ height: '64px', display: 'flex', alignItems: 'flex-start' }}>
-                        <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '200px', objectFit: 'contain' }} />
+                      <div style={{ height: '60px', display: 'flex', alignItems: 'flex-start' }}>
+                        <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '180px', objectFit: 'contain' }} />
                       </div>
                     )}
-                    <div style={{ direction: 'rtl', textAlign: 'right', alignSelf: 'flex-start' }}>
-                      <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName}</div>
-                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress}</div>
-                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName}</div>
+                    <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', lineHeight: '1.5' }}>{config.settings.companyAddress}</div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
+                  <div style={{ textAlign: 'right', paddingLeft: '20px' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 900, color: '#0f172a', marginBottom: '15px' }}>PURCHASE ORDER</div>
+                    <div style={{ borderTop: '2px solid #0f172a', paddingTop: '8px', marginBottom: '8px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>PO NUMBER</div>
+                      <div style={{ fontSize: '16px', fontWeight: 900, color: '#2563eb' }}>{poPrintData.items[0]?.comp.poNumber}</div>
+                    </div>
+                    <div style={{ borderTop: '2px solid #0f172a', paddingTop: '8px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>PO DATE</div>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a' }}>{new Date(poPrintData.items[0]?.comp.statusUpdatedAt).toLocaleDateString()}</div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="border-t-2 border-b-2 py-3 mb-8 flex justify-center items-center" style={{ borderColor: '#e2e8f0' }}>
-                  <h2 className="text-xl font-black uppercase flex items-center gap-6">
-                    <span>رقم الشراء : {poPrintData.items[0]?.comp.poNumber}</span>
-                  </h2>
-                </div>
-
-                <div className="grid grid-cols-2 gap-8 mb-10">
-                  <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
-                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>المطلوب من:</div>
-                      <div className="col-span-2 p-3 font-black text-sm uppercase">{poPrintData.supplier.name}</div>
+                {/* Supplier & Order Details */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '30px' }}>
+                  {/* LEFT: Supplier Details (RTL) */}
+                  <div style={{ border: '2px solid #0f172a', padding: '15px', backgroundColor: '#f8fafc' }}>
+                    <div style={{ textAlign: 'right', direction: 'rtl', marginBottom: '12px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '6px' }}>المطلوب من (Supplier)</div>
+                      <div style={{ fontSize: '13px', fontWeight: 900, color: '#0f172a' }}>{poPrintData.supplier.name}</div>
                     </div>
-                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>العنوان :</div>
-                      <div className="col-span-2 p-3 text-xs font-bold">{poPrintData.supplier.address || 'N/A'}</div>
+                    <div style={{ textAlign: 'right', direction: 'rtl', marginBottom: '12px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>العنوان (Address)</div>
+                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a', lineHeight: '1.5' }}>{poPrintData.supplier.address || 'N/A'}</div>
                     </div>
-                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-right" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>رقم طلب العميل</div>
-                      <div className="col-span-2 p-3 font-mono font-black text-xs" style={{ color: '#2563eb' }}>{poPrintData.order.internalOrderNumber}</div>
-                    </div>
-                  </div>
-
-                  <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
-                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-2 p-3 font-black text-sm text-center tracking-widest">
-                        {new Date(poPrintData.items[0]?.comp.statusUpdatedAt).toLocaleDateString()}
+                    {poPrintData.supplier.phone && (
+                      <div style={{ textAlign: 'right', direction: 'rtl' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>الهاتف (Phone)</div>
+                        <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>{poPrintData.supplier.phone}</div>
                       </div>
-                      <div className="col-span-1 p-3 border-l-2 font-bold text-xs" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>التاريخ :</div>
+                    )}
+                  </div>
+
+                  {/* RIGHT: Order Details */}
+                  <div style={{ border: '2px solid #0f172a', padding: '15px', backgroundColor: '#f8fafc' }}>
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '6px' }}>BUYER ORDER NUMBER</div>
+                      <div style={{ fontSize: '13px', fontWeight: 900, color: '#2563eb' }}>{poPrintData.order.internalOrderNumber}</div>
                     </div>
-                    <div className="p-3 text-center font-bold text-[10px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>
-                      مأموريه ضرائب الشركات المساهمه - القاهره
-                    </div>
-                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">522 803 435</div>
-                      <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>رقم التسجيل الضريبي :</div>
-                    </div>
-                    <div className="grid grid-cols-3" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest">00 212 00389 5</div>
-                      <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>رقم الملف الضريبي :</div>
+                    {poPrintData.order.customerName && (
+                      <div style={{ marginBottom: '12px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>CUSTOMER</div>
+                        <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>{poPrintData.order.customerName}</div>
+                      </div>
+                    )}
+                    <div>
+                      <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Payment Terms</div>
+                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>As per agreement</div>
                     </div>
                   </div>
                 </div>
 
-                <div className="border-2 mb-10 min-h-[400px] flex flex-col" style={{ borderColor: '#0f172a' }}>
-                  <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc' }}>
-                    <div className="col-span-3 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Description (الوصف)</div>
-                    <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Part No.<br />رقم القطعة</div>
-                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Price LE<br />السعر</div>
-                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Qty<br />الكميه</div>
-                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Unit<br />الوحده</div>
-                    <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Start Date<br />تاريخ البدء</div>
-                    <div className="col-span-2 p-3">Value القيمه</div>
+                {/* Items Table */}
+                <div style={{ border: '2px solid #0f172a', marginBottom: '25px' }}>
+                  {/* Table Header */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '0.8fr 2.5fr 1.2fr 0.8fr 0.8fr 1fr 1fr', gap: 0, backgroundColor: '#0f172a', color: '#ffffff' }}>
+                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>No.</div>
+                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'left', borderRight: '1px solid #ffffff' }}>Description (الوصف)</div>
+                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Srv./Cont. #</div>
+                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Qty</div>
+                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>UOM</div>
+                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Start Date</div>
+                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center' }}>Amount</div>
                   </div>
 
+                  {/* Table Rows */}
                   {poPrintData.items.map(({ comp }, idx) => (
-                    <div key={idx} className="grid grid-cols-12 border-b-2 text-center font-black" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-3 p-4 border-r-2 text-left text-sm flex flex-col justify-center" style={{ borderColor: '#0f172a' }}>
-                        <span>{comp.scopeOfWork || comp.description}</span>
+                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '0.8fr 2.5fr 1.2fr 0.8fr 0.8fr 1fr 1fr', gap: 0, borderBottom: idx < poPrintData.items.length - 1 ? '1px solid #0f172a' : 'none' }}>
+                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>{idx + 1}</div>
+                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 600, textAlign: 'left', borderRight: '1px solid #e2e8f0' }}>
+                        <div style={{ fontWeight: 900, marginBottom: '3px' }}>{comp.scopeOfWork || comp.description}</div>
+                        {comp.detailedDescription && (
+                          <div style={{ fontSize: '8px', color: '#64748b', marginTop: '2px' }}>{comp.detailedDescription}</div>
+                        )}
                         {comp.contractDuration && (
-                          <span className="text-[9px] font-bold mt-1 uppercase" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration}</span>
-                        )}
-                        {comp.componentNumber && !comp.contractNumber && (
-                          <span className="text-[8px] font-bold mt-0.5" style={{ color: '#94a3b8' }}>(Internal P#: {comp.componentNumber})</span>
+                          <div style={{ fontSize: '8px', color: '#7c3aed', fontWeight: 700, marginTop: '2px' }}>Duration: {comp.contractDuration}</div>
                         )}
                       </div>
-                      <div className="col-span-2 p-4 border-r-2 flex items-center justify-center font-mono text-xs break-all" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
-                        {comp.contractNumber || comp.supplierPartNumber || ''}
+                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0', color: '#2563eb' }}>
+                        {comp.contractNumber || '-'}
                       </div>
-
-                      <div className="col-span-1 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
-                        {comp.unitCost.toLocaleString()}
-                      </div>
-                      <div className="col-span-1 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
+                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
                         {comp.quantity}
                       </div>
-                      <div className="col-span-1 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
+                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
                         {comp.unit === 'pcs' ? 'قطعة' : comp.unit}
                       </div>
-                      <div className="col-span-2 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
-                        {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString() : '-'}
+                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
+                        {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString('en-US') : '-'}
                       </div>
-                      <div className="col-span-2 p-4 flex items-center justify-center text-base">
-                        {(comp.quantity * comp.unitCost).toLocaleString()}
+                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'right' }}>
+                        {(comp.quantity * comp.unitCost).toLocaleString('en-US')} LE
                       </div>
                     </div>
                   ))}
 
-                  {Array.from({ length: Math.max(0, 8 - poPrintData.items.length) }).map((_, idx) => (
-                    <div key={idx} className="grid grid-cols-12 border-b-2 h-10" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-3 border-r-2" style={{ borderColor: '#0f172a' }}></div>
-                      <div className="col-span-2 border-r-2" style={{ borderColor: '#0f172a' }}></div>
-                      <div className="col-span-1 border-r-2" style={{ borderColor: '#0f172a' }}></div>
-                      <div className="col-span-1 border-r-2" style={{ borderColor: '#0f172a' }}></div>
-                      <div className="col-span-1 border-r-2" style={{ borderColor: '#0f172a' }}></div>
-                      <div className="col-span-2 border-r-2" style={{ borderColor: '#0f172a' }}></div>
-                      <div className="col-span-2"></div>
+                  {/* Empty Rows */}
+                  {Array.from({ length: Math.max(0, 5 - poPrintData.items.length) }).map((_, idx) => (
+                    <div key={`empty-${idx}`} style={{ display: 'grid', gridTemplateColumns: '0.8fr 2.5fr 1.2fr 0.8fr 0.8fr 1fr 1fr', gap: 0, borderBottom: '1px solid #e2e8f0', height: '45px' }}>
+                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                      <div></div>
                     </div>
                   ))}
                 </div>
 
-                <div className="flex justify-between items-end">
-                  <div className="w-64 border-2 divide-y-2 font-black" style={{ borderColor: '#0f172a' }}>
-                    <div className="grid grid-cols-2" style={{ borderColor: '#0f172a' }}>
-                      <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>Subtotal</div>
-                      <div className="p-3 text-right">
-                        {poPrintData.items.reduce((sum, { comp }) => sum + (comp.quantity * comp.unitCost), 0).toLocaleString()}
+                {/* Totals Section */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '30px' }}>
+                  <div style={{ width: '280px', border: '2px solid #0f172a' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid #0f172a' }}>
+                      <div style={{ padding: '10px 8px', fontSize: '10px', fontWeight: 900, backgroundColor: '#f8fafc', borderRight: '1px solid #0f172a' }}>SUBTOTAL</div>
+                      <div style={{ padding: '10px 8px', fontSize: '10px', fontWeight: 700, textAlign: 'right' }}>
+                        {poPrintData.items.reduce((sum, { comp }) => sum + (comp.quantity * comp.unitCost), 0).toLocaleString('en-US')} LE
                       </div>
                     </div>
-                    <div className="grid grid-cols-2" style={{ borderColor: '#0f172a' }}>
-                      <div className="p-3 border-r-2 text-[10px] uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a' }}>Tax</div>
-                      <div className="p-3 text-right">
-                        {poPrintData.items.reduce((sum, { comp }) => sum + ((comp.quantity * comp.unitCost) * ((comp.taxPercent || 0) / 100)), 0).toLocaleString()}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid #0f172a' }}>
+                      <div style={{ padding: '10px 8px', fontSize: '10px', fontWeight: 900, backgroundColor: '#f8fafc', borderRight: '1px solid #0f172a' }}>TAX (14%)</div>
+                      <div style={{ padding: '10px 8px', fontSize: '10px', fontWeight: 700, textAlign: 'right' }}>
+                        {poPrintData.items.reduce((sum, { comp }) => sum + ((comp.quantity * comp.unitCost) * ((comp.taxPercent || 14) / 100)), 0).toLocaleString('en-US')} LE
                       </div>
                     </div>
-                    <div className="grid grid-cols-2" style={{ backgroundColor: '#f1f5f9', borderColor: '#0f172a' }}>
-                      <div className="p-3 border-r-2 text-sm uppercase" style={{ borderColor: '#0f172a' }}>TOTAL</div>
-                      <div className="p-3 text-right text-xl">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', backgroundColor: '#0f172a', color: '#ffffff' }}>
+                      <div style={{ padding: '12px 8px', fontSize: '11px', fontWeight: 900, borderRight: '1px solid #ffffff' }}>TOTAL</div>
+                      <div style={{ padding: '12px 8px', fontSize: '14px', fontWeight: 900, textAlign: 'right' }}>
                         {poPrintData.items.reduce((sum, { comp }) => {
                           const base = comp.quantity * comp.unitCost;
+                          return sum + base + (base * ((comp.taxPercent || 14) / 100));
+                        }, 0).toLocaleString('en-US')} LE
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Notes & Signature */}
+                <div style={{ marginTop: '40px', paddingTop: '20px', borderTop: '2px solid #0f172a' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginBottom: '30px' }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ height: '50px', borderBottom: '1px solid #0f172a', marginBottom: '5px' }}></div>
+                      <div style={{ fontSize: '9px', fontWeight: 700 }}>AUTHORIZED</div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ height: '50px', borderBottom: '1px solid #0f172a', marginBottom: '5px' }}></div>
+                      <div style={{ fontSize: '9px', fontWeight: 700 }}>APPROVED</div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ height: '50px', borderBottom: '1px solid #0f172a', marginBottom: '5px' }}></div>
+                      <div style={{ fontSize: '9px', fontWeight: 700 }}>RECEIVED</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '8px', fontWeight: 600, color: '#94a3b8', textAlign: 'center', marginTop: '20px' }}>
+                    This is an electronically generated document - Digital Signature on file · تم إنشاء هذا المستند إلكترونياً
+                  </div>
+                </div>
+              </div>
+            )}
                           return sum + base + (base * ((comp.taxPercent || 0) / 100));
                         }, 0).toLocaleString()}
                       </div>
