@@ -132,6 +132,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const today = new Date().toISOString().split('T')[0];
   const selectedOutsourced = multiComps.some(({ item: mi, comp: mc }) => selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING');
   const isContractStartDateInvalid = selectedOutsourced && contractStartDate.trim() && contractStartDate < today && !allowPastContractStart;
+  const isCommitProcurementDisabled = isActionLoading != null || ((activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction?.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0 || (selectedOutsourced && !contractStartDate.trim()) || isContractStartDateInvalid));
 
   // Procurement resolution state (for in-transit components during rollback)
   type CompResolution = 'CANCEL_PO' | 'RECEIVE_TO_STOCK';
@@ -253,6 +254,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   }, [activeAction, suppliers]);
 
   const handleDownloadPO = async (order: CustomerOrder, comp: ManufacturingComponent) => {
+    if (isPoPdfGenerating) return;
+
     const supplier = suppliers.find(s => s.id === comp.supplierId);
     if (!supplier) {
       alert("Supplier data missing. Cannot generate PO.");
@@ -275,9 +278,24 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     }
 
     setPoPrintData({ order, items, supplier });
+  };
 
-    setTimeout(async () => {
-      if (!poTemplateRef.current) return;
+  useEffect(() => {
+    if (!poPrintData) return;
+
+    let cancelled = false;
+
+    const generatePdf = async () => {
+      setIsPoPdfGenerating(true);
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+
+      if (cancelled || !poTemplateRef.current) {
+        if (!cancelled) alert("Failed to render PO preview. Please try again.");
+        setPoPrintData(null);
+        setIsPoPdfGenerating(false);
+        return;
+      }
 
       try {
         const canvas = await html2canvas(poTemplateRef.current, {
@@ -294,15 +312,24 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
         pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-        pdf.save(`PO-${comp.poNumber}-${order.internalOrderNumber}.pdf`);
-        setPoPrintData(null);
+        pdf.save(`PO-${poPrintData.items[0]?.comp.poNumber}-${poPrintData.order.internalOrderNumber}.pdf`);
       } catch (err) {
         console.error("PDF generation failed:", err);
         alert("Failed to generate PDF. Check console.");
-        setPoPrintData(null);
+      } finally {
+        if (!cancelled) {
+          setPoPrintData(null);
+          setIsPoPdfGenerating(false);
+        }
       }
-    }, 500);
-  };
+    };
+
+    generatePdf();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [poPrintData]);
 
   const handleDownloadRfp = async () => {
     // This handles download from the Send RFP wizard
@@ -784,17 +811,18 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
                 <div className="border-2 mb-10 min-h-[400px] flex flex-col" style={{ borderColor: '#0f172a' }}>
                   <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc' }}>
-                    <div className="col-span-4 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Description (الوصف)</div>
+                    <div className="col-span-3 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Description (الوصف)</div>
                     <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Part No.<br />رقم القطعة</div>
                     <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Price LE<br />السعر</div>
-                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>quantities<br />الكميه</div>
-                    <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>unit<br />الوحده</div>
+                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Qty<br />الكميه</div>
+                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Unit<br />الوحده</div>
+                    <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Start Date<br />تاريخ البدء</div>
                     <div className="col-span-2 p-3">Value القيمه</div>
                   </div>
 
                   {poPrintData.items.map(({ comp }, idx) => (
                     <div key={idx} className="grid grid-cols-12 border-b-2 text-center font-black" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-4 p-4 border-r-2 text-left text-sm flex flex-col justify-center" style={{ borderColor: '#0f172a' }}>
+                      <div className="col-span-3 p-4 border-r-2 text-left text-sm flex flex-col justify-center" style={{ borderColor: '#0f172a' }}>
                         <span>{comp.scopeOfWork || comp.description}</span>
                         {comp.contractDuration && (
                           <span className="text-[9px] font-bold mt-1 uppercase" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration}</span>
@@ -813,8 +841,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       <div className="col-span-1 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
                         {comp.quantity}
                       </div>
-                      <div className="col-span-2 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
+                      <div className="col-span-1 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
                         {comp.unit === 'pcs' ? 'قطعة' : comp.unit}
+                      </div>
+                      <div className="col-span-2 p-4 border-r-2 flex items-center justify-center text-sm" style={{ borderColor: '#0f172a' }}>
+                        {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString() : '-'}
                       </div>
                       <div className="col-span-2 p-4 flex items-center justify-center text-base">
                         {(comp.quantity * comp.unitCost).toLocaleString()}
@@ -824,8 +855,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
                   {Array.from({ length: Math.max(0, 8 - poPrintData.items.length) }).map((_, idx) => (
                     <div key={idx} className="grid grid-cols-12 border-b-2 h-10" style={{ borderColor: '#0f172a' }}>
-                      <div className="col-span-4 border-r-2" style={{ borderColor: '#0f172a' }}></div>
+                      <div className="col-span-3 border-r-2" style={{ borderColor: '#0f172a' }}></div>
                       <div className="col-span-2 border-r-2" style={{ borderColor: '#0f172a' }}></div>
+                      <div className="col-span-1 border-r-2" style={{ borderColor: '#0f172a' }}></div>
                       <div className="col-span-1 border-r-2" style={{ borderColor: '#0f172a' }}></div>
                       <div className="col-span-1 border-r-2" style={{ borderColor: '#0f172a' }}></div>
                       <div className="col-span-2 border-r-2" style={{ borderColor: '#0f172a' }}></div>
@@ -1557,9 +1589,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   <div className="mt-10 flex gap-3">
                     <button onClick={closeModal} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">Abort</button>
                     <button
-                      disabled={isActionLoading != null || ((activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0 || (selectedOutsourced && !contractStartDate.trim()) || isContractStartDateInvalid))}
+                      disabled={isCommitProcurementDisabled}
                       onClick={handleExecuteAction}
-                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
+                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${isCommitProcurementDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
                         }`}
                     >
                       {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
