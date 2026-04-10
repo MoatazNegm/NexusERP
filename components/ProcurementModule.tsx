@@ -1015,6 +1015,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
               </div>
             )}
 
+          </div>
+
           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
               <div>
