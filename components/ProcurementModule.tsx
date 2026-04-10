@@ -316,44 +316,76 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           throw new Error('PO template element not found');
         }
 
-        // Clone and sanitize the element to remove oklch color functions (html2canvas v1.4 limitation)
+        // Clone and convert all styles to inline to avoid stylesheet parsing (oklch issue)
         const clonedElement = printTarget.cloneNode(true) as HTMLElement;
         clonedElement.style.position = 'fixed';
-        clonedElement.style.left = '-9999px';
-        clonedElement.style.top = '-9999px';
+        clonedElement.style.left = '-10000px';
+        clonedElement.style.top = '-10000px';
+        clonedElement.style.width = '800px';
         document.body.appendChild(clonedElement);
 
-        // Recursively convert oklch colors to rgb equivalents for html2canvas compatibility
-        const sanitizeColors = (element: HTMLElement) => {
-          const style = window.getComputedStyle(element);
-          const props = ['color', 'backgroundColor', 'borderColor', 'outlineColor'];
+        // Recursively convert all computed styles to inline styles and remove classes
+        const convertToInlineStyles = (element: HTMLElement) => {
+          if (element.nodeType !== 1) return; // Skip non-element nodes
+
+          const computedStyles = window.getComputedStyle(element);
           
-          for (const prop of props) {
-            const value = style.getPropertyValue(prop);
-            if (value?.includes('oklch')) {
-              // Fallback to readable default colors instead of oklch
-              if (prop === 'backgroundColor') {
-                element.style.backgroundColor = '#ffffff';
-              } else if (prop === 'borderColor') {
-                element.style.borderColor = '#e2e8f0';
-              } else if (prop === 'color') {
-                element.style.color = '#0f172a';
+          // List of CSS properties to copy
+          const stylesToCopy = [
+            'display', 'position', 'width', 'height', 'margin', 'padding', 'border',
+            'backgroundColor', 'color', 'fontSize', 'fontWeight', 'fontFamily',
+            'textAlign', 'borderColor', 'borderWidth', 'borderStyle',
+            'gridTemplateColumns', 'gridColumn', 'gridRow', 'gap',
+            'flexDirection', 'justifyContent', 'alignItems', 'flex',
+            'textDecoration', 'cursor', 'opacity', 'zIndex',
+            'whiteSpace', 'wordWrap', 'overflow', 'direction'
+          ];
+
+          for (const prop of stylesToCopy) {
+            let value = computedStyles.getPropertyValue(prop);
+            if (value && value.trim()) {
+              // Replace oklch colors with safe fallbacks
+              if (value.includes('oklch')) {
+                if (prop.includes('background') || prop === 'backgroundColor') {
+                  value = '#ffffff';
+                } else if (prop.includes('border') || prop.includes('Color')) {
+                  value = '#e2e8f0';
+                } else if (prop === 'color') {
+                  value = '#0f172a';
+                }
+              }
+              // Avoid setting computed shorthand properties that may conflict
+              if (!prop.includes('border') || prop === 'border') {
+                try {
+                  (element.style as any)[prop] = value;
+                } catch (e) {
+                  // Silently skip invalid assignments
+                }
               }
             }
           }
+
+          // Remove classes to prevent stylesheet lookups
+          element.removeAttribute('class');
           
+          // Process children
           for (let i = 0; i < element.children.length; i++) {
-            sanitizeColors(element.children[i] as HTMLElement);
+            convertToInlineStyles(element.children[i] as HTMLElement);
           }
         };
-        
-        sanitizeColors(clonedElement);
+
+        convertToInlineStyles(clonedElement);
+
+        // Explicitly set background for the document
+        clonedElement.style.backgroundColor = '#ffffff';
+        clonedElement.style.color = '#0f172a';
 
         const canvas = await html2canvas(clonedElement, {
           scale: 2,
           useCORS: true,
           logging: false,
-          backgroundColor: '#ffffff'
+          backgroundColor: '#ffffff',
+          allowTaint: true
         });
 
         document.body.removeChild(clonedElement);
