@@ -128,6 +128,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [selectedCompIds, setSelectedCompIds] = useState<string[]>([]);
   const [multiComps, setMultiComps] = useState<{ item: CustomerOrderItem, comp: ManufacturingComponent }[]>([]);
 
+  // Computed values for contract date validation
+  const today = new Date().toISOString().split('T')[0];
+  const selectedOutsourced = multiComps.some(({ item: mi, comp: mc }) => selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING');
+  const isContractStartDateInvalid = selectedOutsourced && contractStartDate.trim() && contractStartDate < today && !allowPastContractStart;
+
   // Procurement resolution state (for in-transit components during rollback)
   type CompResolution = 'CANCEL_PO' | 'RECEIVE_TO_STOCK';
   interface InTransitCompRecord {
@@ -1456,11 +1461,16 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1">Contract Start Date (Outsourcing)</label>
                             <input
                               type="date"
-                              min={!allowPastContractStart ? new Date().toISOString().split('T')[0] : undefined}
-                              className="w-full p-4 bg-white border-2 border-purple-200 rounded-2xl font-black text-purple-600 outline-none focus:border-purple-500 transition-all"
+                              min={!allowPastContractStart ? today : undefined}
+                              className={`w-full p-4 bg-white border-2 rounded-2xl font-black text-purple-600 outline-none transition-all ${isContractStartDateInvalid ? 'border-red-500 bg-red-50' : 'border-purple-200 focus:border-purple-500'}`}
                               value={contractStartDate}
                               onChange={e => setContractStartDate(e.target.value)}
                             />
+                            {isContractStartDateInvalid && (
+                              <div className="text-[10px] text-red-600 font-bold uppercase tracking-widest mt-2">
+                                Past start dates are prohibited unless the checkbox is checked.
+                              </div>
+                            )}
                             <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-purple-600">
                               <input
                                 type="checkbox"
@@ -1547,7 +1557,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   <div className="mt-10 flex gap-3">
                     <button onClick={closeModal} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">Abort</button>
                     <button
-                      disabled={isActionLoading != null || ((activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0))}
+                      disabled={isActionLoading != null || ((activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0 || (selectedOutsourced && !contractStartDate.trim()) || isContractStartDateInvalid))}
                       onClick={handleExecuteAction}
                       className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' || activeAction.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
                         }`}
