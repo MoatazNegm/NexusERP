@@ -95,6 +95,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null);
   const poTemplateRef = useRef<HTMLDivElement>(null);
   const [poPrintData, setPoPrintData] = useState<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier } | null>(null);
+  const [isPoPdfGenerating, setIsPoPdfGenerating] = useState<boolean>(false);
   const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
 
   // Pre-rasterize SVG logo to PNG for html2canvas compatibility
