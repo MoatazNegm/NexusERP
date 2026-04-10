@@ -955,7 +955,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       </div>
                     </div>
                   );
-                  })
+                  })}
 
                   {/* Empty Rows */}
                   {Array.from({ length: Math.max(0, 5 - poPrintData.items.length) }).map((_, idx) => (
