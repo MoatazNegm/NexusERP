@@ -1014,25 +1014,6 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 </div>
               </div>
             )}
-                          return sum + base + (base * ((comp.taxPercent || 0) / 100));
-                        }, 0).toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="text-right italic text-[10px] text-slate-400 opacity-50 mb-4 pr-10">
-                    AUTHORIZED DIGITAL DOCUMENT
-                  </div>
-                </div>
-
-                <div className="mt-16 pt-6 border-t-2 border-slate-900 flex justify-between px-4 text-[11px] font-black uppercase tracking-widest">
-                  <span>AGENT / المختص</span>
-                  <span>REFERENCE / المرجع</span>
-                  <span>APPROVED / يعتمد</span>
-                </div>
-              </div>
-            )}
-          </div>
 
           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
