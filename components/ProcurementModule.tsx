@@ -1107,6 +1107,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'WAITING_CONTRACT_START' || cc.status === 'RECEIVED');
                 const readyForPo = allAwarded;
 
+                const orderProcurementComponents = o.items.flatMap(item => item.components || []).filter(comp => comp.source === 'PROCUREMENT');
+                const allOrderProcurementAwarded = orderProcurementComponents.length > 0 && orderProcurementComponents.every(comp => comp.status === 'AWARDED');
+                const anyOrderProcurementNotReady = orderProcurementComponents.some(comp => ['PENDING_OFFER', 'RFP_SENT'].includes(comp.status || ''));
+
                 const itemsInFactoryCount = o.items.filter(i => {
                   const eff = getItemEffectiveStatus(i);
                   return ['WAITING_FACTORY', 'MANUFACTURING', 'MANUFACTURED'].includes(eff);
@@ -1154,16 +1158,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         </button>
 
                         {/* Global Issue PO for all awarded comps */}
-                        {readyForPo && (
+                        {readyForPo && allOrderProcurementAwarded && (
                           <button
-                            disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
+                            disabled={o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded}
                             onClick={async () => {
                               const po = await dataService.getUniquePoNumber();
                               setPoNumberInput(po);
-                              // Find all AWARDED components regardless of supplier to present a grouped selector
                               const awarded = comps.filter(({ comp: cc }) => cc.status === 'AWARDED');
                               if (awarded.length > 0) {
-                                // By default group by the first awarded component's supplier
                                 const sId = awarded[0].comp.supplierId;
                                 const sameSupplier = awarded.filter(a => a.comp.supplierId === sId);
                                 setMultiComps(sameSupplier);
@@ -1174,13 +1176,19 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                 setActiveAction({ type: 'PO', order: o, item: sameSupplier[0].item, comp: sameSupplier[0].comp });
                               }
                             }}
-                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg flex items-center gap-2 transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-100'
+                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg flex items-center gap-2 transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-100'
                               }`}
                           >
                             <i className="fa-solid fa-file-invoice"></i> Issue PO for All
                           </button>
                         )}
-                        {!allAwarded && !allOrderedOrHigher && (
+                        {anyOrderProcurementNotReady && (
+                          <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-600 uppercase bg-rose-50 px-3 py-1.5 rounded-lg">
+                            <i className="fa-solid fa-circle-exclamation"></i>
+                            Not all line items ready for PO
+                          </div>
+                        )}
+                        {!allAwarded && !allOrderedOrHigher && !anyOrderProcurementNotReady && (
                           <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
                             <i className="fa-solid fa-hourglass-half"></i>
                             All components must be awarded for PO
@@ -1291,16 +1299,15 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             )}
                             {c.status === 'AWARDED' && (
                               <div className="flex flex-col items-end gap-1.5">
-                                {!allAwarded && (
+                                {!allOrderProcurementAwarded && (
                                   <span className="text-[8px] font-black text-slate-400 uppercase">All components must be awarded first</span>
                                 )}
-                                {allAwarded && (
+                                {allOrderProcurementAwarded && (
                                   <button
-                                    disabled={o.status === OrderStatus.NEGATIVE_MARGIN}
+                                    disabled={o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded}
                                     onClick={async () => {
                                       const po = await dataService.getUniquePoNumber();
                                       setPoNumberInput(po);
-                                      // Find all awarded components sharing the same Award ID (and supplier) in THIS order
                                       const sameAwardGroup = comps.filter(x =>
                                         x.comp.status === 'AWARDED' &&
                                         x.comp.supplierId === c.supplierId &&
@@ -1313,7 +1320,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                       setContractStartDate(contractInfo.contractStartDate);
                                       setActiveAction({ type: 'PO', order: o, item: i, comp: c });
                                     }}
-                                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                                   >
                                     Issue PO
                                   </button>

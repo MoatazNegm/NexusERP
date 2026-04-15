@@ -93,6 +93,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [editingComp, setEditingComp] = useState<ManufacturingComponent | null>(null);
   const [editQty, setEditQty] = useState<number | string>(1);
   const [editDesc, setEditDesc] = useState('');
+  const [editComponentNumber, setEditComponentNumber] = useState('');
   const [editContractNumber, setEditContractNumber] = useState('');
   const [editContractStartDate, setEditContractStartDate] = useState('');
   const [editDurationVal, setEditDurationVal] = useState<number | string>('');
@@ -454,6 +455,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setEditingComp(comp);
     setEditQty(comp.quantity);
     setEditDesc(comp.description);
+    setEditComponentNumber(comp.componentNumber || '');
     setEditContractNumber(comp.contractNumber || generateContractNumber(selectedItem, comp));
     setEditContractStartDate(comp.contractStartDate || '');
     
@@ -473,6 +475,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       const updates: any = {
         quantity: Number(editQty),
         description: editDesc,
+        componentNumber: editComponentNumber
       };
       
       if (selectedItem.productionType === 'OUTSOURCING') {
@@ -1465,6 +1468,19 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                       />
                     </div>
                   </div>
+
+                  {selectedItem?.productionType !== 'OUTSOURCING' && (
+                    <div className="space-y-2 animate-in slide-in-from-top-4 duration-500">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Manufacturer ID / Part Number</label>
+                      <input 
+                        type="text"
+                        className="w-full p-4 border-2 border-slate-100 rounded-2xl text-sm font-mono outline-none focus:border-blue-500 transition-all bg-slate-50/30"
+                        value={editComponentNumber}
+                        onChange={e => setEditComponentNumber(e.target.value)}
+                        placeholder="CMP-..."
+                      />
+                    </div>
+                  )}
 
                   {selectedItem?.productionType === 'OUTSOURCING' && (
                     <div className="space-y-6 animate-in slide-in-from-top-4 duration-500">

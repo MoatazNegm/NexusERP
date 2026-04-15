@@ -144,6 +144,36 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     return currentStatus;
 };
 
+const orderComponentsRequiringPo = (order) => {
+    return (order.items || [])
+        .flatMap(item => item.components || [])
+        .filter(comp => comp.source === 'PROCUREMENT');
+};
+
+const canIssuePoForOrder = (order, minMargin) => {
+    const procurementComponents = orderComponentsRequiringPo(order);
+    if (procurementComponents.length === 0) return false;
+
+    // ALL procurement components must be in AWARDED status (not already ORDERED)
+    if (!procurementComponents.every(comp => comp.status === 'AWARDED')) {
+        return false;
+    }
+
+    if (order.customerName === 'Internal Stock') return true;
+
+    let totalRevenue = 0;
+    let totalCost = 0;
+    (order.items || []).forEach(item => {
+        totalRevenue += ((item.quantity || 0) * (item.pricePerUnit || 0));
+        (item.components || []).forEach(comp => {
+            totalCost += ((comp.quantity || 0) * (comp.unitCost || 0));
+        });
+    });
+
+    const markupPct = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+    return markupPct >= minMargin;
+};
+
 const isOrderFullyPaid = (order) => {
     if (!order.payments) return false;
     const totalPaid = order.payments.reduce((s, p) => s + (p.amount || 0), 0);
@@ -1754,6 +1784,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             case 'send-rfp-batch': {
                 const rfpId = Math.random().toString(36).substring(2, 9);
                 if (!payload.components || !Array.isArray(payload.components)) throw new Error("components array required");
+                // rfpSupplierIds can be empty array (meaning show all suppliers) or have IDs
+                const rfpSupplierIds = Array.isArray(payload.rfpSupplierIds) ? payload.rfpSupplierIds : [];
 
                 let updatedCount = 0;
                 order.items.forEach(item => {
@@ -1761,6 +1793,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         if (payload.components.includes(comp.id)) {
                             comp.status = 'RFP_SENT';
                             comp.rfpId = rfpId;
+                            comp.rfpSupplierIds = rfpSupplierIds;
                             comp.statusUpdatedAt = new Date().toISOString();
                             updatedCount++;
                         }
@@ -1799,12 +1832,33 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const sendPoId = Math.random().toString(36).substring(2, 9);
                 if (!payload.components || !Array.isArray(payload.components)) throw new Error("components array required");
 
+                const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
+                let minMargin = dbSettings.minimumMarginPct || 15;
+                const customer = db.customers.find(c => c.name === order.customerName);
+                if (customer && customer.minimumMarginPct !== undefined && customer.minimumMarginPct !== null) {
+                    minMargin = customer.minimumMarginPct;
+                }
+
+                if (!canIssuePoForOrder(order, minMargin)) {
+                    throw new Error("Cannot issue PO: not all procurement components in the order have reached AWARDED status, or margin protection is active.");
+                }
+
+                const selectedComponentIds = payload.components;
+                const allProcurementComps = orderComponentsRequiringPo(order);
+                const selectedComponents = allProcurementComps.filter(comp => selectedComponentIds.includes(comp.id));
+                
+                if (selectedComponents.length !== selectedComponentIds.length) {
+                    throw new Error("Invalid component selection for PO issuance.");
+                }
+                if (!selectedComponents.every(comp => comp.status === 'AWARDED')) {
+                    throw new Error("Cannot issue PO: only AWARDED components can be issued as PO.");
+                }
+
                 let updatedCount = 0;
                 let auditDetails = [];
                 order.items.forEach(item => {
                     item.components?.forEach(comp => {
-                        if (payload.components.includes(comp.id)) {
-                            // For outsourcing items, set to WAITING_CONTRACT_START; for regular procurement, set to ORDERED
+                        if (selectedComponentIds.includes(comp.id)) {
                             const prodType = (item.productionType || '').toUpperCase().trim();
                             if (prodType === 'OUTSOURCING') {
                                 comp.status = 'WAITING_CONTRACT_START';
