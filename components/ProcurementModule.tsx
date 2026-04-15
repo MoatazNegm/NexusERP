@@ -126,6 +126,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [rfpCompSelection, setRfpCompSelection] = useState<string[]>([]); // For multi-component RFP PDF
   const [rfpTemplateRef, rfpPrintData, setRfpPrintData] = [useRef<HTMLDivElement>(null), ...useState<{ order: CustomerOrder, comps: ManufacturingComponent[] } | null>(null)];
   const [isDownloadingRfp, setIsDownloadingRfp] = useState(false);
+  const companyName = config.settings.companyName || 'Nexus ERP';
+  const companyNameHasArabic = /[\u0600-\u06FF]/.test(companyName);
   const [awardSupplierId, setAwardSupplierId] = useState<string>('');
   const [awardCosts, setAwardCosts] = useState<Record<string, string>>({});
   const [awardTaxPercent, setAwardTaxPercent] = useState<string>('14');
@@ -134,6 +136,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [contractStartDate, setContractStartDate] = useState<string>('');
   const [allowPastContractStart, setAllowPastContractStart] = useState<boolean>(false);
   const [resetReason, setResetReason] = useState<string>('');
+
+  const deriveOutsourcingContractInfo = (components: { item: CustomerOrderItem; comp: ManufacturingComponent }[]) => {
+    const outsourcingComp = components.find(({ item, comp }) => item.productionType === 'OUTSOURCING' && (comp.contractNumber || comp.componentNumber || comp.contractStartDate));
+    return {
+      contractNumber: outsourcingComp?.comp.contractNumber || outsourcingComp?.comp.componentNumber || '',
+      contractStartDate: outsourcingComp?.comp.contractStartDate || ''
+    };
+  };
   const [compHistory, setCompHistory] = useState<any[] | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [selectedCompIds, setSelectedCompIds] = useState<string[]>([]);
@@ -273,22 +283,35 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       return;
     }
 
-    // Find all components in this order sharing the same PO number from THIS supplier
-    const items: { item: CustomerOrderItem, comp: ManufacturingComponent }[] = [];
-    order.items.forEach(i => {
-      (i.components || []).forEach(c => {
-        if (c.poNumber === comp.poNumber && c.supplierId === comp.supplierId) {
-          items.push({ item: i, comp: c });
-        }
+    try {
+      // Fetch fresh data to ensure contractStartDate and other fields are up-to-date
+      const freshOrders = await dataService.getOrders();
+      const freshOrder = freshOrders.find(o => o.id === order.id);
+      
+      if (!freshOrder) {
+        alert("Order not found. Please refresh and try again.");
+        return;
+      }
+
+      // Find all components in this order sharing the same PO number from THIS supplier
+      const items: { item: CustomerOrderItem, comp: ManufacturingComponent }[] = [];
+      freshOrder.items.forEach(i => {
+        (i.components || []).forEach(c => {
+          if (c.poNumber === comp.poNumber && c.supplierId === comp.supplierId) {
+            items.push({ item: i, comp: c });
+          }
+        });
       });
-    });
 
-    if (items.length === 0) {
-      alert("No components found for this PO number.");
-      return;
+      if (items.length === 0) {
+        alert("No components found for this PO number.");
+        return;
+      }
+
+      setPoPrintData({ order: freshOrder, items, supplier });
+    } catch (e: any) {
+      alert("Failed to fetch order data: " + (e.message || "Unknown error"));
     }
-
-    setPoPrintData({ order, items, supplier });
   };
 
   useEffect(() => {
@@ -550,12 +573,12 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           poNumber: poNumberInput
         };
         
-        if (contractStartDate) {
-          payload.contractStartDate = contractStartDate;
+        if (contractStartDate && contractStartDate.trim()) {
+          payload.contractStartDate = contractStartDate.trim();
         }
         
-        if (contractNumber) {
-          payload.contractNumber = contractNumber;
+        if (contractNumber && contractNumber.trim()) {
+          payload.contractNumber = contractNumber.trim();
         }
 
         await dataService.dispatchAction(order.id, 'issue-po-batch', payload);
@@ -780,7 +803,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 <div className="border-2 mb-8 flex flex-col" style={{ borderColor: '#0f172a' }}>
                   <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc' }}>
                     <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>#</div>
-                    <div className="col-span-6 p-3 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>Component Description & Specifications</div>
+                    <div className="col-span-6 p-3 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>Component / Description</div>
                     <div className="col-span-3 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Supplier/Mfr Part #</div>
                     <div className="col-span-2 p-3">Quantity</div>
                   </div>
@@ -792,12 +815,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
                           <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
                           <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
-                            <div className="font-black text-xs leading-relaxed">{comp.scopeOfWork || comp.description}</div>
-                            {comp.contractDuration && (
-                              <div className="text-[10px] font-black uppercase mt-1" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration}</div>
-                            )}
+                            <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
+                            <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
+                            <div className="text-[10px] font-black uppercase mt-2" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration || '-'}</div>
                             {comp.componentNumber && !comp.contractNumber && (
-                              <div className="text-[9px] font-bold mt-1 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
+                              <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
                             )}
                           </div>
                           <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
@@ -819,12 +841,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
                             <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
                             <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
-                              <div className="font-black text-xs leading-relaxed">{comp.scopeOfWork || comp.description}</div>
-                              {comp.contractDuration && (
-                                <div className="text-[10px] font-black uppercase mt-1" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration}</div>
-                              )}
+                              <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
+                              <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
+                              <div className="text-[10px] font-black uppercase mt-2" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration || '-'}</div>
                               {comp.componentNumber && !comp.contractNumber && (
-                                <div className="text-[9px] font-bold mt-1 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
+                                <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
                               )}
                             </div>
                             <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
@@ -840,8 +861,12 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   )}
                 </div>
 
-                <div className="text-[9px] font-black uppercase tracking-widest text-center mt-20 pt-8 border-t-2" style={{ color: '#94a3b8', borderColor: '#0f172a' }}>
-                  Generated by {config.settings.companyName || 'Nexus ERP'} Procurement Operations
+                <div style={{ fontSize: '9px', fontWeight: 900, textAlign: 'center', marginTop: '80px', paddingTop: '32px', borderTop: '2px solid #0f172a', color: '#94a3b8', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", Inter, "Segoe UI", Tahoma, Arial, sans-serif' }}>
+                  <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>Generated by</span>
+                  {' '}
+                  <span dir={companyNameHasArabic ? 'rtl' : 'ltr'} lang={companyNameHasArabic ? 'ar' : 'en'} style={{ unicodeBidi: 'isolate', display: 'inline-block', letterSpacing: 'normal', textTransform: companyNameHasArabic ? 'none' : 'none', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif' }}>{companyName}</span>
+                  {' '}
+                  <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>Procurement Operations</span>
                 </div>
               </div>
             )}
@@ -904,6 +929,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       <div style={{ marginBottom: '12px' }}>
                         <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>CUSTOMER</div>
                         <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>{poPrintData.order.customerName}</div>
+                      </div>
+                    )}
+                    {poPrintData.items.some(({ item, comp }) => item.productionType === 'OUTSOURCING' && comp.contractStartDate) && (
+                      <div style={{ marginBottom: '12px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Contract Start Date</div>
+                        <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>
+                          {new Date(poPrintData.items.find(({ item, comp }) => item.productionType === 'OUTSOURCING' && comp.contractStartDate)?.comp.contractStartDate || '').toLocaleDateString('en-US')}
+                        </div>
                       </div>
                     )}
                     <div>
@@ -1130,6 +1163,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                 const sameSupplier = awarded.filter(a => a.comp.supplierId === sId);
                                 setMultiComps(sameSupplier);
                                 setSelectedCompIds(sameSupplier.map(m => m.comp.id!));
+                                const contractInfo = deriveOutsourcingContractInfo(sameSupplier);
+                                setContractNumber(contractInfo.contractNumber);
+                                setContractStartDate(contractInfo.contractStartDate);
                                 setActiveAction({ type: 'PO', order: o, item: sameSupplier[0].item, comp: sameSupplier[0].comp });
                               }
                             }}
@@ -1267,6 +1303,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                       );
                                       setMultiComps(sameAwardGroup);
                                       setSelectedCompIds([c.id!]); // Default to only current
+                                      const contractInfo = deriveOutsourcingContractInfo(sameAwardGroup);
+                                      setContractNumber(contractInfo.contractNumber);
+                                      setContractStartDate(contractInfo.contractStartDate);
                                       setActiveAction({ type: 'PO', order: o, item: i, comp: c });
                                     }}
                                     className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
@@ -1610,11 +1649,12 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           <div className="space-y-3 p-4 bg-purple-50 rounded-2xl border border-purple-100">
                             <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1">Contract/Service Number (Outsourcing)</label>
                             <input
-                              className="w-full p-4 bg-white border-2 border-purple-200 rounded-2xl font-black text-purple-600 outline-none focus:border-purple-500 transition-all uppercase tracking-widest"
-                              placeholder="Enter supplier contract or service reference number"
+                              className="w-full p-4 bg-slate-100 border-2 border-purple-200 rounded-2xl font-black text-purple-600 outline-none cursor-not-allowed transition-all uppercase tracking-widest"
+                              placeholder="Contract number is set from Technical Review"
                               value={contractNumber}
-                              onChange={e => setContractNumber(e.target.value)}
+                              readOnly
                             />
+                            <div className="text-[9px] text-purple-500 uppercase tracking-[0.2em] mt-1">Pre-filled from Technical Review and not editable here.</div>
                             <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1 mt-4">Contract Start Date (Outsourcing)</label>
                             <input
                               type="date"

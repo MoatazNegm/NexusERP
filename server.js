@@ -1787,13 +1787,20 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!payload.components || !Array.isArray(payload.components)) throw new Error("components array required");
 
                 let updatedCount = 0;
+                let auditDetails = [];
                 order.items.forEach(item => {
                     item.components?.forEach(comp => {
                         if (payload.components.includes(comp.id)) {
                             // For outsourcing items, set to WAITING_CONTRACT_START; for regular procurement, set to ORDERED
                             if (item.productionType === 'OUTSOURCING') {
                                 comp.status = 'WAITING_CONTRACT_START';
-                                comp.contractStartDate = payload.contractStartDate || undefined;
+                                if (payload.contractStartDate && payload.contractStartDate.trim()) {
+                                    comp.contractStartDate = payload.contractStartDate;
+                                }
+                                if (payload.contractNumber && payload.contractNumber.trim()) {
+                                    comp.contractNumber = payload.contractNumber;
+                                }
+                                auditDetails.push(`[${comp.id}: contract=${payload.contractNumber || 'auto'}, startDate=${payload.contractStartDate || 'N/A'}]`);
                             } else {
                                 comp.status = 'ORDERED';
                             }
@@ -1805,7 +1812,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     });
                 });
-                order.logs.push(createAuditLog(`Issued PO batch ${payload.poNumber} for ${updatedCount} components (PO Group ID: ${sendPoId})`, order.status, user));
+                order.logs.push(createAuditLog(`Issued PO batch ${payload.poNumber} for ${updatedCount} components (PO Group ID: ${sendPoId}) ${auditDetails.join(' ')}`, order.status, user));
                 break;
             }
 
@@ -1818,7 +1825,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             comp.status = 'AWARDED';
                             delete comp.sendPoId;
                             delete comp.poNumber;
-                            delete comp.contractStartDate;
+                            // Keep contractStartDate and contractNumber intact for re-issuance
                             comp.statusUpdatedAt = new Date().toISOString();
                             updatedCount++;
                         }

@@ -93,6 +93,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [editingComp, setEditingComp] = useState<ManufacturingComponent | null>(null);
   const [editQty, setEditQty] = useState<number | string>(1);
   const [editDesc, setEditDesc] = useState('');
+  const [editContractNumber, setEditContractNumber] = useState('');
+  const [editContractStartDate, setEditContractStartDate] = useState('');
   const [editDurationVal, setEditDurationVal] = useState<number | string>('');
   const [editDurationUnit, setEditDurationUnit] = useState<'Months' | 'Years'>('Months');
   const [editScope, setEditScope] = useState('');
@@ -242,6 +244,15 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     });
   }, [compSearch, partNumSearch, historyData]);
 
+  const generateContractNumber = (item?: CustomerOrderItem, comp?: ManufacturingComponent, hint?: string) => {
+    if (hint && hint.trim()) return hint.trim();
+    const rawBase = comp?.componentNumber || item?.id || 'OUTSRC';
+    const base = rawBase.slice(-6).replace(/[^A-Za-z0-9]/g, '').toUpperCase() || 'OUTSRC';
+    const timeCode = `${Date.now() % 100000}`.padStart(5, '0');
+    const randomCode = Math.floor(Math.random() * 900) + 100;
+    return `CTR-${base}-${timeCode}-${randomCode}`;
+  };
+
   const invResults = useMemo(() => {
     if (selectedItem?.productionType === 'OUTSOURCING') return [];
     const descQuery = compSearch.toLowerCase();
@@ -333,6 +344,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
           taxPercent: 14,
           source: 'PROCUREMENT',
           status: 'PENDING_OFFER',
+          contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, partNumSearch.trim()) : undefined,
           contractDuration: finalDuration,
           scopeOfWork: compScope || inv.description
         });
@@ -367,7 +379,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       supplierId: supp.id,
       supplierPartId: part.id,
       supplierPartNumber: part.partNumber,
-      contractNumber: selectedItem.productionType === 'OUTSOURCING' ? part.partNumber : undefined,
+      contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, part.partNumber) : undefined,
       contractDuration: finalDuration,
       scopeOfWork: compScope || part.description,
       status: 'PENDING_OFFER'
@@ -410,7 +422,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       source: 'PROCUREMENT',
       status: 'PENDING_OFFER',
       supplierPartNumber: partNumSearch.trim() || undefined,
-      contractNumber: selectedItem.productionType === 'OUTSOURCING' ? partNumSearch.trim() : undefined,
+      contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, partNumSearch.trim()) : undefined,
       contractDuration: finalDuration,
       scopeOfWork: compScope || compSearch.trim()
     });
@@ -442,9 +454,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setEditingComp(comp);
     setEditQty(comp.quantity);
     setEditDesc(comp.description);
+    setEditContractNumber(comp.contractNumber || generateContractNumber(selectedItem, comp));
+    setEditContractStartDate(comp.contractStartDate || '');
     
-    if (selectedItem?.productionType === 'OUTSOURCING' && comp.contractDuration) {
-      const parts = comp.contractDuration.split(' ');
+    if (selectedItem?.productionType === 'OUTSOURCING') {
+      const parts = comp.contractDuration ? comp.contractDuration.split(' ') : ['','Months'];
       setEditDurationVal(parts[0]);
       setEditDurationUnit((parts[1] || 'Months') as 'Months' | 'Years');
       setEditScope(comp.scopeOfWork || '');
@@ -465,6 +479,10 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
         const dVal = editDurationVal || 0;
         updates.contractDuration = `${dVal} ${editDurationUnit}`;
         updates.scopeOfWork = editScope;
+        updates.contractNumber = generateContractNumber(selectedItem, editingComp, editContractNumber);
+        if (editContractStartDate) {
+          updates.contractStartDate = editContractStartDate;
+        }
       }
       
       const updatedOrder = await dataService.updateComponent(selectedOrder.id, selectedItem.id, editingComp.id, updates);
@@ -1450,6 +1468,28 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
                   {selectedItem?.productionType === 'OUTSOURCING' && (
                     <div className="space-y-6 animate-in slide-in-from-top-4 duration-500">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black text-violet-400 uppercase ml-1">Service / Contract ID</label>
+                          <input
+                            type="text"
+                            className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-black outline-none focus:border-violet-500 transition-all bg-violet-50/20"
+                            value={editContractNumber}
+                            onChange={e => setEditContractNumber(e.target.value)}
+                            placeholder="Contract number or service reference"
+                          />
+                          <div className="text-[8px] text-slate-500 uppercase tracking-[0.2em]">Auto-generated if left blank</div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black text-violet-400 uppercase ml-1">Contract Start Date</label>
+                          <input
+                            type="date"
+                            className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-black outline-none focus:border-violet-500 transition-all bg-violet-50/20"
+                            value={editContractStartDate}
+                            onChange={e => setEditContractStartDate(e.target.value)}
+                          />
+                        </div>
+                      </div>
                       <div className="flex flex-col md:flex-row gap-4">
                         <div className="w-full md:w-32 space-y-1.5">
                           <div className="flex justify-between items-center ml-1">
