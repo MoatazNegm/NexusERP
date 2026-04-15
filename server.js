@@ -488,7 +488,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
 
             // Ensure exactly one component that mirrors the item
             if (!item.components || item.components.length === 0) {
-                item.components = [{
+                const newComp = {
                     id: `c_${Date.now()}_${idx}_0`,
                     description: item.description,
                     quantity: item.quantity,
@@ -498,13 +498,25 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     source: 'PROCUREMENT',
                     status: 'PENDING_OFFER',
                     componentNumber: `CMP-${order.internalOrderNumber}-${idx + 1}-1`
-                }];
+                };
+                
+                // Automatic intelligence: search price list for match
+                const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === item.description.trim().toLowerCase());
+                if (match) newComp.supplierPartNumber = match.partNumber;
+
+                item.components = [newComp];
             } else {
                 // Mirror sync: Only the first component is active in TRADING
                 const comp = item.components[0];
                 if (comp.description !== item.description || comp.quantity !== item.quantity) {
                     comp.description = item.description;
                     comp.quantity = item.quantity;
+                    
+                    // Attempt to auto-populate part number if missing
+                    if (!comp.supplierPartNumber) {
+                        const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase());
+                        if (match) comp.supplierPartNumber = match.partNumber;
+                    }
                 }
                 // Cap at 1 component for TRADING to prevent BoM pollution
                 if (item.components.length > 1) {
@@ -1652,7 +1664,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         newComp.componentNumber = newComp.supplierPartNumber;
                     } else {
                         const compCount = acItem.components.length;
-                        newComp.componentNumber = `CMP-${order.internalOrderNumber}-${acItemIdx}-${compCount + 1}`;
+                        // Unified: Use 1-based indexing for item number consistency
+                        newComp.componentNumber = `CMP-${order.internalOrderNumber}-${acItemIdx + 1}-${compCount + 1}`;
                     }
                 }
 
@@ -1792,15 +1805,16 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     item.components?.forEach(comp => {
                         if (payload.components.includes(comp.id)) {
                             // For outsourcing items, set to WAITING_CONTRACT_START; for regular procurement, set to ORDERED
-                            if (item.productionType === 'OUTSOURCING') {
+                            const prodType = (item.productionType || '').toUpperCase().trim();
+                            if (prodType === 'OUTSOURCING') {
                                 comp.status = 'WAITING_CONTRACT_START';
                                 if (payload.contractStartDate && payload.contractStartDate.trim()) {
-                                    comp.contractStartDate = payload.contractStartDate;
+                                    comp.contractStartDate = payload.contractStartDate.trim();
                                 }
                                 if (payload.contractNumber && payload.contractNumber.trim()) {
-                                    comp.contractNumber = payload.contractNumber;
+                                    comp.contractNumber = payload.contractNumber.trim();
                                 }
-                                auditDetails.push(`[${comp.id}: contract=${payload.contractNumber || 'auto'}, startDate=${payload.contractStartDate || 'N/A'}]`);
+                                auditDetails.push(`[${comp.id}: contract=${comp.contractNumber || 'auto'}, startDate=${comp.contractStartDate || 'N/A'}]`);
                             } else {
                                 comp.status = 'ORDERED';
                             }
@@ -1812,7 +1826,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     });
                 });
-                order.logs.push(createAuditLog(`Issued PO batch ${payload.poNumber} for ${updatedCount} components (PO Group ID: ${sendPoId}) ${auditDetails.join(' ')}`, order.status, user));
+                order.logs.push(createAuditLog(`Issued PO batch ${payload.poNumber} for ${updatedCount} components (PO Group ID: ${sendPoId}). ${auditDetails.join(' ')}`, order.status, user));
+
                 break;
             }
 

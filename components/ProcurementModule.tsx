@@ -227,7 +227,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       o.items.forEach(i => {
         if (i.productionType !== 'OUTSOURCING') return; // Skip in this tab
         i.components?.forEach(c => {
-          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(c.status || '')) {
+          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'].includes(c.status || '')) {
             if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
             map.get(o.id)!.comps.push({ item: i, comp: c });
           }
@@ -823,7 +823,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             )}
                           </div>
                           <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
-                            {comp.contractNumber || externalPartNum}
+                            {comp.contractNumber || externalPartNum || comp.componentNumber || 'TBD'}
                           </div>
                           <div className="col-span-2 p-4 font-black">
                             {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
@@ -931,11 +931,16 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>{poPrintData.order.customerName}</div>
                       </div>
                     )}
-                    {poPrintData.items.some(({ item, comp }) => item.productionType === 'OUTSOURCING' && comp.contractStartDate) && (
+                    {poPrintData.items.some(({ item, comp }) => (item.productionType === 'OUTSOURCING' || (comp as any).contractStartDate) && comp.contractStartDate) && (
                       <div style={{ marginBottom: '12px' }}>
                         <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Contract Start Date</div>
                         <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>
-                          {new Date(poPrintData.items.find(({ item, comp }) => item.productionType === 'OUTSOURCING' && comp.contractStartDate)?.comp.contractStartDate || '').toLocaleDateString('en-US')}
+                          {(() => {
+                            const dateComp = poPrintData.items.find(({ item, comp }) => 
+                              (item.productionType === 'OUTSOURCING' || (comp as any).contractStartDate) && comp.contractStartDate
+                            );
+                            return dateComp ? new Date(dateComp.comp.contractStartDate!).toLocaleDateString('en-US') : 'N/A';
+                          })()}
                         </div>
                       </div>
                     )}
@@ -981,7 +986,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         {isOutsourcing ? (comp.contractDuration || '-') : (comp.unit === 'pcs' ? 'قطعة' : comp.unit)}
                       </div>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
-                        {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString('en-US') : 'N/A'}
+                        {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString('en-US') : (item.productionType === 'OUTSOURCING' ? 'TBD' : 'N/A')}
                       </div>
                       <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'right' }}>
                         {(comp.quantity * comp.unitCost).toLocaleString('en-US')} LE
