@@ -589,6 +589,24 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         await dataService.dispatchAction(order.id, 'cancel-po-batch', {
           sendPoId: comp?.sendPoId
         });
+      } else if (type === 'REVERT_PO') {
+        setIsActionLoading('revert-po');
+        await dataService.dispatchAction(order.id, 'revert-po', {
+          itemId: item.id,
+          componentId: comp.id
+        });
+      } else if (type === 'REVERT_TO_PENDING') {
+        setIsActionLoading('revert-to-pending');
+        // Reset component back to PENDING_OFFER
+        const updates: Partial<ManufacturingComponent> = {
+          status: 'PENDING_OFFER',
+          supplierId: undefined,
+          supplierName: undefined,
+          awardId: undefined,
+          unitCost: 0,
+          statusUpdatedAt: new Date().toISOString()
+        };
+        await dataService.updateComponent(order.id, item.id, comp.id!, updates);
       } else {
         let updates: Partial<ManufacturingComponent> = { statusUpdatedAt: new Date().toISOString() };
 
@@ -1299,32 +1317,46 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             )}
                             {c.status === 'AWARDED' && (
                               <div className="flex flex-col items-end gap-1.5">
-                                {!allOrderProcurementAwarded && (
-                                  <span className="text-[8px] font-black text-slate-400 uppercase">All components must be awarded first</span>
-                                )}
-                                {allOrderProcurementAwarded && (
+                                <div className="flex items-center gap-2">
+                                  {!allOrderProcurementAwarded && (
+                                    <span className="text-[8px] font-black text-slate-400 uppercase mr-2">All components must be awarded first</span>
+                                  )}
+
+                                  {allOrderProcurementAwarded && (
+                                    <button
+                                      disabled={o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded}
+                                      onClick={async () => {
+                                        const po = await dataService.getUniquePoNumber();
+                                        setPoNumberInput(po);
+                                        const sameAwardGroup = comps.filter(x =>
+                                          x.comp.status === 'AWARDED' &&
+                                          x.comp.supplierId === c.supplierId &&
+                                          (c.awardId ? x.comp.awardId === c.awardId : true)
+                                        );
+                                        setMultiComps(sameAwardGroup);
+                                        setSelectedCompIds([c.id!]); // Default to only current
+                                        const contractInfo = deriveOutsourcingContractInfo(sameAwardGroup);
+                                        setContractNumber(contractInfo.contractNumber);
+                                        setContractStartDate(contractInfo.contractStartDate);
+                                        setActiveAction({ type: 'PO', order: o, item: i, comp: c });
+                                      }}
+                                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                    >
+                                      Issue PO
+                                    </button>
+                                  )}
+                                  
                                   <button
-                                    disabled={o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded}
-                                    onClick={async () => {
-                                      const po = await dataService.getUniquePoNumber();
-                                      setPoNumberInput(po);
-                                      const sameAwardGroup = comps.filter(x =>
-                                        x.comp.status === 'AWARDED' &&
-                                        x.comp.supplierId === c.supplierId &&
-                                        (c.awardId ? x.comp.awardId === c.awardId : true)
-                                      );
-                                      setMultiComps(sameAwardGroup);
-                                      setSelectedCompIds([c.id!]); // Default to only current
-                                      const contractInfo = deriveOutsourcingContractInfo(sameAwardGroup);
-                                      setContractNumber(contractInfo.contractNumber);
-                                      setContractStartDate(contractInfo.contractStartDate);
-                                      setActiveAction({ type: 'PO', order: o, item: i, comp: c });
+                                    onClick={() => {
+                                      setActiveAction({ type: 'REVERT_TO_PENDING', order: o, item: i, comp: c });
                                     }}
-                                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                    disabled={isActionLoading != null}
+                                    className="px-4 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all bg-orange-500 text-white hover:bg-orange-600 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                    title="Reset this award and return to PENDING_OFFER status"
                                   >
-                                    Issue PO
+                                    Reset Award
                                   </button>
-                                )}
+                                </div>
                                 {o.status === OrderStatus.NEGATIVE_MARGIN && (
                                   <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-500 uppercase animate-pulse">
                                     <i className="fa-solid fa-triangle-exclamation"></i>
@@ -1359,6 +1391,16 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                 >
                                   <i className="fa-solid fa-ban"></i> Cancel Order
                                 </button>
+                                <button
+                                  onClick={() => {
+                                    setActiveAction({ type: 'REVERT_PO', order: o, item: i, comp: c });
+                                  }}
+                                  disabled={isActionLoading != null}
+                                  className="px-5 py-2.5 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-600 transition-all flex items-center gap-2"
+                                  title="Revert this PO back to AWARDED status"
+                                >
+                                  <i className="fa-solid fa-rotate-left"></i> Revert to Award
+                                </button>
                                 <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
                                   <i className="fa-solid fa-truck-fast mr-1"></i>In Transit
                                 </span>
@@ -1388,6 +1430,16 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                   className="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-rose-700 transition-all flex items-center gap-2"
                                 >
                                   <i className="fa-solid fa-ban"></i> Cancel Order
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setActiveAction({ type: 'REVERT_PO', order: o, item: i, comp: c });
+                                  }}
+                                  disabled={isActionLoading != null}
+                                  className="px-5 py-2.5 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-600 transition-all flex items-center gap-2"
+                                  title="Revert this PO back to AWARDED status"
+                                >
+                                  <i className="fa-solid fa-rotate-left"></i> Revert to Award
                                 </button>
                                 <div className="text-[10px] font-black text-purple-600 uppercase tracking-[0.15em] px-2 whitespace-nowrap">
                                   <i className="fa-solid fa-calendar-check mr-1"></i>Waiting Contract: {c.contractStartDate ? new Date(c.contractStartDate).toLocaleDateString() : 'TBD'}
@@ -1743,6 +1795,60 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       </div>
                     )}
 
+                    {activeAction.type === 'REVERT_PO' && (
+                      <div className="space-y-6">
+                        <div className="p-6 bg-amber-50 rounded-3xl border border-amber-100 flex justify-between items-center">
+                          <div>
+                            <div className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Reverting PO to Award</div>
+                            <div className="text-xl font-black text-amber-900 uppercase tracking-tight">
+                              {activeAction.comp?.description}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] font-black text-amber-400 uppercase tracking-widest">PO Number</div>
+                            <div className="text-lg font-black text-amber-600">{activeAction.comp?.poNumber || 'N/A'}</div>
+                          </div>
+                        </div>
+
+                        <div className="p-6 bg-amber-50 rounded-3xl border border-amber-100 space-y-4">
+                          <p className="text-[11px] text-amber-800 font-black leading-relaxed uppercase">
+                            This component will be reverted from ORDERED/WAITING_CONTRACT_START back to AWARDED status. This allows you to modify the award or issue a new PO.
+                          </p>
+                          <p className="text-[10px] text-amber-700 font-bold leading-relaxed">
+                            <i className="fa-solid fa-triangle-exclamation mr-2"></i>
+                            Note: This may re-enable "Issue PO" buttons on other line items if they were blocked by order-wide readiness.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeAction.type === 'REVERT_TO_PENDING' && (
+                      <div className="space-y-6">
+                        <div className="p-6 bg-orange-50 rounded-3xl border border-orange-100 flex justify-between items-center">
+                          <div>
+                            <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest">Reverting Award to Pending</div>
+                            <div className="text-xl font-black text-orange-900 uppercase tracking-tight">
+                              {activeAction.comp?.description}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest">Component ID</div>
+                            <div className="font-mono text-sm font-black text-orange-600">{activeAction.comp?.id}</div>
+                          </div>
+                        </div>
+
+                        <div className="p-6 bg-orange-50 rounded-3xl border border-orange-100 space-y-4">
+                          <p className="text-[11px] text-orange-800 font-black leading-relaxed uppercase">
+                            This component will be reverted from AWARDED back to PENDING_OFFER status. This allows you to restart the sourcing process from RFP.
+                          </p>
+                          <p className="text-[10px] text-orange-700 font-bold leading-relaxed bg-white border border-orange-200 rounded-2xl p-3">
+                            <i className="fa-solid fa-lock mr-2 text-red-600"></i>
+                            <strong>Important:</strong> All "Issue PO" buttons in this order will be DISABLED until ALL components are awarded again.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {(activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK') && (
                       <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
                         <p className="text-sm text-rose-800 font-bold leading-relaxed">
@@ -1768,11 +1874,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                     <button
                       disabled={isCommitProcurementDisabled}
                       onClick={handleExecuteAction}
-                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${isCommitProcurementDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
+                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${isCommitProcurementDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : activeAction?.type === 'REVERT_PO' || activeAction?.type === 'REVERT_TO_PENDING' ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
                         }`}
                     >
                       {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
-                      {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : activeAction.type === 'CANCEL_PO_BATCH' ? 'Confirm Cancellation' : 'Commit Procurement'}
+                      {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : activeAction.type === 'CANCEL_PO_BATCH' ? 'Confirm Cancellation' : activeAction.type === 'REVERT_PO' ? 'Confirm Revert' : activeAction.type === 'REVERT_TO_PENDING' ? 'Confirm Revert to Pending' : 'Commit Procurement'}
                     </button>
                   </div>
                 </div>

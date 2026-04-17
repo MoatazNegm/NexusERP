@@ -1904,6 +1904,27 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
             }
 
+            case 'revert-po': {
+                if (!payload.componentId) throw new Error("componentId required");
+                const itemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (itemIdx === -1) throw new Error("Item not found");
+                const comp = order.items[itemIdx].components?.find(c => c.id === payload.componentId);
+                if (!comp) throw new Error("Component not found");
+                if (comp.status !== 'ORDERED' && comp.status !== 'WAITING_CONTRACT_START') {
+                    throw new Error("Component is not in a PO status");
+                }
+                const oldStatus = comp.status;
+                const oldPoNumber = comp.poNumber || 'N/A';
+                comp.status = 'AWARDED';
+                comp.statusUpdatedAt = new Date().toISOString();
+                delete comp.sendPoId;
+                delete comp.poNumber;
+                delete comp.contractStartDate;
+                delete comp.contractNumber;
+                order.logs.push(createAuditLog(`Reverted PO for component ${comp.description} (PO: ${oldPoNumber}) from ${oldStatus} back to AWARDED. Re-award or re-issue PO.`, order.status, user));
+                break;
+            }
+
             case 'cancel-payment':
                 if (!order.payments || !order.payments[payload.index]) throw new Error("Payment index not found");
                 const [removed] = order.payments.splice(payload.index, 1);
