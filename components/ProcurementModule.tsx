@@ -354,38 +354,41 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
           const computedStyles = window.getComputedStyle(element);
           
-          // List of CSS properties to copy
+          // List of CSS properties to copy (camelCase for bracket-notation access)
           const stylesToCopy = [
-            'display', 'position', 'width', 'height', 'margin', 'padding', 'border',
+            'display', 'position', 'width', 'height', 'minWidth', 'minHeight',
+            'maxWidth', 'maxHeight', 'margin', 'padding',
             'backgroundColor', 'color', 'fontSize', 'fontWeight', 'fontFamily',
-            'textAlign', 'borderColor', 'borderWidth', 'borderStyle',
+            'fontStyle', 'textAlign', 'textTransform', 'textDecoration',
+            'lineHeight', 'letterSpacing', 'wordSpacing',
+            'border', 'borderTop', 'borderBottom', 'borderLeft', 'borderRight',
+            'borderColor', 'borderWidth', 'borderStyle', 'borderRadius',
             'gridTemplateColumns', 'gridColumn', 'gridRow', 'gap',
-            'flexDirection', 'justifyContent', 'alignItems', 'flex',
-            'textDecoration', 'cursor', 'opacity', 'zIndex',
-            'whiteSpace', 'wordWrap', 'overflow', 'direction'
+            'flexDirection', 'justifyContent', 'alignItems', 'flex', 'flexWrap',
+            'cursor', 'opacity', 'zIndex', 'boxSizing', 'verticalAlign',
+            'whiteSpace', 'wordWrap', 'overflow', 'overflowWrap',
+            'direction', 'unicodeBidi', 'objectFit'
           ];
 
           for (const prop of stylesToCopy) {
-            let value = computedStyles.getPropertyValue(prop);
-            if (value && value.trim()) {
-              // Replace oklch colors with safe fallbacks
-              if (value.includes('oklch')) {
-                if (prop.includes('background') || prop === 'backgroundColor') {
-                  value = '#ffffff';
-                } else if (prop.includes('border') || prop.includes('Color')) {
-                  value = '#e2e8f0';
-                } else if (prop === 'color') {
-                  value = '#0f172a';
+            try {
+              // Use bracket notation — works with camelCase property names
+              let value = (computedStyles as any)[prop];
+              if (value && typeof value === 'string' && value.trim()) {
+                // Replace oklch colors with safe fallbacks
+                if (value.includes('oklch')) {
+                  if (prop.includes('background') || prop === 'backgroundColor') {
+                    value = '#ffffff';
+                  } else if (prop.includes('border') || prop.includes('Color')) {
+                    value = '#e2e8f0';
+                  } else if (prop === 'color') {
+                    value = '#0f172a';
+                  }
                 }
+                (element.style as any)[prop] = value;
               }
-              // Avoid setting computed shorthand properties that may conflict
-              if (!prop.includes('border') || prop === 'border') {
-                try {
-                  (element.style as any)[prop] = value;
-                } catch (e) {
-                  // Silently skip invalid assignments
-                }
-              }
+            } catch (e) {
+              // Silently skip invalid assignments
             }
           }
 
@@ -787,105 +790,163 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
             {/* RFP PDF Template */}
             {(rfpPrintData || (activeAction?.type === 'RFP' && activeAction.order && rfpCompSelection.length > 0)) && (
               <div ref={rfpTemplateRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", Inter, "Segoe UI", Tahoma, Arial, sans-serif' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '48px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-                    {rasterizedLogo && (
-                      <div style={{ height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '220px', objectFit: 'contain' }} />
-                      </div>
-                    )}
-                    <div lang="ar" style={{ direction: 'rtl', textAlign: 'center', unicodeBidi: 'isolate', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#1e3a8a', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif', textTransform: /[\u0600-\u06FF]/.test(config.settings.companyName || '') ? 'none' : 'uppercase' }}>{config.settings.companyName || 'Nexus ERP'}</div>
-                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', whiteSpace: 'pre-line', lineHeight: '1.6', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif' }}>
-                        {config.settings.companyAddress || 'Headquarters'}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right flex flex-col items-end gap-1">
-                    <div className="text-4xl font-black uppercase tracking-tighter mb-2" style={{ color: '#0f172a' }}>Request For Proposal</div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#94a3b8' }}>Date</div>
-                      <div className="font-mono text-sm font-black">{new Date().toLocaleDateString()}</div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#94a3b8' }}>Ref</div>
-                      <div className="font-mono text-sm font-black" style={{ color: '#1d4ed8' }}>RFP-{rfpPrintData ? rfpPrintData.order.internalOrderNumber : activeAction!.order.internalOrderNumber}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-6 rounded-2xl border-2 mb-10 text-sm font-bold leading-relaxed" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#334155' }}>
-                  <p>Please provide your best commercial offer and lead time for the components listed below. Ensure your quotation clearly states unit prices and total amounts, excluding taxes. If applicable, please attach technical data sheets or compliance certificates.</p>
-                </div>
-
-                <div className="border-2 mb-8 flex flex-col" style={{ borderColor: '#0f172a' }}>
-                  <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc' }}>
-                    <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>#</div>
-                    <div className="col-span-6 p-3 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>Component / Description</div>
-                    <div className="col-span-3 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Supplier/Mfr Part #</div>
-                    <div className="col-span-2 p-3">Quantity</div>
-                  </div>
-
-                  {rfpPrintData ? (
-                    rfpPrintData.comps.map((comp, idx) => {
-                      const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
-                      return (
-                        <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
-                          <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
-                          <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
-                            <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
-                            <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
-                            <div className="text-[10px] font-black uppercase mt-2" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration || '-'}</div>
-                            {comp.componentNumber && !comp.contractNumber && (
-                              <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
-                            )}
-                          </div>
-                          <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
-                            {comp.contractNumber || externalPartNum || comp.componentNumber || 'TBD'}
-                          </div>
-                          <div className="col-span-2 p-4 font-black">
-                            {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
+                {/* Determine if this is an outsourcing RFP */}
+                {(() => {
+                  const compsToRender = rfpPrintData ? rfpPrintData.comps : activeAction!.order.items.flatMap(ci => (ci.components || [])).filter(comp => rfpCompSelection.includes(comp.id || ''));
+                  const relatedItems = rfpPrintData 
+                    ? rfpPrintData.comps.map(c => activeAction?.order.items.find(i => i.components?.some(comp => comp.id === c.id)) || null).filter(Boolean) as CustomerOrderItem[]
+                    : activeAction!.order.items.filter(i => i.components?.some(c => rfpCompSelection.includes(c.id || '')));
+                  const isOutsourcing = relatedItems.some(item => item?.productionType === 'OUTSOURCING');
+                  
+                  return (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '48px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                          {rasterizedLogo && (
+                            <div style={{ height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '220px', objectFit: 'contain' }} />
+                            </div>
+                          )}
+                          <div lang="ar" style={{ direction: 'rtl', textAlign: 'center', unicodeBidi: 'isolate', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif' }}>
+                            <div style={{ fontSize: '18px', fontWeight: 900, color: '#1e3a8a', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif', textTransform: /[\u0600-\u06FF]/.test(config.settings.companyName || '') ? 'none' : 'uppercase' }}>{config.settings.companyName || 'Nexus ERP'}</div>
+                            <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', whiteSpace: 'pre-line', lineHeight: '1.6', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif' }}>
+                              {config.settings.companyAddress || 'Headquarters'}
+                            </div>
                           </div>
                         </div>
+                        <div className="text-right flex flex-col items-end gap-1">
+                          <div className="text-4xl font-black uppercase tracking-tighter mb-2" style={{ color: '#0f172a' }}>Request For {isOutsourcing ? 'Services' : 'Proposal'}</div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#94a3b8' }}>Date</div>
+                            <div className="font-mono text-sm font-black">{new Date().toLocaleDateString()}</div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#94a3b8' }}>Ref</div>
+                            <div className="font-mono text-sm font-black" style={{ color: '#1d4ed8' }}>RFQ-{rfpPrintData ? rfpPrintData.order.internalOrderNumber : activeAction!.order.internalOrderNumber}</div>
+                          </div>
+                        </div>
+                      </div>
 
-                      );
-                    })
-                  ) : (
-                    activeAction!.order.items.flatMap(ci => (ci.components || []))
-                      .filter(comp => rfpCompSelection.includes(comp.id || ''))
-                      .map((comp, idx) => {
-                        const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
-                        return (
-                          <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
-                            <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
-                            <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
-                              <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
-                              <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
-                              <div className="text-[10px] font-black uppercase mt-2" style={{ color: '#7c3aed' }}>Duration: {comp.contractDuration || '-'}</div>
-                              {comp.componentNumber && !comp.contractNumber && (
-                                <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
-                              )}
-                            </div>
-                            <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
-                              {comp.contractNumber || externalPartNum}
-                            </div>
-                            <div className="col-span-2 p-4 font-black">
-                              {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
-                            </div>
+                      <div className="p-6 rounded-2xl border-2 mb-10 text-sm font-bold leading-relaxed" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#334155' }}>
+                        {isOutsourcing 
+                          ? <p>Please provide your best commercial offer and estimated timeline for the services listed below. Ensure your quotation clearly states service rates, duration, and total amounts, excluding taxes. If applicable, please attach service scope documentation or qualifications.</p>
+                          : <p>Please provide your best commercial offer and lead time for the components listed below. Ensure your quotation clearly states unit prices and total amounts, excluding taxes. If applicable, please attach technical data sheets or compliance certificates.</p>
+                        }
+                      </div>
+
+                      {/* OUTSOURCING TEMPLATE */}
+                      {isOutsourcing && (
+                        <div className="border-2 mb-8 flex flex-col" style={{ borderColor: '#0f172a' }}>
+                          <div className="grid gap-0 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc', display: 'grid', gridTemplateColumns: '0.8fr 3.5fr 1.2fr 1.2fr 1.2fr' }}>
+                            <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a' }}>#</div>
+                            <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a', textAlign: 'left' }}>Service / Description</div>
+                            <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a' }}>Contract ID</div>
+                            <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a' }}>Duration</div>
+                            <div style={{ padding: '12px 8px' }}>Qty</div>
                           </div>
 
-                        );
-                      })
-                  )}
-                </div>
+                          {rfpPrintData ? (
+                            rfpPrintData.comps.map((comp, idx) => (
+                              <div key={comp.id} style={{ display: 'grid', gridTemplateColumns: '0.8fr 3.5fr 1.2fr 1.2fr 1.2fr', gap: 0, borderBottom: '#e2e8f0 1px solid', textAlign: 'center', fontSize: '13px' }}>
+                                <div style={{ padding: '12px 8px', borderRight: '1px solid #0f172a', fontFamily: 'monospace', fontWeight: 600, color: '#94a3b8' }}>{idx + 1}</div>
+                                <div style={{ padding: '12px 8px', borderRight: '1px solid #0f172a', textAlign: 'left' }}>
+                                  <div style={{ fontWeight: 900, fontSize: '12px', marginBottom: '4px' }}>{comp.description}</div>
+                                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>{comp.scopeOfWork || ''}</div>
+                                </div>
+                                <div style={{ padding: '12px 8px', borderRight: '1px solid #0f172a', fontFamily: 'monospace', fontWeight: 900, color: '#1e40af', fontSize: '12px' }}>{comp.contractNumber || 'TBD'}</div>
+                                <div style={{ padding: '12px 8px', borderRight: '1px solid #0f172a', fontWeight: 700, color: '#7c3aed' }}>{comp.contractDuration || '-'}</div>
+                                <div style={{ padding: '12px 8px', fontWeight: 900 }}>{comp.quantity} {comp.unit}</div>
+                              </div>
+                            ))
+                          ) : (
+                            activeAction!.order.items.flatMap(ci => (ci.components || []))
+                              .filter(comp => rfpCompSelection.includes(comp.id || ''))
+                              .map((comp, idx) => (
+                                <div key={comp.id} style={{ display: 'grid', gridTemplateColumns: '0.8fr 3.5fr 1.2fr 1.2fr 1.2fr', gap: 0, borderBottom: '#e2e8f0 1px solid', textAlign: 'center', fontSize: '13px' }}>
+                                  <div style={{ padding: '12px 8px', borderRight: '1px solid #0f172a', fontFamily: 'monospace', fontWeight: 600, color: '#94a3b8' }}>{idx + 1}</div>
+                                  <div style={{ padding: '12px 8px', borderRight: '1px solid #0f172a', textAlign: 'left' }}>
+                                    <div style={{ fontWeight: 900, fontSize: '12px', marginBottom: '4px' }}>{comp.description}</div>
+                                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>{comp.scopeOfWork || ''}</div>
+                                  </div>
+                                  <div style={{ padding: '12px 8px', borderRight: '1px solid #0f172a', fontFamily: 'monospace', fontWeight: 900, color: '#1e40af', fontSize: '12px' }}>{comp.contractNumber || 'TBD'}</div>
+                                  <div style={{ padding: '12px 8px', borderRight: '1px solid #0f172a', fontWeight: 700, color: '#7c3aed' }}>{comp.contractDuration || '-'}</div>
+                                  <div style={{ padding: '12px 8px', fontWeight: 900 }}>{comp.quantity} {comp.unit}</div>
+                                </div>
+                              ))
+                          )}
+                        </div>
+                      )}
 
-                <div style={{ fontSize: '9px', fontWeight: 900, textAlign: 'center', marginTop: '80px', paddingTop: '32px', borderTop: '2px solid #0f172a', color: '#94a3b8', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", Inter, "Segoe UI", Tahoma, Arial, sans-serif' }}>
-                  <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>Generated by</span>
-                  {' '}
-                  <span dir={companyNameHasArabic ? 'rtl' : 'ltr'} lang={companyNameHasArabic ? 'ar' : 'en'} style={{ unicodeBidi: 'isolate', display: 'inline-block', letterSpacing: 'normal', textTransform: companyNameHasArabic ? 'none' : 'none', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif' }}>{companyName}</span>
-                  {' '}
-                  <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>Procurement Operations</span>
-                </div>
+                      {/* TRADING & MANUFACTURING TEMPLATE */}
+                      {!isOutsourcing && (
+                        <div className="border-2 mb-8 flex flex-col" style={{ borderColor: '#0f172a' }}>
+                          <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc' }}>
+                            <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>#</div>
+                            <div className="col-span-6 p-3 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>Component / Description</div>
+                            <div className="col-span-3 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Supplier/Mfr Part #</div>
+                            <div className="col-span-2 p-3">Quantity</div>
+                          </div>
+
+                          {rfpPrintData ? (
+                            rfpPrintData.comps.map((comp, idx) => {
+                              const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
+                              return (
+                                <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
+                                  <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
+                                  <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
+                                    <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
+                                    <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
+                                    {comp.componentNumber && !comp.contractNumber && (
+                                      <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
+                                    )}
+                                  </div>
+                                  <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
+                                    {comp.contractNumber || externalPartNum || comp.componentNumber || 'TBD'}
+                                  </div>
+                                  <div className="col-span-2 p-4 font-black">
+                                    {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            activeAction!.order.items.flatMap(ci => (ci.components || []))
+                              .filter(comp => rfpCompSelection.includes(comp.id || ''))
+                              .map((comp, idx) => {
+                                const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
+                                return (
+                                  <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
+                                    <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
+                                    <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
+                                      <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
+                                      <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
+                                      {comp.componentNumber && !comp.contractNumber && (
+                                        <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
+                                      )}
+                                    </div>
+                                    <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
+                                      {comp.contractNumber || externalPartNum}
+                                    </div>
+                                    <div className="col-span-2 p-4 font-black">
+                                      {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                          )}
+                        </div>
+                      )}
+
+                      <div style={{ fontSize: '9px', fontWeight: 900, textAlign: 'center', marginTop: '80px', paddingTop: '32px', borderTop: '2px solid #0f172a', color: '#94a3b8', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", Inter, "Segoe UI", Tahoma, Arial, sans-serif' }}>
+                        <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>Generated by</span>
+                        {' '}
+                        <span dir={companyNameHasArabic ? 'rtl' : 'ltr'} lang={companyNameHasArabic ? 'ar' : 'en'} style={{ unicodeBidi: 'isolate', display: 'inline-block', letterSpacing: 'normal', textTransform: companyNameHasArabic ? 'none' : 'none', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif' }}>{companyName}</span>
+                        {' '}
+                        <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>Procurement Operations</span>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
@@ -897,8 +958,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '30px', paddingBottom: '20px', borderBottom: '3px solid #0f172a' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
                     {rasterizedLogo && (
-                      <div style={{ height: '60px', display: 'flex', alignItems: 'flex-start' }}>
-                        <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '180px', objectFit: 'contain' }} />
+                      <div style={{ height: '70px', display: 'flex', alignItems: 'flex-start' }}>
+                        <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '220px', objectFit: 'contain' }} />
                       </div>
                     )}
                     <div style={{ fontSize: '18px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName}</div>
@@ -969,63 +1030,122 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   </div>
                 </div>
 
-                {/* Items Table */}
-                <div style={{ border: '2px solid #0f172a', marginBottom: '25px' }}>
-                  {/* Table Header */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '0.8fr 2.5fr 1.2fr 0.8fr 0.8fr 1fr 1fr', gap: 0, backgroundColor: '#0f172a', color: '#ffffff' }}>
-                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>No.</div>
-                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'left', borderRight: '1px solid #ffffff' }}>Description (الوصف)</div>
-                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Srv./Cont. #</div>
-                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Qty</div>
-                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>UOM</div>
-                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Start Date</div>
-                    <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center' }}>Amount</div>
-                  </div>
+                {/* Items Table — conditionally render outsourcing vs trading/manufacturing layout */}
+                {(() => {
+                  const isOutsourcingPO = poPrintData.items.some(({ item: oi }) => oi?.productionType === 'OUTSOURCING');
 
-                  {/* Table Rows */}
-                  {poPrintData.items.map(({ item: orderItem, comp }, idx) => {
-                    const isOutsourcing = orderItem?.productionType === 'OUTSOURCING';
+                  if (isOutsourcingPO) {
+                    // ── OUTSOURCING PO TABLE: No. | Description | Contract ID | Duration | Qty | Start Date | Amount ──
+                    const osCols = '0.6fr 2.8fr 1.2fr 0.8fr 0.6fr 1fr 1fr';
                     return (
-                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '0.8fr 2.5fr 1.2fr 0.8fr 0.8fr 1fr 1fr', gap: 0, borderBottom: idx < poPrintData.items.length - 1 ? '1px solid #0f172a' : 'none' }}>
-                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>{idx + 1}</div>
-                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 600, textAlign: 'left', borderRight: '1px solid #e2e8f0' }}>
-                        <div style={{ fontWeight: 900, marginBottom: '3px' }}>{comp.scopeOfWork || comp.description}</div>
-                        {comp.detailedDescription && (
-                          <div style={{ fontSize: '8px', color: '#64748b', marginTop: '2px' }}>{comp.detailedDescription}</div>
-                        )}
-                      </div>
-                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0', color: '#2563eb' }}>
-                        {comp.contractNumber || 'N/A'}
-                      </div>
-                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
-                        {comp.quantity}
-                      </div>
-                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
-                        {isOutsourcing ? (comp.contractDuration || '-') : (comp.unit === 'pcs' ? 'قطعة' : comp.unit)}
-                      </div>
-                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
-                        {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString('en-US') : (item.productionType === 'OUTSOURCING' ? 'TBD' : 'N/A')}
-                      </div>
-                      <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'right' }}>
-                        {(comp.quantity * comp.unitCost).toLocaleString('en-US')} LE
-                      </div>
-                    </div>
-                  );
-                  })}
+                      <div style={{ border: '2px solid #0f172a', marginBottom: '25px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: osCols, gap: 0, backgroundColor: '#0f172a', color: '#ffffff' }}>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>No.</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'left', borderRight: '1px solid #ffffff' }}>Description (الوصف)</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Contract ID</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Duration</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Qty</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Start Date</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center' }}>Amount</div>
+                        </div>
 
-                  {/* Empty Rows */}
-                  {Array.from({ length: Math.max(0, 5 - poPrintData.items.length) }).map((_, idx) => (
-                    <div key={`empty-${idx}`} style={{ display: 'grid', gridTemplateColumns: '0.8fr 2.5fr 1.2fr 0.8fr 0.8fr 1fr 1fr', gap: 0, borderBottom: '1px solid #e2e8f0', height: '45px' }}>
-                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
-                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
-                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
-                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
-                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
-                      <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
-                      <div></div>
-                    </div>
-                  ))}
-                </div>
+                        {poPrintData.items.map(({ item: orderItem, comp }, idx) => (
+                          <div key={idx} style={{ display: 'grid', gridTemplateColumns: osCols, gap: 0, borderBottom: idx < poPrintData.items.length - 1 ? '1px solid #0f172a' : 'none' }}>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>{idx + 1}</div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 600, textAlign: 'left', borderRight: '1px solid #e2e8f0' }}>
+                              <div style={{ fontWeight: 900, marginBottom: '3px' }}>{comp.scopeOfWork || comp.description}</div>
+                              {comp.detailedDescription && (
+                                <div style={{ fontSize: '8px', color: '#64748b', marginTop: '2px' }}>{comp.detailedDescription}</div>
+                              )}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0', color: '#2563eb' }}>
+                              {comp.contractNumber || 'N/A'}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
+                              {comp.contractDuration || '-'}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
+                              {comp.quantity}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
+                              {comp.contractStartDate ? new Date(comp.contractStartDate).toLocaleDateString('en-US') : 'TBD'}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'right' }}>
+                              {((comp.quantity || 0) * (comp.unitCost || 0)).toLocaleString('en-US')} LE
+                            </div>
+                          </div>
+                        ))}
+
+                        {Array.from({ length: Math.max(0, 5 - poPrintData.items.length) }).map((_, idx) => (
+                          <div key={`empty-${idx}`} style={{ display: 'grid', gridTemplateColumns: osCols, gap: 0, borderBottom: '1px solid #e2e8f0', height: '45px' }}>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div></div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  } else {
+                    // ── TRADING / MANUFACTURING PO TABLE: No. | Description | Mfr Part # | Qty | UOM | Unit Price | Amount ──
+                    const tmCols = '0.6fr 3fr 1.2fr 0.6fr 0.6fr 1fr 1fr';
+                    return (
+                      <div style={{ border: '2px solid #0f172a', marginBottom: '25px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: tmCols, gap: 0, backgroundColor: '#0f172a', color: '#ffffff' }}>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>No.</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'left', borderRight: '1px solid #ffffff' }}>Description (الوصف)</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Mfr Part #</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Qty</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Unit</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Unit Price</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center' }}>Amount</div>
+                        </div>
+
+                        {poPrintData.items.map(({ item: orderItem, comp }, idx) => (
+                          <div key={idx} style={{ display: 'grid', gridTemplateColumns: tmCols, gap: 0, borderBottom: idx < poPrintData.items.length - 1 ? '1px solid #0f172a' : 'none' }}>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>{idx + 1}</div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 600, textAlign: 'left', borderRight: '1px solid #e2e8f0' }}>
+                              <div style={{ fontWeight: 900, marginBottom: '3px' }}>{comp.description}</div>
+                              {comp.scopeOfWork && comp.scopeOfWork !== comp.description && (
+                                <div style={{ fontSize: '8px', color: '#64748b', marginTop: '2px' }}>{comp.scopeOfWork}</div>
+                              )}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0', color: '#2563eb' }}>
+                              {comp.supplierPartNumber || comp.componentNumber || 'N/A'}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
+                              {comp.quantity}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
+                              {comp.unit === 'pcs' ? 'قطعة' : (comp.unit || 'pcs')}
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 700, textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>
+                              {(comp.unitCost || 0).toLocaleString('en-US')} LE
+                            </div>
+                            <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'right' }}>
+                              {((comp.quantity || 0) * (comp.unitCost || 0)).toLocaleString('en-US')} LE
+                            </div>
+                          </div>
+                        ))}
+
+                        {Array.from({ length: Math.max(0, 5 - poPrintData.items.length) }).map((_, idx) => (
+                          <div key={`empty-${idx}`} style={{ display: 'grid', gridTemplateColumns: tmCols, gap: 0, borderBottom: '1px solid #e2e8f0', height: '45px' }}>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div style={{ borderRight: '1px solid #e2e8f0' }}></div>
+                            <div></div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                })()}
 
                 {/* Totals Section */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '30px' }}>
@@ -1126,7 +1246,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                 const readyForPo = allAwarded;
 
                 const orderProcurementComponents = o.items.flatMap(item => item.components || []).filter(comp => comp.source === 'PROCUREMENT');
-                const allOrderProcurementAwarded = orderProcurementComponents.length > 0 && orderProcurementComponents.every(comp => comp.status === 'AWARDED');
+                const allOrderProcurementAwarded = orderProcurementComponents.length > 0 && orderProcurementComponents.every(comp => ['AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED'].includes(comp.status || ''));
                 const anyOrderProcurementNotReady = orderProcurementComponents.some(comp => ['PENDING_OFFER', 'RFP_SENT'].includes(comp.status || ''));
 
                 const itemsInFactoryCount = o.items.filter(i => {

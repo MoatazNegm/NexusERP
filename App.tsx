@@ -424,7 +424,16 @@ const App: React.FC = () => {
               </div>
               {!effectivelyCollapsed && (
                 <div className="flex flex-col min-w-0">
-                  <span className="font-black text-xl tracking-tighter text-white uppercase truncate max-w-[150px] leading-tight">
+                  <span 
+                    className="font-black tracking-tighter text-white uppercase leading-tight"
+                    style={{
+                      width: '150px',
+                      fontSize: `clamp(0.4rem, ${150 / (Math.max(10, (config.settings.companyName || 'NEXUS ERP').length) * 0.55)}px, 1rem)`,
+                      whiteSpace: 'nowrap',
+                      display: 'block',
+                      minHeight: '1.2rem'
+                    }}
+                  >
                     {config.settings.companyName || 'NEXUS ERP'}
                   </span>
                   <div className="flex items-center gap-0 mt-1 opacity-70">

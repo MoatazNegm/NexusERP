@@ -154,8 +154,8 @@ const canIssuePoForOrder = (order, minMargin) => {
     const procurementComponents = orderComponentsRequiringPo(order);
     if (procurementComponents.length === 0) return false;
 
-    // ALL procurement components must be in AWARDED status (not already ORDERED)
-    if (!procurementComponents.every(comp => comp.status === 'AWARDED')) {
+    // ALL procurement components must be in AWARDED status or beyond (e.g. already ORDERED)
+    if (!procurementComponents.every(comp => ['AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED'].includes(comp.status))) {
         return false;
     }
 
