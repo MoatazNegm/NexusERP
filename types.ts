@@ -133,6 +133,15 @@ export interface LedgerEntry {
 
 export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' | 'ORDERED' | 'ORDERED_FOR_STOCK' | 'WAITING_CONTRACT_START' | 'RECEIVED' | 'RESERVED' | 'IN_MANUFACTURING' | 'MANUFACTURED' | 'CANCELLED';
 
+export interface ReplacementRequest {
+  id: string;
+  requestDate: string;
+  reason: string;
+  originalStartDate: string;
+  newStartDate: string;
+  remainingDuration: string;
+}
+
 export interface ManufacturingComponent {
   id?: string;
   componentNumber?: string;
@@ -160,6 +169,8 @@ export interface ManufacturingComponent {
   contractDuration?: string;
   scopeOfWork?: string;
   contractStartDate?: string;
+  originalStartDate?: string;
+  replacementHistory?: ReplacementRequest[];
 }
 
 

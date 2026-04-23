@@ -154,8 +154,11 @@ const canIssuePoForOrder = (order, minMargin) => {
     const procurementComponents = orderComponentsRequiringPo(order);
     if (procurementComponents.length === 0) return false;
 
-    // ALL procurement components must be in AWARDED status or beyond (e.g. already ORDERED)
-    if (!procurementComponents.every(comp => ['AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED'].includes(comp.status))) {
+    // Binary 0/1 PO-readiness gate: a component is "ready" (1) unless it is
+    // still in a pre-PO status.  Only PENDING_OFFER and RFP_SENT are pre-PO.
+    // This blacklist approach is future-proof — new statuses are automatically OK.
+    const PRE_PO_STATUSES = ['PENDING_OFFER', 'RFP_SENT'];
+    if (!procurementComponents.every(comp => !PRE_PO_STATUSES.includes(comp.status))) {
         return false;
     }
 
@@ -1713,7 +1716,30 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
 
                 acItem.components.push(newComp);
-                order.logs.push(createAuditLog(`Component added: ${newComp.description} (${newComp.source})`, order.status, user));
+                
+                // Build detailed audit log message for procurement components
+                let auditMessage = `Component added: ${newComp.description} (${newComp.source})`;
+                const procurementDetails = [];
+                
+                if (newComp.source === 'PROCUREMENT') {
+                  if (newComp.contractNumber) {
+                    procurementDetails.push(`Contract: ${newComp.contractNumber}`);
+                  }
+                  if (newComp.contractDuration) {
+                    procurementDetails.push(`Duration: ${newComp.contractDuration}`);
+                  }
+                  if (newComp.contractStartDate) {
+                    procurementDetails.push(`Start Date: ${newComp.contractStartDate}`);
+                  }
+                  if (newComp.scopeOfWork) {
+                    procurementDetails.push(`Reason: ${newComp.scopeOfWork}`);
+                  }
+                  if (procurementDetails.length > 0) {
+                    auditMessage += ` [${procurementDetails.join(', ')}]`;
+                  }
+                }
+                
+                order.logs.push(createAuditLog(auditMessage, order.status, user));
                 break;
             }
 
@@ -1746,7 +1772,51 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const ucComp = order.items[ucItemIdx].components?.find(c => c.id === payload.compId);
                 if (!ucComp) throw new Error("Component not found");
                 Object.assign(ucComp, payload.updates);
-                order.logs.push(createAuditLog(`Component updated: ${ucComp.description}`, order.status, user));
+                
+                // Build detailed audit log message for procurement-related updates
+                // Check the UPDATED component properties (after Object.assign)
+                let auditMessage = `Component updated: ${ucComp.description}`;
+                
+                // Check if this is a resource request (procurement-related update)
+                const hasProcurementDetails = ucComp.contractStartDate || ucComp.contractNumber || ucComp.scopeOfWork || ucComp.contractDuration;
+                
+                if (hasProcurementDetails) {
+                  const details = [];
+                  if (ucComp.contractNumber) {
+                    details.push(`Contract: ${ucComp.contractNumber}`);
+                  }
+                  if (ucComp.contractDuration) {
+                    details.push(`Duration: ${ucComp.contractDuration}`);
+                  }
+                  if (ucComp.contractStartDate) {
+                    details.push(`Start Date: ${ucComp.contractStartDate}`);
+                  }
+                  if (ucComp.scopeOfWork) {
+                    details.push(`Reason: ${ucComp.scopeOfWork}`);
+                  }
+                  if (details.length > 0) {
+                    auditMessage += ` (${details.join(', ')})`;
+                  }
+                }
+                
+                order.logs.push(createAuditLog(auditMessage, order.status, user));
+                break;
+            }
+
+            case 'revive-contract': {
+                const rcItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (rcItemIdx === -1) throw new Error("Item not found");
+                const rcComp = order.items[rcItemIdx].components?.find(c => c.id === payload.compId);
+                if (!rcComp) throw new Error("Component not found");
+
+                const oldDuration = rcComp.contractDuration;
+                rcComp.contractDuration = payload.newDuration;
+                rcComp.statusUpdatedAt = new Date().toISOString();
+
+                // Detailed audit log message
+                const auditMsg = `Component updated: ${rcComp.description} (Contract: ${rcComp.contractNumber || rcComp.componentNumber}, Duration: ${payload.newDuration}, Start Date: ${rcComp.contractStartDate}, Reason: ${payload.reason}). [CONTRACT REVIVED - NO CHARGE]`;
+
+                order.logs.push(createAuditLog(auditMsg, order.status, user));
                 break;
             }
 

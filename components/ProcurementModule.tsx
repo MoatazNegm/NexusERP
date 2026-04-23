@@ -47,6 +47,50 @@ const sanitizeFileName = (value: string) => {
     .replace(/^-+|-+$/g, '');
 };
 
+/**
+ * Binary PO-readiness gate (the "0/1" approach).
+ * Returns true (1) if a component has reached or passed the Issue PO stage.
+ * Returns false (0) for the only two "pre-PO" statuses.
+ * This eliminates the need for ever-growing status whitelists — any new
+ * status added to the lifecycle is automatically treated as "past PO".
+ */
+const hasReachedPoReadiness = (status: string | undefined): boolean => {
+  if (!status) return false;
+  // Only these two statuses mean the component hasn't reached PO yet
+  return !['PENDING_OFFER', 'RFP_SENT'].includes(status);
+};
+
+/**
+ * Calculate contract end date based on start date and duration
+ * Duration format: "12 Months" or "1 Years"
+ */
+const calculateContractEndDate = (startDate: string, duration: string): Date | null => {
+  if (!startDate || !duration) return null;
+  
+  try {
+    const start = new Date(startDate);
+    if (isNaN(start.getTime())) return null;
+    
+    // Parse duration string (e.g., "12 Months" or "1 Years")
+    const durationMatch = duration.match(/(\d+)\s*(Month|Year)s?/i);
+    if (!durationMatch) return null;
+    
+    const amount = parseInt(durationMatch[1], 10);
+    const unit = durationMatch[2].toLowerCase();
+    
+    const end = new Date(start);
+    if (unit === 'month') {
+      end.setMonth(end.getMonth() + amount);
+    } else if (unit === 'year') {
+      end.setFullYear(end.getFullYear() + amount);
+    }
+    
+    return end;
+  } catch {
+    return null;
+  }
+};
+
 interface ProcurementModuleProps {
   config: AppConfig;
   refreshKey?: number;
@@ -116,7 +160,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
   // Modal States
   const [activeAction, setActiveAction] = useState<{
-    type: 'RFP' | 'AWARD' | 'PO' | 'RESET' | 'ORDER_ROLLBACK' | 'CANCEL_PO_BATCH';
+    type: 'RFP' | 'AWARD' | 'PO' | 'RESET' | 'ORDER_ROLLBACK' | 'CANCEL_PO_BATCH' | 'REVIVE_CONTRACT';
     order: CustomerOrder;
     item?: CustomerOrderItem;
     comp?: ManufacturingComponent;
@@ -136,7 +180,22 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const [contractStartDate, setContractStartDate] = useState<string>('');
   const [allowPastContractStart, setAllowPastContractStart] = useState<boolean>(false);
   const [resetReason, setResetReason] = useState<string>('');
-
+  
+  // Replacement Request Modal States
+  const [replacementModalInfo, setReplacementModalInfo] = useState<{order: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent} | null>(null);
+  const [replacementReason, setReplacementReason] = useState<string>('');
+  const [replacementStartDate, setReplacementStartDate] = useState<string>('');
+  const [updateAllContractDates, setUpdateAllContractDates] = useState<boolean>(false);
+  const [replacementDateError, setReplacementDateError] = useState<string>('');
+  const replacementTemplateRef = useRef<HTMLDivElement>(null);
+  const [isReplacementPdfGenerating, setIsReplacementPdfGenerating] = useState<boolean>(false);
+  
+  // Revive Contract States
+  const [reviveReason, setReviveReason] = useState<string>('');
+  const [reviveDuration, setReviveDuration] = useState<string>('');
+  const [reviveMode, setReviveMode] = useState<'EXTENSION' | 'END_DATE'>('EXTENSION');
+  const [reviveEndDate, setReviveEndDate] = useState<string>('');
+  
   const deriveOutsourcingContractInfo = (components: { item: CustomerOrderItem; comp: ManufacturingComponent }[]) => {
     const outsourcingComp = components.find(({ item, comp }) => item.productionType === 'OUTSOURCING' && (comp.contractNumber || comp.componentNumber || comp.contractStartDate));
     return {
@@ -153,7 +212,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
   const today = new Date().toISOString().split('T')[0];
   const selectedOutsourced = multiComps.some(({ item: mi, comp: mc }) => selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING');
   const isContractStartDateInvalid = selectedOutsourced && contractStartDate.trim() && contractStartDate < today && !allowPastContractStart;
-  const isCommitProcurementDisabled = isActionLoading != null || ((activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction?.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0 || (selectedOutsourced && !contractStartDate.trim()) || isContractStartDateInvalid));
+  const isCommitProcurementDisabled = isActionLoading != null || ((activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH') && !resetReason.trim()) || (activeAction?.type === 'REVIVE_CONTRACT' && (!reviveReason.trim() || (reviveMode === 'EXTENSION' ? !reviveDuration.trim() : !reviveEndDate.trim()))) || (activeAction?.type === 'PO' && (!poNumberInput.trim() || selectedCompIds.length === 0 || (selectedOutsourced && !contractStartDate.trim()) || isContractStartDateInvalid));
 
   // Procurement resolution state (for in-transit components during rollback)
   type CompResolution = 'CANCEL_PO' | 'RECEIVE_TO_STOCK';
@@ -227,7 +286,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       o.items.forEach(i => {
         if (i.productionType !== 'OUTSOURCING') return; // Skip in this tab
         i.components?.forEach(c => {
-          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'].includes(c.status || '')) {
+          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '')) {
             if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
             map.get(o.id)!.comps.push({ item: i, comp: c });
           }
@@ -610,6 +669,29 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           statusUpdatedAt: new Date().toISOString()
         };
         await dataService.updateComponent(order.id, item.id, comp.id!, updates);
+      } else if (type === 'REVIVE_CONTRACT') {
+        if (!reviveReason.trim()) throw new Error("Reason is mandatory");
+        
+        let finalDuration = '';
+        const originalDurationNum = parseInt(comp.contractDuration || '0') || 0;
+        
+        if (reviveMode === 'EXTENSION') {
+          const extensionNum = parseInt(reviveDuration) || 0;
+          if (extensionNum <= 0) throw new Error("Extension months must be greater than zero");
+          finalDuration = (originalDurationNum + extensionNum) + " Months";
+        } else {
+          if (!reviveEndDate) throw new Error("Please select a new end date");
+          const start = new Date(comp.contractStartDate || '');
+          const end = new Date(reviveEndDate);
+          if (end <= start) throw new Error("New end date must be after original start date");
+          
+          const diffMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+          if (diffMonths <= originalDurationNum) throw new Error("New end date must result in a longer duration than the original");
+          finalDuration = diffMonths + " Months";
+        }
+
+        setIsActionLoading('revive-contract');
+        await dataService.reviveContract(order.id, item.id, comp.id!, finalDuration, reviveReason.trim());
       } else {
         let updates: Partial<ManufacturingComponent> = { statusUpdatedAt: new Date().toISOString() };
 
@@ -675,6 +757,215 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     setPendingResolutions(null);
     setResolutionChoices({});
     setPendingRollbackOrder(null);
+    setReplacementModalInfo(null);
+    setReplacementReason('');
+    setReplacementStartDate('');
+    setReviveReason('');
+    setReviveDuration('');
+    setReviveEndDate('');
+    setReviveMode('EXTENSION');
+  };
+
+  const handleReplacementSubmit = async () => {
+    if (!replacementModalInfo || !replacementReason.trim() || !replacementStartDate.trim()) return;
+    
+    // Validate resource start date against contract start date
+    const currentContractStart = new Date(replacementModalInfo.comp.contractStartDate || new Date());
+    const newResourceStart = new Date(replacementStartDate);
+    const now = new Date();
+    
+    // Check if current contract start date is in the past
+    if (currentContractStart < now) {
+      // Contract already started - don't allow new resource start date to be older
+      if (newResourceStart < currentContractStart) {
+        setReplacementDateError('Resource start date cannot be earlier than the contract start date that already began.');
+        return;
+      }
+    } else {
+      // Contract is in the future - offer to update all contract start dates
+      if (newResourceStart < currentContractStart && !updateAllContractDates) {
+        // This is handled by checkbox, but we could add additional validation here
+      }
+    }
+    
+    setIsReplacementPdfGenerating(true);
+    try {
+      const { order, item, comp } = replacementModalInfo;
+      
+      // Step 1: Generate PDF snapshot using the safe clone & scrub technique
+      console.log('Step 1: Generating PDF...');
+      const h2c = (await import('html2canvas')).default;
+      if (!replacementTemplateRef.current) throw new Error("Template not ready");
+      
+      const printTarget = replacementTemplateRef.current;
+      const clonedElement = printTarget.cloneNode(true) as HTMLElement;
+      clonedElement.style.position = 'fixed';
+      clonedElement.style.left = '-10000px';
+      clonedElement.style.top = '-10000px';
+      clonedElement.style.display = 'block';
+      document.body.appendChild(clonedElement);
+
+      // Recursively convert all computed styles to inline styles and remove classes
+      const convertToInlineStyles = (element: HTMLElement, originalElement: HTMLElement) => {
+        if (element.nodeType !== 1 || originalElement.nodeType !== 1) return;
+
+        const computedStyles = window.getComputedStyle(originalElement);
+        const stylesToCopy = [
+          'display', 'position', 'width', 'height', 'minWidth', 'minHeight',
+          'maxWidth', 'maxHeight', 'margin', 'padding',
+          'backgroundColor', 'color', 'fontSize', 'fontWeight', 'fontFamily',
+          'fontStyle', 'textAlign', 'textTransform', 'textDecoration',
+          'lineHeight', 'letterSpacing', 'wordSpacing',
+          'border', 'borderTop', 'borderBottom', 'borderLeft', 'borderRight',
+          'borderColor', 'borderWidth', 'borderStyle', 'borderRadius',
+          'gridTemplateColumns', 'gridColumn', 'gridRow', 'gap',
+          'flexDirection', 'justifyContent', 'alignItems', 'flex', 'flexWrap',
+          'cursor', 'opacity', 'zIndex', 'boxSizing', 'verticalAlign',
+          'whiteSpace', 'wordWrap', 'overflow', 'overflowWrap',
+          'direction', 'unicodeBidi', 'objectFit'
+        ];
+
+        for (const prop of stylesToCopy) {
+          try {
+            let value = (computedStyles as any)[prop];
+            if (value && typeof value === 'string' && value.trim()) {
+              if (value.includes('oklch')) {
+                if (prop.includes('background') || prop === 'backgroundColor') value = '#ffffff';
+                else if (prop.includes('border') || prop.includes('Color')) value = '#e2e8f0';
+                else if (prop === 'color') value = '#0f172a';
+              }
+              (element.style as any)[prop] = value;
+            }
+          } catch (e) { /* skip */ }
+        }
+        element.removeAttribute('class');
+        
+        for (let i = 0; i < element.children.length; i++) {
+          if (originalElement.children[i]) {
+            convertToInlineStyles(element.children[i] as HTMLElement, originalElement.children[i] as HTMLElement);
+          }
+        }
+      };
+
+      // We read styles from the original hidden element but apply to the clone
+      convertToInlineStyles(clonedElement, printTarget);
+      clonedElement.style.backgroundColor = '#ffffff';
+      clonedElement.style.color = '#0f172a';
+
+      const canvas = await h2c(clonedElement, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        allowTaint: true
+      });
+      
+      document.body.removeChild(clonedElement);
+
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`ReplacementRequest-${comp.contractNumber || comp.componentNumber}-${new Date().toISOString().split('T')[0]}.pdf`);
+      console.log('PDF generated successfully');
+
+      // Step 2: Prepare replacement history
+      console.log('Step 2: Preparing replacement history...');
+      const d1 = new Date(comp.contractStartDate || comp.originalStartDate || new Date());
+      const d2 = new Date(replacementStartDate);
+      let diffMonths = (d2.getFullYear() - d1.getFullYear()) * 12 + (d2.getMonth() - d1.getMonth());
+      let durationStr = comp.contractDuration || "0";
+      let parsedDur = parseFloat(durationStr);
+      let remainingDurationStr = durationStr;
+      if (!isNaN(parsedDur)) {
+         remainingDurationStr = `${Math.max(0, parsedDur - diffMonths)} months remaining`;
+      } else {
+         remainingDurationStr = `Elapsed approx ${Math.max(0, diffMonths)} months`;
+      }
+
+      const newHistory = [...(comp.replacementHistory || [])];
+      newHistory.push({
+        id: Math.random().toString(36).substring(2, 9),
+        requestDate: new Date().toISOString(),
+        reason: replacementReason,
+        originalStartDate: comp.originalStartDate || comp.contractStartDate || '',
+        newStartDate: replacementStartDate,
+        remainingDuration: remainingDurationStr
+      });
+
+      // Update contract start dates if user chose to move all dates
+      let updatedItems = [...order.items];
+      if (updateAllContractDates && currentContractStart > now) {
+        // Update all components' contract start dates in this order
+        updatedItems = updatedItems.map(itm => ({
+          ...itm,
+          components: (itm.components || []).map(c => ({
+            ...c,
+            contractStartDate: replacementStartDate
+          }))
+        }));
+      }
+
+      // Step 3: Update component with replacement history
+      console.log('Step 3: Updating component with order:', order.id, 'item:', item.id, 'comp:', comp.id);
+      
+      let finalContractStartDate = comp.contractStartDate || '';
+      if (updateAllContractDates && currentContractStart > now) {
+        finalContractStartDate = replacementStartDate;
+      }
+      
+      console.log('Update payload:', { originalStartDate: comp.originalStartDate || comp.contractStartDate || '', contractStartDate: finalContractStartDate, replacementHistory: newHistory });
+      
+      await dataService.updateComponent(order.id, item.id, comp.id!, {
+        originalStartDate: comp.originalStartDate || comp.contractStartDate || '',
+        contractStartDate: finalContractStartDate,
+        replacementHistory: newHistory
+      });
+      console.log('Component updated successfully');
+      
+      // If we need to update other components' contract start dates
+      if (updateAllContractDates && currentContractStart > now) {
+        console.log('Step 4: Updating all other components contract dates...');
+        for (const itm of updatedItems) {
+          if (itm.id !== item.id) {
+            for (const c of (itm.components || [])) {
+              if (c.id && c.contractStartDate !== replacementStartDate) {
+                await dataService.updateComponent(order.id, itm.id, c.id, {
+                  contractStartDate: replacementStartDate
+                }).catch(() => {});
+              }
+            }
+          }
+        }
+      }
+
+      setReplacementModalInfo(null);
+      setReplacementReason('');
+      setReplacementStartDate('');
+      setUpdateAllContractDates(false);
+      setReplacementDateError('');
+      console.log('Step 5: Fetching updated data...');
+      await fetchData();
+      console.log('Resource replacement request submitted successfully!');
+    } catch(e) {
+      console.error('Resource replacement error:', e);
+      const errorMsg = (e as any)?.response?.data?.message || (e as any)?.message || 'Unknown error occurred';
+      alert(`Failed to submit resource replacement request: ${errorMsg}`);
+    } finally {
+      setIsReplacementPdfGenerating(false);
+    }
+  };
+
+  const getContractStartStatus = () => {
+    if (!replacementModalInfo) return { isInPast: false, daysUntilStart: 0 };
+    const contractStart = new Date(replacementModalInfo.comp.contractStartDate || new Date());
+    const now = new Date();
+    const isInPast = contractStart < now;
+    const daysUntilStart = Math.ceil((contractStart.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    return { isInPast, daysUntilStart };
   };
 
   // Check for in-transit components before initiating a rollback
@@ -756,6 +1047,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
       totalInclTax: totalExclTax + taxAmount
     };
   }, [multiComps, selectedCompIds, activeAction, awardCosts, awardTaxPercent]);
+
+
 
   return (
     <div className="space-y-6">
@@ -1238,16 +1531,18 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
             <div className="space-y-8">
               {(activeTab === 'outsourcing' ? outsourcingGroups : purchaseGroups).map(({ order: o, comps }) => {
-                const allAwardedOrOrdered = comps.every(({ comp: cc }) => ['AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED'].includes(cc.status || ''));
-                const allAwarded = comps.every(({ comp: cc }) => cc.status === 'AWARDED');
+                // Binary 0/1 PO-readiness gate:
+                // Each component is 1 if it has reached AWARDED or beyond, 0 if still pre-PO.
+                // "readyForPo" = at least one comp is AWARDED (needs PO) AND all others are 1 (won't block it).
+                const allPoReady = comps.every(({ comp: cc }) => hasReachedPoReadiness(cc.status));  // AND gate
                 const anyReadyToOrder = comps.some(({ comp: cc }) => cc.status === 'AWARDED');
-                const anyOrdered = comps.some(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'WAITING_CONTRACT_START' || cc.status === 'RECEIVED');
-                const allOrderedOrHigher = comps.every(({ comp: cc }) => cc.status === 'ORDERED' || cc.status === 'WAITING_CONTRACT_START' || cc.status === 'RECEIVED');
-                const readyForPo = allAwarded;
+                const anyOrdered = comps.some(({ comp: cc }) => hasReachedPoReadiness(cc.status) && cc.status !== 'AWARDED');
+                const allOrderedOrHigher = comps.every(({ comp: cc }) => hasReachedPoReadiness(cc.status) && cc.status !== 'AWARDED');
+                const readyForPo = anyReadyToOrder && allPoReady;
 
                 const orderProcurementComponents = o.items.flatMap(item => item.components || []).filter(comp => comp.source === 'PROCUREMENT');
-                const allOrderProcurementAwarded = orderProcurementComponents.length > 0 && orderProcurementComponents.every(comp => ['AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED'].includes(comp.status || ''));
-                const anyOrderProcurementNotReady = orderProcurementComponents.some(comp => ['PENDING_OFFER', 'RFP_SENT'].includes(comp.status || ''));
+                const allOrderProcurementAwarded = orderProcurementComponents.length > 0 && orderProcurementComponents.every(comp => hasReachedPoReadiness(comp.status || ''));
+                const anyOrderProcurementNotReady = orderProcurementComponents.some(comp => !hasReachedPoReadiness(comp.status || ''));
 
                 const itemsInFactoryCount = o.items.filter(i => {
                   const eff = getItemEffectiveStatus(i);
@@ -1326,7 +1621,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             Not all line items ready for PO
                           </div>
                         )}
-                        {!allAwarded && !allOrderedOrHigher && !anyOrderProcurementNotReady && (
+                        {!readyForPo && !allOrderedOrHigher && !anyOrderProcurementNotReady && (
                           <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
                             <i className="fa-solid fa-hourglass-half"></i>
                             All components must be awarded for PO
@@ -1337,9 +1632,18 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
                     {/* Components List */}
                     <div className="divide-y divide-slate-100">
-                      {comps.map(({ item: i, comp: c }) => (
-                        <div key={c.id} className="flex flex-col lg:flex-row justify-between items-center p-6 hover:bg-blue-50/30 transition-all group">
-                          <div className="flex gap-6 items-center w-full lg:w-auto">
+                      {comps.map(({ item: i, comp: c }) => {
+                        const isContractExpired = (() => {
+                          if (activeTab !== 'outsourcing') return false;
+                          if (!c.contractStartDate || !c.contractDuration) return false;
+                          const endDate = calculateContractEndDate(c.contractStartDate, c.contractDuration);
+                          if (!endDate) return false;
+                          return endDate.getTime() < new Date().setHours(0, 0, 0, 0);
+                        })();
+
+                        return (
+                          <div key={c.id} className="flex flex-col justify-between p-5 hover:bg-blue-50/30 transition-all group gap-3">
+                          <div className="flex gap-4 items-center w-full">
                             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${c.status === 'ORDERED' ? 'bg-emerald-50 text-emerald-600' :
                               c.status === 'WAITING_CONTRACT_START' ? 'bg-purple-50 text-purple-600' :
                               c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
@@ -1360,7 +1664,27 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                   </span>
                                 )}
                               </div>
-                              <div className="font-black text-slate-800 text-base tracking-tight">{c.description}</div>
+                              <div className="font-black text-slate-800 text-base tracking-tight">
+                                {c.description}
+                                {c.contractStartDate && (
+                                  <span className="ml-3 text-[9px] font-black text-purple-600 uppercase tracking-wide">
+                                    <i className="fa-solid fa-calendar-check mr-1"></i>Start: {new Date(c.contractStartDate).toLocaleDateString()}
+                                    {c.contractStartDate && c.contractDuration && (() => {
+                                      const endDate = calculateContractEndDate(c.contractStartDate, c.contractDuration);
+                                      return endDate ? (
+                                        <span className="text-emerald-600 ml-2">
+                                          • End: {endDate.toLocaleDateString()} ✓
+                                        </span>
+                                      ) : null;
+                                    })()}
+                                    {c.contractDuration && (
+                                      <span className="text-blue-600 ml-2">
+                                        • Duration: {c.contractDuration}
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex flex-wrap gap-x-2 gap-y-1">
                                 <span>Item: {i.orderNumber}</span>
                                 <span>•</span>
@@ -1382,7 +1706,21 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                               <CompThreshold component={c} config={config} />
                             </div>
                           </div>
-                          <div className="flex items-center gap-3 mt-4 lg:mt-0">
+                          {isContractExpired ? (
+                            <div className="flex flex-col items-end gap-2 mt-4 pt-4 border-t border-slate-100 w-full">
+                              <div className="text-[10px] font-black text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200 uppercase tracking-widest">
+                                <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>Contract Expired
+                              </div>
+                              <button
+                                onClick={() => setActiveAction({ type: 'REVIVE_CONTRACT', order: o, item: i, comp: c })}
+                                className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase shadow-lg hover:bg-emerald-700 transition-all flex items-center gap-2 mt-2"
+                              >
+                                <i className="fa-solid fa-heart-pulse"></i> Revive Contract
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2 flex-wrap">
                             <div className="flex items-center">
                               {c.status === 'RFP_SENT' && (
                                 <button
@@ -1411,14 +1749,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                 const sameRfpIds = c.rfpId ? comps.filter(x => x.comp.rfpId === c.rfpId).map(x => x.comp.id!) : [c.id!];
                                 setRfpCompSelection(sameRfpIds);
                               }}
-                                className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-black transition-all"
+                                className="px-4 py-2 bg-slate-900 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-black transition-all"
                               >Send RFP</button>
                             )}
                             {c.status === 'RFP_SENT' && (
                               <div className="flex items-center gap-3">
                                 <button
                                   onClick={() => handleDownloadExistingRfp(o, c, comps)}
-                                  className="px-5 py-2.5 bg-white border-2 border-slate-900 text-slate-900 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-slate-50 transition-all flex items-center gap-2"
+                                  className="px-3 py-1.5 bg-white border border-slate-900 text-slate-900 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-slate-50 transition-all flex items-center gap-1.5"
                                 >
                                   <i className="fa-solid fa-file-pdf"></i> Download RFP
                                 </button>
@@ -1431,7 +1769,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                   setAwardCosts({ [c.id!]: (c.unitCost || 0).toString() });
                                   setAwardTaxPercent((c.taxPercent || 14).toString());
                                 }}
-                                  className="px-6 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
+                                  className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-700 transition-all"
                                 >Award Tender</button>
                               </div>
                             )}
@@ -1460,7 +1798,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                         setContractStartDate(contractInfo.contractStartDate);
                                         setActiveAction({ type: 'PO', order: o, item: i, comp: c });
                                       }}
-                                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                      className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase shadow-sm transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                                     >
                                       Issue PO
                                     </button>
@@ -1471,7 +1809,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                       setActiveAction({ type: 'REVERT_TO_PENDING', order: o, item: i, comp: c });
                                     }}
                                     disabled={isActionLoading != null}
-                                    className="px-4 py-3 rounded-xl text-[10px] font-black uppercase shadow-lg transition-all bg-orange-500 text-white hover:bg-orange-600 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                    className="px-3 py-2 rounded-lg text-[9px] font-black uppercase shadow-sm transition-all bg-orange-500 text-white hover:bg-orange-600 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
                                     title="Reset this award and return to PENDING_OFFER status"
                                   >
                                     Reset Award
@@ -1489,7 +1827,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                               <div className="flex items-center gap-3">
                                 <button
                                   onClick={() => handleDownloadPO(o, c)}
-                                  className="px-5 py-2.5 bg-white border-2 border-blue-600 text-blue-600 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-2"
+                                  className="px-3 py-1.5 bg-white border border-blue-600 text-blue-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-1.5"
                                 >
                                   <i className="fa-solid fa-file-pdf"></i> Download PO
                                 </button>
@@ -1507,7 +1845,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                     setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
                                   }}
                                   disabled={isActionLoading != null}
-                                  className="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-rose-700 transition-all flex items-center gap-2"
+                                  className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-rose-700 transition-all flex items-center gap-1.5"
                                 >
                                   <i className="fa-solid fa-ban"></i> Cancel Order
                                 </button>
@@ -1516,7 +1854,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                     setActiveAction({ type: 'REVERT_PO', order: o, item: i, comp: c });
                                   }}
                                   disabled={isActionLoading != null}
-                                  className="px-5 py-2.5 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-600 transition-all flex items-center gap-2"
+                                  className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-600 transition-all flex items-center gap-1.5"
                                   title="Revert this PO back to AWARDED status"
                                 >
                                   <i className="fa-solid fa-rotate-left"></i> Revert to Award
@@ -1527,10 +1865,10 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                               </div>
                             )}
                             {c.status === 'WAITING_CONTRACT_START' && (
-                              <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <button
                                   onClick={() => handleDownloadPO(o, c)}
-                                  className="px-5 py-2.5 bg-white border-2 border-purple-600 text-purple-600 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-purple-50 transition-all flex items-center gap-2"
+                                  className="px-3 py-1.5 bg-white border border-purple-600 text-purple-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-purple-50 transition-all flex items-center gap-1.5"
                                 >
                                   <i className="fa-solid fa-file-pdf"></i> Download PO
                                 </button>
@@ -1547,7 +1885,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                     setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
                                   }}
                                   disabled={isActionLoading != null}
-                                  className="px-5 py-2.5 bg-rose-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-rose-700 transition-all flex items-center gap-2"
+                                  className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-rose-700 transition-all flex items-center gap-1.5"
                                 >
                                   <i className="fa-solid fa-ban"></i> Cancel Order
                                 </button>
@@ -1556,19 +1894,29 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                     setActiveAction({ type: 'REVERT_PO', order: o, item: i, comp: c });
                                   }}
                                   disabled={isActionLoading != null}
-                                  className="px-5 py-2.5 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-amber-600 transition-all flex items-center gap-2"
+                                  className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-600 transition-all flex items-center gap-1.5"
                                   title="Revert this PO back to AWARDED status"
                                 >
                                   <i className="fa-solid fa-rotate-left"></i> Revert to Award
                                 </button>
-                                <div className="text-[10px] font-black text-purple-600 uppercase tracking-[0.15em] px-2 whitespace-nowrap">
-                                  <i className="fa-solid fa-calendar-check mr-1"></i>Waiting Contract: {c.contractStartDate ? new Date(c.contractStartDate).toLocaleDateString() : 'TBD'}
-                                </div>
+                              </div>
+                            )}
+                            {['WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '') && activeTab === 'outsourcing' && (
+                              <div className="flex items-center gap-2 pt-2 border-t border-slate-100 w-full justify-end">
+                                <button
+                                  onClick={() => setReplacementModalInfo({ order: o, item: i, comp: c })}
+                                  className="px-3 py-1.5 bg-violet-100 border border-violet-100 text-violet-700 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-violet-200 hover:border-violet-200 transition-all flex items-center gap-1.5"
+                                  title="Request Resource Replacement"
+                                >
+                                  <i className="fa-solid fa-users-arrows"></i> Resource Replacement
+                                </button>
                               </div>
                             )}
                           </div>
+                            </>
+                          )}
                         </div>
-                      ))}
+                      )})}
                     </div>
                   </div>
                 );
@@ -1589,12 +1937,14 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   <div className="flex items-center gap-6 mb-8">
                     <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-inner ${activeAction.type === 'RFP' ? 'bg-blue-50 text-blue-600' :
                       activeAction.type === 'AWARD' ? 'bg-amber-50 text-amber-600' :
-                        activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
+                        activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-50 text-rose-600' :
+                          activeAction.type === 'REVIVE_CONTRACT' ? 'bg-emerald-50 text-emerald-600' : 'bg-emerald-50 text-emerald-600'
                       }`}>
                       <i className={`fa-solid ${activeAction.type === 'RFP' ? 'fa-paper-plane' :
                         activeAction.type === 'AWARD' ? 'fa-award' :
                           activeAction.type === 'RESET' ? 'fa-rotate-left' :
-                            activeAction.type === 'ORDER_ROLLBACK' ? 'fa-file-export fa-flip-horizontal' : 'fa-file-invoice'
+                            activeAction.type === 'ORDER_ROLLBACK' ? 'fa-file-export fa-flip-horizontal' :
+                              activeAction.type === 'REVIVE_CONTRACT' ? 'fa-heart-pulse' : 'fa-file-invoice'
                         }`}></i>
                     </div>
                     <div>
@@ -1602,7 +1952,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         {activeAction.type === 'RFP' ? 'Issue Request for Proposals' :
                           activeAction.type === 'AWARD' ? 'Commercial Award Selection' :
                             activeAction.type === 'RESET' ? 'Reset Sourcing Cycle' :
-                              activeAction.type === 'ORDER_ROLLBACK' ? 'Order Workflow Rollback' : 'Confirm Purchase Order'}
+                              activeAction.type === 'ORDER_ROLLBACK' ? 'Order Workflow Rollback' :
+                                activeAction.type === 'REVIVE_CONTRACT' ? 'Revive Expired Contract' : 'Confirm Purchase Order'}
                       </h3>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                         {activeAction.type === 'ORDER_ROLLBACK' ? `Reverting to Logged Registry: ${activeAction.order.internalOrderNumber}` : `Comp: ${activeAction.comp?.description}`}
@@ -1969,6 +2320,96 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       </div>
                     )}
 
+                    {activeAction.type === 'REVIVE_CONTRACT' && (
+                      <div className="space-y-6">
+                        <div className="p-6 bg-emerald-50 rounded-3xl border border-emerald-100 flex justify-between items-center">
+                          <div>
+                            <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Reviving Contract</div>
+                            <div className="text-xl font-black text-emerald-900 uppercase tracking-tight">
+                              {activeAction.comp?.contractNumber || activeAction.comp?.componentNumber}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Old End Date</div>
+                            <div className="text-lg font-black text-emerald-600">
+                              {activeAction.comp?.contractStartDate && activeAction.comp?.contractDuration 
+                                ? calculateContractEndDate(activeAction.comp.contractStartDate, activeAction.comp.contractDuration)?.toLocaleDateString()
+                                : 'Unknown'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-6 bg-amber-50 border border-amber-200 rounded-3xl space-y-2">
+                          <p className="text-[10px] text-amber-700 font-bold uppercase tracking-wide">
+                            <i className="fa-solid fa-circle-info mr-1.5 text-amber-500"></i>
+                            This extension will not incur any payment request from the customer.
+                          </p>
+                          <p className="text-[10px] text-amber-800 font-medium">
+                            If a payment is needed, a new contract PO should be issued and this contract should be ended properly instead.
+                          </p>
+                        </div>
+
+                        <div className="space-y-4 pt-2">
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Reason for reviving</label>
+                            <textarea
+                              className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:border-emerald-500 transition-all placeholder:text-slate-300"
+                              placeholder="Why is this contract being extended for free?"
+                              rows={2}
+                              value={reviveReason} onChange={e => setReviveReason(e.target.value)}
+                            />
+                          </div>
+
+                          <div className="space-y-4 pt-4 border-t border-slate-100">
+                            <div className="flex bg-slate-100 p-1 rounded-2xl mb-4">
+                              <button 
+                                onClick={() => setReviveMode('EXTENSION')}
+                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${reviveMode === 'EXTENSION' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                              >
+                                <i className="fa-solid fa-plus-circle"></i> Add Extension
+                              </button>
+                              <button 
+                                onClick={() => setReviveMode('END_DATE')}
+                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${reviveMode === 'END_DATE' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                              >
+                                <i className="fa-solid fa-calendar-day"></i> Pick End Date
+                              </button>
+                            </div>
+
+                            {reviveMode === 'EXTENSION' ? (
+                              <div className="space-y-1.5 flex flex-col">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Extension Duration (Months)</label>
+                                <input
+                                  type="number"
+                                  className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-lg font-black text-emerald-600 outline-none focus:bg-white focus:border-emerald-500 transition-all"
+                                  placeholder="e.g. 1"
+                                  value={reviveDuration}
+                                  onChange={e => setReviveDuration(e.target.value)}
+                                />
+                                <p className="text-[9px] text-slate-400 font-bold mt-1 ml-1 leading-relaxed">
+                                  Original: {activeAction.comp?.contractDuration}. <span className="text-emerald-500">New Total: {parseInt(activeAction.comp?.contractDuration || '0') + (parseInt(reviveDuration) || 0)} Months.</span>
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="space-y-1.5 flex flex-col">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">New Contract End Date</label>
+                                <input
+                                  type="date"
+                                  className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-lg font-black text-emerald-600 outline-none focus:bg-white focus:border-emerald-500 transition-all font-mono"
+                                  value={reviveEndDate}
+                                  onChange={e => setReviveEndDate(e.target.value)}
+                                  min={calculateContractEndDate(activeAction.comp?.contractStartDate || '', activeAction.comp?.contractDuration || '')?.toISOString().split('T')[0]}
+                                />
+                                <p className="text-[9px] text-slate-400 font-bold mt-1 ml-1 leading-relaxed uppercase tracking-tight">
+                                  Select a date further than {calculateContractEndDate(activeAction.comp?.contractStartDate || '', activeAction.comp?.contractDuration || '')?.toLocaleDateString()}. Duration will be auto-calculated.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {(activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK') && (
                       <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
                         <p className="text-sm text-rose-800 font-bold leading-relaxed">
@@ -1994,17 +2435,156 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                     <button
                       disabled={isCommitProcurementDisabled}
                       onClick={handleExecuteAction}
-                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${isCommitProcurementDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : activeAction?.type === 'REVERT_PO' || activeAction?.type === 'REVERT_TO_PENDING' ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
+                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${isCommitProcurementDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : activeAction?.type === 'REVERT_PO' || activeAction?.type === 'REVERT_TO_PENDING' ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100' : activeAction?.type === 'REVIVE_CONTRACT' ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
                         }`}
                     >
                       {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
-                      {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : activeAction.type === 'CANCEL_PO_BATCH' ? 'Confirm Cancellation' : activeAction.type === 'REVERT_PO' ? 'Confirm Revert' : activeAction.type === 'REVERT_TO_PENDING' ? 'Confirm Revert to Pending' : 'Commit Procurement'}
+                      {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : activeAction.type === 'CANCEL_PO_BATCH' ? 'Confirm Cancellation' : activeAction.type === 'REVERT_PO' ? 'Confirm Revert' : activeAction.type === 'REVERT_TO_PENDING' ? 'Confirm Revert to Pending' : activeAction.type === 'REVIVE_CONTRACT' ? 'Revive Contract' : 'Commit Procurement'}
                     </button>
                   </div>
                 </div>
               </div>
             )
           }
+          
+          {/* --- Resource Replacement Modal --- */}
+          {replacementModalInfo && (
+            <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
+              <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-10 animate-in zoom-in-95 duration-200 border border-slate-100">
+                <div className="flex items-center gap-6 mb-8">
+                  <div className="w-16 h-16 rounded-3xl bg-violet-50 text-violet-600 flex items-center justify-center text-3xl shadow-inner">
+                    <i className="fa-solid fa-users-arrows"></i>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Request Resource Replacement</h3>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                      {replacementModalInfo.comp.description}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Contract Information Section */}
+                <div className="bg-slate-50 rounded-2xl p-6 mb-6 border border-slate-100">
+                  <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4">Contract Information</h4>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-400 uppercase">Contract ID</label>
+                      <p className="text-sm font-black text-blue-600 mt-1">
+                        {replacementModalInfo.comp.contractNumber || replacementModalInfo.comp.componentNumber || 'N/A'}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-400 uppercase">Duration</label>
+                      <p className="text-sm font-black text-slate-800 mt-1">
+                        {replacementModalInfo.comp.contractDuration || 'Not Set'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-400 uppercase">Contract Start Date</label>
+                      <p className="text-sm font-black text-slate-800 mt-1">
+                        {replacementModalInfo.comp.contractStartDate 
+                          ? new Date(replacementModalInfo.comp.contractStartDate).toLocaleDateString('en-US')
+                          : 'Not Set'}
+                      </p>
+                      <p className={`text-[10px] font-bold mt-1 ${getContractStartStatus().isInPast ? 'text-rose-600' : 'text-emerald-600'}`}>
+                        {getContractStartStatus().isInPast 
+                          ? '✓ Contract Already Started'
+                          : `Starts in ${getContractStartStatus().daysUntilStart} days`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Detailed Reason for Replacement</label>
+                    <textarea
+                      value={replacementReason}
+                      onChange={e => setReplacementReason(e.target.value)}
+                      className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-medium text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all custom-scrollbar h-32"
+                      placeholder="Explain why this outsourced resource is being replaced..."
+                    ></textarea>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">New Resource Start Date</label>
+                    <input
+                      type="date"
+                      value={replacementStartDate}
+                      onChange={e => {
+                        const newDate = e.target.value;
+                        setReplacementStartDate(newDate);
+                        
+                        // Validate immediately
+                        if (newDate) {
+                          const contractStart = new Date(replacementModalInfo.comp.contractStartDate || new Date());
+                          const newResourceStart = new Date(newDate);
+                          const now = new Date();
+                          
+                          if (contractStart < now && newResourceStart < contractStart) {
+                            setReplacementDateError('❌ Resource start date cannot be earlier than contract start date (2/3/2026)');
+                          } else {
+                            setReplacementDateError('');
+                          }
+                        } else {
+                          setReplacementDateError('');
+                        }
+                      }}
+                      className={`w-full border-2 rounded-2xl p-4 text-sm font-black text-slate-700 outline-none transition-all uppercase ${
+                        replacementDateError 
+                          ? 'bg-rose-50 border-rose-300 focus:border-rose-500' 
+                          : 'bg-slate-50 border-slate-100 focus:border-violet-500 focus:bg-violet-50/30'
+                      }`}
+                    />
+                    {replacementDateError && (
+                      <p className="text-rose-600 text-[10px] font-bold mt-2 flex items-center gap-1">
+                        <i className="fa-solid fa-exclamation-circle"></i> {replacementDateError}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Option to update all contract dates if future contract */}
+                  {replacementStartDate && !getContractStartStatus().isInPast && (
+                    <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={updateAllContractDates}
+                          onChange={e => setUpdateAllContractDates(e.target.checked)}
+                          className="w-5 h-5 accent-blue-600"
+                        />
+                        <span className="text-[11px] font-bold text-blue-900">
+                          Move all contract start dates in this order to {new Date(replacementStartDate).toLocaleDateString('en-US')}
+                        </span>
+                      </label>
+                      <p className="text-[9px] text-blue-700 mt-2 ml-8">
+                        This will update the contract start date for all related components in this order.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3 justify-end mt-10">
+                  <button
+                    onClick={() => { setReplacementModalInfo(null); setReplacementReason(''); setReplacementStartDate(''); setUpdateAllContractDates(false); setReplacementDateError(''); }}
+                    className="px-6 py-3.5 bg-slate-100 text-slate-500 rounded-2xl text-[11px] font-black uppercase tracking-wider hover:bg-slate-200 transition-colors"
+                    disabled={isReplacementPdfGenerating}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleReplacementSubmit}
+                    disabled={!replacementReason.trim() || !replacementStartDate.trim() || isReplacementPdfGenerating || !!replacementDateError}
+                    className="px-8 py-3.5 bg-violet-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-wider hover:bg-violet-700 hover:shadow-lg hover:shadow-violet-600/30 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center min-w-[200px]"
+                  >
+                    {isReplacementPdfGenerating ? <i className="fa-solid fa-spinner fa-spin"></i> : <><i className="fa-solid fa-file-pdf mr-2"></i> Submit & Extract PDF</>}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* --- Procurement Resolution Modal (in-transit components before rollback) --- */}
           {
             pendingResolutions && !activeAction && (
@@ -2086,6 +2666,100 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
               </div>
             )
           }
+
+          {/* Hidden Template for Replacement PDF Extraction */}
+          <div style={{ position: 'absolute', left: '-9999px', top: '-9999px' }}>
+            <div id="replacement-pdf-template" ref={replacementTemplateRef} style={{ width: '210mm', minHeight: '297mm', padding: '20mm', boxSizing: 'border-box', fontFamily: 'Inter, sans-serif', backgroundColor: '#ffffff' }}>
+              {replacementModalInfo && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #334155', paddingBottom: '20px', marginBottom: '30px' }}>
+                    <div style={{ textAlign: 'center' }}>
+                      {rasterizedLogo ? (
+                        <img src={rasterizedLogo} alt="Company Logo" style={{ height: '70px', maxWidth: '220px', objectFit: 'contain', margin: '0 auto', display: 'block' }} />
+                      ) : (
+                        <h1 style={{ fontSize: '24px', fontWeight: 900, color: '#1e293b', margin: 0, textTransform: 'uppercase' }}>
+                          {config.settings.companyName || 'Nexus ERP'}
+                        </h1>
+                      )}
+                      
+                      <div style={{ marginTop: '10px', fontSize: '10px', color: '#64748b' }}>
+                        {rasterizedLogo && (
+                          <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1e293b', marginBottom: '4px' }}>
+                            {config.settings.companyName || 'Nexus ERP'}
+                          </div>
+                        )}
+                        <div>{config.settings.companyAddress}</div>
+                        <div>{config.settings.companyPhone} | {config.settings.companyEmail}</div>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <h2 style={{ fontSize: '28px', fontWeight: 900, color: '#000', margin: 0, letterSpacing: '-0.5px' }}>RESOURCE REPLACEMENT</h2>
+                      <div style={{ marginTop: '8px', fontSize: '12px', fontWeight: 'bold' }}>
+                        <span style={{ color: '#475569' }}>Date:</span>{' '}
+                        <span style={{ color: '#000' }}>{new Date().toLocaleDateString('en-GB')}</span>
+                      </div>
+                      <div style={{ marginTop: '4px', fontSize: '12px', fontWeight: 'bold' }}>
+                        <span style={{ color: '#475569' }}>Contract Number:</span>{' '}
+                        <span style={{ color: '#000' }}>{replacementModalInfo.comp.contractNumber || replacementModalInfo.comp.componentNumber || '-'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: '30px' }}>
+                     <h3 style={{ fontSize: '14px', fontWeight: 900, color: '#334155', marginBottom: '10px', textTransform: 'uppercase' }}>Replacement Details</h3>
+                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                       <tbody>
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', width: '30%', backgroundColor: '#f8fafc' }}>Contract ID</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#2563eb' }}>{replacementModalInfo.comp.contractNumber || replacementModalInfo.comp.componentNumber || '-'}</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Description</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1' }}>{replacementModalInfo.comp.description}</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Contract Duration</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1' }}>{replacementModalInfo.comp.contractDuration || 'N/A'}</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Contract Start Date</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate && new Date(replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate!) < new Date() ? '#dc2626' : '#059669' }}>{replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate ? new Date(replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate!).toLocaleDateString('en-GB') : 'N/A'}</td>
+                          </tr>
+
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>New Resource Start Date</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#0ea5e9' }}>{replacementStartDate ? new Date(replacementStartDate).toLocaleDateString('en-GB') : '-'}</td>
+                          </tr>
+                          {updateAllContractDates && (
+                            <tr>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#dbeafe', color: '#0c4a6e' }}>All Contracts Updated</td>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', backgroundColor: '#dbeafe', color: '#0c4a6e', fontWeight: 'bold' }}>Yes - All contract dates moved to {replacementStartDate ? new Date(replacementStartDate).toLocaleDateString('en-GB') : '-'}</td>
+                            </tr>
+                          )}
+                       </tbody>
+                     </table>
+                  </div>
+
+                  <div style={{ marginBottom: '30px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 900, color: '#334155', marginBottom: '10px', textTransform: 'uppercase' }}>Reasoning</h3>
+                    <div style={{ border: '1px solid #cbd5e1', padding: '15px', backgroundColor: '#f8fafc', whiteSpace: 'pre-wrap', fontSize: '12px', minHeight: '80px' }}>
+                      {replacementReason || 'No reason provided.'}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '50px', display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 'bold' }}>
+                    <div style={{ width: '200px', borderTop: '1px solid #94a3b8', paddingTop: '10px', textAlign: 'center' }}>
+                      Authorized By
+                    </div>
+                    <div style={{ width: '200px', borderTop: '1px solid #94a3b8', paddingTop: '10px', textAlign: 'center' }}>
+                      Supplier Acknowledgement
+                    </div>
+                  </div>
+
+                </>
+              )}
+            </div>
+          </div>
         </>
       )}
     </div >

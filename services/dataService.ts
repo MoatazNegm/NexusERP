@@ -245,6 +245,10 @@ class DataService {
     return this.dispatchAction(orderId, 'update-component', { itemId, compId, updates });
   }
 
+  async reviveContract(orderId: string, itemId: string, compId: string, newDuration: string, reason: string) {
+    return this.dispatchAction(orderId, 'revive-contract', { itemId, compId, newDuration, reason });
+  }
+
   private async getOrderOrThrow(id: string) {
     const orders = await this.getOrders();
     const order = orders.find(o => o.id === id);

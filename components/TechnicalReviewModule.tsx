@@ -19,6 +19,37 @@ const getCompLimit = (status: CompStatus, settings: any) => {
   }
 };
 
+/**
+ * Calculate contract end date based on start date and duration
+ * Duration format: "12 Months" or "1 Years"
+ */
+const calculateContractEndDate = (startDate: string, duration: string): Date | null => {
+  if (!startDate || !duration) return null;
+  
+  try {
+    const start = new Date(startDate);
+    if (isNaN(start.getTime())) return null;
+    
+    // Parse duration string (e.g., "12 Months" or "1 Years")
+    const durationMatch = duration.match(/(\d+)\s*(Month|Year)s?/i);
+    if (!durationMatch) return null;
+    
+    const amount = parseInt(durationMatch[1], 10);
+    const unit = durationMatch[2].toLowerCase();
+    
+    const end = new Date(start);
+    if (unit === 'month') {
+      end.setMonth(end.getMonth() + amount);
+    } else if (unit === 'year') {
+      end.setFullYear(end.getFullYear() + amount);
+    }
+    
+    return end;
+  } catch {
+    return null;
+  }
+};
+
 const ThresholdDisplay: React.FC<{ order: CustomerOrder, config: AppConfig }> = ({ order, config }) => {
   const [remaining, setRemaining] = useState<number>(0);
 
@@ -1142,8 +1173,27 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                       <div className="font-mono text-[9px] text-blue-500">
                                         {selectedItem.productionType === 'OUTSOURCING' ? (c.contractNumber || c.componentNumber) : c.componentNumber}
                                       </div>
-                                      {selectedItem.productionType === 'OUTSOURCING' && c.contractDuration && (
-                                        <div className="text-[8px] font-black text-violet-600 uppercase bg-violet-50 px-2 py-0.5 rounded-lg w-fit mt-1">Duration: {c.contractDuration}</div>
+                                      {selectedItem.productionType === 'OUTSOURCING' && (c.contractDuration || c.contractStartDate) && (
+                                        <div className="flex flex-col gap-1 mt-1">
+                                          {c.contractStartDate && (
+                                            <div className="text-[8px] font-black text-purple-600 uppercase bg-purple-50 px-2 py-0.5 rounded-lg w-fit border border-purple-200">
+                                              <i className="fa-solid fa-calendar-check mr-1"></i>Start: {new Date(c.contractStartDate).toLocaleDateString()}
+                                            </div>
+                                          )}
+                                          {c.contractDuration && (
+                                            <div className="text-[8px] font-black text-violet-600 uppercase bg-violet-50 px-2 py-0.5 rounded-lg w-fit border border-violet-200">
+                                              <i className="fa-solid fa-hourglass-end mr-1"></i>Duration: {c.contractDuration}
+                                            </div>
+                                          )}
+                                          {c.contractStartDate && c.contractDuration && (() => {
+                                            const endDate = calculateContractEndDate(c.contractStartDate, c.contractDuration);
+                                            return endDate ? (
+                                              <div className="text-[8px] font-black text-emerald-600 uppercase bg-emerald-100 px-2 py-0.5 rounded-lg w-fit border border-emerald-300 shadow-sm">
+                                                <i className="fa-solid fa-flag-checkered mr-1"></i>End: {endDate.toLocaleDateString()} ✓
+                                              </div>
+                                            ) : null;
+                                          })()}
+                                        </div>
                                       )}
                                       {selectedItem.productionType !== 'OUTSOURCING' && c.supplierPartNumber && c.supplierPartNumber !== c.componentNumber && (
                                         <div className="font-mono text-[9px] text-amber-600 font-bold uppercase tracking-widest">MFR P/N: {c.supplierPartNumber}</div>
@@ -1542,6 +1592,14 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                             value={editDurationVal}
                             onChange={e => setEditDurationVal(e.target.value)}
                           />
+                          {editContractStartDate && editDurationVal && (() => {
+                            const endDate = calculateContractEndDate(editContractStartDate, `${editDurationVal} ${editDurationUnit}`);
+                            return endDate ? (
+                              <div className="text-[8px] font-black text-emerald-600 uppercase bg-emerald-100 px-2 py-2 rounded-lg border border-emerald-300 text-center mt-2">
+                                <i className="fa-solid fa-flag-checkered mr-1"></i>End: {endDate.toLocaleDateString()} ✓
+                              </div>
+                            ) : null;
+                          })()}
                         </div>
                         <div className="flex-1 space-y-1.5">
                           <label className="text-[9px] font-black text-violet-400 uppercase ml-1">Scope of Work Summary</label>

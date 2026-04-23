@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { CustomerOrder, ManufacturingComponent, Supplier } from '../types';
+import { CustomerOrder, ManufacturingComponent, Supplier, ReplacementRequest } from '../types';
 
 interface PartHistoryProps {
     orders: CustomerOrder[];
@@ -31,6 +31,11 @@ interface PartRow {
     source: string;
     productionType: string;
     orderLogs: { timestamp: string; message: string; status?: string; user?: string }[];
+    replacementHistory?: ReplacementRequest[];
+    contractNumber?: string;
+    contractDuration?: string;
+    contractStartDate?: string;
+    scopeOfWork?: string;
 }
 
 type ColKey = keyof Pick<PartRow, 'internalPN' | 'mfrPN' | 'description' | 'qty' | 'purchaseDate' | 'usageDate' | 'price' | 'supplier'>;
@@ -116,6 +121,11 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                             (l.message || '').toLowerCase().includes('award') ||
                             (l.message || '').toLowerCase().includes('po ')
                         ),
+                        replacementHistory: comp.replacementHistory || [],
+                        contractNumber: comp.contractNumber || '',
+                        contractDuration: comp.contractDuration || '',
+                        contractStartDate: comp.contractStartDate || '',
+                        scopeOfWork: comp.scopeOfWork || '',
                     });
                 });
             });
@@ -422,7 +432,39 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                                                 )}
                                                                                 {log.user && <span className="text-[9px] font-bold text-slate-400">by {log.user}</span>}
                                                                             </div>
-                                                                            <p className="text-xs font-bold text-slate-600 mt-0.5 truncate">{log.message}</p>
+                                                                            <p className="text-xs font-bold text-slate-600 mt-0.5 whitespace-pre-wrap leading-relaxed">
+                                                                                {log.message}
+                                                                                {row.productionType === 'OUTSOURCING' && log.message.startsWith('Component updated:') && (
+                                                                                    <span className="block mt-1 font-normal italic text-[10px] text-violet-500">
+                                                                                        (Contract: {row.contractNumber || row.orderRef}, Duration: {row.contractDuration || 'N/A'}, Start Date: {row.contractStartDate ? formatDate(row.contractStartDate) : 'N/A'}, Reason: {row.scopeOfWork || row.description})
+                                                                                    </span>
+                                                                                )}
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Resource Replacement History */}
+                                                    {row.replacementHistory && row.replacementHistory.length > 0 && (
+                                                        <div className="mt-6 bg-white rounded-2xl p-5 border border-slate-200 shadow-sm border-l-4 border-l-violet-500">
+                                                            <h4 className="text-[9px] font-black uppercase tracking-[0.2em] text-violet-600 mb-4 flex items-center gap-2">
+                                                                <i className="fa-solid fa-clock-rotate-left"></i> Resource Replacement History
+                                                            </h4>
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                                {row.replacementHistory.map((req, ridx) => (
+                                                                    <div key={ridx} className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[10px]">
+                                                                        <div className="flex justify-between items-center mb-2">
+                                                                            <span className="font-black text-slate-700 uppercase">Request Date: {formatDate(req.requestDate)}</span>
+                                                                            <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-black">{req.remainingDuration}</span>
+                                                                        </div>
+                                                                        <div className="text-slate-500 font-bold italic mb-2">"{req.reason}"</div>
+                                                                        <div className="flex items-center gap-2 text-slate-400 font-black">
+                                                                            <span>Start: {formatDate(req.originalStartDate)}</span>
+                                                                            <i className="fa-solid fa-arrow-right text-[8px] opacity-40"></i>
+                                                                            <span className="text-violet-600">New: {formatDate(req.newStartDate)}</span>
                                                                         </div>
                                                                     </div>
                                                                 ))}
