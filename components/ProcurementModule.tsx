@@ -287,6 +287,15 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         if (i.productionType !== 'OUTSOURCING') return; // Skip in this tab
         i.components?.forEach(c => {
           if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '')) {
+            // Auto-cleanup: If contract end date passed more than 1 month ago, treat as finished and remove from active list
+            if (c.contractStartDate && c.contractDuration) {
+              const endDate = calculateContractEndDate(c.contractStartDate, c.contractDuration);
+              if (endDate) {
+                const oneMonthLater = new Date(endDate);
+                oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
+                if (new Date() > oneMonthLater) return; // Skip old items
+              }
+            }
             if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
             map.get(o.id)!.comps.push({ item: i, comp: c });
           }
@@ -1641,23 +1650,40 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           return endDate.getTime() < new Date().setHours(0, 0, 0, 0);
                         })();
 
+                        const dynamicStatus = (() => {
+                          if (activeTab !== 'outsourcing' || !c.contractStartDate || !c.contractDuration) return c.status || '';
+                          const today = new Date();
+                          today.setHours(0,0,0,0);
+                          const start = new Date(c.contractStartDate);
+                          start.setHours(0,0,0,0);
+                          const end = calculateContractEndDate(c.contractStartDate, c.contractDuration);
+                          if (!end) return c.status || '';
+                          end.setHours(0,0,0,0);
+
+                          if (today < start) return 'WAITING_CONTRACT_START';
+                          if (today >= start && today <= end) return 'RUNNING';
+                          return 'GRACE_PERIOD';
+                        })();
+
                         return (
                           <div key={c.id} className="flex flex-col justify-between p-5 hover:bg-blue-50/30 transition-all group gap-3">
                           <div className="flex gap-4 items-center w-full">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${c.status === 'ORDERED' ? 'bg-emerald-50 text-emerald-600' :
-                              c.status === 'WAITING_CONTRACT_START' ? 'bg-purple-50 text-purple-600' :
-                              c.status === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 'bg-white text-blue-500 shadow-sm'
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'bg-emerald-50 text-emerald-600' :
+                              dynamicStatus === 'WAITING_CONTRACT_START' ? 'bg-purple-50 text-purple-600' :
+                              dynamicStatus === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 
+                              dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-50 text-rose-600' : 'bg-white text-blue-500 shadow-sm'
                               }`}>
-                              <i className={`fa-solid ${c.status === 'ORDERED' ? 'fa-truck-fast' : c.status === 'WAITING_CONTRACT_START' ? 'fa-calendar-check' : c.status === 'AWARDED' ? 'fa-file-signature' : 'fa-diagram-project'}`}></i>
+                              <i className={`fa-solid ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'fa-truck-fast' : dynamicStatus === 'WAITING_CONTRACT_START' ? 'fa-calendar-check' : dynamicStatus === 'AWARDED' ? 'fa-file-signature' : dynamicStatus === 'GRACE_PERIOD' ? 'fa-hourglass-end' : 'fa-diagram-project'}`}></i>
                             </div>
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
                                 {c.supplierPartNumber && <span className="text-[10px] font-black text-amber-600 font-mono tracking-widest uppercase border border-amber-200 bg-amber-50 px-1 rounded">MFR P/N: {c.supplierPartNumber}</span>}
-                                <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${c.status === 'ORDERED' ? 'bg-emerald-600 text-white' :
-                                  c.status === 'WAITING_CONTRACT_START' ? 'bg-purple-600 text-white' :
-                                  c.status === 'AWARDED' ? 'bg-amber-600 text-white' : 'bg-slate-900 text-white'
-                                  }`}>{(c.status || '').replace(/_/g, ' ')}</span>
+                                <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'bg-emerald-600 text-white' :
+                                  dynamicStatus === 'WAITING_CONTRACT_START' ? 'bg-purple-600 text-white' :
+                                  dynamicStatus === 'AWARDED' ? 'bg-amber-600 text-white' : 
+                                  dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
+                                  }`}>{dynamicStatus.replace(/_/g, ' ')}</span>
                                 {c.rfpId && ['RFP_SENT', 'AWARDED'].includes(c.status || '') && (
                                   <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
                                     BATCH: {c.rfpId.substring(0, 6)}
