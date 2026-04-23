@@ -1189,53 +1189,57 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             <div className="col-span-2 p-3">Quantity</div>
                           </div>
 
-                          {rfpPrintData ? (
-                            rfpPrintData.comps.map((comp, idx) => {
-                              const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
-                              return (
-                                <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
-                                  <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
-                                  <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
-                                    <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
-                                    <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
-                                    {comp.componentNumber && !comp.contractNumber && (
-                                      <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
-                                    )}
-                                  </div>
-                                  <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
-                                    {comp.contractNumber || externalPartNum || comp.componentNumber || 'TBD'}
-                                  </div>
-                                  <div className="col-span-2 p-4 font-black">
-                                    {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
-                                  </div>
-                                </div>
-                              );
-                            })
-                          ) : (
-                            activeAction!.order.items.flatMap(ci => (ci.components || []))
-                              .filter(comp => rfpCompSelection.includes(comp.id || ''))
-                              .map((comp, idx) => {
-                                const externalPartNum = comp.supplierPartNumber || suppliers.flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase())?.partNumber || '';
-                                return (
-                                  <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
-                                    <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
-                                    <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
-                                      <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
-                                      <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
-                                      {comp.componentNumber && !comp.contractNumber && (
-                                        <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
-                                      )}
-                                    </div>
-                                    <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
-                                      {comp.contractNumber || externalPartNum}
-                                    </div>
-                                    <div className="col-span-2 p-4 font-black">
-                                      {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
-                                    </div>
-                                  </div>
-                                );
-                              })
-                          )}
+                           {rfpPrintData ? (
+                             rfpPrintData.comps.map((comp, idx) => {
+                               // For trading/manufacturing components, always use componentNumber as the manufacturer part number
+                               // componentNumber is auto-generated in technical review and stored in database
+                               const manufacturerPartNum = comp.componentNumber || comp.supplierPartNumber || 'TBD';
+                               return (
+                                 <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
+                                   <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
+                                   <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
+                                     <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
+                                     <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
+                                     {comp.componentNumber && !comp.contractNumber && (
+                                       <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
+                                     )}
+                                   </div>
+                                   <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
+                                     {comp.contractNumber || manufacturerPartNum}
+                                   </div>
+                                   <div className="col-span-2 p-4 font-black">
+                                     {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
+                                   </div>
+                                 </div>
+                               );
+                             })
+                           ) : (
+                             activeAction!.order.items.flatMap(ci => (ci.components || []))
+                               .filter(comp => rfpCompSelection.includes(comp.id || ''))
+                               .map((comp, idx) => {
+                                 // For trading/manufacturing components, always use componentNumber as the manufacturer part number
+                                 // componentNumber is auto-generated in technical review and stored in database
+                                 const manufacturerPartNum = comp.componentNumber || comp.supplierPartNumber || 'TBD';
+                                 return (
+                                   <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
+                                     <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
+                                     <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
+                                       <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
+                                       <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
+                                       {comp.componentNumber && !comp.contractNumber && (
+                                         <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
+                                       )}
+                                     </div>
+                                     <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
+                                       {comp.contractNumber || manufacturerPartNum}
+                                     </div>
+                                     <div className="col-span-2 p-4 font-black">
+                                       {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
+                                     </div>
+                                   </div>
+                                 );
+                               })
+                           )}
                         </div>
                       )}
 
