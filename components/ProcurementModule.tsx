@@ -1075,12 +1075,12 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
         >
           <i className="fa-solid fa-handshake-angle mr-2"></i> Outsourcing
         </button>
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'history' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
-        >
-          <i className="fa-solid fa-clock-rotate-left mr-2"></i> Part History
-        </button>
+<button
+           onClick={() => setActiveTab('history')}
+           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'history' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+         >
+           <i className="fa-solid fa-clock-rotate-left mr-2"></i> History
+         </button>
       </div>
 
       {activeTab === 'history' ? (
