@@ -1958,10 +1958,37 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               </div>
             </div>
 
+            {/* Sorting Controls */}
+            <div className="flex gap-4 mb-6">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Sort by:</span>
+                <select
+                  value={sortConfig.key}
+                  onChange={(e) => setSortConfig({ key: e.target.value, direction: sortConfig.direction })}
+                  className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:border-blue-500 outline-none"
+                >
+                  <option value="timestamp">Date & Time</option>
+                  <option value="orderNumber">Order Number</option>
+                  <option value="customerName">Customer</option>
+                  <option value="type">Activity Type</option>
+                  <option value="user">User</option>
+                </select>
+                <button
+                  onClick={() => setSortConfig({ ...sortConfig, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}
+                  className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-100 transition-all"
+                >
+                  {sortConfig.direction === 'asc' ? '↑' : '↓'}
+                </button>
+              </div>
+            </div>
+
             <div className="space-y-4">
               {(() => {
                 const allHistoryEntries = [];
+
+                // Collect order history entries (payments, authorizations, etc.)
                 orders.forEach(o => {
+                  // Include custom history entries
                   if (o.history && Array.isArray(o.history)) {
                     o.history.forEach(entry => {
                       allHistoryEntries.push({
@@ -1973,7 +2000,45 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                       });
                     });
                   }
-                  // Also include payments from the payments array
+
+                  // Include order logs (system activities, authorizations, gov.E invoice, etc.)
+                  if (o.logs && Array.isArray(o.logs)) {
+                    o.logs.forEach(log => {
+                      // Filter to only include transaction-related logs, exclude operational/system messages
+                      const message = log.message || '';
+                      const isTransactionLog =
+                        message.includes('Payment') ||
+                        message.includes('Invoice') ||
+                        message.includes('Gov. E-Invoice') ||
+                        message.includes('Finance') ||
+                        message.includes('Auth') ||
+                        message.includes('Dispatch') ||
+                        message.includes('Receipt') ||
+                        message.includes('Hub') ||
+                        message.includes('Manufactured') ||
+                        message.includes('Delivery') ||
+                        message.includes('Shipment');
+
+                      if (isTransactionLog && !message.includes('[SYSTEM]') && !message.includes('[AUTO]')) {
+                        allHistoryEntries.push({
+                          orderId: o.id,
+                          orderNumber: o.internalOrderNumber,
+                          customerName: o.customerName,
+                          orderStatus: log.status || o.status,
+                          type: message.includes('Payment') ? 'payment' :
+                                message.includes('Invoice') ? 'invoice' :
+                                message.includes('Delivery') || message.includes('Shipment') ? 'delivery' :
+                                message.includes('Finance') || message.includes('Auth') || message.includes('Dispatch') ? 'authorization' :
+                                'transaction',
+                          message: message,
+                          timestamp: log.timestamp,
+                          user: log.user || 'System'
+                        });
+                      }
+                    });
+                  }
+
+                  // Include payments from the payments array (as separate entries)
                   if (o.payments && Array.isArray(o.payments)) {
                     o.payments.forEach((payment, idx) => {
                       allHistoryEntries.push({
@@ -1992,7 +2057,45 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   }
                 });
 
-                allHistoryEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+                // Sort based on current sort configuration
+                allHistoryEntries.sort((a, b) => {
+                  let valA, valB;
+
+                  switch (sortConfig.key) {
+                    case 'timestamp':
+                      valA = new Date(a.timestamp).getTime();
+                      valB = new Date(b.timestamp).getTime();
+                      break;
+                    case 'orderNumber':
+                      valA = (a.orderNumber || '').toLowerCase();
+                      valB = (b.orderNumber || '').toLowerCase();
+                      break;
+                    case 'customerName':
+                      valA = (a.customerName || '').toLowerCase();
+                      valB = (b.customerName || '').toLowerCase();
+                      break;
+                    case 'type':
+                      valA = a.type || '';
+                      valB = b.type || '';
+                      break;
+                    case 'user':
+                      valA = (a.user || '').toLowerCase();
+                      valB = (b.user || '').toLowerCase();
+                      break;
+                    default:
+                      valA = new Date(a.timestamp).getTime();
+                      valB = new Date(b.timestamp).getTime();
+                  }
+
+                  if (typeof valA === 'string' && typeof valB === 'string') {
+                    if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+                    if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+                  } else if (typeof valA === 'number' && typeof valB === 'number') {
+                    return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
+                  }
+
+                  return 0;
+                });
 
                 if (allHistoryEntries.length === 0) {
                   return (
@@ -2015,21 +2118,24 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                               entry.type === 'payment' ? 'bg-emerald-100 text-emerald-600' :
                               entry.type === 'invoice' ? 'bg-blue-100 text-blue-600' :
                               entry.type === 'delivery' ? 'bg-purple-100 text-purple-600' :
+                              entry.type === 'authorization' ? 'bg-amber-100 text-amber-600' :
                               'bg-slate-100 text-slate-600'
                             }`}>
                               <i className={`fa-solid ${
                                 entry.type === 'payment' ? 'fa-money-bill-wave' :
                                 entry.type === 'invoice' ? 'fa-file-invoice' :
                                 entry.type === 'delivery' ? 'fa-truck' :
+                                entry.type === 'authorization' ? 'fa-check-circle' :
                                 'fa-circle-info'
                               }`}></i>
                             </div>
                             <div>
                               <div className="font-black text-slate-800 text-base uppercase tracking-tight">
                                 {entry.type === 'payment' ? `${entry.amount?.toLocaleString()} L.E. Payment` :
-                                 entry.type === 'invoice' ? 'Invoice Generated' :
+                                 entry.type === 'invoice' ? 'Tax Invoice Generated' :
                                  entry.type === 'delivery' ? 'Delivery Processed' :
-                                 entry.message?.split(':')[0] || 'Activity'}
+                                 entry.type === 'authorization' ? 'Finance Authorization' :
+                                 entry.message?.split(':')[0] || 'Transaction'}
                               </div>
                               <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
                                 {entry.orderNumber} • {entry.customerName} • {entry.orderStatus?.replace(/_/g, ' ')}
