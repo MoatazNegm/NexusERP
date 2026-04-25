@@ -41,7 +41,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'margins' | 'billing' | 'entities' | 'tax_clearances' | 'supplier_reporting' | 'ledger';
+type FinanceTab = 'orders' | 'billing_details' | 'history' | 'entities' | 'tax_clearances' | 'supplier_reporting' | 'ledger';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   const status = order.status;
@@ -1016,13 +1016,12 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
         <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
-          {(['orders', 'margins', 'billing', 'entities', 'tax_clearances', 'supplier_reporting', 'ledger'] as const).map(tab => (
+          {(['orders', 'billing_details', 'history', 'entities', 'tax_clearances', 'supplier_reporting', 'ledger'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-8 py-3 rounded-xl text-[10px] whitespace-nowrap font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
-              {tab === 'margins' && orders.some(o => o.status === OrderStatus.NEGATIVE_MARGIN) && <span className="mr-2 w-2 h-2 rounded-full bg-rose-50 inline-block animate-pulse"></span>}
               {tab === 'supplier_reporting' ? 'Supplier Financial Report' : tab.replace(/([A-Z_])/g, ' $1').replace('_', ' ')}
             </button>
           ))}
@@ -1571,8 +1570,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               const pl = (o as any).pl;
               const isBreach = pl.markupPct < config.settings.minimumMarginPct;
               const showRow = activeTab === 'orders' ||
-                (activeTab === 'margins' && o.status === OrderStatus.NEGATIVE_MARGIN) ||
-                (activeTab === 'billing' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0))));
+                (activeTab === 'billing_details' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
+                (activeTab === 'history' && o.payments && o.payments.length > 0);
 
               if (!showRow) return null;
 
@@ -1816,7 +1815,197 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             </div>
           )
         }
+
+        {/* Payment History Section for Billing Details Tab */}
+        {activeTab === 'billing_details' && (
+          <div className="mt-8 bg-slate-50 rounded-2xl border border-slate-200 p-6">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                <i className="fa-solid fa-clock-rotate-left"></i>
+              </div>
+              <div>
+                <div className="font-black text-slate-800 uppercase tracking-widest text-sm">Payment History</div>
+                <div className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">All payment transactions for this order</div>
+              </div>
+            </div>
+
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {(() => {
+                const historyEntries = [];
+                filteredOrders.forEach(o => {
+                  if (o.history && Array.isArray(o.history)) {
+                    o.history.forEach(entry => {
+                      if (entry.type === 'payment') {
+                        historyEntries.push({
+                          orderId: o.id,
+                          orderNumber: o.internalOrderNumber,
+                          customerName: o.customerName,
+                          ...entry
+                        });
+                      }
+                    });
+                  }
+                });
+
+                historyEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+                if (historyEntries.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-slate-400 italic">
+                      <i className="fa-solid fa-receipt text-3xl mb-3 opacity-50"></i>
+                      <div className="text-sm font-bold uppercase tracking-widest">No payment history yet</div>
+                    </div>
+                  );
+                }
+
+                return historyEntries.map((entry, idx) => (
+                  <div key={`${entry.orderId}-${idx}`} className="bg-white rounded-xl border border-slate-100 p-4 hover:shadow-sm transition-all">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center text-sm">
+                            <i className="fa-solid fa-money-bill-wave"></i>
+                          </div>
+                          <div>
+                            <div className="font-black text-slate-800 text-sm uppercase tracking-tight">
+                              {entry.amount?.toLocaleString()} L.E.
+                            </div>
+                            <div className="text-[9px] text-slate-500 font-bold uppercase">
+                              {entry.orderNumber} • {entry.customerName}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-xs text-slate-600 font-medium leading-relaxed">
+                          {entry.message}
+                        </div>
+                        <div className="text-[9px] text-slate-400 font-bold uppercase mt-2 tracking-widest">
+                          {new Date(entry.timestamp).toLocaleString()} • {entry.user}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        )}
       </div>
+      ) : null}
+
+      {/* History Tab Content */}
+      {activeTab === 'history' ? (
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+          <div className="p-8">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-600 flex items-center justify-center">
+                <i className="fa-solid fa-history text-xl"></i>
+              </div>
+              <div>
+                <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Financial History</div>
+                <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Complete transaction history across all orders</div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {(() => {
+                const allHistoryEntries = [];
+                orders.forEach(o => {
+                  if (o.history && Array.isArray(o.history)) {
+                    o.history.forEach(entry => {
+                      allHistoryEntries.push({
+                        orderId: o.id,
+                        orderNumber: o.internalOrderNumber,
+                        customerName: o.customerName,
+                        orderStatus: o.status,
+                        ...entry
+                      });
+                    });
+                  }
+                  // Also include payments from the payments array
+                  if (o.payments && Array.isArray(o.payments)) {
+                    o.payments.forEach((payment, idx) => {
+                      allHistoryEntries.push({
+                        orderId: o.id,
+                        orderNumber: o.internalOrderNumber,
+                        customerName: o.customerName,
+                        orderStatus: o.status,
+                        type: 'payment',
+                        amount: payment.amount,
+                        message: `Payment recorded: ${payment.amount.toLocaleString()} L.E.`,
+                        timestamp: payment.date || new Date().toISOString(),
+                        user: payment.user || 'System',
+                        receiptNumber: payment.receiptNumber
+                      });
+                    });
+                  }
+                });
+
+                allHistoryEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+                if (allHistoryEntries.length === 0) {
+                  return (
+                    <div className="text-center py-20 text-slate-400 italic">
+                      <i className="fa-solid fa-archive text-5xl mb-4 opacity-20"></i>
+                      <div className="text-sm font-bold uppercase tracking-widest">No historical records found</div>
+                      <div className="text-xs font-medium mt-2">Financial activities will appear here</div>
+                    </div>
+                  );
+                }
+
+                return allHistoryEntries.map((entry, idx) => (
+                  <div key={`${entry.orderId}-${entry.timestamp}-${idx}`} className="bg-slate-50 rounded-xl border border-slate-200 p-6 hover:bg-white hover:shadow-sm transition-all">
+                    <div className="flex items-start justify-between gap-6">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${
+                            entry.type === 'payment' ? 'bg-emerald-100 text-emerald-600' :
+                            entry.type === 'invoice' ? 'bg-blue-100 text-blue-600' :
+                            entry.type === 'delivery' ? 'bg-purple-100 text-purple-600' :
+                            'bg-slate-100 text-slate-600'
+                          }`}>
+                            <i className={`fa-solid ${
+                              entry.type === 'payment' ? 'fa-money-bill-wave' :
+                              entry.type === 'invoice' ? 'fa-file-invoice' :
+                              entry.type === 'delivery' ? 'fa-truck' :
+                              'fa-circle-info'
+                            }`}></i>
+                          </div>
+                          <div>
+                            <div className="font-black text-slate-800 text-base uppercase tracking-tight">
+                              {entry.type === 'payment' ? `${entry.amount?.toLocaleString()} L.E. Payment` :
+                               entry.type === 'invoice' ? 'Invoice Generated' :
+                               entry.type === 'delivery' ? 'Delivery Processed' :
+                               entry.message?.split(':')[0] || 'Activity'}
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                              {entry.orderNumber} • {entry.customerName} • {entry.orderStatus?.replace(/_/g, ' ')}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-sm text-slate-700 font-medium leading-relaxed mb-3">
+                          {entry.message}
+                        </div>
+                        {entry.receiptNumber && (
+                          <div className="text-xs font-bold text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-lg inline-block">
+                            Receipt: {entry.receiptNumber}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
+                          {new Date(entry.timestamp).toLocaleString()}
+                        </div>
+                        <div className="text-xs font-bold text-slate-600 mt-1">
+                          {entry.user}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {decisionModal && (

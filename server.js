@@ -2071,13 +2071,27 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!order.payments) order.payments = [];
                 const paymentIndex = order.payments.length + 1;
                 const receiptNumber = `RCV-${String(paymentIndex).padStart(3, '0')}`;
-                order.payments.push({
+                const paymentEntry = {
                     amount: payload.amount,
                     date: new Date().toISOString(),
                     user,
                     memo: payload.memo || 'Regular payment',
                     receiptNumber
+                };
+                order.payments.push(paymentEntry);
+
+                // Add to order history for billing details tracking
+                if (!order.history) order.history = [];
+                order.history.push({
+                    timestamp: new Date().toISOString(),
+                    message: `Payment Recorded: ${payload.amount.toLocaleString()} L.E. - ${payload.memo || 'No comment'}`,
+                    status: order.status,
+                    user: user,
+                    type: 'payment',
+                    amount: payload.amount,
+                    receiptNumber: receiptNumber
                 });
+
                 const totalPaid = (order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
                 const fullyPaid = isOrderFullyPaid(order);
                 const fullyDelivered = isOrderFullyDelivered(order);
