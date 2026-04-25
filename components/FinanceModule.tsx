@@ -1674,7 +1674,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                             {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
                               <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">Generate Invoice</button>
                             )}
-                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Pay</button>
+                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Record Payment</button>
                             <div className="flex gap-1">
                               {!o.einvoiceRequested && (
                                 <button

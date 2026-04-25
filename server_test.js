@@ -1,4 +1,4 @@
-﻿
+
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -363,14 +363,79 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         if (order.status === OrderStatus.WAITING_SUPPLIERS) {
             const hasItems = order.items && order.items.length > 0;
             if (hasItems) {
-                const allReserved = order.items.every(item =>
-                    (item.components || []).every(comp => comp.status === 'RESERVED')
-                );
+                // Determine which items drive the status based on priority: Manufacturing > Trading > Outsourcing
+                const manufacturingItems = order.items.filter(item => item.productionType === 'MANUFACTURING');
+                const tradingItems = order.items.filter(item => item.productionType === 'TRADING');
+                const outsourcingItems = order.items.filter(item => item.productionType === 'OUTSOURCING');
 
-                if (allReserved) {
-                    const old = order.status;
-                    order.status = OrderStatus.WAITING_FACTORY;
-                    order.logs.push(createAuditLog(`[AUTO] Procurement Complete: All components reserved. Status moved from ${old} to ${order.status}`, order.status, 'System'));
+                let drivingItems = [];
+                let statusDriver = '';
+
+                if (manufacturingItems.length > 0) {
+                    drivingItems = manufacturingItems;
+                    statusDriver = 'manufacturing';
+                } else if (tradingItems.length > 0) {
+                    drivingItems = tradingItems;
+                    statusDriver = 'trading';
+                } else {
+                    // Only outsourcing items - don't advance status
+                    drivingItems = [];
+                    statusDriver = 'outsourcing';
+                }
+
+                if (drivingItems.length > 0) {
+                    // Check if ANY procurement component in driving items still needs action
+                    const anyStillInProcurement = drivingItems.some(item =>
+                        (item.components || []).some(comp =>
+                            comp.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)
+                        )
+                    );
+
+                    // Check if driving items have components ready (Reserved/Received/In Stock, or fully received)
+                    const anyReservedOrReceived = drivingItems.some(item =>
+                        (item.components || []).some(comp =>
+                            ['RESERVED', 'RECEIVED', 'IN_STOCK'].includes(comp.status) ||
+                            ((comp.receivedQty || 0) >= (comp.quantity || 0))
+                        )
+                    );
+
+                    if (anyReservedOrReceived && !anyStillInProcurement) {
+                        // Transition based on item type
+                        const old = order.status;
+                        if (statusDriver === 'manufacturing') {
+                            order.status = OrderStatus.WAITING_FACTORY;
+                            order.logs.push(createAuditLog(`[AUTO] Manufacturing procurement complete. Status moved from ${old} to ${order.status}`, order.status, 'System'));
+                        } else if (statusDriver === 'trading') {
+                            // Trading items go directly to hub when components are received
+                            order.status = OrderStatus.IN_PRODUCT_HUB;
+
+                            // Mark trading items as manufactured and move to hub
+                            tradingItems.forEach(item => {
+                                item.status = 'Manufactured';
+                                item.hubReceivedQty = item.quantity;
+                                (item.components || []).forEach(comp => {
+                                    if (comp.status !== 'Manufactured') {
+                                        comp.status = 'Manufactured';
+                                        comp.statusUpdatedAt = new Date().toISOString();
+                                    }
+
+                                    // Update inventory: Remove from reserved since item is now committed to order
+                                    if (comp.inventoryItemId && db.inventory) {
+                                        const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
+                                        if (invItem) {
+                                            const qtyToUnreserve = comp.quantity || 0;
+                                            invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - qtyToUnreserve);
+                                            invItem.lastUpdated = new Date().toISOString();
+
+                                            console.log(`[Inventory] [TRADING_HUB_TRANSFER] Unreserved ${qtyToUnreserve} of ${invItem.sku}. New Reserved: ${invItem.quantityReserved}`);
+                                        }
+                                    }
+                                });
+                            });
+
+                            order.logs.push(createAuditLog(`[AUTO] Trading items ready for delivery. Auto-transitioned to Ready for Invoicing`, order.status, 'System'));
+                        }
+                    }
                 }
             }
         }
