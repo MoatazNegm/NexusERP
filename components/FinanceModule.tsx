@@ -485,6 +485,43 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   };
 
   // Payment Invoice PDF state
+  // Function to generate receipt PDF for a specific payment from history
+  const generateReceiptPDF = async (order: CustomerOrder, paymentEntry: any) => {
+    try {
+      // Find the payment in the order's payments array
+      const payment = order.payments?.find(p => p.receiptNumber === paymentEntry.receiptNumber);
+      if (!payment) {
+        alert("Payment data not found");
+        return;
+      }
+
+      // Find previous payments (all payments before this one)
+      const paymentIndex = order.payments?.findIndex(p => p.receiptNumber === paymentEntry.receiptNumber) || 0;
+      const previousPayments = order.payments?.slice(0, paymentIndex) || [];
+
+      // Calculate if this is the final payment
+      let grossRev = 0;
+      order.items.forEach(it => grossRev += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+      const totalPaidIncludingThis = previousPayments.reduce((s, p) => s + p.amount, 0) + payment.amount;
+      const isFinal = totalPaidIncludingThis >= grossRev;
+
+      // Set up the PDF data
+      const pdfData = {
+        order: order,
+        paymentAmount: payment.amount,
+        receiptNumber: payment.receiptNumber,
+        isFinal: isFinal,
+        previousPayments: previousPayments
+      };
+
+      // Trigger PDF generation
+      setPaymentInvoiceData(pdfData);
+    } catch (e) {
+      console.error('Failed to generate receipt PDF:', e);
+      alert("Failed to generate receipt PDF. Please try again.");
+    }
+  };
+
   const [paymentInvoiceData, setPaymentInvoiceData] = useState<{
     order: CustomerOrder;
     paymentAmount: number;
@@ -1858,33 +1895,48 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   );
                 }
 
-                return historyEntries.map((entry, idx) => (
-                  <div key={`${entry.orderId}-${idx}`} className="bg-white rounded-xl border border-slate-100 p-4 hover:shadow-sm transition-all">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center text-sm">
-                            <i className="fa-solid fa-money-bill-wave"></i>
+                return historyEntries.map((entry, idx) => {
+                  const order = orders.find(o => o.id === entry.orderId);
+                  return (
+                    <div key={`${entry.orderId}-${idx}`} className="bg-white rounded-xl border border-slate-100 p-4 hover:shadow-sm transition-all">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center text-sm">
+                              <i className="fa-solid fa-money-bill-wave"></i>
+                            </div>
+                            <div>
+                              <div className="font-black text-slate-800 text-sm uppercase tracking-tight">
+                                {entry.amount?.toLocaleString()} L.E.
+                              </div>
+                              <div className="text-[9px] text-slate-500 font-bold uppercase">
+                                {entry.orderNumber} • {entry.customerName}
+                              </div>
+                            </div>
                           </div>
-                          <div>
-                            <div className="font-black text-slate-800 text-sm uppercase tracking-tight">
-                              {entry.amount?.toLocaleString()} L.E.
-                            </div>
-                            <div className="text-[9px] text-slate-500 font-bold uppercase">
-                              {entry.orderNumber} • {entry.customerName}
-                            </div>
+                          <div className="text-xs text-slate-600 font-medium leading-relaxed">
+                            {entry.message}
+                          </div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-2 tracking-widest">
+                            {new Date(entry.timestamp).toLocaleString()} • {entry.user}
                           </div>
                         </div>
-                        <div className="text-xs text-slate-600 font-medium leading-relaxed">
-                          {entry.message}
-                        </div>
-                        <div className="text-[9px] text-slate-400 font-bold uppercase mt-2 tracking-widest">
-                          {new Date(entry.timestamp).toLocaleString()} • {entry.user}
+                        <div className="flex-shrink-0">
+                          {entry.receiptNumber && order && (
+                            <button
+                              onClick={() => generateReceiptPDF(order, entry)}
+                              className="px-3 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-blue-700 transition-all flex items-center gap-1"
+                              title="Download Receipt PDF"
+                            >
+                              <i className="fa-solid fa-file-pdf"></i>
+                              Receipt
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
-                  </div>
-                ));
+                  );
+                });
               })()}
             </div>
           </div>
@@ -1952,56 +2004,71 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   );
                 }
 
-                return allHistoryEntries.map((entry, idx) => (
-                  <div key={`${entry.orderId}-${entry.timestamp}-${idx}`} className="bg-slate-50 rounded-xl border border-slate-200 p-6 hover:bg-white hover:shadow-sm transition-all">
-                    <div className="flex items-start justify-between gap-6">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${
-                            entry.type === 'payment' ? 'bg-emerald-100 text-emerald-600' :
-                            entry.type === 'invoice' ? 'bg-blue-100 text-blue-600' :
-                            entry.type === 'delivery' ? 'bg-purple-100 text-purple-600' :
-                            'bg-slate-100 text-slate-600'
-                          }`}>
-                            <i className={`fa-solid ${
-                              entry.type === 'payment' ? 'fa-money-bill-wave' :
-                              entry.type === 'invoice' ? 'fa-file-invoice' :
-                              entry.type === 'delivery' ? 'fa-truck' :
-                              'fa-circle-info'
-                            }`}></i>
-                          </div>
-                          <div>
-                            <div className="font-black text-slate-800 text-base uppercase tracking-tight">
-                              {entry.type === 'payment' ? `${entry.amount?.toLocaleString()} L.E. Payment` :
-                               entry.type === 'invoice' ? 'Invoice Generated' :
-                               entry.type === 'delivery' ? 'Delivery Processed' :
-                               entry.message?.split(':')[0] || 'Activity'}
+                return allHistoryEntries.map((entry, idx) => {
+                  const order = orders.find(o => o.id === entry.orderId);
+                  return (
+                    <div key={`${entry.orderId}-${entry.timestamp}-${idx}`} className="bg-slate-50 rounded-xl border border-slate-200 p-6 hover:bg-white hover:shadow-sm transition-all">
+                      <div className="flex items-start justify-between gap-6">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${
+                              entry.type === 'payment' ? 'bg-emerald-100 text-emerald-600' :
+                              entry.type === 'invoice' ? 'bg-blue-100 text-blue-600' :
+                              entry.type === 'delivery' ? 'bg-purple-100 text-purple-600' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              <i className={`fa-solid ${
+                                entry.type === 'payment' ? 'fa-money-bill-wave' :
+                                entry.type === 'invoice' ? 'fa-file-invoice' :
+                                entry.type === 'delivery' ? 'fa-truck' :
+                                'fa-circle-info'
+                              }`}></i>
                             </div>
-                            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-                              {entry.orderNumber} • {entry.customerName} • {entry.orderStatus?.replace(/_/g, ' ')}
+                            <div>
+                              <div className="font-black text-slate-800 text-base uppercase tracking-tight">
+                                {entry.type === 'payment' ? `${entry.amount?.toLocaleString()} L.E. Payment` :
+                                 entry.type === 'invoice' ? 'Invoice Generated' :
+                                 entry.type === 'delivery' ? 'Delivery Processed' :
+                                 entry.message?.split(':')[0] || 'Activity'}
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                                {entry.orderNumber} • {entry.customerName} • {entry.orderStatus?.replace(/_/g, ' ')}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <div className="text-sm text-slate-700 font-medium leading-relaxed mb-3">
-                          {entry.message}
-                        </div>
-                        {entry.receiptNumber && (
-                          <div className="text-xs font-bold text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-lg inline-block">
-                            Receipt: {entry.receiptNumber}
+                          <div className="text-sm text-slate-700 font-medium leading-relaxed mb-3">
+                            {entry.message}
                           </div>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
-                          {new Date(entry.timestamp).toLocaleString()}
+                          {entry.receiptNumber && (
+                            <div className="text-xs font-bold text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-lg inline-block">
+                              Receipt: {entry.receiptNumber}
+                            </div>
+                          )}
                         </div>
-                        <div className="text-xs font-bold text-slate-600 mt-1">
-                          {entry.user}
+                        <div className="flex items-start gap-3">
+                          {entry.type === 'payment' && entry.receiptNumber && order && (
+                            <button
+                              onClick={() => generateReceiptPDF(order, entry)}
+                              className="px-3 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-blue-700 transition-all flex items-center gap-1"
+                              title="Download Receipt PDF"
+                            >
+                              <i className="fa-solid fa-file-pdf"></i>
+                              Receipt
+                            </button>
+                          )}
+                          <div className="text-right">
+                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
+                              {new Date(entry.timestamp).toLocaleString()}
+                            </div>
+                            <div className="text-xs font-bold text-slate-600 mt-1">
+                              {entry.user}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ));
+                  );
+                });
               })()}
             </div>
           </div>
