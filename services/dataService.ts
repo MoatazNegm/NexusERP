@@ -190,6 +190,9 @@ class DataService {
   async addLedgerEntry(entry: Omit<LedgerEntry, 'id'>) {
     return this.post<LedgerEntry>('ledger', entry);
   }
+  async updateLedgerEntry(id: string, updates: Partial<LedgerEntry>) {
+    return this.patch<LedgerEntry>(`ledger/${id}`, updates);
+  }
 
   async getInventory() { return this.get<InventoryItem>('inventory'); }
   async addInventoryItem(item: Omit<InventoryItem, 'id' | 'quantityReserved'>) {

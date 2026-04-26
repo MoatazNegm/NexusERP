@@ -329,6 +329,8 @@ export interface AppConfig {
       backgroundColor?: string; // Hex code for background (if base theme)
       textColor?: string; // Hex code for text elements
     };
+    ledgerAccounts?: string[];
+    ledgerAccountGroups?: Record<string, string[]>; // groupName -> [accountNames]
     availableRoles?: UserRole[];
     roleMappings?: Record<string, UserRole[]>;
   };

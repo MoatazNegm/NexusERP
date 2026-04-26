@@ -56,6 +56,12 @@ export const INITIAL_CONFIG: AppConfig = {
       suppliers: ['procurement'],
       reporting: ['management'],
       govEInvoice: ['Gov.EInvoice']
+    },
+    ledgerAccounts: ['Transportation', 'Ekramya', 'Handles'],
+    ledgerAccountGroups: {
+      'Operating Expenses': ['Transportation'],
+      'Supplier Payments': ['Ekramya'],
+      'Employee Costs': ['Handles']
     }
   }
 };

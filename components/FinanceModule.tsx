@@ -111,24 +111,47 @@ interface GeneralLedgerViewProps {
   onRefresh: () => void;
   currentUser: User;
   searchQuery: string;
+  ledgerAccounts?: string[];
+  config: AppConfig;
 }
 
-const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, supplierPayments, onRefresh, currentUser, searchQuery }) => {
+const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, supplierPayments, onRefresh, currentUser, searchQuery, ledgerAccounts = [], config }) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState<'COST' | 'ADDITION'>('COST');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('');
+  const [fromAccount, setFromAccount] = useState('');
+  const [toAccount, setToAccount] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const unifiedEntries = useMemo(() => {
     const all: any[] = [];
-    
-    // 1. Manual entries
-    entries.forEach(e => all.push({ ...e, source: 'Manual' }));
 
-    // 2. Customer payments
+    // Helper function to get account group
+    const getAccountGroup = (accountName: string, config: any) => {
+      const groups = config.settings?.ledgerAccountGroups || {};
+      for (const [groupName, accounts] of Object.entries(groups)) {
+        if (accounts.includes(accountName)) {
+          return groupName;
+        }
+      }
+      return null;
+    };
+
+    // 1. Manual entries
+    entries.forEach(e => {
+      const fromGroup = getAccountGroup(e.fromAccount || e.category, config);
+      const toGroup = getAccountGroup(e.toAccount, config);
+      all.push({
+        ...e,
+        source: 'Manual',
+        fromGroup,
+        toGroup
+      });
+    });
+
+    // 2. Customer payments (these don't have from/to accounts, so they stay as-is)
     orders.forEach(o => {
       (o.payments || []).forEach((p, idx) => {
         all.push({
@@ -139,12 +162,14 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
           description: `Payment: ${o.customerName}`,
           category: o.internalOrderNumber,
           user: p.user || 'System',
-          source: 'Customer'
+          source: 'Customer',
+          fromGroup: null,
+          toGroup: null
         });
       });
     });
 
-    // 3. Supplier payments
+    // 3. Supplier payments (these don't have from/to accounts, so they stay as-is)
     supplierPayments.forEach(sp => {
       all.push({
         id: `supp_${sp.id}`,
@@ -154,22 +179,37 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         description: `Paid: ${sp.supplierName}`,
         category: sp.memo || 'Supplier Payment',
         user: sp.user || 'System',
-        source: 'Supplier'
+        source: 'Supplier',
+        fromGroup: null,
+        toGroup: null
       });
     });
 
-    return all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [entries, orders, supplierPayments]);
+    return all;
+  }, [entries, orders, supplierPayments, config]);
 
   const filteredEntries = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return unifiedEntries;
-    return unifiedEntries.filter(e => 
-      e.description.toLowerCase().includes(q) || 
-      e.category?.toLowerCase().includes(q) ||
-      e.user?.toLowerCase().includes(q) ||
-      e.source?.toLowerCase().includes(q)
-    );
+    return unifiedEntries.filter(e => {
+      // Create a comprehensive searchable string with all displayed data
+      const searchableText = [
+        e.description || '',
+        e.category || '',
+        e.fromAccount || '',
+        e.toAccount || '',
+        e.fromGroup || '',
+        e.toGroup || '',
+        e.amount?.toString() || '',
+        e.type || '',
+        e.user || '',
+        e.source || '',
+        new Date(e.date).toLocaleDateString(),
+        e.receiptNumber || ''
+      ].join(' ').toLowerCase();
+
+      return searchableText.includes(q);
+    });
   }, [unifiedEntries, searchQuery]);
 
   const totals = useMemo(() => {
@@ -181,7 +221,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   }, [filteredEntries]);
 
   const handleAddEntry = async () => {
-    if (!amount || !description) { setError('Amount and description are mandatory'); return; }
+    if (!amount || !description || !fromAccount || !toAccount) { setError('Amount, description, from account, and to account are mandatory'); return; }
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) { setError('Enter a valid positive amount'); return; }
 
@@ -193,13 +233,15 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         type,
         amount: amt,
         description,
-        category,
+        fromAccount,
+        toAccount,
         user: currentUser.username
       });
       setShowAddModal(false);
       setAmount('');
       setDescription('');
-      setCategory('');
+      setFromAccount('');
+      setToAccount('');
       onRefresh();
     } catch (e: any) {
       setError(e.message || 'Failed to add entry');
@@ -255,7 +297,9 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
           <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
             <tr>
               <th className="px-8 py-5">Date</th>
-              <th className="px-8 py-5">Description / Category</th>
+              <th className="px-8 py-5">Description</th>
+              <th className="px-8 py-5">From Account</th>
+              <th className="px-8 py-5">To Account</th>
               <th className="px-8 py-5">Source</th>
               <th className="px-8 py-5">Type</th>
               <th className="px-8 py-5 text-right">Amount</th>
@@ -270,12 +314,27 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 </td>
                 <td className="px-8 py-5">
                   <div className="font-black text-slate-800 text-sm">{entry.description}</div>
-                  {entry.category && <div className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{entry.category}</div>}
+                </td>
+                <td className="px-8 py-5">
+                  <div className="text-xs font-bold text-blue-600 uppercase">
+                    {entry.fromAccount || entry.category || '-'}
+                    {entry.fromGroup && (
+                      <div className="text-[9px] text-blue-500 font-medium mt-0.5">{entry.fromGroup}</div>
+                    )}
+                  </div>
+                </td>
+                <td className="px-8 py-5">
+                  <div className="text-xs font-bold text-emerald-600 uppercase">
+                    {entry.toAccount || '-'}
+                    {entry.toGroup && (
+                      <div className="text-[9px] text-emerald-500 font-medium mt-0.5">{entry.toGroup}</div>
+                    )}
+                  </div>
                 </td>
                 <td className="px-8 py-5">
                   <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
-                    entry.source === 'Manual' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
-                    entry.source === 'Customer' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
+                    entry.source === 'Manual' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                    entry.source === 'Customer' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
                     'bg-rose-50 text-rose-600 border-rose-100'
                   }`}>
                     {entry.source}
@@ -283,17 +342,16 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 </td>
                 <td className="px-8 py-5">
                   <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
-                    entry.type === 'ADDITION' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-rose-50 text-rose-600 border-rose-100'
+                    entry.type === 'ADDITION' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                    'bg-rose-50 text-rose-600 border-rose-100'
                   }`}>
                     {entry.type}
                   </span>
                 </td>
-                <td className={`px-8 py-5 text-right font-black text-sm ${
-                  entry.type === 'ADDITION' ? 'text-emerald-600' : 'text-rose-600'
-                }`}>
-                  {entry.type === 'ADDITION' ? '+' : '-'}{entry.amount.toLocaleString()} L.E.
+                <td className="px-8 py-5 text-right font-black text-slate-800 text-sm">
+                  {entry.amount.toLocaleString()} L.E.
                 </td>
-                <td className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">
+                <td className="px-8 py-5 text-xs font-bold text-slate-500">
                   {entry.user}
                 </td>
               </tr>
@@ -364,14 +422,61 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Category (Optional)</label>
-                <input 
-                  type="text"
-                  className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
-                  value={category} onChange={e => setCategory(e.target.value)}
-                  placeholder="e.g. Utilities, Petty Cash, Bonus"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">From Account</label>
+                  <select
+                    className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
+                    value={fromAccount} onChange={e => setFromAccount(e.target.value)}
+                  >
+                    <option value="">Select account...</option>
+                    {/* Grouped accounts */}
+                    {Object.entries(ledgerAccounts.reduce((groups, account) => {
+                      const groupName = (() => {
+                        for (const [gName, accounts] of Object.entries(config.settings.ledgerAccountGroups || {})) {
+                          if (accounts.includes(account)) return gName;
+                        }
+                        return 'Ungrouped';
+                      })();
+                      if (!groups[groupName]) groups[groupName] = [];
+                      groups[groupName].push(account);
+                      return groups;
+                    }, {} as Record<string, string[]>)).map(([groupName, accounts]) => (
+                      <optgroup key={groupName} label={groupName}>
+                        {accounts.map(account => (
+                          <option key={account} value={account}>{account}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">To Account</label>
+                  <select
+                    className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
+                    value={toAccount} onChange={e => setToAccount(e.target.value)}
+                  >
+                    <option value="">Select account...</option>
+                    {/* Grouped accounts */}
+                    {Object.entries(ledgerAccounts.reduce((groups, account) => {
+                      const groupName = (() => {
+                        for (const [gName, accounts] of Object.entries(config.settings.ledgerAccountGroups || {})) {
+                          if (accounts.includes(account)) return gName;
+                        }
+                        return 'Ungrouped';
+                      })();
+                      if (!groups[groupName]) groups[groupName] = [];
+                      groups[groupName].push(account);
+                      return groups;
+                    }, {} as Record<string, string[]>)).map(([groupName, accounts]) => (
+                      <optgroup key={groupName} label={groupName}>
+                        {accounts.map(account => (
+                          <option key={account} value={account}>{account}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -1091,6 +1196,20 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             />
             <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
           </div>
+        ) : activeTab === 'ledger' ? (
+          <div className="w-full lg:w-96">
+            <div className="relative">
+              <input
+                type="text" placeholder="Search ledger: accounts, groups, amounts, dates..."
+                className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
+                value={search} onChange={e => setSearch(e.target.value)}
+              />
+              <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+            </div>
+            <div className="text-xs text-slate-500 mt-1 px-1">
+              Search through descriptions, account names, groups, amounts, dates, and transaction details
+            </div>
+          </div>
         ) : (
           <div className="relative w-full lg:w-96">
             <input
@@ -1104,13 +1223,15 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       </div>
 
       {activeTab === 'ledger' && (
-        <GeneralLedgerView 
-          entries={ledgerEntries} 
+        <GeneralLedgerView
+          entries={ledgerEntries}
           orders={orders}
           supplierPayments={supplierPayments}
-          onRefresh={fetchData} 
+          onRefresh={fetchData}
           currentUser={currentUser}
           searchQuery={search}
+          ledgerAccounts={config.settings.ledgerAccounts || []}
+          config={config}
         />
       )}
 

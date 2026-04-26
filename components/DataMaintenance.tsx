@@ -11,7 +11,7 @@ interface DataMaintenanceProps {
   isAdmin: boolean;
 }
 
-type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'email' | 'data';
+type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'email' | 'ledger' | 'data';
 
 export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConfigUpdate, onRefresh, currentUser, isAdmin }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('modules');
@@ -42,6 +42,89 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditProgress, setAuditProgress] = useState({ current: 0, total: 0 });
   const auditLogRef = useRef<HTMLDivElement>(null);
+
+  // Ledger accounts management
+  const [ledgerAccounts, setLedgerAccounts] = useState<string[]>(config.settings.ledgerAccounts || []);
+  const [ledgerAccountGroups, setLedgerAccountGroups] = useState<Record<string, string[]>>(config.settings.ledgerAccountGroups || {});
+  const [accountSearch, setAccountSearch] = useState('');
+  const [newGroupName, setNewGroupName] = useState('');
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [editingAccount, setEditingAccount] = useState<{ index: number, name: string } | null>(null);
+
+  // Check if an account has any transactions
+  // TODO: Implement transaction checking when ledgerEntries is available
+  const accountHasTransactions = (accountName: string) => {
+    // For now, assume accounts don't have transactions to allow deletion
+    // This should be implemented when ledgerEntries is passed to this component
+    return false;
+  };
+
+  // Get group for an account
+  const getAccountGroup = (accountName: string) => {
+    for (const [groupName, accounts] of Object.entries(ledgerAccountGroups)) {
+      if (accounts.includes(accountName)) {
+        return groupName;
+      }
+    }
+    return 'Ungrouped';
+  };
+
+  // Add account to group
+  const addAccountToGroup = (accountName: string, groupName: string) => {
+    const newGroups = { ...ledgerAccountGroups };
+    if (!newGroups[groupName]) {
+      newGroups[groupName] = [];
+    }
+    if (!newGroups[groupName].includes(accountName)) {
+      newGroups[groupName].push(accountName);
+    }
+    // Remove from other groups
+    Object.keys(newGroups).forEach(g => {
+      if (g !== groupName) {
+        newGroups[g] = newGroups[g].filter(acc => acc !== accountName);
+      }
+    });
+    setLedgerAccountGroups(newGroups);
+    updateSetting('settings', 'ledgerAccountGroups', newGroups);
+  };
+
+  // Create new group
+  const createGroup = (groupName: string) => {
+    if (!groupName.trim() || ledgerAccountGroups[groupName]) return;
+    const newGroups = { ...ledgerAccountGroups, [groupName.trim()]: [] };
+    setLedgerAccountGroups(newGroups);
+    updateSetting('settings', 'ledgerAccountGroups', newGroups);
+    setNewGroupName('');
+  };
+
+  // Delete group
+  const deleteGroup = (groupName: string) => {
+    const newGroups = { ...ledgerAccountGroups };
+    delete newGroups[groupName];
+    setLedgerAccountGroups(newGroups);
+    updateSetting('settings', 'ledgerAccountGroups', newGroups);
+  };
+
+  // Filter accounts based on search
+  const filteredAccounts = ledgerAccounts.filter(account =>
+    account.toLowerCase().includes(accountSearch.toLowerCase())
+  );
+
+  // Check if the search term matches an existing account
+  const searchMatchesExisting = ledgerAccounts.some(account =>
+    account.toLowerCase() === accountSearch.toLowerCase().trim()
+  );
+
+  // Check if search term is valid for new account
+  const canAddNewAccount = accountSearch.trim() &&
+    !searchMatchesExisting &&
+    accountSearch.trim().length > 0;
+
+  // Sync ledger accounts and groups with config changes
+  useEffect(() => {
+    setLedgerAccounts(config.settings.ledgerAccounts || []);
+    setLedgerAccountGroups(config.settings.ledgerAccountGroups || {});
+  }, [config.settings.ledgerAccounts, config.settings.ledgerAccountGroups]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
@@ -401,7 +484,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex border-b border-slate-100 bg-slate-50/50 overflow-x-auto custom-scrollbar">
-          {(['modules', 'thresholds', 'groups', 'users', 'intelligence', 'email', 'data'] as const).map(tab => (
+          {(['modules', 'thresholds', 'ledger', 'groups', 'users', 'intelligence', 'email', 'data'] as const).map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`px-10 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative whitespace-nowrap ${activeTab === tab ? 'text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}>
               {tab === 'email' ? 'Relay Node' : tab === 'intelligence' ? 'AI Engine' : tab}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600"></div>}
@@ -1217,6 +1300,221 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
             </div>
           )}
 
+          {activeTab === 'ledger' && (
+            <div className="space-y-8">
+              <div className="p-8 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-[2.5rem] border border-blue-100">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                    <i className="fa-solid fa-book text-2xl"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-xl font-black text-slate-700 uppercase tracking-tight">Ledger Accounts & Groups</h4>
+                    <p className="text-sm text-slate-500 font-bold uppercase tracking-tight">Organize accounts into groups for better financial management</p>
+                  </div>
+                </div>
+
+                {/* Group Management */}
+                <div className="mb-8">
+                  <h5 className="text-sm font-black text-slate-600 uppercase tracking-widest mb-4">Account Groups</h5>
+                  <div className="flex gap-3 mb-4">
+                    <input
+                      type="text"
+                      value={newGroupName}
+                      onChange={(e) => setNewGroupName(e.target.value)}
+                      placeholder="New group name..."
+                      className="flex-1 p-3 border border-slate-200 rounded-xl focus:border-blue-500 outline-none font-medium"
+                    />
+                    <button
+                      onClick={() => createGroup(newGroupName)}
+                      disabled={!newGroupName.trim()}
+                      className="px-6 py-3 bg-green-600 text-white rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-green-700 disabled:opacity-50 transition-all"
+                    >
+                      Create Group
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {Object.entries(ledgerAccountGroups).map(([groupName, accounts]) => (
+                      <div key={groupName} className="bg-white rounded-xl border border-slate-200 p-4 hover:border-blue-300 transition-all">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="font-bold text-slate-700 text-sm">{groupName}</div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setSelectedGroup(selectedGroup === groupName ? null : groupName)}
+                              className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"
+                              title="Manage accounts in this group"
+                            >
+                              <i className="fa-solid fa-cog text-xs"></i>
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Delete group "${groupName}"? Accounts will become ungrouped.`)) {
+                                  deleteGroup(groupName);
+                                }
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 transition-colors"
+                              title="Delete group"
+                            >
+                              <i className="fa-solid fa-trash text-xs"></i>
+                            </button>
+                          </div>
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {accounts.length} account{accounts.length !== 1 ? 's' : ''}
+                        </div>
+                        {selectedGroup === groupName && (
+                          <div className="mt-3 pt-3 border-t border-slate-100">
+                            <div className="text-xs font-bold text-slate-600 mb-2 uppercase tracking-widest">Assign Accounts:</div>
+                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                              {ledgerAccounts.map(account => (
+                                <label key={account} className="flex items-center gap-2 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={accounts.includes(account)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        addAccountToGroup(account, groupName);
+                                      } else {
+                                        // Remove from group
+                                        const newGroups = { ...ledgerAccountGroups };
+                                        newGroups[groupName] = accounts.filter(acc => acc !== account);
+                                        setLedgerAccountGroups(newGroups);
+                                        updateSetting('settings', 'ledgerAccountGroups', newGroups);
+                                      }
+                                    }}
+                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                  />
+                                  {account}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {Object.keys(ledgerAccountGroups).length === 0 && (
+                      <div className="col-span-full text-center py-8 text-slate-400 italic">
+                        <i className="fa-solid fa-layer-group text-2xl mb-2 opacity-50"></i>
+                        <div className="text-sm font-bold">No groups created</div>
+                        <div className="text-xs mt-1">Create groups to organize your accounts</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Account Management */}
+                <div className="mb-6">
+                  <h5 className="text-sm font-black text-slate-600 uppercase tracking-widest mb-4">Account Management</h5>
+                  <div className="flex gap-3">
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        value={accountSearch}
+                        onChange={(e) => setAccountSearch(e.target.value)}
+                        placeholder="Search accounts or type new account name..."
+                        className="w-full p-4 pl-12 border border-slate-200 rounded-xl focus:border-blue-500 outline-none font-medium bg-white"
+                      />
+                      <i className="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                    </div>
+                    {accountSearch.trim() && !ledgerAccounts.some(acc => acc.toLowerCase() === accountSearch.toLowerCase().trim()) && accountSearch.trim().length > 0 && (
+                      <button
+                        onClick={() => {
+                          const newAccounts = [...ledgerAccounts, accountSearch.trim()];
+                          setLedgerAccounts(newAccounts);
+                          updateSetting('settings', 'ledgerAccounts', newAccounts);
+                          setAccountSearch('');
+                        }}
+                        className="px-6 py-4 bg-blue-600 text-white rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-blue-700 transition-all"
+                      >
+                        Add Account
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    {accountSearch.trim() && !ledgerAccounts.some(acc => acc.toLowerCase() === accountSearch.toLowerCase().trim()) && accountSearch.trim().length > 0 && (
+                      <span className="text-blue-600 font-medium">Click "Add Account" to create new account: "{accountSearch.trim()}"</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Accounts List */}
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                  <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
+                    <h5 className="text-sm font-black text-slate-600 uppercase tracking-widest">
+                      Accounts ({ledgerAccounts.length})
+                    </h5>
+                  </div>
+
+                  <div className="max-h-96 overflow-y-auto">
+                    {ledgerAccounts.length === 0 ? (
+                      <div className="px-6 py-12 text-center text-slate-400 italic">
+                        <i className="fa-solid fa-inbox text-3xl mb-3 opacity-50"></i>
+                        <div className="text-sm font-bold">No accounts configured</div>
+                        <div className="text-xs mt-1">Type an account name above and click "Add Account"</div>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {ledgerAccounts
+                          .filter(account => !accountSearch || account.toLowerCase().includes(accountSearch.toLowerCase()))
+                          .map((account, index) => {
+                            const accountGroup = getAccountGroup(account);
+                            return (
+                              <div key={account} className="px-6 py-4 hover:bg-slate-50 transition-colors">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold">
+                                      {account.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <div className="font-bold text-slate-800 text-sm">{account}</div>
+                                      <div className="text-xs text-slate-500">
+                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                          accountGroup === 'Ungrouped' ? 'bg-slate-100 text-slate-600' : 'bg-green-100 text-green-700'
+                                        }`}>
+                                          {accountGroup}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => {
+                                        if (window.confirm(`Are you sure you want to delete the account "${account}"?`)) {
+                                          const newAccounts = ledgerAccounts.filter((_, i) => i !== index);
+                                          setLedgerAccounts(newAccounts);
+                                          updateSetting('settings', 'ledgerAccounts', newAccounts);
+                                          // Also remove from groups
+                                          const newGroups = { ...ledgerAccountGroups };
+                                          Object.keys(newGroups).forEach(group => {
+                                            newGroups[group] = newGroups[group].filter(acc => acc !== account);
+                                          });
+                                          setLedgerAccountGroups(newGroups);
+                                          updateSetting('settings', 'ledgerAccountGroups', newGroups);
+                                        }
+                                      }}
+                                      className="p-2 text-slate-400 hover:text-rose-600 transition-colors"
+                                      title="Delete account"
+                                    >
+                                      <i className="fa-solid fa-trash text-sm"></i>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 text-xs text-slate-500 italic">
+                  Account names are used in the Finance module's ledger for categorizing transactions between accounts.
+                  Groups help organize accounts for better financial reporting and management.
+                </div>
+              </div>
+            </div>
+          )}
 
           {activeTab === 'data' && (
             <div className="space-y-6">
