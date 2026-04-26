@@ -49,6 +49,7 @@ const OrderStatus = {
     INVOICED: 'INVOICED',
     HUB_RELEASED: 'HUB_RELEASED',
     DELIVERED: 'DELIVERED',
+    WAITING_GOVE: 'WAITING_GOVE',
     PARTIAL_PAYMENT: 'PARTIAL_PAYMENT',
     FULFILLED: 'FULFILLED'
 };
@@ -1098,12 +1099,43 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const compIdx = order.items[itemIdx].components?.findIndex(c => c.id === payload.compId);
                 if (compIdx === -1) throw new Error("Component not found");
 
+                const item = order.items[itemIdx];
                 const compToReceive = order.items[itemIdx].components[compIdx];
                 updateInventoryItem(db, compToReceive, 'RECEIVE');
 
-                compToReceive.status = 'RESERVED';
+                // Special handling for trading items - move directly to hub
+                if (item.productionType === 'TRADING') {
+                    // For trading items, automatically move to hub
+                    item.hubReceivedQty = (item.hubReceivedQty || 0) + 1; // Assuming qty = 1 for test
+
+                    // Mark component as manufactured since trading items skip manufacturing
+                    compToReceive.status = 'Manufactured';
+
+                    order.logs.push(createAuditLog(`Trading Component Received & Moved to Hub: ${compToReceive.description}`, order.status, user));
+
+                    // Check if all trading components are received and move to hub
+                    const allTradingCompsReceived = item.components?.every(comp => comp.status === 'Manufactured') || false;
+                    if (allTradingCompsReceived && item.hubReceivedQty >= item.quantity) {
+                        // Transition order status if appropriate
+                        if (order.status === 'WAITING_SUPPLIERS') {
+                            // Check if all driving items are ready
+                            const manufacturingItems = order.items.filter(i => i.productionType === 'MANUFACTURING');
+                            const tradingItems = order.items.filter(i => i.productionType === 'TRADING');
+
+                            if (manufacturingItems.length === 0 && tradingItems.length > 0) {
+                                // All trading items ready - move to IN_PRODUCT_HUB
+                                order.status = OrderStatus.IN_PRODUCT_HUB;
+                                order.logs.push(createAuditLog(`All trading components received and moved to hub. Ready for invoicing.`, order.status, user));
+                            }
+                        }
+                    }
+                } else {
+                    // Standard processing for manufacturing/outsourcing items
+                    compToReceive.status = 'RESERVED';
+                    order.logs.push(createAuditLog(`Component Received & Reserved: ${compToReceive.description}`, order.status, user));
+                }
+
                 compToReceive.statusUpdatedAt = new Date().toISOString();
-                order.logs.push(createAuditLog(`Component Received & Reserved: ${compToReceive.description}`, order.status, user));
                 break;
 
             case 'cancel-payment':
@@ -1133,23 +1165,51 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             case 'record-payment':
                 if (!order.payments) order.payments = [];
-                order.payments.push({
+                const paymentIndex = order.payments.length + 1;
+                // Create unique receipt number: RCV-{OrderNumber}-{PaymentIndex}-{Timestamp}
+                const timestamp = Date.now().toString().slice(-4); // Last 4 digits of timestamp
+                const orderShortId = order.internalOrderNumber.replace(/[^\w]/g, '').slice(-6); // Last 6 alphanumeric chars
+                const receiptNumber = `RCV-${orderShortId}-${String(paymentIndex).padStart(2, '0')}-${timestamp}`;
+                const paymentEntry = {
                     amount: payload.amount,
                     date: new Date().toISOString(),
                     user,
-                    memo: payload.memo || 'Regular payment'
+                    memo: payload.memo || 'Regular payment',
+                    receiptNumber
+                };
+                order.payments.push(paymentEntry);
+
+                // Add to order history for billing details tracking
+                if (!order.history) order.history = [];
+                order.history.push({
+                    timestamp: new Date().toISOString(),
+                    message: `Payment Recorded: ${payload.amount.toLocaleString()} L.E. - ${payload.memo || 'No comment'}`,
+                    status: order.status,
+                    user: user,
+                    type: 'payment',
+                    amount: payload.amount,
+                    receiptNumber: receiptNumber
                 });
+
                 const totalPaid = order.payments.reduce((s, p) => s + p.amount, 0);
                 // Calculate gross revenue to see if fully paid
                 let revenue = 0;
                 order.items.forEach(it => revenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
 
-                const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.PARTIAL_PAYMENT].includes(order.status);
+                const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE, OrderStatus.PARTIAL_PAYMENT].includes(order.status);
+
+                // Check if Gov.E invoice has been issued
+                const hasGovEInvoice = order.logs?.some(log => log.message && log.message.includes('Gov. E-Invoice Attached')) || false;
 
                 if (totalPaid >= revenue) {
                     if (isLateStage) {
-                        order.status = OrderStatus.FULFILLED;
-                        order.logs.push(createAuditLog(`Full payment reconciled. Order lifecycle FULFILLED.`, order.status, user));
+                        if (hasGovEInvoice) {
+                            order.status = OrderStatus.FULFILLED;
+                            order.logs.push(createAuditLog(`Full payment reconciled & Gov. E-Invoice issued. Order lifecycle FULFILLED.`, order.status, user));
+                        } else {
+                            order.status = OrderStatus.WAITING_GOVE;
+                            order.logs.push(createAuditLog(`Full payment reconciled. Awaiting Gov. E-Invoice to FULFILL.`, order.status, user));
+                        }
                     } else {
                         order.logs.push(createAuditLog(`Full payment received (Pre-payment). Operational status '${order.status}' retained.`, order.status, user));
                     }

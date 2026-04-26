@@ -109,6 +109,7 @@ export const STATUS_CONFIG: Record<OrderStatus, { label: string, color: string, 
   [OrderStatus.INVOICED]: { label: 'Invoiced', color: 'blue', icon: 'fa-file-invoice-dollar' },
   [OrderStatus.HUB_RELEASED]: { label: 'In Transit', color: 'indigo', icon: 'fa-truck-fast' },
   [OrderStatus.DELIVERED]: { label: 'Delivered', color: 'emerald', icon: 'fa-box-check' },
+  [OrderStatus.WAITING_GOVE]: { label: 'Waiting Gov.E', color: 'yellow', icon: 'fa-file-invoice' },
   [OrderStatus.FULFILLED]: { label: 'Fulfilled', color: 'emerald', icon: 'fa-check-double' }
 };
 

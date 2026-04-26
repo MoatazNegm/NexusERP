@@ -407,6 +407,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
   const [supplierPayments, setSupplierPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [historySearch, setHistorySearch] = useState('');
   const [whtPeriod, setWhtPeriod] = useState<'this_year' | 'last_year'>('this_year');
   const [whtSearch, setWhtSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'desc' });
@@ -716,7 +717,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
           setPaymentInvoiceData({
             order: updatedOrder,
             paymentAmount: amt,
-            receiptNumber: lastPayment?.receiptNumber || `RCV-${String(updatedOrder.payments.length).padStart(3, '0')}`,
+            receiptNumber: lastPayment?.receiptNumber || `RCV-${updatedOrder.internalOrderNumber.replace(/[^\w]/g, '').slice(-6)}-${String(updatedOrder.payments.length).padStart(2, '0')}-${Date.now().toString().slice(-4)}`,
             isFinal: totalPaidNow >= grossRev,
             previousPayments
           });
@@ -1081,6 +1082,15 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
             </div>
           </div>
+        ) : activeTab === 'history' ? (
+          <div className="relative w-full lg:w-96">
+            <input
+              type="text" placeholder="Search transaction history..."
+              className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
+              value={historySearch} onChange={e => setHistorySearch(e.target.value)}
+            />
+            <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+          </div>
         ) : (
           <div className="relative w-full lg:w-96">
             <input
@@ -1432,7 +1442,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             </div>
           )}
         </div>
-      ) : activeTab !== 'ledger' ? (
+      ) : activeTab !== 'ledger' && activeTab !== 'history' ? (
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
         <table className="w-full text-left">
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
@@ -1608,7 +1618,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               const isBreach = pl.markupPct < config.settings.minimumMarginPct;
               const showRow = activeTab === 'orders' ||
                 (activeTab === 'billing_details' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
-                (activeTab === 'history' && o.payments && o.payments.length > 0);
+                (activeTab === 'orders' && o.status === OrderStatus.WAITING_GOVE);
 
               if (!showRow) return null;
 
@@ -1944,7 +1954,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       </div>
       ) : null}
 
-      {/* History Tab Content */}
+      {/* History Tab Content - Read-only transaction history only */}
       {activeTab === 'history' ? (
         <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
           <div className="p-8">
@@ -1953,8 +1963,9 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                 <i className="fa-solid fa-history text-xl"></i>
               </div>
               <div>
-                <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Financial History</div>
-                <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Complete transaction history across all orders</div>
+                <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Financial Transaction History</div>
+                <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Read-only view of all financial activities and changes</div>
+                <div className="text-[8px] text-slate-400 font-bold uppercase mt-1">No operational buttons - view only</div>
               </div>
             </div>
 
@@ -1968,10 +1979,11 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:border-blue-500 outline-none"
                 >
                   <option value="timestamp">Date & Time</option>
-                  <option value="orderNumber">Order Number</option>
+                  <option value="orderNumber">PO Number</option>
                   <option value="customerName">Customer</option>
-                  <option value="type">Activity Type</option>
-                  <option value="user">User</option>
+                  <option value="type">Transaction Type</option>
+                  <option value="amount">Amount</option>
+                  <option value="revenue">PO Revenue</option>
                 </select>
                 <button
                   onClick={() => setSortConfig({ ...sortConfig, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}
@@ -1982,44 +1994,56 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               </div>
             </div>
 
+            {/* Read-only Transaction History - No Operational Buttons */}
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
+                  <i className="fa-solid fa-info-circle"></i>
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-amber-800 uppercase tracking-widest">Read-Only History View</div>
+                  <div className="text-xs text-amber-700 mt-1">This tab shows only financial transaction records. For order management, use the Orders or Billing Details tabs.</div>
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-4">
               {(() => {
-                const allHistoryEntries = [];
+                let allHistoryEntries = [];
 
-                // Collect order history entries (payments, authorizations, etc.)
+                // Collect order history entries (only financial transactions)
                 orders.forEach(o => {
-                  // Include custom history entries
+                  // Include custom history entries (only payment-related)
                   if (o.history && Array.isArray(o.history)) {
                     o.history.forEach(entry => {
-                      allHistoryEntries.push({
-                        orderId: o.id,
-                        orderNumber: o.internalOrderNumber,
-                        customerName: o.customerName,
-                        orderStatus: o.status,
-                        ...entry
-                      });
+                      // Only include payment history entries
+                      if (entry.type === 'payment') {
+                        allHistoryEntries.push({
+                          orderId: o.id,
+                          orderNumber: o.internalOrderNumber,
+                          customerName: o.customerName,
+                          orderStatus: o.status,
+                          ...entry
+                        });
+                      }
                     });
                   }
 
-                  // Include order logs (system activities, authorizations, gov.E invoice, etc.)
+                  // Include only financial transaction logs (payments, invoices, authorizations)
                   if (o.logs && Array.isArray(o.logs)) {
                     o.logs.forEach(log => {
-                      // Filter to only include transaction-related logs, exclude operational/system messages
                       const message = log.message || '';
-                      const isTransactionLog =
-                        message.includes('Payment') ||
-                        message.includes('Invoice') ||
-                        message.includes('Gov. E-Invoice') ||
-                        message.includes('Finance') ||
-                        message.includes('Auth') ||
-                        message.includes('Dispatch') ||
-                        message.includes('Receipt') ||
-                        message.includes('Hub') ||
-                        message.includes('Manufactured') ||
-                        message.includes('Delivery') ||
-                        message.includes('Shipment');
 
-                      if (isTransactionLog && !message.includes('[SYSTEM]') && !message.includes('[AUTO]')) {
+                      // Only include pure financial transactions - payments, invoices, and finance authorizations
+                      const isFinancialTransaction =
+                        (message.includes('Payment of') && message.includes('recorded')) ||
+                        (message.includes('Official Tax Invoice Generated')) ||
+                        (message.includes('Gov. E-Invoice requested') || message.includes('Gov. E-Invoice Attached')) ||
+                        (message.includes('Finance Partial Receipt for Dispatch')) ||
+                        (message.includes('Full payment reconciled')) ||
+                        (message.includes('Payment recorded:') && message.includes('L.E.'));
+
+                      if (isFinancialTransaction && !message.includes('[SYSTEM]') && !message.includes('[AUTO]')) {
                         allHistoryEntries.push({
                           orderId: o.id,
                           orderNumber: o.internalOrderNumber,
@@ -2027,8 +2051,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                           orderStatus: log.status || o.status,
                           type: message.includes('Payment') ? 'payment' :
                                 message.includes('Invoice') ? 'invoice' :
-                                message.includes('Delivery') || message.includes('Shipment') ? 'delivery' :
-                                message.includes('Finance') || message.includes('Auth') || message.includes('Dispatch') ? 'authorization' :
+                                message.includes('Finance') ? 'authorization' :
                                 'transaction',
                           message: message,
                           timestamp: log.timestamp,
@@ -2051,11 +2074,31 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                         message: `Payment recorded: ${payment.amount.toLocaleString()} L.E.`,
                         timestamp: payment.date || new Date().toISOString(),
                         user: payment.user || 'System',
-                        receiptNumber: payment.receiptNumber
+                                  receiptNumber: payment.receiptNumber || `RCV-${order.internalOrderNumber.replace(/[^\w]/g, '').slice(-6)}-${String(idx + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`
                       });
                     });
                   }
                 });
+
+                // Filter by search term if provided
+                if (historySearch.trim()) {
+                  const searchTerm = historySearch.trim().toLowerCase();
+                  allHistoryEntries = allHistoryEntries.filter(entry => {
+                    const searchableText = [
+                      entry.orderNumber || '',
+                      entry.customerName || '',
+                      entry.orderStatus || '',
+                      entry.type || '',
+                      entry.message || '',
+                      entry.amount ? entry.amount.toString() : '',
+                      entry.receiptNumber || '',
+                      entry.user || '',
+                      new Date(entry.timestamp).toLocaleString()
+                    ].join(' ').toLowerCase();
+
+                    return searchableText.includes(searchTerm);
+                  });
+                }
 
                 // Sort based on current sort configuration
                 allHistoryEntries.sort((a, b) => {
@@ -2078,9 +2121,18 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                       valA = a.type || '';
                       valB = b.type || '';
                       break;
-                    case 'user':
-                      valA = (a.user || '').toLowerCase();
-                      valB = (b.user || '').toLowerCase();
+                    case 'amount':
+                      valA = a.amount || 0;
+                      valB = b.amount || 0;
+                      break;
+                    case 'revenue':
+                      // Get revenue from the corresponding order
+                      const orderA = orders.find(o => o.id === a.orderId);
+                      const orderB = orders.find(o => o.id === b.orderId);
+                      valA = orderA ? (orderA.items?.reduce((sum, item) =>
+                        sum + (item.quantity * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
+                      valB = orderB ? (orderB.items?.reduce((sum, item) =>
+                        sum + (item.quantity * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
                       break;
                     default:
                       valA = new Date(a.timestamp).getTime();
@@ -2100,9 +2152,9 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                 if (allHistoryEntries.length === 0) {
                   return (
                     <div className="text-center py-20 text-slate-400 italic">
-                      <i className="fa-solid fa-archive text-5xl mb-4 opacity-20"></i>
-                      <div className="text-sm font-bold uppercase tracking-widest">No historical records found</div>
-                      <div className="text-xs font-medium mt-2">Financial activities will appear here</div>
+                      <i className="fa-solid fa-receipt text-5xl mb-4 opacity-20"></i>
+                      <div className="text-sm font-bold uppercase tracking-widest">No financial transactions found</div>
+                      <div className="text-xs font-medium mt-2">Payment and invoice activities will appear here</div>
                     </div>
                   );
                 }
@@ -2117,14 +2169,12 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                             <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${
                               entry.type === 'payment' ? 'bg-emerald-100 text-emerald-600' :
                               entry.type === 'invoice' ? 'bg-blue-100 text-blue-600' :
-                              entry.type === 'delivery' ? 'bg-purple-100 text-purple-600' :
                               entry.type === 'authorization' ? 'bg-amber-100 text-amber-600' :
                               'bg-slate-100 text-slate-600'
                             }`}>
                               <i className={`fa-solid ${
                                 entry.type === 'payment' ? 'fa-money-bill-wave' :
                                 entry.type === 'invoice' ? 'fa-file-invoice' :
-                                entry.type === 'delivery' ? 'fa-truck' :
                                 entry.type === 'authorization' ? 'fa-check-circle' :
                                 'fa-circle-info'
                               }`}></i>
@@ -2133,9 +2183,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                               <div className="font-black text-slate-800 text-base uppercase tracking-tight">
                                 {entry.type === 'payment' ? `${entry.amount?.toLocaleString()} L.E. Payment` :
                                  entry.type === 'invoice' ? 'Tax Invoice Generated' :
-                                 entry.type === 'delivery' ? 'Delivery Processed' :
                                  entry.type === 'authorization' ? 'Finance Authorization' :
-                                 entry.message?.split(':')[0] || 'Transaction'}
+                                 'Financial Transaction'}
                               </div>
                               <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
                                 {entry.orderNumber} • {entry.customerName} • {entry.orderStatus?.replace(/_/g, ' ')}
@@ -2151,7 +2200,16 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                             </div>
                           )}
                         </div>
-                        <div className="flex items-start gap-3">
+                        <div className="flex items-start justify-end gap-3">
+                          <div className="text-right">
+                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
+                              {new Date(entry.timestamp).toLocaleString()}
+                            </div>
+                            <div className="text-xs font-bold text-slate-600 mt-1">
+                              {entry.user}
+                            </div>
+                          </div>
+                          {/* Only show receipt download for payment entries - no other operational buttons */}
                           {entry.type === 'payment' && entry.receiptNumber && order && (
                             <button
                               onClick={() => generateReceiptPDF(order, entry)}
@@ -2162,14 +2220,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                               Receipt
                             </button>
                           )}
-                          <div className="text-right">
-                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
-                              {new Date(entry.timestamp).toLocaleString()}
-                            </div>
-                            <div className="text-xs font-bold text-slate-600 mt-1">
-                              {entry.user}
-                            </div>
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -2298,7 +2348,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
 
                       return (
                         <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-5 font-mono text-xs font-black text-blue-600 uppercase">{p.receiptNumber || `RCV-${String(idx + 1).padStart(3, '0')}`}</td>
+                          <td className="px-4 py-5 font-mono text-xs font-black text-blue-600 uppercase">{p.receiptNumber || `RCV-${order.internalOrderNumber.replace(/[^\w]/g, '').slice(-6)}-${String(idx + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`}</td>
                           <td className="px-4 py-5 font-bold text-slate-500 text-xs">{new Date(p.date).toLocaleDateString()}</td>
                           <td className="px-4 py-5 font-black text-slate-800">{p.amount.toLocaleString()} L.E.</td>
                           <td className="px-4 py-5 text-right">
