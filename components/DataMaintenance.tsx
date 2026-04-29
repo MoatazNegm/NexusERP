@@ -69,8 +69,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     return 'Ungrouped';
   };
 
-  // Add account to group
-  const addAccountToGroup = (accountName: string, groupName: string) => {
+  // Add account to group (accounts can be in multiple groups)
+  const addAccountToGroup = async (accountName: string, groupName: string) => {
     const newGroups = { ...ledgerAccountGroups };
     if (!newGroups[groupName]) {
       newGroups[groupName] = [];
@@ -78,31 +78,26 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     if (!newGroups[groupName].includes(accountName)) {
       newGroups[groupName].push(accountName);
     }
-    // Remove from other groups
-    Object.keys(newGroups).forEach(g => {
-      if (g !== groupName) {
-        newGroups[g] = newGroups[g].filter(acc => acc !== accountName);
-      }
-    });
+    // Note: No longer removing from other groups - accounts can be in multiple groups
     setLedgerAccountGroups(newGroups);
-    updateSetting('settings', 'ledgerAccountGroups', newGroups);
+    await updateSetting('settings', 'ledgerAccountGroups', newGroups);
   };
 
   // Create new group
-  const createGroup = (groupName: string) => {
+  const createGroup = async (groupName: string) => {
     if (!groupName.trim() || ledgerAccountGroups[groupName]) return;
     const newGroups = { ...ledgerAccountGroups, [groupName.trim()]: [] };
     setLedgerAccountGroups(newGroups);
-    updateSetting('settings', 'ledgerAccountGroups', newGroups);
+    await updateSetting('settings', 'ledgerAccountGroups', newGroups);
     setNewGroupName('');
   };
 
   // Delete group
-  const deleteGroup = (groupName: string) => {
+  const deleteGroup = async (groupName: string) => {
     const newGroups = { ...ledgerAccountGroups };
     delete newGroups[groupName];
     setLedgerAccountGroups(newGroups);
-    updateSetting('settings', 'ledgerAccountGroups', newGroups);
+    await updateSetting('settings', 'ledgerAccountGroups', newGroups);
   };
 
   // Filter accounts based on search
@@ -122,8 +117,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   // Sync ledger accounts and groups with config changes
   useEffect(() => {
-    setLedgerAccounts(config.settings.ledgerAccounts || []);
-    setLedgerAccountGroups(config.settings.ledgerAccountGroups || {});
+    setLedgerAccounts(config.settings?.ledgerAccounts || []);
+    setLedgerAccountGroups(config.settings?.ledgerAccountGroups || {});
   }, [config.settings.ledgerAccounts, config.settings.ledgerAccountGroups]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -162,7 +157,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
 
 
-  const updateSetting = (section: 'modules' | 'settings', key: string, value: any) => {
+  const updateSetting = async (section: 'modules' | 'settings', key: string, value: any) => {
     const newConfig = {
       ...config,
       [section]: {
@@ -170,7 +165,23 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
         [key]: value
       }
     };
+
+    // Update local state
     onConfigUpdate(newConfig);
+
+    // Persist to database
+    try {
+      if (section === 'settings') {
+        await dataService.updateSettings(newConfig.settings);
+      } else if (section === 'modules') {
+        await dataService.updateModules(newConfig.modules);
+      }
+    } catch (error) {
+      console.error('Failed to persist config to database:', error);
+      // Revert local state if persistence failed
+      onConfigUpdate(config);
+      throw error;
+    }
   };
 
   const updateEmailConfig = (key: keyof EmailConfig, value: any) => {
@@ -1347,9 +1358,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                               <i className="fa-solid fa-cog text-xs"></i>
                             </button>
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 if (window.confirm(`Delete group "${groupName}"? Accounts will become ungrouped.`)) {
-                                  deleteGroup(groupName);
+                                  await deleteGroup(groupName);
                                 }
                               }}
                               className="p-1.5 text-slate-400 hover:text-rose-600 transition-colors"
@@ -1371,15 +1382,15 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                                   <input
                                     type="checkbox"
                                     checked={accounts.includes(account)}
-                                    onChange={(e) => {
+                                    onChange={async (e) => {
                                       if (e.target.checked) {
-                                        addAccountToGroup(account, groupName);
+                                        await addAccountToGroup(account, groupName);
                                       } else {
                                         // Remove from group
                                         const newGroups = { ...ledgerAccountGroups };
                                         newGroups[groupName] = accounts.filter(acc => acc !== account);
-                                        setLedgerAccountGroups(newGroups);
-                                        updateSetting('settings', 'ledgerAccountGroups', newGroups);
+    setLedgerAccountGroups(newGroups);
+    await updateSetting('settings', 'ledgerAccountGroups', newGroups);
                                       }
                                     }}
                                     className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -1418,10 +1429,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     </div>
                     {accountSearch.trim() && !ledgerAccounts.some(acc => acc.toLowerCase() === accountSearch.toLowerCase().trim()) && accountSearch.trim().length > 0 && (
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const newAccounts = [...ledgerAccounts, accountSearch.trim()];
                           setLedgerAccounts(newAccounts);
-                          updateSetting('settings', 'ledgerAccounts', newAccounts);
+                          await updateSetting('settings', 'ledgerAccounts', newAccounts);
                           setAccountSearch('');
                         }}
                         className="px-6 py-4 bg-blue-600 text-white rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-blue-700 transition-all"
@@ -1468,29 +1479,47 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                                     <div>
                                       <div className="font-bold text-slate-800 text-sm">{account}</div>
                                       <div className="text-xs text-slate-500">
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                          accountGroup === 'Ungrouped' ? 'bg-slate-100 text-slate-600' : 'bg-green-100 text-green-700'
-                                        }`}>
-                                          {accountGroup}
-                                        </span>
+                                        {(() => {
+                                          const groups = Object.entries(ledgerAccountGroups)
+                                            .filter(([_, accounts]) => accounts.includes(account))
+                                            .map(([groupName]) => groupName);
+
+                                          if (groups.length === 0) {
+                                            return (
+                                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
+                                                Ungrouped
+                                              </span>
+                                            );
+                                          } else {
+                                            return (
+                                              <div className="flex flex-wrap gap-1">
+                                                {groups.map(group => (
+                                                  <span key={group} className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700">
+                                                    {group}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            );
+                                          }
+                                        })()}
                                       </div>
                                     </div>
                                   </div>
 
                                   <div className="flex items-center gap-2">
                                     <button
-                                      onClick={() => {
+                                      onClick={async () => {
                                         if (window.confirm(`Are you sure you want to delete the account "${account}"?`)) {
                                           const newAccounts = ledgerAccounts.filter((_, i) => i !== index);
                                           setLedgerAccounts(newAccounts);
-                                          updateSetting('settings', 'ledgerAccounts', newAccounts);
+                                          await updateSetting('settings', 'ledgerAccounts', newAccounts);
                                           // Also remove from groups
                                           const newGroups = { ...ledgerAccountGroups };
                                           Object.keys(newGroups).forEach(group => {
                                             newGroups[group] = newGroups[group].filter(acc => acc !== account);
                                           });
                                           setLedgerAccountGroups(newGroups);
-                                          updateSetting('settings', 'ledgerAccountGroups', newGroups);
+                                          await updateSetting('settings', 'ledgerAccountGroups', newGroups);
                                         }
                                       }}
                                       className="p-2 text-slate-400 hover:text-rose-600 transition-colors"

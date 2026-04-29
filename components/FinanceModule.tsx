@@ -128,15 +128,16 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   const unifiedEntries = useMemo(() => {
     const all: any[] = [];
 
-    // Helper function to get account group
+    // Helper function to get account groups (returns all groups for an account)
     const getAccountGroup = (accountName: string, config: any) => {
       const groups = config.settings?.ledgerAccountGroups || {};
+      const accountGroups = [];
       for (const [groupName, accounts] of Object.entries(groups)) {
         if (accounts.includes(accountName)) {
-          return groupName;
+          accountGroups.push(groupName);
         }
       }
-      return null;
+      return accountGroups.length > 0 ? accountGroups : null;
     };
 
     // 1. Manual entries
@@ -318,16 +319,22 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 <td className="px-8 py-5">
                   <div className="text-xs font-bold text-blue-600 uppercase">
                     {entry.fromAccount || entry.category || '-'}
-                    {entry.fromGroup && (
-                      <div className="text-[9px] text-blue-500 font-medium mt-0.5">{entry.fromGroup}</div>
+                    {entry.fromGroup && Array.isArray(entry.fromGroup) && (
+                      <div className="text-[9px] text-blue-500 font-medium mt-0.5">
+                        {entry.fromGroup.slice(0, 2).join(', ')}
+                        {entry.fromGroup.length > 2 && '...'}
+                      </div>
                     )}
                   </div>
                 </td>
                 <td className="px-8 py-5">
                   <div className="text-xs font-bold text-emerald-600 uppercase">
                     {entry.toAccount || '-'}
-                    {entry.toGroup && (
-                      <div className="text-[9px] text-emerald-500 font-medium mt-0.5">{entry.toGroup}</div>
+                    {entry.toGroup && Array.isArray(entry.toGroup) && (
+                      <div className="text-[9px] text-emerald-500 font-medium mt-0.5">
+                        {entry.toGroup.slice(0, 2).join(', ')}
+                        {entry.toGroup.length > 2 && '...'}
+                      </div>
                     )}
                   </div>
                 </td>
@@ -430,24 +437,22 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     value={fromAccount} onChange={e => setFromAccount(e.target.value)}
                   >
                     <option value="">Select account...</option>
-                    {/* Grouped accounts */}
-                    {Object.entries(ledgerAccounts.reduce((groups, account) => {
-                      const groupName = (() => {
+                    {/* Grouped accounts - accounts can appear in multiple groups */}
+                    {ledgerAccounts.map(account => {
+                      const accountGroups = (() => {
+                        const groups = [];
                         for (const [gName, accounts] of Object.entries(config.settings.ledgerAccountGroups || {})) {
-                          if (accounts.includes(account)) return gName;
+                          if (accounts.includes(account)) groups.push(gName);
                         }
-                        return 'Ungrouped';
+                        return groups.length > 0 ? groups : ['Ungrouped'];
                       })();
-                      if (!groups[groupName]) groups[groupName] = [];
-                      groups[groupName].push(account);
-                      return groups;
-                    }, {} as Record<string, string[]>)).map(([groupName, accounts]) => (
-                      <optgroup key={groupName} label={groupName}>
-                        {accounts.map(account => (
-                          <option key={account} value={account}>{account}</option>
-                        ))}
-                      </optgroup>
-                    ))}
+
+                      return (
+                        <option key={account} value={account}>
+                          {account} ({accountGroups.slice(0, 2).join(', ')}{accountGroups.length > 2 ? '...' : ''})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 <div className="space-y-1.5">
@@ -457,24 +462,22 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     value={toAccount} onChange={e => setToAccount(e.target.value)}
                   >
                     <option value="">Select account...</option>
-                    {/* Grouped accounts */}
-                    {Object.entries(ledgerAccounts.reduce((groups, account) => {
-                      const groupName = (() => {
+                    {/* Grouped accounts - accounts can appear in multiple groups */}
+                    {ledgerAccounts.map(account => {
+                      const accountGroups = (() => {
+                        const groups = [];
                         for (const [gName, accounts] of Object.entries(config.settings.ledgerAccountGroups || {})) {
-                          if (accounts.includes(account)) return gName;
+                          if (accounts.includes(account)) groups.push(gName);
                         }
-                        return 'Ungrouped';
+                        return groups.length > 0 ? groups : ['Ungrouped'];
                       })();
-                      if (!groups[groupName]) groups[groupName] = [];
-                      groups[groupName].push(account);
-                      return groups;
-                    }, {} as Record<string, string[]>)).map(([groupName, accounts]) => (
-                      <optgroup key={groupName} label={groupName}>
-                        {accounts.map(account => (
-                          <option key={account} value={account}>{account}</option>
-                        ))}
-                      </optgroup>
-                    ))}
+
+                      return (
+                        <option key={account} value={account}>
+                          {account} ({accountGroups.slice(0, 2).join(', ')}{accountGroups.length > 2 ? '...' : ''})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               </div>
