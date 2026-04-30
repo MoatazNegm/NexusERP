@@ -4,6 +4,8 @@ import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getIte
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
+import { LanguageToggle } from './LanguageToggle';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -116,6 +118,7 @@ interface GeneralLedgerViewProps {
 }
 
 const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, supplierPayments, onRefresh, currentUser, searchQuery, ledgerAccounts = [], config }) => {
+  const { t } = useLanguage();
   const [showAddModal, setShowAddModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState<'COST' | 'ADDITION'>('COST');
@@ -257,7 +260,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-emerald-50 border border-emerald-100 p-6 rounded-[2rem] shadow-sm">
           <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600 mb-2 flex items-center gap-2">
-            <i className="fa-solid fa-plus-circle"></i> Total Additions
+            <i className="fa-solid fa-plus-circle"></i> {t('finance.ledger.totalAdditions')}
           </div>
           <div className="text-3xl font-black text-emerald-800 tracking-tight">
             {totals.additions.toLocaleString()} <span className="text-sm">L.E.</span>
@@ -265,7 +268,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         </div>
         <div className="bg-rose-50 border border-rose-100 p-6 rounded-[2rem] shadow-sm">
           <div className="text-[10px] font-black uppercase tracking-widest text-rose-600 mb-2 flex items-center gap-2">
-            <i className="fa-solid fa-minus-circle"></i> Total Costs
+            <i className="fa-solid fa-minus-circle"></i> {t('finance.ledger.totalCosts')}
           </div>
           <div className="text-3xl font-black text-rose-800 tracking-tight">
             {totals.costs.toLocaleString()} <span className="text-sm">L.E.</span>
@@ -273,7 +276,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         </div>
         <div className="bg-blue-50 border border-blue-100 p-6 rounded-[2rem] shadow-sm">
           <div className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-2 flex items-center gap-2">
-            <i className="fa-solid fa-scale-balanced"></i> Net Balance
+            <i className="fa-solid fa-scale-balanced"></i> {t('finance.ledger.netBalance')}
           </div>
           <div className="text-3xl font-black text-blue-800 tracking-tight">
             {(totals.additions - totals.costs).toLocaleString()} <span className="text-sm">L.E.</span>
@@ -297,14 +300,14 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         <table className="w-full text-left">
           <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
             <tr>
-              <th className="px-8 py-5">Date</th>
-              <th className="px-8 py-5">Description</th>
-              <th className="px-8 py-5">From Account</th>
-              <th className="px-8 py-5">To Account</th>
-              <th className="px-8 py-5">Source</th>
-              <th className="px-8 py-5">Type</th>
-              <th className="px-8 py-5 text-right">Amount</th>
-              <th className="px-8 py-5">User</th>
+              <th className="px-8 py-5">{t('finance.ledger.date')}</th>
+              <th className="px-8 py-5">{t('finance.ledger.description')}</th>
+              <th className="px-8 py-5">{t('finance.ledger.fromAccount')}</th>
+              <th className="px-8 py-5">{t('finance.ledger.toAccount')}</th>
+              <th className="px-8 py-5">{t('finance.ledger.source')}</th>
+              <th className="px-8 py-5">{t('finance.ledger.type')}</th>
+              <th className="px-8 py-5 text-right">{t('finance.ledger.amount')}</th>
+              <th className="px-8 py-5">{t('finance.ledger.user')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
@@ -382,8 +385,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 <i className="fa-solid fa-file-invoice-dollar"></i>
               </div>
               <div>
-                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">New Ledger Entry</h3>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Manual financial adjustment</p>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{t('finance.ledger.addEntry')}</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('messages.loading')}</p>
               </div>
             </div>
 
@@ -410,7 +413,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Amount (L.E.)</label>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('common.amount')} (L.E.)</label>
                 <input 
                   type="number" step="0.01" autoFocus
                   className="w-full p-4 border rounded-2xl bg-slate-50 font-black text-2xl outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
@@ -420,7 +423,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Description</label>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('common.description')}</label>
                 <input 
                   type="text"
                   className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
@@ -496,7 +499,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 className="flex-[2] py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center justify-center gap-2 hover:bg-black transition-all"
               >
                 {loading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check"></i>}
-                Record Entry
+                {t('common.save')}
               </button>
             </div>
           </div>
@@ -506,7 +509,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   );
 };
 
-export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey, currentUser }) => {
+const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, currentUser }) => {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<FinanceTab>('orders');
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -980,10 +984,10 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               </div>
               <div className="border-2 mb-10 min-h-[400px] flex flex-col" style={{ borderColor: '#0f172a' }}>
                 <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>
-                  <div className="col-span-6 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Description</div>
-                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Price</div>
-                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Qty</div>
-                  <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Tax %</div>
+                  <div className="col-span-6 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.description") || "Description"}</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("common.price") || "Price"}</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.qty") || "Qty"}</div>
+                  <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.taxPercent") || "Tax %"}</div>
                   <div className="col-span-2 p-3">Total</div>
                 </div>
                 {printOrder.items.map(item => (
@@ -1090,12 +1094,12 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
               {/* Line Items Table */}
               <div className="border-2 mb-8 flex flex-col" style={{ borderColor: '#0f172a' }}>
                 <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>
-                  <div className="col-span-5 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Description</div>
-                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Unit Price</div>
-                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Qty (Pro-Rata)</div>
-                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Tax %</div>
-                  <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Tax Amount</div>
-                  <div className="col-span-2 p-3">Line Total</div>
+                  <div className="col-span-5 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.description") || "Description"}</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.unitPrice") || "Unit Price"}</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.qtyProRata") || "Qty (Pro-Rata)"}</div>
+                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.taxPercent") || "Tax %"}</div>
+                  <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.taxAmount") || "Tax Amount"}</div>
+                  <div className="col-span-2 p-3">{t("finance.billing.lineTotal") || "Line Total"}</div>
                 </div>
                 {proratedItems.map((item: any) => (
                   <div key={item.id} className="grid grid-cols-12 border-b text-center text-sm" style={{ borderColor: '#e2e8f0', color: '#0f172a' }}>
@@ -1117,7 +1121,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                     <div className="p-3 text-right text-sm" style={{ color: '#0f172a' }}>{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
                   </div>
                   <div className="grid grid-cols-2">
-                    <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Total Tax</div>
+                    <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>{t("finance.billing.taxTotal") || "Total Tax"}</div>
                     <div className="p-3 text-right text-sm" style={{ color: '#b45309' }}>{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
                   </div>
                   <div className="grid grid-cols-2" style={{ backgroundColor: isFinal ? '#ecfdf5' : '#eff6ff' }}>
@@ -1139,7 +1143,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                       </div>
                     ))}
                     <div className="flex justify-between px-4 py-2 text-xs font-black border-t" style={{ backgroundColor: '#f8fafc', borderColor: '#e2e8f0', color: '#0f172a' }}>
-                      <span>Total Previously Paid</span>
+                      <span>{t("finance.orders.totalPreviouslyPaid") || "Total Previously Paid"}</span>
                       <span>{totalPaidBefore.toLocaleString()} L.E.</span>
                     </div>
                   </div>
@@ -1161,23 +1165,27 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
       </div>
 
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-        <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
+        <div className="flex items-center gap-4">
+          <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
           {(['orders', 'billing_details', 'history', 'entities', 'tax_clearances', 'supplier_reporting', 'ledger'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-8 py-3 rounded-xl text-[10px] whitespace-nowrap font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
-              {tab === 'supplier_reporting' ? 'Supplier Financial Report' : tab.replace(/([A-Z_])/g, ' $1').replace('_', ' ')}
+              {t(`finance.tabs.${tab}`) !== `finance.tabs.${tab}` ? t(`finance.tabs.${tab}`) :
+               tab.replace(/([A-Z_])/g, ' $1').replace('_', ' ')}
             </button>
           ))}
+          </div>
+          <LanguageToggle />
         </div>
         {activeTab === 'tax_clearances' ? (
           <div className="flex gap-4 w-full lg:w-auto">
             <div className="relative group w-40">
               <select className="w-full pl-10 pr-4 py-3 bg-white border-2 border-slate-100 rounded-2xl text-[10px] font-black uppercase appearance-none focus:border-blue-500 transition-all outline-none text-slate-700 shadow-sm" value={whtPeriod} onChange={e => setWhtPeriod(e.target.value as 'this_year' | 'last_year')}>
-                <option value="this_year">This Year</option>
-                <option value="last_year">Last Year</option>
+                <option value="this_year">{t("finance.tax.thisYear") || "This Year"}</option>
+                <option value="last_year">{t("finance.tax.lastYear") || "Last Year"}</option>
               </select>
               <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"><i className="fa-solid fa-calendar text-xs"></i></div>
             </div>
@@ -1193,7 +1201,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         ) : activeTab === 'history' ? (
           <div className="relative w-full lg:w-96">
             <input
-              type="text" placeholder="Search transaction history..."
+              type="text" placeholder={t("finance.history.searchHistory") || "Search transaction history..."}
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
               value={historySearch} onChange={e => setHistorySearch(e.target.value)}
             />
@@ -1203,7 +1211,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
           <div className="w-full lg:w-96">
             <div className="relative">
               <input
-                type="text" placeholder="Search ledger: accounts, groups, amounts, dates..."
+                type="text" placeholder={t("finance.history.searchHistory") || "Search ledger..."}
                 className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
                 value={search} onChange={e => setSearch(e.target.value)}
               />
@@ -1216,7 +1224,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         ) : (
           <div className="relative w-full lg:w-96">
             <input
-              type="text" placeholder="Search entries..."
+              type="text" placeholder={t("finance.history.searchHistory") || "Search entries..."}
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
               value={search} onChange={e => setSearch(e.target.value)}
             />
@@ -1243,7 +1251,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
         <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh] p-8 space-y-8">
           {/* Print Header */}
           <div className="print-only mb-8 text-center border-b-2 border-slate-900 pb-6">
-            <h1 className="text-3xl font-black uppercase tracking-tighter">Supplier Financial Report</h1>
+            <h1 className="text-3xl font-black uppercase tracking-tighter">{t("finance.supplier.title") || "Supplier Financial Report"}</h1>
             <p className="text-sm font-bold text-slate-600 mt-1 uppercase tracking-[0.3em]">
               {selectedSupplierIds.includes('all') 
                 ? 'ALL SUPPLIERS' 
@@ -1293,7 +1301,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                           setSpMemo(generatePaymentRef());
                         }}
                       />
-                      <span className="text-[10px] font-black uppercase text-slate-700 group-hover:text-blue-600">ALL SUPPLIERS</span>
+                      <span className="text-[10px] font-black uppercase text-slate-700 group-hover:text-blue-600">{t("finance.supplier.allSuppliers") || "ALL SUPPLIERS"}</span>
                     </label>
                     <div className="h-px bg-slate-100 my-2"></div>
                     {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map(s => (
@@ -1333,7 +1341,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
           {spLoading && (
             <div className="py-12 text-center text-slate-400">
               <i className="fa-solid fa-spinner fa-spin text-2xl text-blue-500 mb-2"></i>
-              <div className="text-sm font-bold">Loading supplier ledger...</div>
+              <div className="text-sm font-bold">{t("finance.supplier.loadingLedger") || "Loading supplier ledger..."}</div>
             </div>
           )}
 
@@ -1352,7 +1360,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   )}
                   <div className="flex flex-col lg:flex-row gap-4">
                     <div className="flex-1">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Date</label>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 block">{t("common.date") || "Date"}</label>
                       <input
                         type="date"
                         className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
@@ -1446,10 +1454,10 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                     <table className="w-full text-left">
                       <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                         <tr>
-                          <th className="px-6 py-4">Date</th>
-                          <th className="px-6 py-4">Amount</th>
-                          <th className="px-6 py-4">Memo</th>
-                          <th className="px-6 py-4">Recorded By</th>
+                          <th className="px-6 py-4">{t("common.date") || "Date"}</th>
+                          <th className="px-6 py-4">{t("common.amount") || "Amount"}</th>
+                          <th className="px-6 py-4">{t("common.memo") || "Memo"}</th>
+                          <th className="px-6 py-4">{t("common.recordedBy") || "Recorded By"}</th>
                           <th className="px-6 py-4 w-10"></th>
                         </tr>
                       </thead>
@@ -1477,8 +1485,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                                       <thead>
                                         <tr className="bg-slate-50 border-b border-slate-100 text-[9px] font-black uppercase text-slate-400 italic">
                                           <th className="px-4 py-3">PO#</th>
-                                          <th className="px-4 py-3">Description</th>
-                                          <th className="px-4 py-3 text-right">Allocated Amt</th>
+                                          <th className="px-4 py-3">{t("finance.billing.description") || "Description"}</th>
+                                          <th className="px-4 py-3 text-right">{t("finance.supplier.allocatedAmount") || "Allocated Amt"}</th>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-50">
@@ -1514,14 +1522,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                       <thead className="bg-slate-50 text-[9px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                         <tr>
                           <th className="px-6 py-4">PO#</th>
-                          <th className="px-6 py-4">Description</th>
-                          <th className="px-6 py-4 text-right">Qty</th>
+                          <th className="px-6 py-4">{t("finance.billing.description") || "Description"}</th>
+                          <th className="px-6 py-4 text-right">{t("finance.billing.qty") || "Qty"}</th>
                           <th className="px-6 py-4 text-right">Unit cost</th>
-                          <th className="px-6 py-4 text-right">Total (PO)</th>
-                          <th className="px-6 py-4 text-right">Deliv. Val</th>
-                          <th className="px-6 py-4 text-right">Allocated</th>
-                          <th className="px-6 py-4 text-right">Balance</th>
-                          <th className="px-6 py-4">Status</th>
+                          <th className="px-6 py-4 text-right">{t("finance.supplier.totalPO") || "Total (PO)"}</th>
+                          <th className="px-6 py-4 text-right">{t("finance.supplier.deliveryValue") || "Deliv. Val"}</th>
+                          <th className="px-6 py-4 text-right">{t("finance.supplier.allocated") || "Allocated"}</th>
+                          <th className="px-6 py-4 text-right">{t("finance.supplier.balance") || "Balance"}</th>
+                          <th className="px-6 py-4">{t("common.status") || "Status"}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1555,7 +1563,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
           {selectedSupplierIds.length > 0 && !supplierLedger && !spLoading && (
             <div className="py-16 text-center text-slate-400">
               <i className="fa-solid fa-box-open text-4xl mb-4"></i>
-              <div className="font-bold text-sm uppercase tracking-widest">No detailed ledger data found</div>
+              <div className="font-bold text-sm uppercase tracking-widest">{t("finance.supplier.noLedgerData") || "No detailed ledger data found"}</div>
             </div>
           )}
 
@@ -1573,12 +1581,12 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
             <tr>
               {activeTab === 'entities' ? (
                 <>
-                  <th className="px-8 py-5 text-white">Operational Context</th>
+                  <th className="px-8 py-5 text-white">{t("finance.orders.operationalContext") || "Operational Context"}</th>
                   <th className="px-8 py-5 text-white cursor-pointer select-none" onClick={() => handleSort('name')}>
                     Entity Type {sortConfig.key === 'name' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
-                  <th className="px-8 py-5 text-white">Account Status</th>
-                  <th className="px-8 py-5 text-white text-right">Credit Action</th>
+                  <th className="px-8 py-5 text-white">{t("finance.orders.accountStatus") || "Account Status"}</th>
+                  <th className="px-8 py-5 text-white text-right">{t("finance.orders.creditAction") || "Credit Action"}</th>
                 </>
               ) : (
                 <>
@@ -1633,7 +1641,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-8 py-6">
                       <div className="font-black text-slate-800">{c.name}</div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Customer Account</div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">{t("finance.orders.customerAccount") || "Customer Account"}</div>
                     </td>
                     <td className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-tighter">Client Relations</td>
                     <td className="px-8 py-6">
@@ -1659,9 +1667,9 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-8 py-6">
                       <div className="font-black text-slate-800">{s.name}</div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Vendor Entity</div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">{t("finance.orders.vendorEntity") || "Vendor Entity"}</div>
                     </td>
-                    <td className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-tighter">Supply Chain</td>
+                    <td className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-tighter">{t("finance.orders.supplyChain") || "Supply Chain"}</td>
                     <td className="px-8 py-6">
                       <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${s.isBlacklisted ? 'bg-slate-900 text-white border-black' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
                         {s.isBlacklisted ? 'BLACKLISTED' : 'APPROVED VENDOR'}
@@ -1777,7 +1785,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                           <div className="text-xs font-black text-slate-700 uppercase tracking-tighter">
                             {o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}
                           </div>
-                          <div className="text-[9px] text-slate-400 font-bold mt-1">Acquisition Date</div>
+                          <div className="text-[9px] text-slate-400 font-bold mt-1">{t("finance.tax.acquisitionDate") || "Acquisition Date"}</div>
                         </td>
                       );
                       if (col === 'revenue') return (
@@ -1842,9 +1850,9 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                               <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-rose-200">Force Auth</button>
                             )}
                             {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
-                              <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">Generate Invoice</button>
+                              <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">{t("finance.orders.generateInvoice") || "Generate Invoice"}</button>
                             )}
-                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">Record Payment</button>
+                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">{t("finance.orders.recordPayment") || "Record Payment"}</button>
                             <div className="flex gap-1">
                               {!o.einvoiceRequested && (
                                 <button
@@ -1880,7 +1888,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                     <td colSpan={columnOrder.length} className="px-8 pb-6 bg-transparent">
                       <div className="bg-white rounded-2xl shadow-inner border border-slate-200 overflow-hidden divide-y divide-slate-100">
                         <div className="px-4 py-2 bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest grid grid-cols-12 gap-4 items-center">
-                          <div className="col-span-5">PO Item Definition</div>
+                          <div className="col-span-5">{t("finance.poItemDefinition") || "PO Item Definition"}</div>
                           <div className="col-span-1 text-center">Hub Rdy</div>
                           <div className="col-span-2 text-center">Authorized</div>
                           <div className="col-span-1 text-center">Shipped</div>
@@ -1995,7 +2003,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                 <i className="fa-solid fa-clock-rotate-left"></i>
               </div>
               <div>
-                <div className="font-black text-slate-800 uppercase tracking-widest text-sm">Payment History</div>
+                <div className="font-black text-slate-800 uppercase tracking-widest text-sm">{t("finance.supplier.paymentHistory") || "Payment History"}</div>
                 <div className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">All payment transactions for this order</div>
               </div>
             </div>
@@ -2106,7 +2114,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   <option value="orderNumber">PO Number</option>
                   <option value="customerName">Customer</option>
                   <option value="type">Transaction Type</option>
-                  <option value="amount">Amount</option>
+                  <option value="amount">{t("common.amount") || "Amount"}</option>
                   <option value="revenue">PO Revenue</option>
                 </select>
                 <button
@@ -2458,8 +2466,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
                   <thead className="sticky top-0 bg-white z-10 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                     <tr>
                       <th className="px-4 py-4">Receipt #</th>
-                      <th className="px-4 py-4">Date</th>
-                      <th className="px-4 py-4">Amount</th>
+                      <th className="px-4 py-4">{t("common.date") || "Date"}</th>
+                      <th className="px-4 py-4">{t("common.amount") || "Amount"}</th>
                       <th className="px-4 py-4 text-right">Action</th>
                     </tr>
                   </thead>
@@ -2513,3 +2521,9 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({ config, refreshKey
     </div >
   );
 };
+
+export const FinanceModule: React.FC<FinanceModuleProps> = (props) => (
+  <LanguageProvider pageId="finance">
+    <FinanceModuleInner {...props} />
+  </LanguageProvider>
+);

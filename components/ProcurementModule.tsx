@@ -5,6 +5,8 @@ import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, Ord
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { PartHistory } from './PartHistory';
+import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
+import { LanguageToggle } from './LanguageToggle';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -141,7 +143,8 @@ const CompThreshold: React.FC<{ component: ManufacturingComponent, config: AppCo
   );
 };
 
-export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, refreshKey, currentUser }) => {
+const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refreshKey, currentUser }) => {
+  const { t } = useLanguage();
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [activeTab, setActiveTab] = useState<'purchases' | 'outsourcing' | 'history'>('purchases');
@@ -1067,19 +1070,19 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
           onClick={() => setActiveTab('purchases')}
           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'purchases' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
         >
-          <i className="fa-solid fa-truck-field mr-2"></i> Component Purchases
+          <i className="fa-solid fa-truck-field mr-2"></i> {t('procurement.tabs.sourcing') || 'Component Purchases'}
         </button>
         <button
           onClick={() => setActiveTab('outsourcing')}
           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'outsourcing' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
         >
-          <i className="fa-solid fa-handshake-angle mr-2"></i> Outsourcing
+          <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Outsourcing'}
         </button>
 <button
            onClick={() => setActiveTab('history')}
            className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'history' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
          >
-           <i className="fa-solid fa-clock-rotate-left mr-2"></i> History
+           <i className="fa-solid fa-clock-rotate-left mr-2"></i> {t('procurement.tabs.history') || 'History'}
          </button>
       </div>
 
@@ -1123,7 +1126,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                             <div className="font-mono text-sm font-black">{new Date().toLocaleDateString()}</div>
                           </div>
                           <div className="flex items-center gap-3">
-                            <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#94a3b8' }}>Ref</div>
+                            <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: '#94a3b8' }}>{t("common.search") || "Ref"}</div>
                             <div className="font-mono text-sm font-black" style={{ color: '#1d4ed8' }}>RFQ-{rfpPrintData ? rfpPrintData.order.internalOrderNumber : activeAction!.order.internalOrderNumber}</div>
                           </div>
                         </div>
@@ -1131,8 +1134,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
 
                       <div className="p-6 rounded-2xl border-2 mb-10 text-sm font-bold leading-relaxed" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#334155' }}>
                         {isOutsourcing 
-                          ? <p>Please provide your best commercial offer and estimated timeline for the services listed below. Ensure your quotation clearly states service rates, duration, and total amounts, excluding taxes. If applicable, please attach service scope documentation or qualifications.</p>
-                          : <p>Please provide your best commercial offer and lead time for the components listed below. Ensure your quotation clearly states unit prices and total amounts, excluding taxes. If applicable, please attach technical data sheets or compliance certificates.</p>
+                          ? <p>{t("procurement.rfp.pleaseProvideServiceOffer") || "Please provide your best commercial offer and estimated timeline for the services listed below."} Ensure your quotation clearly states service rates, duration, and total amounts, excluding taxes. If applicable, please attach service scope documentation or qualifications.</p>
+                          : <p>{t("procurement.rfp.pleaseProvideOffer") || "Please provide your best commercial offer and lead time for the components listed below."} Ensure your quotation clearly states unit prices and total amounts, excluding taxes. If applicable, please attach technical data sheets or compliance certificates.</p>
                         }
                       </div>
 
@@ -1142,8 +1145,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           <div className="grid gap-0 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc', display: 'grid', gridTemplateColumns: '0.8fr 3.5fr 1.2fr 1.2fr 1.2fr' }}>
                             <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a' }}>#</div>
                             <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a', textAlign: 'left' }}>Service / Description</div>
-                            <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a' }}>Contract ID</div>
-                            <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a' }}>Duration</div>
+                            <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a' }}>{t("procurement.rfp.contractId") || "Contract ID"}</div>
+                            <div style={{ padding: '12px 8px', borderRight: '2px solid #0f172a' }}>{t("procurement.rfp.duration") || "Duration"}</div>
                             <div style={{ padding: '12px 8px' }}>Qty</div>
                           </div>
 
@@ -1185,8 +1188,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ borderColor: '#0f172a', backgroundColor: '#f8fafc' }}>
                             <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>#</div>
                             <div className="col-span-6 p-3 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>Component / Description</div>
-                            <div className="col-span-3 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>Supplier/Mfr Part #</div>
-                            <div className="col-span-2 p-3">Quantity</div>
+                            <div className="col-span-3 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("procurement.rfp.supplierMfrPart") || "Supplier/Mfr Part #"}</div>
+                            <div className="col-span-2 p-3">{t("common.quantity") || "Quantity"}</div>
                           </div>
 
                            {rfpPrintData ? (
@@ -1244,11 +1247,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                       )}
 
                       <div style={{ fontSize: '9px', fontWeight: 900, textAlign: 'center', marginTop: '80px', paddingTop: '32px', borderTop: '2px solid #0f172a', color: '#94a3b8', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", Inter, "Segoe UI", Tahoma, Arial, sans-serif' }}>
-                        <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>Generated by</span>
+                        <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>{t("procurement.po.generatedBy") || "Generated by"}</span>
                         {' '}
                         <span dir={companyNameHasArabic ? 'rtl' : 'ltr'} lang={companyNameHasArabic ? 'ar' : 'en'} style={{ unicodeBidi: 'isolate', display: 'inline-block', letterSpacing: 'normal', textTransform: companyNameHasArabic ? 'none' : 'none', fontFamily: '"Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, Arial, sans-serif' }}>{companyName}</span>
                         {' '}
-                        <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>Procurement Operations</span>
+                        <span style={{ textTransform: 'uppercase', letterSpacing: 'normal' }}>{t("procurement.po.procurementOps") || "Procurement Operations"}</span>
                       </div>
                     </>
                   );
@@ -1272,13 +1275,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                     <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', lineHeight: '1.5' }}>{config.settings.companyAddress}</div>
                   </div>
                   <div style={{ textAlign: 'right', paddingLeft: '20px' }}>
-                    <div style={{ fontSize: '14px', fontWeight: 900, color: '#0f172a', marginBottom: '15px' }}>PURCHASE ORDER</div>
+                    <div style={{ fontSize: '14px', fontWeight: 900, color: '#0f172a', marginBottom: '15px' }}>{t("procurement.po.title") || "PURCHASE ORDER"}</div>
                     <div style={{ borderTop: '2px solid #0f172a', paddingTop: '8px', marginBottom: '8px' }}>
-                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>PO NUMBER</div>
+                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>{t("procurement.po.poNumber") || "PO NUMBER"}</div>
                       <div style={{ fontSize: '16px', fontWeight: 900, color: '#2563eb' }}>{poPrintData.items[0]?.comp.poNumber}</div>
                     </div>
                     <div style={{ borderTop: '2px solid #0f172a', paddingTop: '8px' }}>
-                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>PO DATE</div>
+                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>{t("procurement.po.poDate") || "PO DATE"}</div>
                       <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a' }}>{new Date(poPrintData.items[0]?.comp.statusUpdatedAt).toLocaleDateString()}</div>
                     </div>
                   </div>
@@ -1331,7 +1334,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                     )}
                     <div>
                       <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Payment Terms</div>
-                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>As per agreement</div>
+                      <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>{t("procurement.po.asPerAgreement") || "As per agreement"}</div>
                     </div>
                   </div>
                 </div>
@@ -1348,8 +1351,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                         <div style={{ display: 'grid', gridTemplateColumns: osCols, gap: 0, backgroundColor: '#0f172a', color: '#ffffff' }}>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>No.</div>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'left', borderRight: '1px solid #ffffff' }}>Description (الوصف)</div>
-                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Contract ID</div>
-                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Duration</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>{t("procurement.rfp.contractId") || "Contract ID"}</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>{t("procurement.rfp.duration") || "Duration"}</div>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Qty</div>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Start Date</div>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center' }}>Amount</div>
@@ -1405,7 +1408,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'left', borderRight: '1px solid #ffffff' }}>Description (الوصف)</div>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Mfr Part #</div>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Qty</div>
-                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Unit</div>
+                          <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>{t("procurement.po.unit") || "Unit"}</div>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center', borderRight: '1px solid #ffffff' }}>Unit Price</div>
                           <div style={{ padding: '10px 8px', fontSize: '9px', fontWeight: 900, textAlign: 'center' }}>Amount</div>
                         </div>
@@ -1485,15 +1488,15 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginBottom: '30px' }}>
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ height: '50px', borderBottom: '1px solid #0f172a', marginBottom: '5px' }}></div>
-                      <div style={{ fontSize: '9px', fontWeight: 700 }}>AUTHORIZED</div>
+                      <div style={{ fontSize: '9px', fontWeight: 700 }}>{t("procurement.po.authorized") || "AUTHORIZED"}</div>
                     </div>
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ height: '50px', borderBottom: '1px solid #0f172a', marginBottom: '5px' }}></div>
-                      <div style={{ fontSize: '9px', fontWeight: 700 }}>APPROVED</div>
+                      <div style={{ fontSize: '9px', fontWeight: 700 }}>{t("procurement.po.approved") || "APPROVED"}</div>
                     </div>
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ height: '50px', borderBottom: '1px solid #0f172a', marginBottom: '5px' }}></div>
-                      <div style={{ fontSize: '9px', fontWeight: 700 }}>RECEIVED</div>
+                      <div style={{ fontSize: '9px', fontWeight: 700 }}>{t("procurement.po.received") || "RECEIVED"}</div>
                     </div>
                   </div>
                   <div style={{ fontSize: '8px', fontWeight: 600, color: '#94a3b8', textAlign: 'center', marginTop: '20px' }}>
@@ -1509,7 +1512,8 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
               <div>
                 <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-4">
-                  {activeTab === 'outsourcing' ? 'Outsourcing Workflow' : 'Commercial Procurement'}
+                  {activeTab === 'outsourcing' ? t('procurement.tabs.outsourcing') || 'Outsourcing Workflow' : t('procurement.title') || 'Commercial Procurement'}
+                  <span className="ml-3"><LanguageToggle /></span>
                 </h2>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
                   {activeTab === 'outsourcing' 
@@ -1716,11 +1720,11 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                 )}
                               </div>
                               <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex flex-wrap gap-x-2 gap-y-1">
-                                <span>Item: {i.orderNumber}</span>
+                                <span>{t('procurement.component.item')}: {i.orderNumber}</span>
                                 <span>•</span>
-                                <span>Ordered Qty: {c.quantity} {c.unit}</span>
+                                <span>{t('procurement.component.orderedQty')}: {c.quantity} {c.unit}</span>
                                 <span>•</span>
-                                <span>Cost: {(c.unitCost || 0).toLocaleString()} L.E.</span>
+                                <span>{t('procurement.component.cost')}: {(c.unitCost || 0).toLocaleString()} L.E.</span>
                                 {c.receivedQty !== undefined && c.receivedQty > 0 && (
                                   <>
                                     <span className="text-emerald-600 font-black">• Received: {c.receivedQty}</span>
@@ -1739,7 +1743,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                           {isContractExpired ? (
                             <div className="flex flex-col items-end gap-2 mt-4 pt-4 border-t border-slate-100 w-full">
                               <div className="text-[10px] font-black text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200 uppercase tracking-widest">
-                                <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>Contract Expired
+                                <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>{t('procurement.component.contractExpired')}
                               </div>
                               <button
                                 onClick={() => setActiveAction({ type: 'REVIVE_CONTRACT', order: o, item: i, comp: c })}
@@ -1780,7 +1784,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                 setRfpCompSelection(sameRfpIds);
                               }}
                                 className="px-4 py-2 bg-slate-900 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-black transition-all"
-                              >Send RFP</button>
+                              >{t('procurement.rfp.sendRfp')}</button>
                             )}
                             {c.status === 'RFP_SENT' && (
                               <div className="flex items-center gap-3">
@@ -1800,7 +1804,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                   setAwardTaxPercent((c.taxPercent || 14).toString());
                                 }}
                                   className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-700 transition-all"
-                                >Award Tender</button>
+                                >{t('procurement.rfp.awardTender')}</button>
                               </div>
                             )}
                             {c.status === 'AWARDED' && (
@@ -1890,7 +1894,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                                   <i className="fa-solid fa-rotate-left"></i> Revert to Award
                                 </button>
                                 <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
-                                  <i className="fa-solid fa-truck-fast mr-1"></i>In Transit
+                                  <i className="fa-solid fa-truck-fast mr-1"></i>{t('procurement.component.inTransit')}
                                 </span>
                               </div>
                             )}
@@ -2498,13 +2502,13 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                   <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4">Contract Information</h4>
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div>
-                      <label className="text-[9px] font-bold text-slate-400 uppercase">Contract ID</label>
+                      <label className="text-[9px] font-bold text-slate-400 uppercase">{t("procurement.rfp.contractId") || "Contract ID"}</label>
                       <p className="text-sm font-black text-blue-600 mt-1">
                         {replacementModalInfo.comp.contractNumber || replacementModalInfo.comp.componentNumber || 'N/A'}
                       </p>
                     </div>
                     <div>
-                      <label className="text-[9px] font-bold text-slate-400 uppercase">Duration</label>
+                      <label className="text-[9px] font-bold text-slate-400 uppercase">{t("procurement.rfp.duration") || "Duration"}</label>
                       <p className="text-sm font-black text-slate-800 mt-1">
                         {replacementModalInfo.comp.contractDuration || 'Not Set'}
                       </p>
@@ -2740,7 +2744,7 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                        <tbody>
                           <tr>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', width: '30%', backgroundColor: '#f8fafc' }}>Contract ID</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', width: '30%', backgroundColor: '#f8fafc' }}>{t("procurement.rfp.contractId") || "Contract ID"}</td>
                             <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#2563eb' }}>{replacementModalInfo.comp.contractNumber || replacementModalInfo.comp.componentNumber || '-'}</td>
                           </tr>
                           <tr>
@@ -2795,3 +2799,9 @@ export const ProcurementModule: React.FC<ProcurementModuleProps> = ({ config, re
     </div >
   );
 };
+
+export const ProcurementModule: React.FC<ProcurementModuleProps> = (props) => (
+  <LanguageProvider pageId="procurement">
+    <ProcurementModuleInner {...props} />
+  </LanguageProvider>
+);

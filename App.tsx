@@ -21,6 +21,7 @@ import { OrderReport } from './components/OrderReport';
 import { SystemLogs } from './components/SystemLogs';
 import { MinimumsModule } from './components/MinimumsModule';
 import { Login } from './components/Login';
+
 import { dataService } from './services/dataService';
 import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, UserGroup } from './types';
 
@@ -471,6 +472,7 @@ const App: React.FC = () => {
           ))}
         </nav>
 
+
         {!effectivelyCollapsed && (
           <div className="p-6 border-t border-white/5">
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-white/5 border border-white/5">
@@ -557,7 +559,7 @@ const App: React.FC = () => {
         </div>
       )}
       {hasRole('management') && <AIAssistant orders={orders} config={config} />}
-    </div>
+      </div>
   );
 };
 
