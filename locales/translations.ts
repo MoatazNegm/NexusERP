@@ -14,7 +14,7 @@ export const translations: Record<string, any> = {
       refresh: 'Refresh', filter: 'Filter', sort: 'Sort', view: 'View',
       noData: 'No data available', noResults: 'No results found',
       searchPlaceholder: 'Search...', processing: 'Processing...',
-      areYouSure: 'Are you sure?', recordedBy: 'Recorded By', memo: 'Memo',
+      areYouSure: 'Are you sure?', recordedBy: 'Recorded By', memo: 'Memo', record: 'Record',
     },
     nav: {
       dashboard: 'Dashboard', orders: 'Orders', technicalReview: 'Technical Review',
@@ -38,8 +38,10 @@ export const translations: Record<string, any> = {
         addition: 'Addition', manual: 'Manual', customer: 'Customer',
         supplier: 'Supplier', receipt: 'Receipt', account: 'Account',
         accounts: 'Accounts', groups: 'Groups',
+        costExpense: 'Cost / Expense', additionIncome: 'Addition / Income', noRecords: 'No ledger records matching your criteria', selectAccount: 'Select account...', fromAccountLabel: 'From Account', toAccountLabel: 'To Account', whatIsThisFor: 'What is this for?', paymentAllocation: 'Payment Allocation Breakdown', financialLedger: 'Financial Ledger (FIFO Orders)', selectSupplierAudit: 'Please select a supplier to continue audit',
       },
       orders: {
+        authActions: 'Auth Actions', slaStatus: 'SLA / Status', markupAnalysis: 'Markup Analysis', revenueMetrics: 'Revenue Metrics', orderDate: 'Order Date', taxPoDetails: 'Tax PO Details', targetRevenue: 'Target Revenue (99%)', whtValue: 'WHT Value (1%)', clearanceStatus: 'Clearance Status',
         recordPayment: 'Record Payment', void: 'Void', markUp: 'Mark Up',
         gross: 'Gross', outstanding: 'Outstanding', paid: 'Paid', total: 'Total',
         operationalContext: 'Operational Context', accountStatus: 'Account Status',
@@ -53,6 +55,7 @@ export const translations: Record<string, any> = {
         previousPayments: 'Previous Payments', totalPreviouslyPaid: 'Total Previously Paid',
         balanceSummary: 'Balance Summary', paymentReference: 'Payment Reference',
         paymentDate: 'Payment Date', paymentMemo: 'Payment Memo',
+        hubReady: 'Hub Rdy', authorized: 'Authorized', shipped: 'Shipped', dispatchReceipt: 'Dispatch Autho. Receipt',
       },
       supplier: {
         title: 'Supplier Financial Report', selectSupplier: 'Select Supplier(s)',
@@ -63,6 +66,7 @@ export const translations: Record<string, any> = {
         unitCost: 'Unit cost', totalPO: 'Total (PO)', deliveryValue: 'Deliv. Val',
         allocated: 'Allocated', balance: 'Balance', noLedgerData: 'No detailed ledger data found',
         selectSupplierPrompt: 'Please select a supplier to view their financial report',
+        totalOrdered: 'Total Ordered', totalReceivedValue: 'Total Received Value', paidToSupplier: 'Paid to Supplier', receivedBalance: 'Received Balance', futureExpectedPayment: 'Future Expected Payment', overallBalance: 'Overall Balance', unitCostLabel: 'Unit cost',
       },
       tax: {
         thisYear: 'This Year', lastYear: 'Last Year', searchCustomer: 'Search Customer...',
@@ -71,7 +75,7 @@ export const translations: Record<string, any> = {
       },
       history: {
         searchHistory: 'Search transactions, receipts, references...',
-        downloadReceipt: 'Download Receipt',
+        downloadReceipt: 'Download Receipt', dateTime: 'Date & Time', poNumber: 'PO Number', customer: 'Customer', transactionType: 'Transaction Type', poRevenue: 'PO Revenue', financialTransaction: 'Financial Transaction', sortBy: 'Sort by',
       },
       billing: {
         description: 'Description', unitPrice: 'Unit Price', qty: 'Qty',
@@ -80,7 +84,7 @@ export const translations: Record<string, any> = {
         grandTotal: 'Grand Total',
       },
       entities: {
-        customerHold: 'Hold Customer', supplierBlacklist: 'Blacklist Supplier',
+        customerHold: 'Hold Customer', supplierBlacklist: 'Blacklist Supplier', creditHold: 'CREDIT HOLD', accountActive: 'ACCOUNT ACTIVE', releaseHold: 'Release Hold', engageCreditHold: 'Engage Credit Hold', blacklisted: 'BLACKLISTED', approvedVendor: 'APPROVED VENDOR', restoreVendor: 'Restore Vendor', blacklistVendor: 'Blacklist Vendor', clientRelations: 'Client Relations', entityType: 'Entity Type',
         orderHold: 'Hold Order', orderReject: 'Reject Order',
       },
       poItemDefinition: 'PO Item Definition',
@@ -146,7 +150,7 @@ export const translations: Record<string, any> = {
       refresh: 'تحديث', filter: 'تصفية', sort: 'ترتيب', view: 'عرض',
       noData: 'لا توجد بيانات', noResults: 'لم يتم العثور على نتائج',
       searchPlaceholder: 'البحث...', processing: 'جارٍ المعالجة...',
-      areYouSure: 'هل أنت متأكد؟', recordedBy: 'سُجّل بواسطة', memo: 'ملاحظة',
+      areYouSure: 'هل أنت متأكد؟', recordedBy: 'سُجّل بواسطة', memo: 'ملاحظة', record: 'تسجيل',
     },
     nav: {
       dashboard: 'لوحة التحكم', orders: 'الطلبات', technicalReview: 'المراجعة الفنية',
@@ -171,8 +175,10 @@ export const translations: Record<string, any> = {
         addition: 'إضافة', manual: 'يدوي', customer: 'عميل',
         supplier: 'مورد', receipt: 'إيصال', account: 'حساب',
         accounts: 'الحسابات', groups: 'المجموعات',
+        costExpense: 'تكلفة / مصروف', additionIncome: 'إضافة / دخل', noRecords: 'لا توجد سجلات مطابقة لمعاييرك', selectAccount: 'اختر حساباً...', fromAccountLabel: 'من حساب', toAccountLabel: 'إلى حساب', whatIsThisFor: 'ما الغرض من هذا؟', paymentAllocation: 'تفصيل توزيع الدفعة', financialLedger: 'الدفتر المالي (ترتيب الطلبات)', selectSupplierAudit: 'يرجى اختيار مورد لمتابعة التدقيق',
       },
       orders: {
+        authActions: 'إجراءات الاعتماد', slaStatus: 'الحالة / مستوى الخدمة', markupAnalysis: 'تحليل الهامش', revenueMetrics: 'مقاييس الإيرادات', orderDate: 'تاريخ الطلب', taxPoDetails: 'تفاصيل الشراء الضريبي', targetRevenue: 'الإيراد المستهدف (99%)', whtValue: 'قيمة ضريبة الاستقطاع (1%)', clearanceStatus: 'حالة التخليص',
         recordPayment: 'تسجيل دفعة', void: 'إلغاء', markUp: 'هامش الربح',
         gross: 'إجمالي', outstanding: 'مستحق', paid: 'مدفوع', total: 'المجموع',
         operationalContext: 'السياق التشغيلي', accountStatus: 'حالة الحساب',
@@ -186,6 +192,7 @@ export const translations: Record<string, any> = {
         previousPayments: 'الدفعات السابقة', totalPreviouslyPaid: 'إجمالي المدفوع سابقاً',
         balanceSummary: 'ملخص الرصيد', paymentReference: 'مرجع الدفع',
         paymentDate: 'تاريخ الدفع', paymentMemo: 'ملاحظات الدفع',
+        hubReady: 'جاهز بالمستودع', authorized: 'معتمد', shipped: 'تم الشحن', dispatchReceipt: 'إيصال التفويض بالإرسال',
       },
       supplier: {
         title: 'التقرير المالي للمورد', selectSupplier: 'اختيار المورد(ين)',
@@ -196,6 +203,7 @@ export const translations: Record<string, any> = {
         unitCost: 'تكلفة الوحدة', totalPO: 'إجمالي (أمر الشراء)', deliveryValue: 'قيمة التسليم',
         allocated: 'مخصص', balance: 'الرصيد', noLedgerData: 'لا توجد بيانات تفصيلية في الدفتر',
         selectSupplierPrompt: 'يرجى اختيار مورد لعرض تقريره المالي',
+        totalOrdered: 'إجمالي المطلوب', totalReceivedValue: 'إجمالي القيمة المستلمة', paidToSupplier: 'المدفوع للمورد', receivedBalance: 'رصيد المستلم', futureExpectedPayment: 'مدفوعات متوقعة', overallBalance: 'الرصيد الإجمالي', unitCostLabel: 'تكلفة الوحدة',
       },
       tax: {
         thisYear: 'هذا العام', lastYear: 'العام الماضي', searchCustomer: 'بحث عن عميل...',
@@ -204,7 +212,7 @@ export const translations: Record<string, any> = {
       },
       history: {
         searchHistory: 'بحث في المعاملات، الإيصالات، المراجع...',
-        downloadReceipt: 'تنزيل الإيصال',
+        downloadReceipt: 'تنزيل الإيصال', dateTime: 'التاريخ والوقت', poNumber: 'رقم أمر الشراء', customer: 'العميل', transactionType: 'نوع المعاملة', poRevenue: 'إيراد أمر الشراء', financialTransaction: 'معاملة مالية', sortBy: 'ترتيب حسب',
       },
       billing: {
         description: 'الوصف', unitPrice: 'سعر الوحدة', qty: 'الكمية',
@@ -213,7 +221,7 @@ export const translations: Record<string, any> = {
         grandTotal: 'المجموع الكلي',
       },
       entities: {
-        customerHold: 'تعليق العميل', supplierBlacklist: 'حظر المورد',
+        customerHold: 'تعليق العميل', supplierBlacklist: 'حظر المورد', creditHold: 'تعليق ائتماني', accountActive: 'حساب نشط', releaseHold: 'رفع التعليق', engageCreditHold: 'تفعيل التعليق الائتماني', blacklisted: 'محظور', approvedVendor: 'مورد معتمد', restoreVendor: 'استعادة المورد', blacklistVendor: 'حظر المورد', clientRelations: 'علاقات العملاء', entityType: 'نوع الكيان',
         orderHold: 'تعليق الطلب', orderReject: 'رفض الطلب',
       },
       poItemDefinition: 'تعريف بند أمر الشراء',
