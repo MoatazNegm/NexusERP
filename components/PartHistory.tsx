@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useLanguage } from '../contexts/LanguageContext';
 import { CustomerOrder, ManufacturingComponent, Supplier, ReplacementRequest } from '../types';
 
 interface PartHistoryProps {
@@ -64,6 +65,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) => {
+    const { t, language } = useLanguage();
+    const isAr = language === 'ar';
     const [search, setSearch] = useState('');
     const [columnOrder, setColumnOrder] = useState<ColKey[]>(DEFAULT_COLUMNS.map(c => c.key));
     const [sortKey, setSortKey] = useState<ColKey | null>('purchaseDate');
@@ -237,10 +240,10 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                     <div>
                         <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">
-                            {activeTab === 'contracts' ? 'Outsourcing Contract History' : 'Part & Component History'}
+                            {isAr ? (activeTab === 'contracts' ? 'سجل عقود التعهيد' : 'سجل القطع والمكونات') : (activeTab === 'contracts' ? 'Outsourcing Contract History' : 'Part & Component History')}
                         </h2>
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">
-                            Complete {activeTab === 'contracts' ? 'Contract' : 'Part'} Registry • {typedParts.length} Records • Drag column headers to reorder
+                            {isAr ? `سجل ${activeTab === 'contracts' ? 'العقود' : 'القطع'} الكامل • ${typedParts.length} سجلات • اسحب رؤوس الأعمدة لإعادة الترتيب` : `Complete ${activeTab === 'contracts' ? 'Contract' : 'Part'} Registry • ${typedParts.length} Records • Drag column headers to reorder`}
                         </p>
                     </div>
 
@@ -249,20 +252,20 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                             onClick={() => setActiveTab('parts')}
                             className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'parts' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                         >
-                            Parts
+                            {isAr ? 'القطع' : 'Parts'}
                         </button>
                         <button
                             onClick={() => setActiveTab('contracts')}
                             className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'contracts' ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                         >
-                            Contracts
+                            {isAr ? 'العقود' : 'Contracts'}
                         </button>
                     </div>
 
                     <div className="relative w-full md:w-96">
                         <input
                             type="text"
-                            placeholder="Search by part number, description, supplier..."
+                            placeholder={isAr ? "بحث برقم القطعة، الوصف، المورد..." : "Search by part number, description, supplier..."}
                             className="w-full px-5 py-4 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:ring-4 focus:ring-blue-50 focus:border-blue-500 transition-all font-bold text-sm"
                             value={search}
                             onChange={e => setSearch(e.target.value)}
@@ -291,14 +294,14 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                     >
                                         <div className="flex items-center gap-2">
                                             <i className="fa-solid fa-grip-vertical text-[8px] text-slate-300"></i>
-                                            <span>{activeTab === 'contracts' ? colMeta[key].contractLabel : colMeta[key].label}</span>
+                                            <span>{isAr ? colMeta[key].labelAr : (activeTab === 'contracts' ? colMeta[key].contractLabel : colMeta[key].label)}</span>
                                             {sortKey === key && (
                                                 <i className={`fa-solid ${sortAsc ? 'fa-sort-up' : 'fa-sort-down'} text-blue-500`}></i>
                                             )}
                                         </div>
                                     </th>
                                 ))}
-                                <th className="px-4 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Order Ref</th>
+                                <th className="px-4 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">{isAr ? 'مرجع الطلب' : 'Order Ref'}</th>
                                 <th className="px-4 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest w-12"></th>
                             </tr>
                         </thead>
@@ -328,29 +331,29 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                         {/* Component Info */}
                                                         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
                                                             <h4 className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4 flex items-center gap-2">
-                                                                <i className="fa-solid fa-microchip text-blue-500"></i> Component Details
+                                                                <i className="fa-solid fa-microchip text-blue-500"></i> {isAr ? 'تفاصيل المكون' : 'Component Details'}
                                                             </h4>
                                                             <div className="space-y-3">
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Status</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'الحالة' : 'Status'}</span>
                                                                     <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${STATUS_COLORS[row.status] || 'bg-slate-100 text-slate-600'}`}>
                                                                         {row.status.replace(/_/g, ' ') || 'N/A'}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Source</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'المصدر' : 'Source'}</span>
                                                                     <span className="text-xs font-black text-slate-700">{row.source}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">PO Number</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'رقم أمر الشراء' : 'PO Number'}</span>
                                                                     <span className="text-xs font-mono font-black text-indigo-600">{row.poNumber || '-'}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Unit Cost</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'تكلفة الوحدة' : 'Unit Cost'}</span>
                                                                     <span className="text-xs font-black text-slate-700">{row.price.toLocaleString()} L.E.</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Total Cost</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'التكلفة الإجمالية' : 'Total Cost'}</span>
                                                                     <span className="text-xs font-black text-slate-900">{(row.price * row.qty).toLocaleString()} L.E.</span>
                                                                 </div>
                                                             </div>
@@ -359,23 +362,23 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                         {/* Order Info */}
                                                         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
                                                             <h4 className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4 flex items-center gap-2">
-                                                                <i className="fa-solid fa-file-invoice text-amber-500"></i> Order Context
+                                                                <i className="fa-solid fa-file-invoice text-amber-500"></i> {isAr ? 'سياق الطلب' : 'Order Context'}
                                                             </h4>
                                                             <div className="space-y-3">
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Customer</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'العميل' : 'Customer'}</span>
                                                                     <span className="text-xs font-black text-slate-700">{row.customerName}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Order Ref</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'مرجع الطلب' : 'Order Ref'}</span>
                                                                     <span className="text-xs font-mono font-black text-blue-600">{row.orderRef}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Line Item</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'بند الطلب' : 'Line Item'}</span>
                                                                     <span className="text-xs font-bold text-slate-600 truncate max-w-[150px]">{row.itemDescription}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Supplier</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'المورد' : 'Supplier'}</span>
                                                                     <span className="text-xs font-black text-slate-700">{row.supplier || '-'}</span>
                                                                 </div>
                                                             </div>
@@ -384,27 +387,27 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                         {/* Tracking IDs */}
                                                         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
                                                             <h4 className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4 flex items-center gap-2">
-                                                                <i className="fa-solid fa-fingerprint text-emerald-500"></i> Tracking IDs
+                                                                <i className="fa-solid fa-fingerprint text-emerald-500"></i> {isAr ? 'معرفات التتبع' : 'Tracking IDs'}
                                                             </h4>
                                                             <div className="space-y-3">
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">RFP ID</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'رقم طلب العرض' : 'RFP ID'}</span>
                                                                     <span className="text-[10px] font-mono font-bold text-blue-600">{row.rfpId ? row.rfpId.substring(0, 8) + '...' : '-'}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Award ID</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'رقم الترسية' : 'Award ID'}</span>
                                                                     <span className="text-[10px] font-mono font-bold text-amber-600">{row.awardId ? row.awardId.substring(0, 8) + '...' : '-'}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">PO Batch ID</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'رقم دفعة أمر الشراء' : 'PO Batch ID'}</span>
                                                                     <span className="text-[10px] font-mono font-bold text-indigo-600">{row.sendPoId ? row.sendPoId.substring(0, 8) + '...' : '-'}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Procurement Started</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'بدء المشتريات' : 'Procurement Started'}</span>
                                                                     <span className="text-[10px] font-bold text-slate-600">{formatDateTime(row.procurementStartedAt)}</span>
                                                                 </div>
                                                                 <div className="flex justify-between">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Last Status Update</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'آخر تحديث للحالة' : 'Last Status Update'}</span>
                                                                     <span className="text-[10px] font-bold text-slate-600">{formatDateTime(row.statusUpdatedAt)}</span>
                                                                 </div>
                                                             </div>
@@ -415,7 +418,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                     {row.orderLogs.length > 0 && (
                                                         <div className="mt-6 bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
                                                             <h4 className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4 flex items-center gap-2">
-                                                                <i className="fa-solid fa-timeline text-violet-500"></i> Order Activity Log
+                                                                <i className="fa-solid fa-timeline text-violet-500"></i> {isAr ? 'سجل نشاط الطلب' : 'Order Activity Log'}
                                                             </h4>
                                                             <div className="space-y-0 relative">
                                                                 <div className="absolute left-[7px] top-3 bottom-3 w-[2px] bg-slate-100"></div>
@@ -430,13 +433,13 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                                                         {log.status.replace(/_/g, ' ')}
                                                                                     </span>
                                                                                 )}
-                                                                                {log.user && <span className="text-[9px] font-bold text-slate-400">by {log.user}</span>}
+                                                                                {log.user && <span className="text-[9px] font-bold text-slate-400">{isAr ? `بواسطة ${log.user}` : `by ${log.user}`}</span>}
                                                                             </div>
                                                                             <p className="text-xs font-bold text-slate-600 mt-0.5 whitespace-pre-wrap leading-relaxed">
                                                                                 {log.message}
                                                                                 {row.productionType === 'OUTSOURCING' && log.message.startsWith('Component updated:') && (
                                                                                     <span className="block mt-1 font-normal italic text-[10px] text-violet-500">
-                                                                                        (Contract: {row.contractNumber || row.orderRef}, Duration: {row.contractDuration || 'N/A'}, Start Date: {row.contractStartDate ? formatDate(row.contractStartDate) : 'N/A'}, Reason: {row.scopeOfWork || row.description})
+                                                                                        {isAr ? `(العقد: ${row.contractNumber || row.orderRef}، المدة: ${row.contractDuration || 'غ/م'}، تاريخ البدء: ${row.contractStartDate ? formatDate(row.contractStartDate) : 'غ/م'}، السبب: ${row.scopeOfWork || row.description})` : `(Contract: ${row.contractNumber || row.orderRef}, Duration: ${row.contractDuration || 'N/A'}, Start Date: ${row.contractStartDate ? formatDate(row.contractStartDate) : 'N/A'}, Reason: ${row.scopeOfWork || row.description})`}
                                                                                     </span>
                                                                                 )}
                                                                             </p>
@@ -451,20 +454,20 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                     {row.replacementHistory && row.replacementHistory.length > 0 && (
                                                         <div className="mt-6 bg-white rounded-2xl p-5 border border-slate-200 shadow-sm border-l-4 border-l-violet-500">
                                                             <h4 className="text-[9px] font-black uppercase tracking-[0.2em] text-violet-600 mb-4 flex items-center gap-2">
-                                                                <i className="fa-solid fa-clock-rotate-left"></i> Resource Replacement History
+                                                                <i className="fa-solid fa-clock-rotate-left"></i> {isAr ? 'سجل استبدال الموارد' : 'Resource Replacement History'}
                                                             </h4>
                                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                                                 {row.replacementHistory.map((req, ridx) => (
                                                                     <div key={ridx} className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[10px]">
                                                                         <div className="flex justify-between items-center mb-2">
-                                                                            <span className="font-black text-slate-700 uppercase">Request Date: {formatDate(req.requestDate)}</span>
+                                                                            <span className="font-black text-slate-700 uppercase">{isAr ? `تاريخ الطلب: ${formatDate(req.requestDate)}` : `Request Date: ${formatDate(req.requestDate)}`}</span>
                                                                             <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-black">{req.remainingDuration}</span>
                                                                         </div>
                                                                         <div className="text-slate-500 font-bold italic mb-2">"{req.reason}"</div>
                                                                         <div className="flex items-center gap-2 text-slate-400 font-black">
-                                                                            <span>Start: {formatDate(req.originalStartDate)}</span>
+                                                                            <span>{isAr ? `البداية: ${formatDate(req.originalStartDate)}` : `Start: ${formatDate(req.originalStartDate)}`}</span>
                                                                             <i className="fa-solid fa-arrow-right text-[8px] opacity-40"></i>
-                                                                            <span className="text-violet-600">New: {formatDate(req.newStartDate)}</span>
+                                                                            <span className="text-violet-600">{isAr ? `الجديد: ${formatDate(req.newStartDate)}` : `New: ${formatDate(req.newStartDate)}`}</span>
                                                                         </div>
                                                                     </div>
                                                                 ))}
@@ -484,7 +487,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                     <div className="p-20 text-center flex flex-col items-center gap-4 text-slate-300">
                         <i className="fa-solid fa-box-open text-6xl opacity-10"></i>
                         <p className="font-black text-xs uppercase tracking-[0.3em]">
-                            {search ? 'No matching records found' : 'No component history available'}
+                            {isAr ? (search ? 'لا توجد سجلات مطابقة' : 'لا يوجد سجل مكونات متاح') : (search ? 'No matching records found' : 'No component history available')}
                         </p>
                     </div>
                 )}

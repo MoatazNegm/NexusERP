@@ -994,7 +994,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
             compId: comp.id!,
             compDesc: comp.description,
             componentNumber: comp.componentNumber,
-            supplierName: supplier?.name || 'Unknown Supplier',
+            supplierName: supplier?.name || t('procurement.component.unknown'),
             quantity: comp.quantity,
             status: comp.status || ''
           });
@@ -1065,6 +1065,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   return (
     <div className="space-y-6">
       {/* Tab Bar */}
+      <div className="flex items-center gap-3">
+      <LanguageToggle />
       <div className="flex gap-1 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 w-fit">
         <button
           onClick={() => setActiveTab('purchases')}
@@ -1084,6 +1086,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
          >
            <i className="fa-solid fa-clock-rotate-left mr-2"></i> {t('procurement.tabs.history') || 'History'}
          </button>
+      </div>
       </div>
 
       {activeTab === 'history' ? (
@@ -1321,7 +1324,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     )}
                     {poPrintData.items.some(({ item, comp }) => (item.productionType === 'OUTSOURCING' || (comp as any).contractStartDate) && comp.contractStartDate) && (
                       <div style={{ marginBottom: '12px' }}>
-                        <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Contract Start Date</div>
+                        <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>{t('procurement.replacement.contractStartDate')}</div>
                         <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>
                           {(() => {
                             const dateComp = poPrintData.items.find(({ item, comp }) => 
@@ -1512,25 +1515,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
               <div>
                 <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-4">
-                  {activeTab === 'outsourcing' ? t('procurement.tabs.outsourcing') || 'Outsourcing Workflow' : t('procurement.title') || 'Commercial Procurement'}
-                  <span className="ml-3"><LanguageToggle /></span>
+                  {activeTab === 'outsourcing' ? t('procurement.outsourcingTitle') : t('procurement.title')}
+                  
                 </h2>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
                   {activeTab === 'outsourcing' 
-                    ? `Operational Services • ${outsourcingGroups.length} Orders Pending Action` 
-                    : `Supply Chain Orchestration • ${purchaseGroups.length} Orders Pending Action`}
+                    ? `${t('procurement.subtitle.operationalServices')} • ${outsourcingGroups.length} ${t('procurement.subtitle.ordersPending')}` 
+                    : `${t('procurement.subtitle.supplyChain')} • ${purchaseGroups.length} ${t('procurement.subtitle.ordersPending')}`}
                 </p>
               </div>
 
               {/* Sorting Bar */}
               <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 self-end md:self-auto">
-                <span className="text-[9px] font-black uppercase text-slate-400 px-3 tracking-widest whitespace-nowrap">Priority Sort:</span>
+                <span className="text-[9px] font-black uppercase text-slate-400 px-3 tracking-widest whitespace-nowrap">{t('procurement.sort.prioritySort')}:</span>
                 <div className="flex gap-1">
                   {[
-                    { key: 'orderDate', label: 'PO Received' },
-                    { key: 'customer', label: 'Entity' },
-                    { key: 'customerReferenceNumber', label: 'PO #' },
-                    { key: 'internalOrderNumber', label: 'Int ID' }
+                    { key: 'orderDate', label: t('procurement.sort.poReceived') },
+                    { key: 'customer', label: t('procurement.sort.entity') },
+                    { key: 'customerReferenceNumber', label: t('procurement.sort.poHash') },
+                    { key: 'internalOrderNumber', label: t('procurement.sort.intId') }
                   ].map(btn => (
                     <button
                       key={btn.key}
@@ -1581,12 +1584,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             {itemsInFactoryCount > 0 && (
                               <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
                                 <i className="fa-solid fa-bolt mr-1"></i>
-{itemsInFactoryCount}/{totalItems} items factory-ready
+{itemsInFactoryCount}/{totalItems} {t('procurement.component.factoryReady')}
                               </span>
                             )}
                           </div>
                           <div className="font-black text-slate-800">{o.customerName}</div>
-                          <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} components</div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} {t('procurement.component.components')}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
@@ -1601,10 +1604,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           }}
                           className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-2 transition-all ${anyOrdered ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border border-orange-200 text-orange-500 hover:bg-orange-50'
                             }`}
-                          title={anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback to Logged Registry'}
+                          title={anyOrdered ? t('procurement.actions.rollbackLocked') : t('procurement.actions.rollbackOrder')}
                         >
                           <i className="fa-solid fa-file-export fa-flip-horizontal"></i>
-                          {anyOrdered ? 'POs Active — Rollback Locked' : 'Rollback Order'}
+                          {anyOrdered ? t('procurement.actions.rollbackLocked') : t('procurement.actions.rollbackOrder')}
                         </button>
 
                         {/* Global Issue PO for all awarded comps */}
@@ -1629,19 +1632,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-lg flex items-center gap-2 transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-100'
                               }`}
                           >
-                            <i className="fa-solid fa-file-invoice"></i> Issue PO for All
+                            <i className="fa-solid fa-file-invoice"></i> {t('procurement.po.issuePOAll')}
                           </button>
                         )}
                         {anyOrderProcurementNotReady && (
                           <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-600 uppercase bg-rose-50 px-3 py-1.5 rounded-lg">
                             <i className="fa-solid fa-circle-exclamation"></i>
-                            Not all line items ready for PO
+                            {t('procurement.actions.notAllReady')}
                           </div>
                         )}
                         {!readyForPo && !allOrderedOrHigher && !anyOrderProcurementNotReady && (
                           <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase bg-amber-50 px-3 py-1.5 rounded-lg">
                             <i className="fa-solid fa-hourglass-half"></i>
-                            All components must be awarded for PO
+                            {t('procurement.actions.allMustBeAwarded')}
                           </div>
                         )}
                       </div>
@@ -1702,18 +1705,18 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 {c.description}
                                 {c.contractStartDate && (
                                   <span className="ml-3 text-[9px] font-black text-purple-600 uppercase tracking-wide">
-                                    <i className="fa-solid fa-calendar-check mr-1"></i>Start: {new Date(c.contractStartDate).toLocaleDateString()}
+                                    <i className="fa-solid fa-calendar-check mr-1"></i>{t('procurement.component.start')}: {new Date(c.contractStartDate).toLocaleDateString()}
                                     {c.contractStartDate && c.contractDuration && (() => {
                                       const endDate = calculateContractEndDate(c.contractStartDate, c.contractDuration);
                                       return endDate ? (
                                         <span className="text-emerald-600 ml-2">
-                                          • End: {endDate.toLocaleDateString()} ✓
+                                          • {t('procurement.component.end')}: {endDate.toLocaleDateString()} ✓
                                         </span>
                                       ) : null;
                                     })()}
                                     {c.contractDuration && (
                                       <span className="text-blue-600 ml-2">
-                                        • Duration: {c.contractDuration}
+                                        • {t('procurement.rfp.duration')}: {c.contractDuration}
                                       </span>
                                     )}
                                   </span>
@@ -1727,13 +1730,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 <span>{t('procurement.component.cost')}: {(c.unitCost || 0).toLocaleString()} L.E.</span>
                                 {c.receivedQty !== undefined && c.receivedQty > 0 && (
                                   <>
-                                    <span className="text-emerald-600 font-black">• Received: {c.receivedQty}</span>
-                                    <span className="text-amber-600 font-black">• Left: {Math.max(0, (c.quantity || 0) - c.receivedQty)}</span>
+                                    <span className="text-emerald-600 font-black">• {t('procurement.component.received')}: {c.receivedQty}</span>
+                                    <span className="text-amber-600 font-black">• {t('procurement.component.left')}: {Math.max(0, (c.quantity || 0) - c.receivedQty)}</span>
                                   </>
                                 )}
                                 {c.supplierId && (
                                   <span className="text-blue-600">
-                                    • Supplier: {suppliers.find(s => s.id === c.supplierId)?.name || 'Unknown'}
+                                    • {t('procurement.component.supplier')}: {suppliers.find(s => s.id === c.supplierId)?.name || t('procurement.component.unknown')}
                                   </span>
                                 )}
                               </div>
@@ -1749,7 +1752,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 onClick={() => setActiveAction({ type: 'REVIVE_CONTRACT', order: o, item: i, comp: c })}
                                 className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase shadow-lg hover:bg-emerald-700 transition-all flex items-center gap-2 mt-2"
                               >
-                                <i className="fa-solid fa-heart-pulse"></i> Revive Contract
+                                <i className="fa-solid fa-heart-pulse"></i> {t('procurement.actions.reviveContract')}
                               </button>
                             </div>
                           ) : (
@@ -1792,7 +1795,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   onClick={() => handleDownloadExistingRfp(o, c, comps)}
                                   className="px-3 py-1.5 bg-white border border-slate-900 text-slate-900 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-slate-50 transition-all flex items-center gap-1.5"
                                 >
-                                  <i className="fa-solid fa-file-pdf"></i> Download RFP
+                                  <i className="fa-solid fa-file-pdf"></i> {t('procurement.rfp.downloadRfp')}
                                 </button>
                                 <button onClick={() => {
                                   const sameRfp = comps.filter(x => x.comp.status === 'RFP_SENT' && c.rfpId && x.comp.rfpId === c.rfpId);
@@ -1811,7 +1814,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               <div className="flex flex-col items-end gap-1.5">
                                 <div className="flex items-center gap-2">
                                   {!allOrderProcurementAwarded && (
-                                    <span className="text-[8px] font-black text-slate-400 uppercase mr-2">All components must be awarded first</span>
+                                    <span className="text-[8px] font-black text-slate-400 uppercase mr-2">{t('procurement.actions.allMustBeAwarded')}</span>
                                   )}
 
                                   {allOrderProcurementAwarded && (
@@ -1852,7 +1855,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 {o.status === OrderStatus.NEGATIVE_MARGIN && (
                                   <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-500 uppercase animate-pulse">
                                     <i className="fa-solid fa-triangle-exclamation"></i>
-                                    Financial Breach: PO Blocked
+                                    {t('procurement.actions.financialBreach')}
                                   </div>
                                 )}
                               </div>
@@ -1863,7 +1866,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   onClick={() => handleDownloadPO(o, c)}
                                   className="px-3 py-1.5 bg-white border border-blue-600 text-blue-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-1.5"
                                 >
-                                  <i className="fa-solid fa-file-pdf"></i> Download PO
+                                  <i className="fa-solid fa-file-pdf"></i> {t('procurement.po.downloadPO')}
                                 </button>
                                 <button
                                   onClick={() => {
@@ -1881,7 +1884,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   disabled={isActionLoading != null}
                                   className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-rose-700 transition-all flex items-center gap-1.5"
                                 >
-                                  <i className="fa-solid fa-ban"></i> Cancel Order
+                                  <i className="fa-solid fa-ban"></i> {t('procurement.actions.cancelOrder')}
                                 </button>
                                 <button
                                   onClick={() => {
@@ -1891,7 +1894,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-600 transition-all flex items-center gap-1.5"
                                   title="Revert this PO back to AWARDED status"
                                 >
-                                  <i className="fa-solid fa-rotate-left"></i> Revert to Award
+                                  <i className="fa-solid fa-rotate-left"></i> {t('procurement.actions.revertToAward')}
                                 </button>
                                 <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
                                   <i className="fa-solid fa-truck-fast mr-1"></i>{t('procurement.component.inTransit')}
@@ -1942,7 +1945,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   className="px-3 py-1.5 bg-violet-100 border border-violet-100 text-violet-700 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-violet-200 hover:border-violet-200 transition-all flex items-center gap-1.5"
                                   title="Request Resource Replacement"
                                 >
-                                  <i className="fa-solid fa-users-arrows"></i> Resource Replacement
+                                  <i className="fa-solid fa-users-arrows"></i> {t('procurement.actions.resourceReplacement')}
                                 </button>
                               </div>
                             )}
@@ -1958,7 +1961,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
               {((activeTab === 'outsourcing' ? outsourcingGroups : purchaseGroups).length === 0) && (
                 <div className="p-24 text-center text-slate-300 italic uppercase text-xs font-black tracking-widest flex flex-col items-center gap-4">
                   <i className={`fa-solid ${activeTab === 'outsourcing' ? 'fa-handshake-angle' : 'fa-clipboard-check'} text-5xl opacity-10`}></i>
-                  {activeTab === 'outsourcing' ? 'No active outsourcing tasks.' : 'Commercial procurement pipeline is empty.'}
+                  {activeTab === 'outsourcing' ? t('procurement.actions.noActive') : t('procurement.actions.pipelineEmpty')}
                 </div>
               )}
             </div>
@@ -1990,7 +1993,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 activeAction.type === 'REVIVE_CONTRACT' ? 'Revive Expired Contract' : 'Confirm Purchase Order'}
                       </h3>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        {activeAction.type === 'ORDER_ROLLBACK' ? `Reverting to Logged Registry: ${activeAction.order.internalOrderNumber}` : `Comp: ${activeAction.comp?.description}`}
+                        {activeAction.type === 'ORDER_ROLLBACK' ? `${t('procurement.rollback.revertingToLogged')}: ${activeAction.order.internalOrderNumber}` : `${t('procurement.rfp.component')}: ${activeAction.comp?.description}`}
                       </p>
                     </div>
                   </div>
@@ -2001,8 +2004,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         <div className="space-y-3">
                           <div className="flex justify-between items-end mb-2">
                             <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Components to include in RFP</label>
-                              <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1">Select other components from this order to group into a single request.</p>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.rfp.componentsInRfp')}</label>
+                              <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1">{t('procurement.rfp.componentsInRfpHint')}</p>
                             </div>
                           </div>
                           <div className="border border-slate-100 rounded-2xl p-2 max-h-48 overflow-y-auto custom-scrollbar space-y-1">
@@ -2048,14 +2051,14 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             className="w-full py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-2xl font-black text-[10px] uppercase shadow-sm hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all flex items-center justify-center gap-2 group"
                           >
                             {isDownloadingRfp ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-solid fa-file-pdf text-rose-500 group-hover:text-white"></i>}
-                            {isDownloadingRfp ? 'Generating Request Document...' : 'Download Vendor RFP Document'}
+                            {isDownloadingRfp ? t('procurement.rfp.generatingRfpDoc') : t('procurement.rfp.downloadVendorRfp')}
                           </button>
-                          {rfpCompSelection.length === 0 && <p className="text-center text-[9px] text-rose-500 font-bold uppercase mt-1">Select at least one component to generate PDF</p>}
+                          {rfpCompSelection.length === 0 && <p className="text-center text-[9px] text-rose-500 font-bold uppercase mt-1">{t('procurement.rfp.selectAtLeastOne')}</p>}
                         </div>
 
                         <div className="space-y-3 pt-4 border-t border-slate-100">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Select Target Suppliers (Optional)</label>
-                          <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1 mb-2">If none selected, Award Tender will show all available vendors.</p>
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.rfp.selectTargetSuppliers')}</label>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1 mb-2">{t('procurement.rfp.selectTargetSuppliersHint')}</p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 custom-scrollbar">
                             {suppliers.map(s => (
                               <button
@@ -2076,21 +2079,21 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       <>
                         <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 flex justify-between items-center mb-4">
                           <div>
-                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Quantity</div>
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('procurement.award.totalQuantity')}</div>
                             <div className="text-xl font-black text-slate-800">
                               {selectedCompIds.length > 0 ? multiComps.filter(m => selectedCompIds.includes(m.comp.id!)).reduce((sum, m) => sum + (m.comp.quantity || 0), 0) : activeAction.comp.quantity}
                               <span className="text-xs font-bold text-slate-400 ml-1">{activeAction.comp.unit}</span>
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sourcing Code</div>
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('procurement.award.sourcingCode')}</div>
                             <div className="font-mono text-xs font-bold text-blue-600">{activeAction.comp.componentNumber}</div>
                           </div>
                         </div>
 
                         {multiComps.length > 0 && (
                           <div className="space-y-3 mb-4">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Matching Components in RFP</label>
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.award.matchingComponents')}</label>
                             <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-1 custom-scrollbar">
                               {multiComps.map(({ comp: mc, item: mi }) => {
                                 const isSelected = selectedCompIds.includes(mc.id!);
@@ -2110,7 +2113,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                     </div>
                                     {isSelected && (
                                       <div className="mt-2 pt-2 border-t border-amber-200/50 flex items-center justify-between animate-in slide-in-from-top-2">
-                                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Price per {mc.unit || 'Item'}</span>
+                                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">{t('procurement.award.pricePerUnit')} {mc.unit || t('procurement.component.item')}</span>
                                         <div className="flex items-center gap-2">
                                           <input
                                             type="number" step="any" min="0" placeholder="0.00"
@@ -2131,19 +2134,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                         <div className="space-y-4">
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Award Winning Vendor</label>
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.award.awardVendor')}</label>
                             <select
                               className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:bg-white focus:border-blue-500 transition-all"
                               value={awardSupplierId} onChange={e => setAwardSupplierId(e.target.value)}
                             >
-                              <option value="">Select Vendor...</option>
+                              <option value="">{t('procurement.award.selectVendor')}</option>
                               {awardSuppliersList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
                           </div>
 
                           <div className="grid grid-cols-1 gap-4">
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Global Tax Percentage (%)</label>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.award.globalTaxPercent')}</label>
                               <input
                                 type="number" step="any"
                                 className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-xl outline-none focus:bg-white focus:border-blue-500 transition-all"
@@ -2154,16 +2157,16 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                           <div className="p-6 bg-slate-900 rounded-[2rem] text-white space-y-4 mt-6">
                             <div className="flex justify-between items-center opacity-60">
-                              <span className="text-[10px] font-black uppercase tracking-widest">Total Cost Without Tax</span>
+                              <span className="text-[10px] font-black uppercase tracking-widest">{t('procurement.award.totalExclTax')}</span>
                               <span className="font-bold">{awardCalculations.totalExclTax.toLocaleString()} L.E.</span>
                             </div>
                             <div className="flex justify-between items-center text-amber-400">
-                              <span className="text-[10px] font-black uppercase tracking-widest">Tax Amount ({awardTaxPercent}%)</span>
+                              <span className="text-[10px] font-black uppercase tracking-widest">{t('procurement.award.taxAmount')} ({awardTaxPercent}%)</span>
                               <span className="font-bold">{awardCalculations.taxAmount.toLocaleString()} L.E.</span>
                             </div>
                             <div className="h-px bg-white/10 my-2"></div>
                             <div className="flex justify-between items-center">
-                              <span className="text-xs font-black uppercase tracking-[0.2em] text-blue-400">Total Award Value (Incl. Tax)</span>
+                              <span className="text-xs font-black uppercase tracking-[0.2em] text-blue-400">{t('procurement.award.totalInclTax')}</span>
                               <span className="text-2xl font-black">{awardCalculations.totalInclTax.toLocaleString()} <span className="text-xs opacity-40">L.E.</span></span>
                             </div>
                           </div>
@@ -2175,19 +2178,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       <div className="space-y-6">
                         <div className="p-5 bg-blue-50 rounded-2xl border border-blue-100 flex justify-between items-center">
                           <div>
-                            <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Target Supplier</div>
+                            <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{t('procurement.po.targetSupplier')}</div>
                             <div className="text-lg font-black text-blue-900 uppercase tracking-tight">
                               {suppliers.find(s => s.id === (multiComps[0]?.comp.supplierId || activeAction.comp?.supplierId))?.name || 'Unknown Supplier'}
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Order Ref</div>
+                            <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{t('procurement.po.orderRef')}</div>
                             <div className="font-mono text-xs font-bold text-blue-600">{activeAction.order.internalOrderNumber}</div>
                           </div>
                         </div>
 
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Include in Purchase Order</label>
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.po.includeInPO')}</label>
                           <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-1 custom-scrollbar">
                             {multiComps.map(({ item: mi, comp: mc }) => (
                               <button
@@ -2207,7 +2210,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         </div>
 
                         <div className="space-y-2">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">System Purchase Order ID</label>
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.po.systemPOId')}</label>
                           <input
                             className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-2xl text-blue-600 outline-none focus:bg-white focus:border-blue-500 transition-all uppercase tracking-widest"
                             value={poNumberInput} onChange={e => setPoNumberInput(e.target.value)}
@@ -2216,15 +2219,15 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                         {multiComps.some(({ item: mi, comp: mc }) => selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING') && (
                           <div className="space-y-3 p-4 bg-purple-50 rounded-2xl border border-purple-100">
-                            <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1">Contract/Service Number (Outsourcing)</label>
+                            <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1">{t('procurement.po.contractServiceNumber')}</label>
                             <input
                               className="w-full p-4 bg-slate-100 border-2 border-purple-200 rounded-2xl font-black text-purple-600 outline-none cursor-not-allowed transition-all uppercase tracking-widest"
-                              placeholder="Contract number is set from Technical Review"
+                              placeholder={t('procurement.po.contractNumberReadOnly')}
                               value={contractNumber}
                               readOnly
                             />
-                            <div className="text-[9px] text-purple-500 uppercase tracking-[0.2em] mt-1">Pre-filled from Technical Review and not editable here.</div>
-                            <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1 mt-4">Contract Start Date (Outsourcing)</label>
+                            <div className="text-[9px] text-purple-500 uppercase tracking-[0.2em] mt-1">{t('procurement.po.contractNumberHint')}</div>
+                            <label className="text-[10px] font-black text-purple-600 uppercase tracking-widest ml-1 mt-4">{t('procurement.po.contractStartDate')}</label>
                             <input
                               type="date"
                               min={!allowPastContractStart ? today : undefined}
@@ -2234,7 +2237,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             />
                             {isContractStartDateInvalid && (
                               <div className="text-[10px] text-red-600 font-bold uppercase tracking-widest mt-2">
-                                Past start dates are prohibited unless the checkbox is checked.
+                                {t('procurement.po.pastDatesProhibited')}
                               </div>
                             )}
                             <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-purple-600">
@@ -2244,7 +2247,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 onChange={e => setAllowPastContractStart(e.target.checked)}
                                 className="w-4 h-4 rounded border-purple-300 text-purple-600 focus:ring-purple-500"
                               />
-                              Allow a past contract start date
+                              {t('procurement.po.allowPastStart')}
                             </label>
                           </div>
                         )}
@@ -2255,19 +2258,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       <div className="space-y-6">
                         <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 flex justify-between items-center">
                           <div>
-                            <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Cancelling PO</div>
+                            <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">{t('procurement.cancelPO.title')}</div>
                             <div className="text-xl font-black text-rose-900 uppercase tracking-tight">
                               {activeAction.comp?.poNumber || 'N/A'}
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Components</div>
+                            <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">{t('procurement.cancelPO.affectedComponents')}</div>
                             <div className="text-lg font-black text-rose-600">{selectedCompIds.length}</div>
                           </div>
                         </div>
 
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Affected Components</label>
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.cancelPO.affectedComponents')}</label>
                           <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1 custom-scrollbar">
                             {multiComps.map(({ comp: mc }) => (
                               <div key={mc.id} className="p-3 bg-white border border-rose-100 rounded-xl flex items-center gap-3">
@@ -2285,10 +2288,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                         <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
                           <p className="text-[11px] text-rose-800 font-black leading-relaxed uppercase">
-                            Strategic Rollback: Reverting these components to the RFP stage. A mandatory comment is required for the audit trail.
+                            {t('procurement.cancelPO.strategicRollback')}
                           </p>
                           <div className="space-y-1.5">
-                            <label className="text-[9px] font-black text-rose-400 uppercase">Reason for Cancellation</label>
+                            <label className="text-[9px] font-black text-rose-400 uppercase">{t('procurement.cancelPO.reasonForCancellation')}</label>
                             <textarea
                               className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100 placeholder:text-slate-300"
                               placeholder="e.g. Supplier stock issue, project change, incorrect price..."
@@ -2304,24 +2307,24 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       <div className="space-y-6">
                         <div className="p-6 bg-amber-50 rounded-3xl border border-amber-100 flex justify-between items-center">
                           <div>
-                            <div className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Reverting PO to Award</div>
+                            <div className="text-[10px] font-black text-amber-400 uppercase tracking-widest">{t('procurement.revertPO.title')}</div>
                             <div className="text-xl font-black text-amber-900 uppercase tracking-tight">
                               {activeAction.comp?.description}
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-[10px] font-black text-amber-400 uppercase tracking-widest">PO Number</div>
+                            <div className="text-[10px] font-black text-amber-400 uppercase tracking-widest">{t('procurement.po.poNumber')}</div>
                             <div className="text-lg font-black text-amber-600">{activeAction.comp?.poNumber || 'N/A'}</div>
                           </div>
                         </div>
 
                         <div className="p-6 bg-amber-50 rounded-3xl border border-amber-100 space-y-4">
                           <p className="text-[11px] text-amber-800 font-black leading-relaxed uppercase">
-                            This component will be reverted from ORDERED/WAITING_CONTRACT_START back to AWARDED status. This allows you to modify the award or issue a new PO.
+                            {t('procurement.revertPO.warningRevert')}
                           </p>
                           <p className="text-[10px] text-amber-700 font-bold leading-relaxed">
                             <i className="fa-solid fa-triangle-exclamation mr-2"></i>
-                            Note: This may re-enable "Issue PO" buttons on other line items if they were blocked by order-wide readiness.
+                            {t('procurement.revertPO.noteRevert')}
                           </p>
                         </div>
                       </div>
@@ -2331,24 +2334,24 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       <div className="space-y-6">
                         <div className="p-6 bg-orange-50 rounded-3xl border border-orange-100 flex justify-between items-center">
                           <div>
-                            <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest">Reverting Award to Pending</div>
+                            <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest">{t('procurement.revertToPending.title')}</div>
                             <div className="text-xl font-black text-orange-900 uppercase tracking-tight">
                               {activeAction.comp?.description}
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest">Component ID</div>
+                            <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest">{t('procurement.revertToPending.componentId')}</div>
                             <div className="font-mono text-sm font-black text-orange-600">{activeAction.comp?.id}</div>
                           </div>
                         </div>
 
                         <div className="p-6 bg-orange-50 rounded-3xl border border-orange-100 space-y-4">
                           <p className="text-[11px] text-orange-800 font-black leading-relaxed uppercase">
-                            This component will be reverted from AWARDED back to PENDING_OFFER status. This allows you to restart the sourcing process from RFP.
+                            {t('procurement.revertToPending.warningPending')}
                           </p>
                           <p className="text-[10px] text-orange-700 font-bold leading-relaxed bg-white border border-orange-200 rounded-2xl p-3">
                             <i className="fa-solid fa-lock mr-2 text-red-600"></i>
-                            <strong>Important:</strong> All "Issue PO" buttons in this order will be DISABLED until ALL components are awarded again.
+                            <strong>Important:</strong> {t('procurement.revertToPending.importantNote')}
                           </p>
                         </div>
                       </div>
@@ -2358,13 +2361,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       <div className="space-y-6">
                         <div className="p-6 bg-emerald-50 rounded-3xl border border-emerald-100 flex justify-between items-center">
                           <div>
-                            <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Reviving Contract</div>
+                            <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">{t('procurement.revive.title')}</div>
                             <div className="text-xl font-black text-emerald-900 uppercase tracking-tight">
                               {activeAction.comp?.contractNumber || activeAction.comp?.componentNumber}
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Old End Date</div>
+                            <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">{t('procurement.revive.oldEndDate')}</div>
                             <div className="text-lg font-black text-emerald-600">
                               {activeAction.comp?.contractStartDate && activeAction.comp?.contractDuration 
                                 ? calculateContractEndDate(activeAction.comp.contractStartDate, activeAction.comp.contractDuration)?.toLocaleDateString()
@@ -2376,16 +2379,16 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         <div className="p-6 bg-amber-50 border border-amber-200 rounded-3xl space-y-2">
                           <p className="text-[10px] text-amber-700 font-bold uppercase tracking-wide">
                             <i className="fa-solid fa-circle-info mr-1.5 text-amber-500"></i>
-                            This extension will not incur any payment request from the customer.
+                            {t('procurement.revive.extensionHint')}
                           </p>
                           <p className="text-[10px] text-amber-800 font-medium">
-                            If a payment is needed, a new contract PO should be issued and this contract should be ended properly instead.
+                            {t('procurement.revive.extensionPaymentHint')}
                           </p>
                         </div>
 
                         <div className="space-y-4 pt-2">
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Reason for reviving</label>
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.revive.reasonForReviving')}</label>
                             <textarea
                               className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:border-emerald-500 transition-all placeholder:text-slate-300"
                               placeholder="Why is this contract being extended for free?"
@@ -2400,19 +2403,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 onClick={() => setReviveMode('EXTENSION')}
                                 className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${reviveMode === 'EXTENSION' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                               >
-                                <i className="fa-solid fa-plus-circle"></i> Add Extension
+                                <i className="fa-solid fa-plus-circle"></i> {t('procurement.revive.addExtension')}
                               </button>
                               <button 
                                 onClick={() => setReviveMode('END_DATE')}
                                 className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${reviveMode === 'END_DATE' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                               >
-                                <i className="fa-solid fa-calendar-day"></i> Pick End Date
+                                <i className="fa-solid fa-calendar-day"></i> {t('procurement.revive.pickEndDate')}
                               </button>
                             </div>
 
                             {reviveMode === 'EXTENSION' ? (
                               <div className="space-y-1.5 flex flex-col">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Extension Duration (Months)</label>
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.revive.extensionDuration')}</label>
                                 <input
                                   type="number"
                                   className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-lg font-black text-emerald-600 outline-none focus:bg-white focus:border-emerald-500 transition-all"
@@ -2426,7 +2429,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               </div>
                             ) : (
                               <div className="space-y-1.5 flex flex-col">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">New Contract End Date</label>
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.revive.newContractEndDate')}</label>
                                 <input
                                   type="date"
                                   className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-lg font-black text-emerald-600 outline-none focus:bg-white focus:border-emerald-500 transition-all font-mono"
@@ -2453,7 +2456,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           }
                         </p>
                         <div className="space-y-1.5">
-                          <label className="text-[9px] font-black text-rose-400 uppercase">Mandatory Operational Reason</label>
+                          <label className="text-[9px] font-black text-rose-400 uppercase">{t('procurement.reset.mandatoryReason')}</label>
                           <textarea
                             className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100"
                             placeholder="e.g. Supplier failed to deliver, pricing expired, correction required..."
@@ -2465,7 +2468,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   </div>
 
                   <div className="mt-10 flex gap-3">
-                    <button onClick={closeModal} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">Abort</button>
+                    <button onClick={closeModal} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">{t('procurement.abort')}</button>
                     <button
                       disabled={isCommitProcurementDisabled}
                       onClick={handleExecuteAction}
@@ -2473,7 +2476,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         }`}
                     >
                       {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
-                      {activeAction.type === 'RFP' ? 'Broadcast RFP' : activeAction.type === 'AWARD' ? 'Confirm Award' : activeAction.type === 'RESET' ? 'Confirm Reset' : activeAction.type === 'ORDER_ROLLBACK' ? 'Execute Rollback' : activeAction.type === 'CANCEL_PO_BATCH' ? 'Confirm Cancellation' : activeAction.type === 'REVERT_PO' ? 'Confirm Revert' : activeAction.type === 'REVERT_TO_PENDING' ? 'Confirm Revert to Pending' : activeAction.type === 'REVIVE_CONTRACT' ? 'Revive Contract' : 'Commit Procurement'}
+                      {activeAction.type === 'RFP' ? t('procurement.rfp.broadcastRfp') : activeAction.type === 'AWARD' ? t('procurement.award.confirmAward') : activeAction.type === 'RESET' ? t('procurement.reset.confirmReset') : activeAction.type === 'ORDER_ROLLBACK' ? t('procurement.rollback.executeRollback') : activeAction.type === 'CANCEL_PO_BATCH' ? t('procurement.cancelPO.confirmCancellation') : activeAction.type === 'REVERT_PO' ? t('procurement.revertPO.confirmRevert') : activeAction.type === 'REVERT_TO_PENDING' ? t('procurement.revertToPending.confirmRevertPending') : activeAction.type === 'REVIVE_CONTRACT' ? t('procurement.revive.reviveContract') : t('procurement.commitProcurement')}
                     </button>
                   </div>
                 </div>
@@ -2490,7 +2493,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     <i className="fa-solid fa-users-arrows"></i>
                   </div>
                   <div>
-                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Request Resource Replacement</h3>
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{t('procurement.replacement.title')}</h3>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
                       {replacementModalInfo.comp.description}
                     </p>
@@ -2499,7 +2502,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                 {/* Contract Information Section */}
                 <div className="bg-slate-50 rounded-2xl p-6 mb-6 border border-slate-100">
-                  <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4">Contract Information</h4>
+                  <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4">{t('procurement.replacement.contractInfo')}</h4>
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div>
                       <label className="text-[9px] font-bold text-slate-400 uppercase">{t("procurement.rfp.contractId") || "Contract ID"}</label>
@@ -2510,7 +2513,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     <div>
                       <label className="text-[9px] font-bold text-slate-400 uppercase">{t("procurement.rfp.duration") || "Duration"}</label>
                       <p className="text-sm font-black text-slate-800 mt-1">
-                        {replacementModalInfo.comp.contractDuration || 'Not Set'}
+                        {replacementModalInfo.comp.contractDuration || t('procurement.replacement.notSet')}
                       </p>
                     </div>
                   </div>
@@ -2524,7 +2527,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       </p>
                       <p className={`text-[10px] font-bold mt-1 ${getContractStartStatus().isInPast ? 'text-rose-600' : 'text-emerald-600'}`}>
                         {getContractStartStatus().isInPast 
-                          ? '✓ Contract Already Started'
+                          ? '✓ ' + t('procurement.replacement.contractAlreadyStarted')
                           : `Starts in ${getContractStartStatus().daysUntilStart} days`}
                       </p>
                     </div>
@@ -2533,16 +2536,16 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                 <div className="space-y-6">
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Detailed Reason for Replacement</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{t('procurement.replacement.reasonForReplacement')}</label>
                     <textarea
                       value={replacementReason}
                       onChange={e => setReplacementReason(e.target.value)}
                       className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-medium text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all custom-scrollbar h-32"
-                      placeholder="Explain why this outsourced resource is being replaced..."
+                      placeholder={t('procurement.replacement.reasonPlaceholder')}
                     ></textarea>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">New Resource Start Date</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{t('procurement.replacement.newResourceStartDate')}</label>
                     <input
                       type="date"
                       value={replacementStartDate}
@@ -2629,7 +2632,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       <i className="fa-solid fa-triangle-exclamation"></i>
                     </div>
                     <div>
-                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Outstanding Supplier Commitments</h3>
+                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{t('procurement.resolution.title')}</h3>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
                         {pendingResolutions.length} Component{pendingResolutions.length > 1 ? 's' : ''} in transit — Resolve before rollback
                       </p>
@@ -2637,7 +2640,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   </div>
 
                   <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
-                    The following components have active supplier commitments. You must decide the fate of each before rolling back this order:
+                    {t('procurement.resolution.resolveMsg')}
                   </p>
 
                   <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-2">
@@ -2653,7 +2656,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             </div>
                             <div className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded mt-1.5 w-fit border ${rec.status === 'ORDERED' ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : rec.status === 'WAITING_CONTRACT_START' ? 'text-purple-600 bg-purple-50 border-purple-100' : 'text-amber-600 bg-amber-50 border-amber-100'
                               }`}>
-                              {rec.status === 'ORDERED' ? 'PO Issued — Awaiting Delivery' : rec.status === 'WAITING_CONTRACT_START' ? 'Awaiting Contract Start' : 'Awarded — Pending PO Issuance'}
+                              {rec.status === 'ORDERED' ? t('procurement.resolution.poIssued') : rec.status === 'WAITING_CONTRACT_START' ? t('procurement.resolution.awaitingContractStart') : t('procurement.resolution.awardedPendingPO')}
                             </div>
                           </div>
                         </div>
@@ -2665,7 +2668,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'
                               }`}
                           >
-                            <i className="fa-solid fa-ban"></i> Cancel Supplier PO
+                            <i className="fa-solid fa-ban"></i> {t('procurement.resolution.cancelSupplierPO')}
                           </button>
                           <button
                             onClick={() => setResolutionChoices(prev => ({ ...prev, [rec.compId]: 'RECEIVE_TO_STOCK' }))}
@@ -2674,7 +2677,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               : 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-400'
                               }`}
                           >
-                            <i className="fa-solid fa-boxes-stacked"></i> Receive to Stock
+                            <i className="fa-solid fa-boxes-stacked"></i> {t('procurement.resolution.receiveToStock')}
                           </button>
                         </div>
                       </div>
@@ -2686,7 +2689,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       onClick={closeModal}
                       className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200"
                     >
-                      Abort
+                      {t('procurement.abort')}
                     </button>
                     <button
                       onClick={handleConfirmResolutions}
