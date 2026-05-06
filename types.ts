@@ -332,6 +332,7 @@ export interface AppConfig {
     ledgerAccounts?: string[];
     ledgerAccountGroups?: Record<string, string[]>; // groupName -> [accountNames]
     availableRoles?: UserRole[];
+    helpVideos?: string[];
     roleMappings?: Record<string, UserRole[]>;
   };
 }
@@ -350,3 +351,4 @@ export const getItemEffectiveStatus = (item: CustomerOrderItem): string => {
   if (statuses.every(s => ['MANUFACTURED', 'CANCELLED'].includes(s))) return 'MANUFACTURED';
   return 'MIXED';
 };
+

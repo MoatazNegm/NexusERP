@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig } from '../types';
@@ -11,7 +10,7 @@ interface DataMaintenanceProps {
   isAdmin: boolean;
 }
 
-type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'email' | 'ledger' | 'data';
+type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'email' | 'ledger' | 'data' | 'help';
 
 export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConfigUpdate, onRefresh, currentUser, isAdmin }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('modules');
@@ -50,6 +49,25 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [editingAccount, setEditingAccount] = useState<{ index: number, name: string } | null>(null);
+
+  const [helpVideos, setHelpVideos] = useState<string[]>(config.settings.helpVideos || []);
+  const [newVideoUrl, setNewVideoUrl] = useState('');
+  const [showUserGuideVideos, setShowUserGuideVideos] = useState(false);
+
+  const handleAddVideo = () => {
+    if (newVideoUrl.trim()) {
+      const updatedVideos = [...helpVideos, newVideoUrl.trim()];
+      setHelpVideos(updatedVideos);
+      setNewVideoUrl('');
+      updateSetting('settings', 'helpVideos', updatedVideos);
+    }
+  };
+
+  const handleRemoveVideo = (indexToRemove: number) => {
+    const updatedVideos = helpVideos.filter((_, idx) => idx !== indexToRemove);
+    setHelpVideos(updatedVideos);
+    updateSetting('settings', 'helpVideos', updatedVideos);
+  };
 
   // Check if an account has any transactions
   // TODO: Implement transaction checking when ledgerEntries is available
@@ -495,9 +513,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex border-b border-slate-100 bg-slate-50/50 overflow-x-auto custom-scrollbar">
-          {(['modules', 'thresholds', 'ledger', 'groups', 'users', 'intelligence', 'email', 'data'] as const).map(tab => (
+          {(['modules', 'thresholds', 'ledger', 'groups', 'users', 'intelligence', 'email', 'data', 'help'] as const).map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`px-10 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative whitespace-nowrap ${activeTab === tab ? 'text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}>
-              {tab === 'email' ? 'Relay Node' : tab === 'intelligence' ? 'AI Engine' : tab}
+              {tab === 'email' ? 'Relay Node' : tab === 'intelligence' ? 'AI Engine' : tab === 'help' ? 'Help' : tab}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600"></div>}
             </button>
           ))}
@@ -1618,8 +1636,86 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
               </div>
             </div>
           )}
+          {activeTab === 'help' && (
+            <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="p-8 bg-blue-50 rounded-[2.5rem] border border-blue-100 space-y-6">
+                <div className="flex items-center gap-3 border-b border-blue-100 pb-4">
+                  <i className="fa-solid fa-question-circle text-blue-600 text-xl"></i>
+                  <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">Help & Support</h4>
+                </div>
+                <div className="space-y-4">
+                  <p className="text-sm text-slate-600">Welcome to Nexus ERP Help Center. Here you can find resources to help you get the most out of the system.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-2">
+                      <div 
+                        onClick={() => setShowUserGuideVideos(!showUserGuideVideos)}
+                        className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm hover:border-blue-400 transition-colors group cursor-pointer"
+                      >
+                        <h5 className="text-xs font-black text-slate-700 uppercase flex items-center justify-between">
+                          User Guide
+                          <i className={`fa-solid ${showUserGuideVideos ? 'fa-chevron-up' : 'fa-chevron-down'} text-[10px] text-slate-300 group-hover:text-blue-500 transition-colors`}></i>
+                        </h5>
+                        <p className="text-xs text-slate-500 mt-1">Comprehensive guide and video tutorials.</p>
+                      </div>
+                      
+                      {showUserGuideVideos && (
+                        <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-4 animate-in fade-in slide-in-from-top-2">
+                          {helpVideos.length > 0 ? (
+                            <ul className="space-y-2">
+                              {helpVideos.map((url, idx) => (
+                                <li key={idx} className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-700 hover:underline truncate flex-1 flex items-center gap-2">
+                                    <i className="fa-brands fa-youtube text-red-500"></i>
+                                    {url}
+                                  </a>
+                                  {isAdmin && (
+                                    <button onClick={() => handleRemoveVideo(idx)} className="w-6 h-6 rounded-md flex items-center justify-center text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-colors">
+                                      <i className="fa-solid fa-times text-[10px]"></i>
+                                    </button>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-slate-400 italic text-center py-2">No videos added yet.</p>
+                          )}
+                          
+                          {isAdmin && (
+                            <div className="flex items-center gap-2 mt-2 pt-4 border-t border-slate-100">
+                              <input
+                                type="text"
+                                placeholder="Paste video URL here..."
+                                value={newVideoUrl}
+                                onChange={(e) => setNewVideoUrl(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddVideo()}
+                                className="flex-1 p-2 text-xs border rounded-lg outline-none focus:border-blue-500"
+                              />
+                              <button 
+                                onClick={handleAddVideo}
+                                disabled={!newVideoUrl.trim()}
+                                className="px-3 py-2 bg-blue-600 text-white text-[10px] font-black uppercase rounded-lg disabled:opacity-50 hover:bg-blue-700 transition-colors"
+                              >
+                                Add
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm hover:border-blue-400 transition-colors group cursor-pointer">
+                      <h5 className="text-xs font-black text-slate-700 uppercase flex items-center justify-between">
+                        Contact Support
+                        <i className="fa-solid fa-arrow-right text-[10px] text-slate-300 group-hover:text-blue-500 transition-colors"></i>
+                      </h5>
+                      <p className="text-xs text-slate-500 mt-1">Get help from our technical support team.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </div >
+      </div>
 
       {
         showPasscodeModal && (
@@ -1700,6 +1796,14 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
           </div>
         )
       }
-    </div >
+    </div>
   );
 };
+
+
+
+
+
+
+
+
