@@ -26,7 +26,7 @@ export const translations: Record<string, any> = {
     finance: {
       tabs: {
         orders: 'Orders', billing_details: 'Billing Details', history: 'Transaction History',
-        entities: 'Entities', tax_clearances: 'Tax Clearances',
+        blacklist_hold: 'Blacklist & Hold', tax_clearances: 'Tax Clearances',
         supplier_reporting: 'Supplier Reporting', ledger: 'Ledger',
       },
       ledger: {
@@ -449,3 +449,7 @@ export const translations: Record<string, any> = {
     },
   },
 };
+
+
+
+

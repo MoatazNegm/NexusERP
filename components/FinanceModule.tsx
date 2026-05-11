@@ -43,7 +43,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'billing_details' | 'history' | 'entities' | 'tax_clearances' | 'supplier_reporting' | 'ledger';
+type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   const status = order.status;
@@ -1172,7 +1172,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <div className="flex items-center gap-4">
           <LanguageToggle />
           <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
-          {(['orders', 'billing_details', 'history', 'entities', 'tax_clearances', 'supplier_reporting', 'ledger'] as const).map(tab => (
+          {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1583,7 +1583,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
             <tr>
-              {activeTab === 'entities' ? (
+              {activeTab === 'blacklist_hold' ? (
                 <>
                   <th className="px-8 py-5 text-white">{t("finance.orders.operationalContext") || "Operational Context"}</th>
                   <th className="px-8 py-5 text-white cursor-pointer select-none" onClick={() => handleSort('name')}>
@@ -1632,7 +1632,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {activeTab === 'entities' ? (
+            {activeTab === 'blacklist_hold' ? (
               <>
                 {[...customers].sort((a, b) => {
                   const valA = (a.name || '').toLowerCase();
@@ -2531,3 +2531,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = (props) => (
     <FinanceModuleInner {...props} />
   </LanguageProvider>
 );
+
+
+
