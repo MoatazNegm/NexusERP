@@ -1168,15 +1168,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         })()}
       </div>
 
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 w-full">
+        <div className="flex flex-col md:flex-row items-start md:items-center gap-4 w-full xl:w-auto overflow-hidden">
           <LanguageToggle />
-          <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-fit shadow-inner overflow-x-auto">
+          <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-full shadow-inner overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
           {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-8 py-3 rounded-xl text-[10px] whitespace-nowrap font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`px-6 py-3 rounded-xl text-[10px] whitespace-nowrap font-black uppercase tracking-widest transition-all shrink-0 ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
               {t(`finance.tabs.${tab}`) !== `finance.tabs.${tab}` ? t(`finance.tabs.${tab}`) :
                tab.replace(/([A-Z_])/g, ' $1').replace('_', ' ')}
@@ -1185,7 +1185,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           </div>
         </div>
         {activeTab === 'tax_clearances' ? (
-          <div className="flex gap-4 w-full lg:w-auto">
+          <div className="flex gap-4 w-full xl:w-auto">
             <div className="relative group w-40">
               <select className="w-full pl-10 pr-4 py-3 bg-white border-2 border-slate-100 rounded-2xl text-[10px] font-black uppercase appearance-none focus:border-blue-500 transition-all outline-none text-slate-700 shadow-sm" value={whtPeriod} onChange={e => setWhtPeriod(e.target.value as 'this_year' | 'last_year')}>
                 <option value="this_year">{t("finance.tax.thisYear") || "This Year"}</option>
@@ -1193,7 +1193,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </select>
               <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"><i className="fa-solid fa-calendar text-xs"></i></div>
             </div>
-            <div className="relative flex-1 lg:w-64">
+            <div className="relative flex-1 xl:w-64">
               <input
                 type="text" placeholder="Search Customer..."
                 className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
@@ -1203,7 +1203,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
           </div>
         ) : activeTab === 'history' ? (
-          <div className="relative w-full lg:w-96">
+          <div className="relative w-full xl:w-96">
             <input
               type="text" placeholder={t("finance.history.searchHistory") || "Search transaction history..."}
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
@@ -1212,7 +1212,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
           </div>
         ) : activeTab === 'ledger' ? (
-          <div className="w-full lg:w-96">
+          <div className="w-full xl:w-96">
             <div className="relative">
               <input
                 type="text" placeholder={t("finance.history.searchHistory") || "Search ledger..."}
@@ -1226,7 +1226,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
           </div>
         ) : (
-          <div className="relative w-full lg:w-96">
+          <div className="relative w-full xl:w-96">
             <input
               type="text" placeholder={t("finance.history.searchHistory") || "Search entries..."}
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
