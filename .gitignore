@@ -36,6 +36,8 @@ uploads/
 
 # Databases & Backups (Crucial to prevent overwriting server data)
 db.json
+db_test.json
+temp_settings.json
 db.json.local.bak
 
 # Test Scripts
