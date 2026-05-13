@@ -137,7 +137,7 @@ export const INITIAL_USER_GROUPS: UserGroup[] = [
 ];
 
 export const DEFAULT_USERS: (User & { password?: string })[] = [
-  { id: 'u_1', username: 'admin', name: 'System Administrator', roles: ['admin'], groupIds: ['grp_super'], password: 'admin', email: 'admin@nexus-erp.com' },
+  { id: 'u_1', username: 'admin', name: 'System Administrator', roles: ['admin'], groupIds: ['grp_super'], password: '123456', email: 'admin@nexus-erp.com' },
   { id: 'u_2', username: 'manager', name: 'Executive Manager', roles: ['management'], groupIds: [], password: 'manager', email: 'exec@nexus-erp.com' },
   { id: 'u_3', username: 'order', name: 'Order Desk', roles: ['order_management'], groupIds: [], password: 'order', email: 'orders@nexus-erp.com' },
   { id: 'u_4', username: 'factory', name: 'Plant Manager', roles: ['factory'], groupIds: [], password: 'factory', email: 'plant@nexus-erp.com' },

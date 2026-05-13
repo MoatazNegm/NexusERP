@@ -457,16 +457,27 @@ class DataService {
       if (users.length === 0) {
         console.log('Seeding backend with defaults...');
 
-        await this.post('init-defaults', {
-          defaults: {
-            users: DEFAULT_USERS, // Send plain text, server hashes them
-            userGroups: INITIAL_USER_GROUPS,
-            customers: MOCK_CUSTOMERS,
-            orders: MOCK_ORDERS,
-            inventory: MOCK_INVENTORY,
-            suppliers: MOCK_SUPPLIERS
-          }
-        });
+        try {
+          await this.post('init-defaults', {
+            defaults: {
+              users: DEFAULT_USERS, // Send plain text, server hashes them
+              userGroups: INITIAL_USER_GROUPS,
+              customers: MOCK_CUSTOMERS,
+              orders: MOCK_ORDERS,
+              inventory: MOCK_INVENTORY,
+              suppliers: MOCK_SUPPLIERS
+            }
+          });
+        } catch (initErr: any) {
+          // If DB already has data but no users, seed just users/groups
+          console.log('DB not empty, attempting minimal user seed...');
+          await this.post('seed-users', {
+            defaults: {
+              users: DEFAULT_USERS,
+              userGroups: INITIAL_USER_GROUPS
+            }
+          });
+        }
       }
     } catch (e) {
       console.warn("Backend connect failed or DB auth error. Is server running?");
@@ -663,6 +674,33 @@ class DataService {
     return await response.blob();
   }
 
+
+  async exportUsersGroupsBackup(passcode: string): Promise<Blob> {
+    const response = await fetch(`${BACKEND_URL}/api/v1/backup-users-groups?password=${encodeURIComponent(passcode)}`, {
+      headers: { 'x-user': this.getCurrentUser() }
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || "Users/groups backup failed");
+    }
+    return await response.blob();
+  }
+
+  async importUsersGroupsBackup(file: File, passcode: string): Promise<boolean> {
+    const formData = new FormData();
+    formData.append('archive', file);
+    formData.append('password', passcode);
+    const response = await fetch(`${BACKEND_URL}/api/v1/restore-users-groups`, {
+      method: 'POST',
+      headers: { 'x-user': this.getCurrentUser() },
+      body: formData
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || "Users/groups restore failed");
+    }
+    return true;
+  }
   async importFullSystemBackup(file: File, passcode: string): Promise<boolean> {
     const formData = new FormData();
     formData.append('archive', file);

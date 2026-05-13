@@ -2630,6 +2630,94 @@ app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => 
     }
 });
 
+
+app.get('/api/v1/backup-users-groups', (req, res) => {
+    try {
+        const password = req.query.password;
+        if (!password) {
+            return res.status(400).json({ error: "Password is required for secure users/groups export." });
+        }
+
+        const db = readDb();
+        const payload = {
+            users: db.users || [],
+            userGroups: db.userGroups || []
+        };
+        const jsonStr = JSON.stringify(payload);
+
+        const salt = crypto.randomBytes(16);
+        const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+        const encrypted = Buffer.concat([cipher.update(jsonStr, 'utf8'), cipher.final()]);
+        const authTag = cipher.getAuthTag();
+
+        const finalBuffer = Buffer.concat([salt, iv, authTag, encrypted]);
+
+        const date = new Date().toISOString().slice(0, 10);
+        res.set('Content-Type', 'application/octet-stream');
+        res.set('Content-Disposition', `attachment; filename=nexus-users-groups-${date}.nxusers`);
+        res.send(finalBuffer);
+    } catch (err) {
+        console.error("Users/groups backup failed:", err);
+        res.status(500).json({ error: "Users/groups backup failed" });
+    }
+});
+
+app.post('/api/v1/restore-users-groups', restoreUpload.single('archive'), (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
+
+        const password = req.body.password;
+        if (!password) {
+            return res.status(400).json({ error: "Password is required to restore users/groups archive." });
+        }
+
+        const fileBuffer = req.file.buffer;
+
+        if (fileBuffer.length < 44) {
+            return res.status(400).json({ error: "Invalid archive format." });
+        }
+
+        const salt = fileBuffer.subarray(0, 16);
+        const iv = fileBuffer.subarray(16, 28);
+        const authTag = fileBuffer.subarray(28, 44);
+        const encrypted = fileBuffer.subarray(44);
+
+        const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(authTag);
+
+        let rawBuffer;
+        try {
+            rawBuffer = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+        } catch (decryptErr) {
+            console.error("Decryption failed:", decryptErr);
+            return res.status(401).json({ error: "Decryption failed. Incorrect password or corrupted archive." });
+        }
+
+        const data = JSON.parse(rawBuffer.toString('utf8'));
+        if (!data.users || !Array.isArray(data.users) || !data.userGroups || !Array.isArray(data.userGroups)) {
+            return res.status(400).json({ error: "Invalid archive: missing users or userGroups arrays" });
+        }
+
+        const db = readDb();
+        db.users = data.users;
+        db.userGroups = data.userGroups;
+
+        if (writeDb(db)) {
+            console.log(`[System] Users and groups restored at ${new Date().toISOString()}`);
+            res.json({ message: "Users and groups restored successfully" });
+        } else {
+            res.status(500).json({ error: "Restore failed during file write" });
+        }
+    } catch (err) {
+        console.error("Users/groups restore failed:", err);
+        res.status(500).json({ error: "Users/groups restore failed: " + err.message });
+    }
+});
+
 app.post('/api/v1/relay/dispatch', async (req, res) => {
     const { Host, Port, Username, Password, To, From, Subject, Body } = req.body;
     const result = await sendEmail(To, Subject, Body, { smtpServer: Host, smtpPort: Port, username: Username, password: Password, senderName: 'Nexus Relay', senderEmail: From || Username, useSsl: Port === 465 });
@@ -2659,6 +2747,23 @@ app.post('/api/v1/init-defaults', (req, res) => {
         if (writeDb({ ...db, ...dd })) res.json({ message: "Initialized" });
         else res.status(500).json({ error: "Failed" });
     } else res.status(400).json({ message: "NotEmpty" });
+});
+
+app.post('/api/v1/seed-users', (req, res) => {
+    const db = readDb();
+    if (db.users && db.users.length > 0) {
+        return res.status(400).json({ message: "UsersAlreadyExist" });
+    }
+    const dd = req.body.defaults || {};
+    if (dd.users) dd.users = dd.users.map(u => u.password ? { ...u, password: hashPassword(u.password) } : u);
+    db.users = dd.users || [];
+    db.userGroups = dd.userGroups || [];
+    if (writeDb(db)) {
+        console.log(`[System] Seeded users and groups at ${new Date().toISOString()}`);
+        res.json({ message: "Seeded" });
+    } else {
+        res.status(500).json({ error: "Failed" });
+    }
 });
 
 // --- FILE UPLOAD ENDPOINT ---

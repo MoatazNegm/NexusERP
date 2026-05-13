@@ -23,7 +23,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
-  const [showPasscodeModal, setShowPasscodeModal] = useState<{ type: 'export' | 'import' | 'full-export' | 'full-import', file?: File } | null>(null);
+  const [showPasscodeModal, setShowPasscodeModal] = useState<{ type: 'export' | 'import' | 'full-export' | 'full-import' | 'users-groups-export' | 'users-groups-import', file?: File } | null>(null);
   const [passcode, setPasscode] = useState('');
   const [backupFileName, setBackupFileName] = useState('');
 
@@ -141,6 +141,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fullBackupInputRef = useRef<HTMLInputElement>(null);
+  const usersGroupsBackupInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -326,6 +327,46 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     } catch (e) {
       setMessage({ type: 'error', text: 'Secure full backup failed.' });
     } finally { setIsProcessing(false); }
+  };
+
+  
+  const handleUsersGroupsExport = async () => {
+    if (passcode.length < 4) { alert("Passphrase too short. Minimum 4 characters required for secure archive."); return; }
+    setIsProcessing(true);
+    setShowPasscodeModal(null);
+    setMessage({ type: 'info', text: 'Encrypting users and groups archive...' });
+    try {
+      const blob = await dataService.exportUsersGroupsBackup(passcode);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = backupFileName.endsWith('.nxusers') ? backupFileName : `${backupFileName}.nxusers`;
+      link.click();
+
+      setMessage({ type: 'success', text: 'Users and groups archive generated successfully.' });
+      setPasscode('');
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Users and groups backup failed.' });
+    } finally { setIsProcessing(false); }
+  };
+
+  const handleUsersGroupsImport = async () => {
+    if (!showPasscodeModal?.file || !passcode) return;
+    setIsProcessing(true);
+    const file = showPasscodeModal.file;
+    setShowPasscodeModal(null);
+    setMessage({ type: 'info', text: 'Decrypting and restoring users and groups...' });
+    try {
+      await dataService.importUsersGroupsBackup(file, passcode);
+      setMessage({ type: 'success', text: 'Users and groups restored. Refreshing metadata...' });
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e.message || 'Users and groups restoration failed. Incorrect password or corrupted archive.' });
+    } finally {
+      setIsProcessing(false);
+      setPasscode('');
+      if (usersGroupsBackupInputRef.current) usersGroupsBackupInputRef.current.value = '';
+    }
   };
 
   const handleFullImport = async () => {
@@ -1625,6 +1666,41 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 </div>
               </div>
 
+
+              <div className="p-8 bg-indigo-50/50 rounded-[2.5rem] border border-indigo-100 space-y-4">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                    <i className="fa-solid fa-users-rectangle text-xl"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-700 uppercase">Users & Groups Archive</h4>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Encrypted Export • All Identities & Organizational Units</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed italic">Generates an AES-256 encrypted archive containing all user accounts, passwords, and group configurations with their role mappings.</p>
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                  <button onClick={() => {
+                    setBackupFileName(`nexus-users-groups-${new Date().toISOString().slice(0, 10)}`);
+                    setShowPasscodeModal({ type: 'users-groups-export' });
+                  }} disabled={isProcessing} className="py-4 bg-white border border-indigo-200 text-indigo-700 font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-sm hover:bg-indigo-50 transition-colors disabled:opacity-50">
+                    {isProcessing ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : <i className="fa-solid fa-download mr-1"></i>}Export Identities
+                  </button>
+                  <button onClick={() => usersGroupsBackupInputRef.current?.click()} disabled={isProcessing} className="py-4 bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl shadow-lg hover:bg-indigo-700 transition-all disabled:opacity-50">
+                    {isProcessing ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : <i className="fa-solid fa-upload mr-1"></i>}Restore Identities
+                  </button>
+                  <input type="file" ref={usersGroupsBackupInputRef} className="hidden" accept=".nxusers" onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      if (!confirm("RESTORE WARNING: This will overwrite ALL existing users and groups with the contents of this archive. This action is irreversible. Proceed?")) {
+                        e.target.value = '';
+                        return;
+                      }
+                      setShowPasscodeModal({ type: 'users-groups-import', file });
+                    }
+                  }} />
+                </div>
+              </div>
+
               <div className="p-8 bg-rose-50/30 rounded-[2.5rem] border border-rose-100 space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="space-y-1">
@@ -1733,7 +1809,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   : 'Set a highly secure passphrase. You will need this to decrypt the archive later.'}
               </p>
 
-              {(showPasscodeModal.type === 'export' || showPasscodeModal.type === 'full-export') && (
+              {(showPasscodeModal.type === 'export' || showPasscodeModal.type === 'full-export' || showPasscodeModal.type === 'users-groups-export') && (
                 <div className="mb-4 space-y-1">
                   <label className="text-[10px] uppercase font-black tracking-widest text-slate-400">Archive Name</label>
                   <input
@@ -1758,6 +1834,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     else if (showPasscodeModal.type === 'import') handleImport();
                     else if (showPasscodeModal.type === 'full-export') handleFullExport();
                     else if (showPasscodeModal.type === 'full-import') handleFullImport();
+                    else if (showPasscodeModal.type === 'users-groups-export') handleUsersGroupsExport();
+                    else if (showPasscodeModal.type === 'users-groups-import') handleUsersGroupsImport();
                   }
                 }}
               />
@@ -1769,6 +1847,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     else if (showPasscodeModal.type === 'import') handleImport();
                     else if (showPasscodeModal.type === 'full-export') handleFullExport();
                     else if (showPasscodeModal.type === 'full-import') handleFullImport();
+                    else if (showPasscodeModal.type === 'users-groups-export') handleUsersGroupsExport();
+                    else if (showPasscodeModal.type === 'users-groups-import') handleUsersGroupsImport();
                   }}
                   disabled={isProcessing}
                   className={`flex-[2] py-4 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-xl transition-all disabled:opacity-50 ${showPasscodeModal.type.includes('import') ? 'bg-amber-500 hover:bg-amber-600' : 'bg-blue-600 hover:bg-blue-700'}`}
