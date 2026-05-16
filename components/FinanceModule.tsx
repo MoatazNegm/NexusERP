@@ -1380,7 +1380,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       />
                       {spAmount && parseFloat(spAmount) > supplierLedger.balance && supplierLedger.balance > 0 && (
                         <div className="text-[10px] font-bold text-amber-600 mt-1">
-                          <i className="fa-solid fa-triangle-exclamation mr-1"></i> Exceeds outstanding balance by {(parseFloat(spAmount) - supplierLedger.balance).toLocaleString()} L.E.
+                          <i className="fa-solid fa-triangle-exclamation mr-1"></i> Exceeds outstanding balance by {(parseFloat(spAmount) - supplierLedger.balance).toFixed(2)} L.E.
                         </div>
                       )}
                     </div>
@@ -1856,7 +1856,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
                               <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">{t("finance.orders.generateInvoice") || "Generate Invoice"}</button>
                             )}
-                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">{t("finance.orders.recordPayment") || "Record Payment"}</button>
+                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">{t("finance.orders.recordPayment") || "Record Payment"}</button>
                             <div className="flex gap-1">
                               {!o.einvoiceRequested && (
                                 <button
