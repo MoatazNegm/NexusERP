@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import mermaid from 'mermaid';
 import { CustomerOrder, OrderStatus, AppConfig } from '../types';
+import { getItemEffectiveQty } from '../utils';
 
 interface AIAssistantProps {
   orders: CustomerOrder[];
@@ -104,7 +105,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
   // Compress the order ledger for AI consumption
   const orderLedgerSummary = useMemo(() => {
     return orders.map(o => {
-      const valueExclTax = o.items.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
+      const valueExclTax = o.items.reduce((sum, item) => sum + (getItemEffectiveQty(item) * item.pricePerUnit), 0);
       return {
         id: o.internalOrderNumber,
         po: o.customerReferenceNumber,

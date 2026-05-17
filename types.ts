@@ -193,6 +193,8 @@ export interface CustomerOrderItem {
   dispatchedQty?: number;
   shippedQty?: number;
   deliveredQty?: number;
+  alteredQty?: number;
+  alterationComment?: string;
 }
 
 export interface InventoryItem {

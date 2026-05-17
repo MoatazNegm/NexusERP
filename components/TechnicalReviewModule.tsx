@@ -1,7 +1,164 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
+import { getItemEffectiveQty } from '../utils';
 import { PartHistory } from './PartHistory';
+
+interface AlterLineItemsViewProps {
+  orders: CustomerOrder[];
+  onRefresh: () => void;
+}
+
+const AlterLineItemsView: React.FC<AlterLineItemsViewProps> = ({ orders, onRefresh }) => {
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+
+  const runningOrders = useMemo(() => {
+    const terminal = [OrderStatus.FULFILLED, OrderStatus.REJECTED];
+    return orders.filter(o => !terminal.includes(o.status!)).sort((a, b) => new Date(a.dataEntryTimestamp || 0).getTime() - new Date(b.dataEntryTimestamp || 0).getTime());
+  }, [orders]);
+
+  const filteredOrders = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (!q) return runningOrders;
+    return runningOrders.filter(o =>
+      o.internalOrderNumber?.toLowerCase().includes(q) ||
+      o.customerName.toLowerCase().includes(q) ||
+      o.items.some(i => i.description.toLowerCase().includes(q))
+    );
+  }, [runningOrders, search]);
+
+  const handleSave = async (orderId: string, itemId: string, newQty: number, reason: string) => {
+    setSavingId(`${orderId}-${itemId}`);
+    try {
+      await dataService.alterLineItemQty(orderId, itemId, newQty, reason);
+      await onRefresh();
+    } catch (e: any) {
+      alert(e.message || 'Failed to update quantity');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6">
+        <div>
+          <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Line Items to be Altered</h2>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Adjust order quantities lower (cannot exceed original or go below delivered)</p>
+        </div>
+        <div className="relative w-full md:w-96">
+          <i className="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+          <input
+            type="text"
+            placeholder="Search orders or items..."
+            className="w-full p-4 pl-12 border border-slate-200 rounded-xl focus:border-blue-500 outline-none font-medium bg-white"
+            value={search} onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {filteredOrders.length === 0 && (
+          <div className="bg-white p-12 rounded-[2rem] shadow-sm border border-slate-200 text-center text-slate-400">
+            <i className="fa-solid fa-inbox text-3xl mb-3 opacity-50"></i>
+            <div className="text-sm font-bold">No running orders found</div>
+          </div>
+        )}
+
+        {filteredOrders.map(order => (
+          <AlterOrderCard key={order.id} order={order} savingId={savingId} onSave={handleSave} />
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const AlterOrderCard: React.FC<{ order: CustomerOrder; savingId: string | null; onSave: (orderId: string, itemId: string, newQty: number, reason: string) => Promise<void> }> = ({ order, savingId, onSave }) => {
+  const [drafts, setDrafts] = useState<Record<string, { qty: string; reason: string }>>(() => {
+    const initial: Record<string, { qty: string; reason: string }> = {};
+    order.items.forEach(it => {
+      initial[it.id] = { qty: String(getItemEffectiveQty(it)), reason: it.alterationComment || '' };
+    });
+    return initial;
+  });
+
+  useEffect(() => {
+    const synced: Record<string, { qty: string; reason: string }> = {};
+    order.items.forEach(it => {
+      synced[it.id] = { qty: String(getItemEffectiveQty(it)), reason: it.alterationComment || '' };
+    });
+    setDrafts(synced);
+  }, [order.items.map(it => `${it.id}|${it.alteredQty}|${it.alterationComment || ''}`).join(',')]);
+
+  const handleDraftChange = (itemId: string, field: 'qty' | 'reason', value: string) => {
+    setDrafts(prev => ({ ...prev, [itemId]: { ...prev[itemId], [field]: value } }));
+  };
+
+  return (
+    <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
+      <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-black text-slate-800">{order.internalOrderNumber}</div>
+          <div className="text-xs font-bold text-slate-500">{order.customerName}</div>
+        </div>
+        <span className="px-3 py-1 rounded-lg text-[10px] font-black uppercase bg-blue-100 text-blue-700">{order.status}</span>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {order.items.map(item => {
+          const originalQty = item.quantity || 0;
+          const effQty = getItemEffectiveQty(item);
+          const delivered = item.deliveredQty || 0;
+          const isAltered = item.alteredQty !== undefined && item.alteredQty !== null;
+          const draft = drafts[item.id] || { qty: String(effQty), reason: '' };
+          const pending = savingId === `${order.id}-${item.id}`;
+          const draftQtyNum = parseFloat(draft.qty);
+          const canSave = !isNaN(draftQtyNum) && draftQtyNum <= originalQty && draftQtyNum >= delivered && draftQtyNum !== effQty;
+          return (
+            <div key={item.id} className="px-6 py-4 flex flex-col md:flex-row md:items-center gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-slate-800 text-sm">{item.description}</div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Original: <span className="font-black text-slate-700">{originalQty}</span>
+                  {isAltered && <span className="ml-2 text-amber-600 font-bold">Altered to: {effQty}</span>}
+                  <span className="ml-2 text-blue-600 font-bold">Delivered: {delivered}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-1">
+                <input
+                  type="number"
+                  min={delivered}
+                  max={originalQty}
+                  step="any"
+                  value={draft.qty}
+                  onChange={e => handleDraftChange(item.id, 'qty', e.target.value)}
+                  className="w-24 px-3 py-2 border border-slate-200 rounded-xl font-black text-sm outline-none focus:border-blue-500"
+                />
+                <input
+                  type="text"
+                  placeholder="Reason for alteration..."
+                  value={draft.reason}
+                  onChange={e => handleDraftChange(item.id, 'reason', e.target.value)}
+                  className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={() => onSave(order.id, item.id, draftQtyNum, draft.reason)}
+                  disabled={pending || !canSave}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                    pending || !canSave ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg'
+                  }`}
+                >
+                  {pending ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check mr-1"></i>}
+                  Save
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 interface TechnicalReviewModuleProps {
   config: AppConfig;
@@ -134,7 +291,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   // History state
   const [compHistory, setCompHistory] = useState<any[] | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'review' | 'history'>('review');
+  const [activeTab, setActiveTab] = useState<'review' | 'history' | 'alter_items'>('review');
 
   useEffect(() => {
     fetchData();
@@ -630,7 +787,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     let totalCost = 0;
 
     selectedOrder.items.forEach(it => {
-      totalRevenue += (it.quantity * it.pricePerUnit);
+      totalRevenue += (getItemEffectiveQty(it) * it.pricePerUnit);
       it.components?.forEach(c => {
         totalCost += (c.quantity * (c.unitCost || 0));
       });
@@ -666,10 +823,18 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
         >
           <i className="fa-solid fa-clock-rotate-left mr-2"></i> Part History
         </button>
+        <button
+          onClick={() => setActiveTab('alter_items')}
+          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'alter_items' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+        >
+          <i className="fa-solid fa-pen-ruler mr-2"></i> Line Items to be Altered
+        </button>
       </div>
 
       {activeTab === 'history' ? (
         <PartHistory orders={orders} suppliers={suppliers} />
+      ) : activeTab === 'alter_items' ? (
+        <AlterLineItemsView orders={orders} onRefresh={() => fetchData(true)} />
       ) : (
         <>
           <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6">
@@ -816,7 +981,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
                       {selectedOrder.items.map(item => {
                         const itemCost = item.components?.reduce((s, c) => s + (c.quantity * c.unitCost), 0) || 0;
-                        const itemRev = item.quantity * item.pricePerUnit;
+                        const itemRev = getItemEffectiveQty(item) * item.pricePerUnit;
                         const isItemNegative = itemRev > 0 && itemCost > itemRev;
 
                         return (
@@ -834,7 +999,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               <div className="mt-1 text-[8px] font-black text-rose-500 uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">Profitability Integrity Breach</div>
                             )}
                             <div className={`text-[9px] font-bold mt-2 flex justify-between ${selectedItem?.id === item.id ? 'text-indigo-200' : 'text-slate-400'}`}>
-                              <span>{item.quantity} {item.unit}</span>
+                              <span>{getItemEffectiveQty(item)} {item.unit}</span>
                               <span className="uppercase">{item.isAccepted ? 'Ready' : 'In Study'}</span>
                             </div>
                           </button>

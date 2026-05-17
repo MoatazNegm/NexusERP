@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { InventoryItem, CustomerOrder, Supplier, OrderStatus, CustomerOrderItem, ManufacturingComponent, AppConfig, User } from '../types';
+import { getItemEffectiveQty } from '../utils';
 import { SortableTable, ColumnDef } from './SortableTable';
 
 type InventoryTab = 'inventory' | 'reception' | 'hub' | 'dispatch';
@@ -139,7 +140,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
   const hubStorageItems = useMemo(() => {
     const list: { order: CustomerOrder, item: CustomerOrderItem, hubQty: number, mfdQty: number, target: number, allMfgDone: boolean }[] = [];
     allOrders.forEach(order => {
-      const allDone = order.items.every(i => (i.manufacturedQty || 0) >= i.quantity);
+      const allDone = order.items.every(i => (i.manufacturedQty || 0) >= getItemEffectiveQty(i));
       order.items.forEach(item => {
         const hubQty = item.hubReceivedQty || 0;
         if (hubQty > 0) {
@@ -716,7 +717,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                 const approved = (item.approvedForDispatchQty || 0) - (item.dispatchedQty || 0);
                 const max = Math.max(0, Math.min(inHub, approved));
 
-                if (max <= 0 && ((item.dispatchedQty || 0) >= item.quantity)) return null;
+                if (max <= 0 && ((item.dispatchedQty || 0) >= getItemEffectiveQty(item))) return null;
 
                 return (
                   <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center gap-4">

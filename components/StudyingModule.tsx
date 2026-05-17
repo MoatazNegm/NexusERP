@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, Supplier, SupplierPart, User, AppConfig } from '../types';
+import { getItemEffectiveQty } from '../utils';
 
 interface StudyingModuleProps {
   currentUser: User;
@@ -208,7 +209,7 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                   <div className="text-[10px] font-mono text-blue-600 font-bold">{item.orderNumber}</div>
                   <div className="font-bold text-slate-800 text-sm leading-tight">{item.description}</div>
                   <div className="flex justify-between items-center mt-2">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase">{item.quantity} {item.unit}</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">{getItemEffectiveQty(item)} {item.unit}</span>
                     <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter ${item.isAccepted ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-500'}`}>
                       {item.isAccepted ? 'STUDY COMPLETE' : 'PENDING'}
                     </span>

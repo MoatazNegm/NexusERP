@@ -102,7 +102,7 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     let anyAccepted = false;
 
     (items || []).forEach(it => {
-        totalRevenue += ((it.quantity || 0) * (it.pricePerUnit || 0));
+        totalRevenue += ((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0));
         if (it.isAccepted) anyAccepted = true;
         if (it.components && it.components.length > 0) {
             hasComponents = true;
@@ -168,7 +168,7 @@ const canIssuePoForOrder = (order, minMargin) => {
     let totalRevenue = 0;
     let totalCost = 0;
     (order.items || []).forEach(item => {
-        totalRevenue += ((item.quantity || 0) * (item.pricePerUnit || 0));
+        totalRevenue += ((getItemEffectiveQty(item) || 0) * (item.pricePerUnit || 0));
         (item.components || []).forEach(comp => {
             totalCost += ((comp.quantity || 0) * (comp.unitCost || 0));
         });
@@ -183,7 +183,7 @@ const isOrderFullyPaid = (order) => {
     const totalPaid = order.payments.reduce((s, p) => s + (p.amount || 0), 0);
     let revenue = 0;
     (order.items || []).forEach(it => {
-        revenue += ((it.quantity || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100)));
+        revenue += ((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100)));
     });
 
     let targetRevenue = revenue;
@@ -196,7 +196,7 @@ const isOrderFullyPaid = (order) => {
 
 const isOrderFullyDelivered = (order) => {
     if (!order.items || order.items.length === 0) return false;
-    return order.items.every(i => (i.deliveredQty || 0) >= (i.quantity || 0));
+    return order.items.every(i => (i.deliveredQty || 0) >= getItemEffectiveQty(i));
 };
 
 // --- DATABASE HANDLERS ---
@@ -542,9 +542,9 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             } else {
                 // Mirror sync: Only the first component is active in TRADING
                 const comp = item.components[0];
-                if (comp.description !== item.description || comp.quantity !== item.quantity) {
+                if (comp.description !== item.description || comp.quantity !== getItemEffectiveQty(item)) {
                     comp.description = item.description;
-                    comp.quantity = item.quantity;
+                    comp.quantity = getItemEffectiveQty(item);
                     
                     // Attempt to auto-populate part number if missing
                     if (!comp.supplierPartNumber) {
@@ -669,7 +669,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                             // Mark trading items as manufactured and move to hub
                             tradingItems.forEach(item => {
                                 item.status = 'Manufactured';
-                                item.hubReceivedQty = item.quantity;
+                                item.hubReceivedQty = getItemEffectiveQty(item);
                                 (item.components || []).forEach(comp => {
                                     if (comp.status !== 'Manufactured') {
                                         comp.status = 'Manufactured';
@@ -979,7 +979,7 @@ const runThresholdAudit = async () => {
         if (order.status === 'NEGATIVE_MARGIN') {
             let totalRevenue = 0, totalCost = 0;
             (order.items || []).forEach(it => {
-                totalRevenue += (it.quantity * it.pricePerUnit);
+                totalRevenue += (getItemEffectiveQty(it) * it.pricePerUnit);
                 (it.components || []).forEach(c => { totalCost += (c.quantity * (c.unitCost || 0)); });
             });
             const markupPct = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
@@ -1714,11 +1714,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         compToReceive.status = 'Manufactured';
                     }
 
-                    order.logs.push(createAuditLog(`Trading Component Receipt: ${qtyToProcess} ${compToReceive.unit} of ${compToReceive.description} moved directly to Hub (Total Hub: ${item.hubReceivedQty}/${item.quantity})`, order.status, user));
+                    order.logs.push(createAuditLog(`Trading Component Receipt: ${qtyToProcess} ${compToReceive.unit} of ${compToReceive.description} moved directly to Hub (Total Hub: ${item.hubReceivedQty}/${getItemEffectiveQty(item)})`, order.status, user));
 
                     // Check if all trading components are received and move to hub
                     const allTradingCompsReceived = item.components?.every(comp => (comp.receivedQty || 0) >= (comp.quantity || 0)) || false;
-                    if (allTradingCompsReceived && item.hubReceivedQty >= item.quantity) {
+                    if (allTradingCompsReceived && item.hubReceivedQty >= getItemEffectiveQty(item)) {
                         // Transition order status if appropriate
                         if (order.status === 'WAITING_SUPPLIERS') {
                             // Check if all driving items are ready
@@ -2102,7 +2102,76 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.logs.push(createAuditLog(`Margin block manually bypassed: ${payload?.reason || 'Management overrides'}`, order.status, user));
                 break;
 
-            case 'record-payment':
+
+            case 'alter-line-item-qty': {
+                const { itemId, newQty, reason } = payload;
+                if (!itemId) throw new Error("itemId is required for quantity alteration");
+                const targetItem = order.items.find(i => i.id === itemId);
+                if (!targetItem) throw new Error("Line item not found in order");
+                const currentQty = targetItem.quantity || 0;
+                const delivered = targetItem.deliveredQty || 0;
+                if (newQty > currentQty) {
+                    throw new Error(`Cannot increase quantity above original order quantity (${currentQty}).`);
+                }
+                if (newQty < delivered) {
+                    throw new Error(`Cannot reduce quantity below already delivered amount (${delivered}).`);
+                }
+                if (newQty === currentQty) {
+                    delete targetItem.alteredQty;
+                    delete targetItem.alterationComment;
+                    if (targetItem.productionType === 'TRADING' && targetItem.components && targetItem.components.length > 0) {
+                        targetItem.components[0].quantity = currentQty;
+                    }
+                    order.logs.push(createAuditLog(`Line item quantity restored to original: ${targetItem.description} = ${currentQty} units. Reason: ${reason || 'N/A'}`, order.status, user));
+                } else {
+                    targetItem.alteredQty = newQty;
+                    targetItem.alterationComment = reason || '';
+
+                    // Proportionally rescale BoM quantities for all production types
+                    if (targetItem.components && targetItem.components.length > 0) {
+                        const ratio = currentQty > 0 ? newQty / currentQty : 1;
+                        if (ratio < 1) { // only when lowering
+                            for (const comp of targetItem.components) {
+                                const oldCompQty = comp.quantity || 0;
+                                const newCompQty = Number((oldCompQty * ratio).toFixed(3));
+                                const qtyDelta = oldCompQty - newCompQty;
+
+                                // Update the target quantity
+                                comp.quantity = newCompQty;
+
+                                // For MANUFACTURING: release excess un-consumed inventory back to stock
+                                if (targetItem.productionType === 'MANUFACTURING' && qtyDelta > 0) {
+                                    const invItem = (db.inventory || []).find(i => i.id === comp.inventoryItemId);
+                                    if (invItem) {
+                                        if (comp.status === 'RESERVED' || comp.status === 'AVAILABLE') {
+                                            invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - qtyDelta);
+                                        } else if (['RECEIVED', 'IN_STOCK', 'CONSUMED', 'Manufactured'].includes(comp.status)) {
+                                            if (comp.consumedQty && comp.consumedQty > 0) {
+                                                const overConsumed = Math.min(qtyDelta, comp.consumedQty);
+                                                comp.consumedQty = Math.max(0, (comp.consumedQty || 0) - overConsumed);
+                                                invItem.quantityInStock = (invItem.quantityInStock || 0) + overConsumed;
+                                            }
+                                            if (comp.receivedQty && comp.receivedQty > 0) {
+                                                const overReceived = Math.min(qtyDelta, comp.receivedQty);
+                                                comp.receivedQty = Math.max(0, (comp.receivedQty || 0) - overReceived);
+                                                // Received items are already in stock; do NOT subtract.
+                                                // They simply become free/unbound stock now.
+                                            }
+                                        }
+                                        invItem.lastUpdated = new Date().toISOString();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (targetItem.productionType === 'TRADING' && targetItem.components && targetItem.components.length > 0) {
+                        targetItem.components[0].quantity = newQty;
+                    }
+                    order.logs.push(createAuditLog(`Line item quantity adjusted: ${targetItem.description} from ${currentQty} to ${newQty} effective units. Reason: ${reason || 'N/A'}`, order.status, user));
+                }
+                break;
+            }            case 'record-payment':
                 if (!order.payments) order.payments = [];
                 const paymentIndex = order.payments.length + 1;
                 // Create unique receipt number: RCV-{OrderNumber}-{PaymentIndex}-{Timestamp}
@@ -2154,7 +2223,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 } else {
                     let revenue = 0;
-                    order.items.forEach(it => revenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+                    order.items.forEach(it => revenue += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
                     let targetRevenue = revenue * (order.appliesWithholdingTax ? 0.99 : 1);
                     order.logs.push(createAuditLog(`Payment of ${payload.amount} recorded. Bal: ${Math.max(0, targetRevenue - totalPaid).toLocaleString()}`, order.status, user));
                 }
@@ -2212,7 +2281,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
 
                 // Auto-transition if all items are fully manufactured
-                if (order.items.every(i => (i.manufacturedQty || 0) >= i.quantity)) {
+                if (order.items.every(i => (i.manufacturedQty || 0) >= getItemEffectiveQty(i))) {
                     order.status = OrderStatus.MANUFACTURING_COMPLETED;
                     order.logs.push(createAuditLog(`All items manufactured. Auto-transitioned to Ready for QC/Hub`, order.status, user));
                 }
@@ -2295,7 +2364,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
 
                 // Auto-transition if all items are fully received by hub
-                if (order.items.every(i => (i.hubReceivedQty || 0) >= i.quantity)) {
+                if (order.items.every(i => (i.hubReceivedQty || 0) >= getItemEffectiveQty(i))) {
                     order.status = OrderStatus.IN_PRODUCT_HUB;
                     order.logs.push(createAuditLog(`All items received at Hub. Auto-transitioned to Ready for Invoicing`, order.status, user));
                 }
@@ -2364,7 +2433,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (dispatchDetails.length === 0) throw new Error("No valid items to dispatch.");
 
                 // If ALL items are fully dispatched, move to HUB_RELEASED. Otherwise, keep INVOICED or PARTIAL status.
-                const allDispatched = order.items.every(i => (i.dispatchedQty || 0) >= i.quantity);
+                const allDispatched = order.items.every(i => (i.dispatchedQty || 0) >= getItemEffectiveQty(i));
                 if (allDispatched) {
                     order.status = OrderStatus.HUB_RELEASED;
                 }
