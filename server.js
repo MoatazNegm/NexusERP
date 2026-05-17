@@ -2521,10 +2521,12 @@ app.get('/api/v1/full-backup', (req, res) => {
 
         const zip = new AdmZip();
 
-        // Add database
-        if (fs.existsSync(DB_PATH)) {
-            zip.addLocalFile(DB_PATH);
-        }
+        // Add filtered database (exclude users and groups - they are backed up separately via Export Identities)
+        const db = readDb();
+        delete db.users;
+        delete db.userGroups;
+        const filteredDbStr = JSON.stringify(db, null, 2);
+        zip.addFile("db.json", Buffer.from(filteredDbStr, "utf8"));
 
         // Add uploads directory
         const uploadsDir = path.join(__dirname, 'uploads');
