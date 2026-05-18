@@ -83,13 +83,14 @@ const AlterOrderCard: React.FC<{ order: CustomerOrder; savingId: string | null; 
     return initial;
   });
 
+  // Only sync drafts when a completely different order is loaded (by ID)
   useEffect(() => {
     const synced: Record<string, { qty: string; reason: string }> = {};
     order.items.forEach(it => {
       synced[it.id] = { qty: String(getItemEffectiveQty(it)), reason: it.alterationComment || '' };
     });
     setDrafts(synced);
-  }, [order.items.map(it => `${it.id}|${it.alteredQty}|${it.alterationComment || ''}`).join(',')]);
+  }, [order.id]);
 
   const handleDraftChange = (itemId: string, field: 'qty' | 'reason', value: string) => {
     setDrafts(prev => ({ ...prev, [itemId]: { ...prev[itemId], [field]: value } }));
@@ -113,7 +114,7 @@ const AlterOrderCard: React.FC<{ order: CustomerOrder; savingId: string | null; 
           const draft = drafts[item.id] || { qty: String(effQty), reason: '' };
           const pending = savingId === `${order.id}-${item.id}`;
           const draftQtyNum = parseFloat(draft.qty);
-          const canSave = !isNaN(draftQtyNum) && draftQtyNum <= originalQty && draftQtyNum >= delivered && draftQtyNum !== effQty;
+          const canSave = !isNaN(draftQtyNum) && draftQtyNum <= originalQty && draftQtyNum >= delivered && draftQtyNum !== effQty && draft.reason.trim() !== '';
           return (
             <div key={item.id} className="px-6 py-4 flex flex-col md:flex-row md:items-center gap-4">
               <div className="flex-1 min-w-0">
