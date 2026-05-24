@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus } from '../types';
+import { getItemEffectiveQty } from '../utils';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -614,7 +615,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       // Calculate if this is the final payment
       let grossRev = 0;
-      order.items.forEach(it => grossRev += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+      order.items.forEach(it => grossRev += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
       const totalPaidIncludingThis = previousPayments.reduce((s, p) => s + p.amount, 0) + payment.amount;
       const isFinal = totalPaidIncludingThis >= grossRev;
 
@@ -721,7 +722,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     let grossRevenue = 0;
     let cost = 0;
     order.items.forEach(it => {
-      const lineNet = it.quantity * it.pricePerUnit;
+      const lineNet = getItemEffectiveQty(it) * it.pricePerUnit;
       revenue += lineNet;
       grossRevenue += lineNet * (1 + (it.taxPercent / 100));
       it.components?.forEach(c => cost += (c.quantity * (c.unitCost || 0)));
@@ -826,7 +827,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           const updatedOrder = await dataService.recordPayment(decisionModal.entityId, amt, comment);
           // Calculate if this is a final payment
           let grossRev = 0;
-          updatedOrder.items.forEach((it: any) => grossRev += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+          updatedOrder.items.forEach((it: any) => grossRev += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
           const totalPaidNow = (updatedOrder.payments || []).reduce((s: number, p: any) => s + p.amount, 0);
           const lastPayment = updatedOrder.payments[updatedOrder.payments.length - 1];
           const previousPayments = updatedOrder.payments.slice(0, -1);
@@ -902,7 +903,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const getPrintTotal = () => {
     if (!printOrder) return 0;
-    return printOrder.items.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
+    return printOrder.items.reduce((sum, item) => sum + (getItemEffectiveQty(item) * item.pricePerUnit), 0);
   };
 
   // Auto-trigger payment invoice PDF download when paymentInvoiceData is set
@@ -998,9 +999,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   <div key={item.id} className="grid grid-cols-12 border-b-2 text-center font-black text-sm" style={{ borderColor: '#0f172a', color: '#0f172a' }}>
                     <div className="col-span-6 p-4 border-r-2 text-start" style={{ borderColor: '#0f172a' }}>{item.description}</div>
                     <div className="col-span-1 p-4 border-r-2" style={{ borderColor: '#0f172a' }}>{item.pricePerUnit.toLocaleString()}</div>
-                    <div className="col-span-1 p-4 border-r-2" style={{ borderColor: '#0f172a' }}>{item.quantity}</div>
+                    <div className="col-span-1 p-4 border-r-2" style={{ borderColor: '#0f172a' }}>{getItemEffectiveQty(item)}</div>
                     <div className="col-span-2 p-4 border-r-2" style={{ borderColor: '#0f172a' }}>{item.taxPercent}%</div>
-                    <div className="col-span-2 p-4">{((item.quantity * item.pricePerUnit) * (1 + item.taxPercent / 100)).toLocaleString()}</div>
+                    <div className="col-span-2 p-4">{((getItemEffectiveQty(item) * item.pricePerUnit) * (1 + item.taxPercent / 100)).toLocaleString()}</div>
                   </div>
                 ))}
               </div>
@@ -1022,15 +1023,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           const { order: pOrder, paymentAmount: pAmt, receiptNumber: pReceipt, isFinal, previousPayments: prevPay } = paymentInvoiceData;
           // Calculate gross total for proration
           let grossTotal = 0;
-          pOrder.items.forEach((it: any) => grossTotal += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+          pOrder.items.forEach((it: any) => grossTotal += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
           const ratio = grossTotal > 0 ? pAmt / grossTotal : 0;
           // Prorate each line item
           const proratedItems = pOrder.items.map((it: any) => {
-            const lineGross = it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100));
+            const lineGross = getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100));
             const proratedGross = lineGross * ratio;
             const proratedNet = proratedGross / (1 + (it.taxPercent / 100));
             const proratedTax = proratedGross - proratedNet;
-            const proratedQty = it.quantity * ratio;
+            const proratedQty = getItemEffectiveQty(it) * ratio;
             return { ...it, proratedQty, proratedNet, proratedTax, proratedGross };
           });
           const subtotal = proratedItems.reduce((s: number, it: any) => s + it.proratedNet, 0);
@@ -1380,7 +1381,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       />
                       {spAmount && parseFloat(spAmount) > supplierLedger.balance && supplierLedger.balance > 0 && (
                         <div className="text-[10px] font-bold text-amber-600 mt-1">
-                          <i className="fa-solid fa-triangle-exclamation mr-1"></i> Exceeds outstanding balance by {(parseFloat(spAmount) - supplierLedger.balance).toLocaleString()} L.E.
+                          <i className="fa-solid fa-triangle-exclamation mr-1"></i> Exceeds outstanding balance by {(parseFloat(spAmount) - supplierLedger.balance).toFixed(2)} L.E.
                         </div>
                       )}
                     </div>
@@ -1691,7 +1692,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               <>
                 {whtOrders.map(o => {
                   let grossRevenue = 0;
-                  o.items.forEach(it => grossRevenue += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+                  o.items.forEach(it => grossRevenue += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
                   const whtAmount = grossRevenue * 0.01;
                   const targetRevenue = grossRevenue * 0.99;
 
@@ -1856,7 +1857,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
                               <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">{t("finance.orders.generateInvoice") || "Generate Invoice"}</button>
                             )}
-                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toString()); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">{t("finance.orders.recordPayment") || "Record Payment"}</button>
+                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">{t("finance.orders.recordPayment") || "Record Payment"}</button>
                             <div className="flex gap-1">
                               {!o.einvoiceRequested && (
                                 <button
@@ -1915,7 +1916,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               <div className="col-span-5">
                                 <div className="font-bold text-xs text-slate-800 line-clamp-1">{it.description}</div>
                                 <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                                  Tgt: {it.quantity} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} L.E.
+                                  Tgt: {getItemEffectiveQty(it)} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} L.E.
                                 </div>
                               </div>
                               <div className="col-span-1 text-center font-black text-sky-600 text-xs">{inHub}</div>
@@ -2266,9 +2267,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       const orderA = orders.find(o => o.id === a.orderId);
                       const orderB = orders.find(o => o.id === b.orderId);
                       valA = orderA ? (orderA.items?.reduce((sum, item) =>
-                        sum + (item.quantity * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
+                        sum + (getItemEffectiveQty(item) * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
                       valB = orderB ? (orderB.items?.reduce((sum, item) =>
-                        sum + (item.quantity * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
+                        sum + (getItemEffectiveQty(item) * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
                       break;
                     default:
                       valA = new Date(a.timestamp).getTime();
@@ -2479,7 +2480,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     {(viewPaymentsOrder.payments || []).map((p, idx) => {
                       const totalPaidAtThisPoint = viewPaymentsOrder.payments?.slice(0, idx + 1).reduce((s, pay) => s + pay.amount, 0) || 0;
                       let grossSum = 0;
-                      viewPaymentsOrder.items.forEach(it => grossSum += (it.quantity * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+                      viewPaymentsOrder.items.forEach(it => grossSum += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
                       const isClosingPayment = totalPaidAtThisPoint >= grossSum;
 
                       return (

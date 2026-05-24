@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, User, CustomerOrderItem } from '../types';
+import { getItemEffectiveQty } from '../utils';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
@@ -374,7 +375,7 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                                 )}
                                             </td>
                                             <td className="px-8 py-6 font-black text-slate-700 text-sm">
-                                                {order.items.reduce((s, i) => s + (i.quantity * i.pricePerUnit), 0).toLocaleString()} <span className="text-[10px] text-slate-400">L.E.</span>
+                                                {order.items.reduce((s, i) => s + (getItemEffectiveQty(i) * i.pricePerUnit), 0).toLocaleString()} <span className="text-[10px] text-slate-400">L.E.</span>
                                             </td>
                                             <td className="px-8 py-6 text-right">
                                                 <div className="flex flex-col gap-2 items-end">

@@ -25,6 +25,7 @@ import { Login } from './components/Login';
 
 import { dataService } from './services/dataService';
 import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, UserGroup } from './types';
+import { getItemEffectiveQty } from './utils';
 
 // Backend handles threshold calculation (isOverdue flag)
 
@@ -208,7 +209,7 @@ const App: React.FC = () => {
 
     open.forEach(o => {
       o.items.forEach(it => {
-        totalRevenue += (it.quantity * it.pricePerUnit);
+        totalRevenue += (getItemEffectiveQty(it) * it.pricePerUnit);
         it.components?.forEach(c => totalCost += (c.quantity * (c.unitCost || 0)));
       });
     });

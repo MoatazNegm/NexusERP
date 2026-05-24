@@ -178,6 +178,10 @@ class DataService {
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Payment failed'); }
     return res.json();
   }
+  async alterLineItemQty(orderId: string, itemId: string, newQty: number, reason: string) {
+    return this.dispatchAction(orderId, 'alter-line-item-qty', { itemId, newQty, reason });
+  }
+
   async getSupplierLedger(supplierId: string) {
     const res = await fetch(`${BACKEND_URL}/api/v1/supplier-ledger/${supplierId}`, {
       headers: { 'x-user': this.getCurrentUser() }

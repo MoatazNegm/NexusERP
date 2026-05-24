@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, User } from '../types';
+import { getItemEffectiveQty } from '../utils';
 
 interface GovEInvoiceModuleProps {
     refreshKey?: number;
@@ -84,13 +85,13 @@ export const GovEInvoiceModule: React.FC<GovEInvoiceModuleProps> = ({ refreshKey
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                         {orders.map(order => {
-                            const grossRevenue = order.items.reduce((s, it) => s + (it.quantity * it.pricePerUnit * (1 + (it.taxPercent || 0) / 100)), 0);
+                            const grossRevenue = order.items.reduce((s, it) => s + (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent || 0) / 100)), 0);
                             const totalPaid = (order.payments || []).reduce((s, p) => s + p.amount, 0);
                             const outstanding = Math.max(0, grossRevenue - totalPaid);
                             const components = order.items.flatMap(it => it.components || []).filter(c => c.source === 'PROCUREMENT' || c.poNumber);
 
                             const totalComponentCost = components.reduce((s, c) => s + (c.quantity * (c.unitCost || 0) * (1 + (c.taxPercent || 0) / 100)), 0);
-                            const poPriceExcludingTaxes = order.items.reduce((s, it) => s + (it.quantity * it.pricePerUnit), 0);
+                            const poPriceExcludingTaxes = order.items.reduce((s, it) => s + (getItemEffectiveQty(it) * it.pricePerUnit), 0);
                             const netProfit = poPriceExcludingTaxes - totalComponentCost;
 
                             return (

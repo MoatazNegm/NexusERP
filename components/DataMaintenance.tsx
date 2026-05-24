@@ -1569,7 +1569,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                                     <button
                                       onClick={async () => {
                                         if (window.confirm(`Are you sure you want to delete the account "${account}"?`)) {
-                                          const newAccounts = ledgerAccounts.filter((_, i) => i !== index);
+                                          const newAccounts = ledgerAccounts.filter(acc => acc !== account);
                                           setLedgerAccounts(newAccounts);
                                           await updateSetting('settings', 'ledgerAccounts', newAccounts);
                                           // Also remove from groups

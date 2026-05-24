@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CustomerOrder, LogEntry, ManufacturingComponent, OrderStatus, AppConfig } from '../types';
+import { getItemEffectiveQty } from '../utils';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 import { jsPDF } from 'jspdf';
@@ -162,7 +163,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
     checkOverdue();
   }, [order.customerName]);
 
-  const totalSalesValue = order.items.reduce((s, i) => s + (i.quantity * i.pricePerUnit), 0);
+  const totalSalesValue = order.items.reduce((s, i) => s + (getItemEffectiveQty(i) * i.pricePerUnit), 0);
   const isFinanceBlocked = order.status === OrderStatus.IN_HOLD || isOverdue;
   const invoiceTemplateRef = React.useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -266,9 +267,9 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
               <div key={item.id} className="grid grid-cols-12 border-b-2 border-slate-900 text-center font-black text-sm">
                 <div className="col-span-6 p-4 border-r-2 border-slate-900 text-left">{item.description}</div>
                 <div className="col-span-1 p-4 border-r-2 border-slate-900">{item.pricePerUnit.toLocaleString()}</div>
-                <div className="col-span-1 p-4 border-r-2 border-slate-900">{item.quantity}</div>
+                <div className="col-span-1 p-4 border-r-2 border-slate-900">{getItemEffectiveQty(item)}</div>
                 <div className="col-span-2 p-4 border-r-2 border-slate-900">{item.taxPercent}%</div>
-                <div className="col-span-2 p-4">{((item.quantity * item.pricePerUnit) * (1 + item.taxPercent / 100)).toLocaleString()}</div>
+                <div className="col-span-2 p-4">{((getItemEffectiveQty(item) * item.pricePerUnit) * (1 + item.taxPercent / 100)).toLocaleString()}</div>
               </div>
             ))}
           </div>
@@ -447,10 +448,10 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                       <div className="flex-1">
                         <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${item.isAccepted ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-slate-300'}`}></div><div className="font-mono text-[10px] text-blue-500 font-black uppercase tracking-wider">{item.orderNumber}</div></div>
                         <div className="font-bold text-slate-800 text-lg group-hover:text-blue-600 transition-colors">{item.description}</div>
-                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-4"><span className="font-medium">{item.quantity} {item.unit} @ {item.pricePerUnit.toLocaleString()} L.E.</span></div>
+                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-4"><span className="font-medium">{getItemEffectiveQty(item)} {item.unit} @ {item.pricePerUnit.toLocaleString()} L.E.</span></div>
                       </div>
                       <div className="text-right flex items-center gap-6">
-                        <div className="hidden sm:block"><div className="text-[10px] font-black text-slate-400 uppercase mb-0.5">Line Total</div><div className="font-black text-slate-900 text-lg">{(item.quantity * item.pricePerUnit).toLocaleString()} <span className="text-[10px] opacity-40">L.E.</span></div></div>
+                        <div className="hidden sm:block"><div className="text-[10px] font-black text-slate-400 uppercase mb-0.5">Line Total</div><div className="font-black text-slate-900 text-lg">{(getItemEffectiveQty(item) * item.pricePerUnit).toLocaleString()} <span className="text-[10px] opacity-40">L.E.</span></div></div>
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center bg-white border border-slate-200 text-slate-400 transition-transform duration-300 ${expandedItemId === item.id ? 'rotate-180 bg-blue-600 border-blue-600 text-white shadow-lg' : 'group-hover:border-blue-300 group-hover:text-blue-500'}`}><i className="fa-solid fa-chevron-down text-xs"></i></div>
                       </div>
                     </div>

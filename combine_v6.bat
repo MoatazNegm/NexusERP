@@ -1,0 +1,2 @@
+@echo off
+C:\Users\Moata\.gemini\antigravity\brain\96715c2f-1698-4ecd-91c5-b077acd1c354\scratch\node_modules\ffmpeg-static\ffmpeg.exe -y -framerate 1 -i C:\Users\Moata\.gemini\antigravity\brain\96715c2f-1698-4ecd-91c5-b077acd1c354\scratch\frames_v6\f_%%03d.png -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -c:v libx264 -pix_fmt yuv420p C:\Users\Moata\.gemini\antigravity\brain\96715c2f-1698-4ecd-91c5-b077acd1c354\order_modification_specific_demo.mp4

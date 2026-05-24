@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { CustomerOrder, AppConfig, OrderStatus, Customer, Supplier, LedgerEntry } from '../types';
+import { getItemEffectiveQty } from '../utils';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 
@@ -70,7 +71,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       let cost = 0;
       let hasPendingCosts = false;
       order.items.forEach(item => {
-        revenue += (item.quantity * item.pricePerUnit);
+        revenue += (getItemEffectiveQty(item) * item.pricePerUnit);
         item.components?.forEach(comp => {
           const componentTotal = comp.quantity * (comp.unitCost || 0);
           cost += componentTotal;
@@ -117,7 +118,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
     let revenueExclTax = 0;
     let totalCostInclTax = 0;
     order.items.forEach(item => {
-      revenueExclTax += (item.quantity * item.pricePerUnit);
+      revenueExclTax += (getItemEffectiveQty(item) * item.pricePerUnit);
       item.components?.forEach(comp => {
         const taxVal = (comp.taxPercent || 0) / 100;
         totalCostInclTax += (comp.quantity * (comp.unitCost || 0) * (1 + taxVal));
