@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { jsPDF } from 'jspdf';
 import { INITIAL_CONFIG, STATUS_CONFIG } from './constants';
 import { OrderManagement } from './components/OrderManagement';
 import { ProcurementModule } from './components/ProcurementModule';
@@ -234,6 +235,195 @@ const App: React.FC = () => {
     };
   }, [orders, config.settings]);
 
+  const canExportDashboardPdf = effectiveRoles.includes('management');
+
+  const handleExportDashboardSummaryPdf = () => {
+    if (!canExportDashboardPdf) return;
+
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const left = 14;
+    const right = pageWidth - 14;
+    const contentWidth = right - left;
+    let y = 16;
+
+    const writeLine = (text: string, step = 6, x = left) => {
+      doc.text(text, x, y);
+      y += step;
+    };
+
+    const ensurePageSpace = (requiredHeight: number) => {
+      if (y + requiredHeight > pageHeight - 14) {
+        doc.addPage();
+        y = 16;
+      }
+    };
+
+    const addSectionTitle = (title: string) => {
+      ensurePageSpace(14);
+      doc.setFont('helvetica', 'bold');
+      writeLine(title, 7, left);
+      doc.setFont('helvetica', 'normal');
+    };
+
+    const drawTable = (headers: string[], rows: string[][], colWidths: number[]) => {
+      const rowHeight = 7;
+      const drawRow = (cells: string[], isHeader = false) => {
+        ensurePageSpace(rowHeight);
+
+        let x = left;
+        if (isHeader) {
+          doc.setFillColor(241, 245, 249);
+          doc.rect(left, y - 5.5, contentWidth, rowHeight, 'F');
+          doc.setFont('helvetica', 'bold');
+        } else {
+          doc.setFont('helvetica', 'normal');
+        }
+
+        cells.forEach((cell, idx) => {
+          const text = String(cell ?? '');
+          const cellWidth = colWidths[idx] || 20;
+          doc.text(text, x + 1.5, y);
+          doc.rect(x, y - 5.5, cellWidth, rowHeight);
+          x += cellWidth;
+        });
+
+        y += rowHeight;
+      };
+
+      drawRow(headers, true);
+      rows.forEach(r => drawRow(r, false));
+      y += 3;
+    };
+
+    const openOrders = orders.filter(o => ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)).length;
+    const generatedAt = new Date().toLocaleString();
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('Dashboard Summary Report', left, y);
+    y += 8;
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    writeLine(`Generated: ${generatedAt}`, 6, left);
+    writeLine(`User: ${currentUser?.name || currentUser?.username || 'Unknown'}`, 6, left);
+    doc.line(left, y, right, y);
+    y += 8;
+
+    addSectionTitle('Executive Snapshot');
+    drawTable(
+      ['Metric', 'Value'],
+      [
+        ['Gross Portfolio', `${dashboardMetrics.totalRevenue.toLocaleString()} L.E.`],
+        ['Portfolio Margin', `${dashboardMetrics.marginPct.toFixed(1)}%`],
+        ['Active Records', `${openOrders}`],
+        ['Risk Alerts', `${dashboardMetrics.riskCount}`]
+      ],
+      [contentWidth * 0.6, contentWidth * 0.4]
+    );
+
+    addSectionTitle('Status Distribution');
+    const statusRows = Object.entries(STATUS_CONFIG).map(([status, cfg]) => {
+      const stats = dashboardMetrics.statusCounts[status] || { count: 0, hasOverdue: false, hasViolation: false };
+      const flags: string[] = [];
+      if (stats.hasOverdue) flags.push('overdue');
+      if (stats.hasViolation) flags.push('violation');
+      return [cfg.label, `${stats.count}`, flags.length ? flags.join(', ') : '-'];
+    });
+    drawTable(
+      ['Status', 'Count', 'Flags'],
+      statusRows,
+      [contentWidth * 0.5, contentWidth * 0.2, contentWidth * 0.3]
+    );
+
+    addSectionTitle('Critical Margin Alerts');
+    if (dashboardMetrics.negativeMarginOrders.length === 0) {
+      drawTable(
+        ['Order', 'Customer'],
+        [['-', 'No orders in negative margin status.']],
+        [contentWidth * 0.35, contentWidth * 0.65]
+      );
+    } else {
+      const alertRows = dashboardMetrics.negativeMarginOrders.slice(0, 20).map(order => [
+        order.internalOrderNumber || order.id,
+        order.customerName || '-'
+      ]);
+
+      if (dashboardMetrics.negativeMarginOrders.length > 20) {
+        alertRows.push(['...', `and ${dashboardMetrics.negativeMarginOrders.length - 20} more`]);
+      }
+
+      drawTable(
+        ['Order', 'Customer'],
+        alertRows,
+        [contentWidth * 0.35, contentWidth * 0.65]
+      );
+    }
+
+    addSectionTitle('Customers & Suppliers Summary');
+    const customerSummaryMap = new Map<string, { orders: number; value: number }>();
+    const supplierSummaryMap = new Map<string, { components: number; spend: number }>();
+
+    orders.forEach(order => {
+      const customerName = order.customerName || 'Unknown Customer';
+      let orderValue = 0;
+
+      (order.items || []).forEach(item => {
+        orderValue += (item.quantity || 0) * (item.pricePerUnit || 0);
+        (item.components || []).forEach(comp => {
+          const supplierName = comp.supplierName || comp.supplierId || 'Unassigned Supplier';
+          const prevSupplier = supplierSummaryMap.get(supplierName) || { components: 0, spend: 0 };
+          supplierSummaryMap.set(supplierName, {
+            components: prevSupplier.components + 1,
+            spend: prevSupplier.spend + ((comp.quantity || 0) * (comp.unitCost || 0))
+          });
+        });
+      });
+
+      const prevCustomer = customerSummaryMap.get(customerName) || { orders: 0, value: 0 };
+      customerSummaryMap.set(customerName, {
+        orders: prevCustomer.orders + 1,
+        value: prevCustomer.value + orderValue
+      });
+    });
+
+    const topCustomers = Array.from(customerSummaryMap.entries())
+      .sort((a, b) => b[1].value - a[1].value)
+      .slice(0, 5)
+      .map(([name, stats]) => [name, `${stats.orders}`, `${stats.value.toLocaleString()} L.E.`]);
+
+    const topSuppliers = Array.from(supplierSummaryMap.entries())
+      .sort((a, b) => b[1].spend - a[1].spend)
+      .slice(0, 5)
+      .map(([name, stats]) => [name, `${stats.components}`, `${stats.spend.toLocaleString()} L.E.`]);
+
+    const summaryRows: string[][] = [];
+    const maxRows = Math.max(topCustomers.length, topSuppliers.length, 1);
+
+    for (let i = 0; i < maxRows; i++) {
+      const customer = topCustomers[i] || ['-', '-', '-'];
+      const supplier = topSuppliers[i] || ['-', '-', '-'];
+      summaryRows.push([
+        customer[0],
+        customer[1],
+        customer[2],
+        supplier[0],
+        supplier[1],
+        supplier[2]
+      ]);
+    }
+
+    drawTable(
+      ['Customer', 'Orders', 'Value', 'Supplier', 'Components', 'Spend'],
+      summaryRows,
+      [contentWidth * 0.22, contentWidth * 0.1, contentWidth * 0.18, contentWidth * 0.22, contentWidth * 0.12, contentWidth * 0.16]
+    );
+
+    const fileTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    doc.save(`dashboard-summary-${fileTimestamp}.pdf`);
+  };
+
   const renderContent = () => {
     if (!isDbReady || !currentUser) return null;
     switch (activeView) {
@@ -293,9 +483,19 @@ const App: React.FC = () => {
                   <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Pipeline Lifecycle Health</h3>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Global Status Distribution & Threshold Monitoring</p>
                 </div>
-                {dashboardStatusFilter && (
-                  <button onClick={() => setDashboardStatusFilter(null)} className="text-[10px] font-black text-rose-500 uppercase px-3 py-1 bg-rose-50 border border-rose-100 rounded-full">Clear Stage Filter</button>
-                )}
+                <div className="flex items-center gap-2">
+                  {canExportDashboardPdf && (
+                    <button
+                      onClick={handleExportDashboardSummaryPdf}
+                      className="text-[10px] font-black text-blue-700 uppercase px-3 py-1 bg-blue-50 border border-blue-200 rounded-full hover:bg-blue-100 transition-colors"
+                    >
+                      Export Dashboard PDF
+                    </button>
+                  )}
+                  {dashboardStatusFilter && (
+                    <button onClick={() => setDashboardStatusFilter(null)} className="text-[10px] font-black text-rose-500 uppercase px-3 py-1 bg-rose-50 border border-rose-100 rounded-full">Clear Stage Filter</button>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {Object.entries(STATUS_CONFIG).map(([status, cfg]) => {
