@@ -96,6 +96,15 @@ When pulling a new update on a production or staging machine:
 2. **Settings and roles are not automatically migrated.** If the update introduces a new role (e.g., `suppliers`), an admin must log into the application and update the settings via the UI (Settings → Roles), or run a data migration script if provided.
 3. `db.stub.json` is the template for fresh installations. It should remain minimal and not contain any production data.
 
+### Cloud Deployments & Persistent Volumes (e.g., Render)
+In ephemeral hosting environments (like Render or Docker containers), the local disk is wiped on every deploy/restart. To prevent data loss:
+1. **Mount a Persistent Volume:** Add a persistent volume (e.g. at `/data`) in your cloud provider's console.
+2. **Set Environment Variables:** Define the following variables to point to the mounted volume:
+   - `DB_PATH=/data/db.json` (stores the database settings, users, and orders on the persistent volume)
+   - `UPLOADS_PATH=/data/uploads` (stores uploaded files and logos on the persistent volume)
+   
+This configuration decouples application code updates from your database and file assets.
+
 ### `db.stub.json` Template
 The `db.stub.json` file should only contain the empty structure for a fresh database. Do not add production data, users, or custom settings to it.
 
