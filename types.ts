@@ -21,7 +21,7 @@ export enum OrderStatus {
   FULFILLED = 'FULFILLED'
 }
 
-export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice' | 'planning';
+export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice' | 'planning' | 'suppliers';
 
 export interface UserGroup {
   id: string;

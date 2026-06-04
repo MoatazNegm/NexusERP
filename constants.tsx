@@ -42,7 +42,7 @@ export const INITIAL_CONFIG: AppConfig = {
     enableDeliveryAlerts: false,
     deliveryAlertGroupIds: [],
     deliveryWarningDays: 5,
-    availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice'],
+    availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'suppliers'],
     roleMappings: {
       dashboard: ['management'],
       orders: ['order_management'],
@@ -52,8 +52,8 @@ export const INITIAL_CONFIG: AppConfig = {
       factory: ['factory'],
       inventory: ['inventory'],
       shipment: ['order_management'],
-      crm: ['crm'],
-      suppliers: ['procurement'],
+      crm: ['crm', 'suppliers'],
+      suppliers: ['procurement', 'suppliers'],
       reporting: ['management'],
       govEInvoice: ['Gov.EInvoice']
     },
