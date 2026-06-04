@@ -74,6 +74,31 @@ Orders progress through a strict enum (OrderStatus in types.ts). Server-side dis
 ### 7. Backup Segregation
 Full system archive (/api/v1/full-backup) excludes users and userGroups. Those are backed up separately via /api/v1/backup-users-groups ("Export Identities").
 
+## Environment & Data Persistence
+
+### `db.json` is Machine-Local
+`db.json` contains all live data: users, user groups, settings, orders, customers, and uploaded file references. It is already listed in `.gitignore` and **must never be committed** to version control.
+
+If you accidentally committed it earlier, remove it from git tracking (while keeping your local file):
+```bash
+git rm --cached db.json
+git commit -m "Remove db.json from version control"
+```
+
+### How New Environments Are Bootstrapped
+When the server starts and `db.json` is missing:
+1. It first checks for `db.json.local.bak` (a safety copy created on every start).
+2. If no backup exists, it copies `db.stub.json` as the initial database.
+
+### Safe Update Workflow for Production
+When pulling a new update on a production or staging machine:
+1. Ensure `db.json` is not overwritten by the pull (it is `.gitignored`).
+2. **Settings and roles are not automatically migrated.** If the update introduces a new role (e.g., `suppliers`), an admin must log into the application and update the settings via the UI (Settings → Roles), or run a data migration script if provided.
+3. `db.stub.json` is the template for fresh installations. It should remain minimal and not contain any production data.
+
+### `db.stub.json` Template
+The `db.stub.json` file should only contain the empty structure for a fresh database. Do not add production data, users, or custom settings to it.
+
 ## Adding a New Feature
 1. Component: Create components/{Feature}Module.tsx (or Modal.tsx if it's an action).
 2. Types: Add interfaces to types.ts. Export runtime helpers alongside interfaces if needed.
