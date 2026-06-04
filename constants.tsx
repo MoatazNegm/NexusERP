@@ -52,7 +52,7 @@ export const INITIAL_CONFIG: AppConfig = {
       factory: ['factory'],
       inventory: ['inventory'],
       shipment: ['order_management'],
-      crm: ['crm', 'suppliers'],
+      crm: ['crm'],
       suppliers: ['procurement', 'suppliers'],
       reporting: ['management'],
       govEInvoice: ['Gov.EInvoice']
