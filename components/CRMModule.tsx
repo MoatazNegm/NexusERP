@@ -43,13 +43,23 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
   const [custForm, setCustForm] = useState<Omit<Customer, 'id' | 'logs'>>({
     name: '',
     email: '',
+    secondaryEmail: '',
     phone: '',
     address: '',
+    deliveryAddress: '',
     location: '',
     contactName: '',
     contactPhone: '',
     contactAddress: '',
     contactEmail: '',
+    contactName2: '',
+    contactPhone2: '',
+    contactAddress2: '',
+    contactEmail2: '',
+    contactName3: '',
+    contactPhone3: '',
+    contactAddress3: '',
+    contactEmail3: '',
     paymentTermDays: 45,
     appliesWithholdingTax: false
   });
@@ -82,13 +92,23 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
     setCustForm({
       name: '',
       email: '',
+      secondaryEmail: '',
       phone: '',
       address: '',
+      deliveryAddress: '',
       location: '',
       contactName: '',
       contactPhone: '',
       contactAddress: '',
       contactEmail: '',
+      contactName2: '',
+      contactPhone2: '',
+      contactAddress2: '',
+      contactEmail2: '',
+      contactName3: '',
+      contactPhone3: '',
+      contactAddress3: '',
+      contactEmail3: '',
       paymentTermDays: 45,
       appliesWithholdingTax: false
     });
@@ -104,12 +124,12 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
     const normalize = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
     allCustomers.forEach(c1 => {
-      if (processed.has(c1.id)) return;
+      if (!c1.id || processed.has(c1.id)) return;
       const cluster = [c1];
       const n1 = normalize(c1.name);
 
       allCustomers.forEach(c2 => {
-        if (c1.id === c2.id || processed.has(c2.id)) return;
+        if (!c2.id || c1.id === c2.id || processed.has(c2.id)) return;
         const n2 = normalize(c2.name);
 
         // Similarity criteria: subset or subset after normalization
@@ -121,8 +141,10 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
       });
 
       if (cluster.length > 1) {
-        cluster.forEach(c => processed.add(c.id));
-        groups.push({ primaryId: cluster[0].id, customers: cluster });
+        cluster.forEach(c => {
+          if (c.id) processed.add(c.id);
+        });
+        groups.push({ primaryId: cluster[0].id || '', customers: cluster });
       }
     });
 
@@ -148,13 +170,23 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
     setCustForm({
       name: cust.name,
       email: cust.email,
+      secondaryEmail: cust.secondaryEmail || '',
       phone: cust.phone,
       address: cust.address,
+      deliveryAddress: cust.deliveryAddress || '',
       location: cust.location || '',
       contactName: cust.contactName || '',
       contactPhone: cust.contactPhone || '',
       contactAddress: cust.contactAddress || '',
       contactEmail: cust.contactEmail || '',
+      contactName2: cust.contactName2 || '',
+      contactPhone2: cust.contactPhone2 || '',
+      contactAddress2: cust.contactAddress2 || '',
+      contactEmail2: cust.contactEmail2 || '',
+      contactName3: cust.contactName3 || '',
+      contactPhone3: cust.contactPhone3 || '',
+      contactAddress3: cust.contactAddress3 || '',
+      contactEmail3: cust.contactEmail3 || '',
       paymentTermDays: cust.paymentTermDays || 45,
       appliesWithholdingTax: cust.appliesWithholdingTax || false
     });
@@ -168,7 +200,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
     e.preventDefault();
     if (!custForm.name) return;
 
-    if (editingCustomer) {
+    if (editingCustomer?.id) {
       // Fix: Pass currentUser.username as the third argument
       await dataService.updateCustomer(editingCustomer.id, custForm);
     } else {
@@ -285,12 +317,20 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                         <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.email} onChange={e => setCustForm({ ...custForm, email: e.target.value })} />
                       </div>
                       <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Secondary Email</label>
+                        <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.secondaryEmail || ''} onChange={e => setCustForm({ ...custForm, secondaryEmail: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Switchboard / Phone</label>
                         <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.phone} onChange={e => setCustForm({ ...custForm, phone: e.target.value })} />
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Headquarters Address</label>
                         <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.address} onChange={e => setCustForm({ ...custForm, address: e.target.value })} />
+                      </div>
+                      <div className="md:col-span-2 space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Delivery Address</label>
+                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.deliveryAddress || ''} onChange={e => setCustForm({ ...custForm, deliveryAddress: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Payment Term (Days)</label>
@@ -337,22 +377,71 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                       <i className="fa-solid fa-user-tie"></i>
                       Point of Contact
                     </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Contact Name</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactName} onChange={e => setCustForm({ ...custForm, contactName: e.target.value })} />
+                    <div className="space-y-4">
+                      <div className="rounded-lg border border-slate-200 p-4 space-y-3 bg-slate-50/50">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Contact 1</div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Name</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactName || ''} onChange={e => setCustForm({ ...custForm, contactName: e.target.value })} />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Email</label>
+                            <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactEmail || ''} onChange={e => setCustForm({ ...custForm, contactEmail: e.target.value })} />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Mobile</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactPhone || ''} onChange={e => setCustForm({ ...custForm, contactPhone: e.target.value })} />
+                          </div>
+                          <div className="md:col-span-3 space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Personal Contact Address</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress || ''} onChange={e => setCustForm({ ...custForm, contactAddress: e.target.value })} />
+                          </div>
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Contact Email</label>
-                        <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactEmail} onChange={e => setCustForm({ ...custForm, contactEmail: e.target.value })} />
+
+                      <div className="rounded-lg border border-slate-200 p-4 space-y-3 bg-slate-50/50">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Contact 2</div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Name</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactName2 || ''} onChange={e => setCustForm({ ...custForm, contactName2: e.target.value })} />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Email</label>
+                            <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactEmail2 || ''} onChange={e => setCustForm({ ...custForm, contactEmail2: e.target.value })} />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Mobile</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactPhone2 || ''} onChange={e => setCustForm({ ...custForm, contactPhone2: e.target.value })} />
+                          </div>
+                          <div className="md:col-span-3 space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Personal Contact Address</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress2 || ''} onChange={e => setCustForm({ ...custForm, contactAddress2: e.target.value })} />
+                          </div>
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Contact Mobile</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactPhone} onChange={e => setCustForm({ ...custForm, contactPhone: e.target.value })} />
-                      </div>
-                      <div className="md:col-span-3 space-y-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Personal Contact Address (If different)</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress} onChange={e => setCustForm({ ...custForm, contactAddress: e.target.value })} />
+
+                      <div className="rounded-lg border border-slate-200 p-4 space-y-3 bg-slate-50/50">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Contact 3</div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Name</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactName3 || ''} onChange={e => setCustForm({ ...custForm, contactName3: e.target.value })} />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Email</label>
+                            <input type="email" className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactEmail3 || ''} onChange={e => setCustForm({ ...custForm, contactEmail3: e.target.value })} />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Contact Mobile</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactPhone3 || ''} onChange={e => setCustForm({ ...custForm, contactPhone3: e.target.value })} />
+                          </div>
+                          <div className="md:col-span-3 space-y-1">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Personal Contact Address</label>
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress3 || ''} onChange={e => setCustForm({ ...custForm, contactAddress3: e.target.value })} />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -376,7 +465,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                   </h4>
                   <div className="text-[10px] text-slate-400 font-medium italic">Chronological list of all system modifications</div>
                 </div>
-                {editingCustomer && <LogTimeline logs={editingCustomer.logs} />}
+                {editingCustomer && <LogTimeline logs={editingCustomer.logs || []} />}
               </div>
             ) : (
               <div className="p-8 animate-in fade-in slide-in-from-bottom-2 duration-300 min-h-[400px]">
@@ -415,7 +504,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                                   checked={group.primaryId === c.id}
                                   onChange={() => {
                                     const newGroups = [...duplicateGroups];
-                                    newGroups[gIdx].primaryId = c.id;
+                                    newGroups[gIdx].primaryId = c.id || newGroups[gIdx].primaryId;
                                     setDuplicateGroups(newGroups);
                                   }}
                                   className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-slate-300"
@@ -438,7 +527,9 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                               disabled={merging}
                               onClick={() => handleMerge(
                                 group.primaryId,
-                                group.customers.filter(c => c.id !== group.primaryId).map(c => c.id)
+                                group.customers
+                                  .filter(c => c.id && c.id !== group.primaryId)
+                                  .map(c => c.id as string)
                               )}
                               className="px-6 py-2 bg-blue-600 text-white rounded-lg font-black text-[11px] uppercase tracking-wide hover:bg-blue-700 disabled:opacity-50 shadow-lg shadow-blue-100"
                             >
@@ -469,7 +560,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
               <tr>
                 <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Company & Location</th>
                 <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Terms</th>
-                <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Primary Contact</th>
+                <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Contacts</th>
                 <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Actions</th>
               </tr>
             </thead>
@@ -486,10 +577,21 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                       )}
                     </div>
                     <div className="text-xs text-slate-500 mt-1">{cust.address}</div>
+                    {cust.deliveryAddress && (
+                      <div className="text-[10px] text-slate-400 mt-1">
+                        <i className="fa-solid fa-truck text-[9px] mr-1"></i>
+                        Delivery: {cust.deliveryAddress}
+                      </div>
+                    )}
                     <div className="flex gap-4 mt-2">
                       <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium">
                         <i className="fa-solid fa-envelope opacity-60"></i> {cust.email || 'N/A'}
                       </div>
+                      {cust.secondaryEmail && (
+                        <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium">
+                          <i className="fa-solid fa-envelopes-bulk opacity-60"></i> {cust.secondaryEmail}
+                        </div>
+                      )}
                       <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium">
                         <i className="fa-solid fa-phone opacity-60"></i> {cust.phone || 'N/A'}
                       </div>
@@ -506,13 +608,35 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    {cust.contactName ? (
-                      <div className="space-y-1">
-                        <div className="text-sm font-semibold text-slate-700">{cust.contactName}</div>
-                        <div className="text-[10px] text-slate-500 flex items-center gap-3">
-                          <span className="flex items-center gap-1"><i className="fa-solid fa-mobile-screen"></i> {cust.contactPhone || 'No Mobile'}</span>
-                          <span className="flex items-center gap-1"><i className="fa-solid fa-at"></i> {cust.contactEmail || 'No Email'}</span>
-                        </div>
+                    {([cust.contactName, cust.contactName2, cust.contactName3].some(Boolean)) ? (
+                      <div className="space-y-2">
+                        {cust.contactName && (
+                          <div className="space-y-1 border-b border-slate-100 pb-2">
+                            <div className="text-sm font-semibold text-slate-700">1. {cust.contactName}</div>
+                            <div className="text-[10px] text-slate-500 flex items-center gap-3">
+                              <span className="flex items-center gap-1"><i className="fa-solid fa-mobile-screen"></i> {cust.contactPhone || 'No Mobile'}</span>
+                              <span className="flex items-center gap-1"><i className="fa-solid fa-at"></i> {cust.contactEmail || 'No Email'}</span>
+                            </div>
+                          </div>
+                        )}
+                        {cust.contactName2 && (
+                          <div className="space-y-1 border-b border-slate-100 pb-2">
+                            <div className="text-sm font-semibold text-slate-700">2. {cust.contactName2}</div>
+                            <div className="text-[10px] text-slate-500 flex items-center gap-3">
+                              <span className="flex items-center gap-1"><i className="fa-solid fa-mobile-screen"></i> {cust.contactPhone2 || 'No Mobile'}</span>
+                              <span className="flex items-center gap-1"><i className="fa-solid fa-at"></i> {cust.contactEmail2 || 'No Email'}</span>
+                            </div>
+                          </div>
+                        )}
+                        {cust.contactName3 && (
+                          <div className="space-y-1">
+                            <div className="text-sm font-semibold text-slate-700">3. {cust.contactName3}</div>
+                            <div className="text-[10px] text-slate-500 flex items-center gap-3">
+                              <span className="flex items-center gap-1"><i className="fa-solid fa-mobile-screen"></i> {cust.contactPhone3 || 'No Mobile'}</span>
+                              <span className="flex items-center gap-1"><i className="fa-solid fa-at"></i> {cust.contactEmail3 || 'No Email'}</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="text-xs text-slate-400 italic">No contact assigned</div>
