@@ -49,7 +49,7 @@ export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, use
 
   const [newPart, setNewPart] = useState({ partNumber: '', description: '', price: 0, currency: 'L.E.' });
 
-  const canEdit = userRoles.includes('admin') || userRoles.includes('procurement');
+  const canEdit = userRoles.includes('admin') || userRoles.includes('procurement') || userRoles.includes('suppliers');
 
   useEffect(() => {
     loadSuppliers();

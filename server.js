@@ -12,14 +12,18 @@ import AdmZip from 'adm-zip';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DB_PATH = path.join(__dirname, 'db.json');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'db.json');
+const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_BASE)) {
+    fs.mkdirSync(UPLOADS_BASE, { recursive: true });
+}
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
 
 // --- MULTER CONFIG ---
 const podStorage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const dir = path.join(__dirname, 'uploads', 'pod');
+        const dir = path.join(UPLOADS_BASE, 'pod');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
     },
@@ -32,7 +36,7 @@ const uploadPod = multer({ storage: podStorage });
 
 const einvoiceStorage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const dir = path.join(__dirname, 'uploads', 'einvoices');
+        const dir = path.join(UPLOADS_BASE, 'einvoices');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
     },
@@ -45,7 +49,7 @@ const uploadEInvoice = multer({ storage: einvoiceStorage });
 
 const whtStorage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const dir = path.join(__dirname, 'uploads', 'wht_certificates');
+        const dir = path.join(UPLOADS_BASE, 'wht_certificates');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
     },
@@ -320,7 +324,7 @@ const resolveSettings = (db) => {
             senderEmail: 'erpalerts@quickstor.net',
             useSsl: true
         },
-        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning'],
+        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers'],
         roleMappings: {
             dashboard: ['management'],
             orders: ['order_management'],
@@ -331,7 +335,7 @@ const resolveSettings = (db) => {
             inventory: ['inventory'],
             shipment: ['order_management'],
             crm: ['crm'],
-            suppliers: ['procurement'],
+            suppliers: ['procurement', 'suppliers'],
             reporting: ['management'],
             govEInvoice: ['Gov.EInvoice']
         },
@@ -1127,7 +1131,7 @@ app.get('/api/log-crash', (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, 'dist')));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(UPLOADS_BASE));
 
 // --- HEALTH CHECK HELPER ---
 const calculateOrderHealth = (order, settings) => {
@@ -2598,7 +2602,7 @@ app.get('/api/v1/full-backup', (req, res) => {
         zip.addFile("db.json", Buffer.from(filteredDbStr, "utf8"));
 
         // Add uploads directory
-        const uploadsDir = path.join(__dirname, 'uploads');
+        const uploadsDir = UPLOADS_BASE;
         if (fs.existsSync(uploadsDir)) {
             zip.addLocalFolder(uploadsDir, 'uploads');
         }
