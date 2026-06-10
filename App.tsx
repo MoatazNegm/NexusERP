@@ -173,7 +173,7 @@ const App: React.FC = () => {
       { id: 'procurement', icon: 'fa-diagram-project', label: 'Procurement', roles: mapping['procurement'] || ['procurement'] as UserRole[], module: 'procurement' as keyof AppConfig['modules'] },
       { id: 'factory', icon: 'fa-industry', label: 'Factory Build', roles: mapping['factory'] || ['factory'] as UserRole[], module: 'factory' as keyof AppConfig['modules'] },
       { id: 'inventory', icon: 'fa-warehouse', label: 'Inventory & Hub', roles: mapping['inventory'] || ['inventory'] as UserRole[], module: 'inventory' as keyof AppConfig['modules'] },
-      { id: 'shipment', icon: 'fa-truck-ramp-box', label: 'Shipment', roles: mapping['shipment'] || ['order_management'] as UserRole[], module: 'shipping' as keyof AppConfig['modules'] },
+      { id: 'shipment', icon: 'fa-truck-ramp-box', label: 'Shipment', roles: mapping['shipment'] || ['shipment'] as UserRole[], module: 'shipping' as keyof AppConfig['modules'] },
       { id: 'crm', icon: 'fa-users', label: 'CRM Contacts', roles: mapping['crm'] || ['crm'] as UserRole[], module: 'crm' as keyof AppConfig['modules'] },
       { id: 'suppliers', icon: 'fa-truck-field', label: 'Suppliers', roles: mapping['suppliers'] || ['procurement'] as UserRole[], module: 'suppliers' as keyof AppConfig['modules'] },
       { id: 'reporting', icon: 'fa-chart-column', label: 'Profitability', roles: mapping['reporting'] || ['management'] as UserRole[], module: 'finance' as keyof AppConfig['modules'] },

@@ -324,7 +324,7 @@ const resolveSettings = (db) => {
             senderEmail: 'erpalerts@quickstor.net',
             useSsl: true
         },
-        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers'],
+        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers', 'shipment'],
         roleMappings: {
             dashboard: ['management'],
             orders: ['order_management'],
@@ -333,7 +333,7 @@ const resolveSettings = (db) => {
             procurement: ['procurement'],
             factory: ['factory'],
             inventory: ['inventory'],
-            shipment: ['order_management'],
+            shipment: ['shipment'],
             crm: ['crm'],
             suppliers: ['procurement', 'suppliers'],
             reporting: ['management'],
