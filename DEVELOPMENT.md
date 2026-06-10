@@ -61,16 +61,18 @@ When a line item's quantity can be lowered post-creation, use alteredQty + alter
 ### 4. Modal Action Pattern
 User-initiated actions (record payment, issue PO, alter qty) open a local modal with draft state. The modal validates, calls dataService, then triggers a parent refresh via callback. Modals clean up on close.
 
-### 5. Role-Based Gating
-Every top-level module route checks `ModuleGate` against the user's role. **The actual list of available roles and their module mappings live in `db.json` (the `settings.availableRoles` and `settings.roleMappings` fields).** The frontend pulls them at runtime via API. `constants.tsx` and `server.js` are merely **bootstrap fallbacks** used only when the database is empty. Once `db.json` is populated, changes to these fallback files will have **no effect** unless the database is also updated.
+### 5. Role-Based Gating & Schema Migrations
+Every top-level module route checks `ModuleGate` against the user's role. **The actual list of available roles and their module mappings live in `db.json` (the `settings.availableRoles` and `settings.roleMappings` fields).** The frontend pulls them at runtime via API.
 
-When adding or modifying roles, you **must** update all of the following:
+**Schema migrations are automated.** When you add or change roles, there is no need to manually edit `db.json` on every machine. Instead, you write a small migration function in `server.js` and bump `CURRENT_SCHEMA_VERSION`. The server automatically upgrades any `db.json` on startup (or after restore) by running the migration chain. Business data (orders, customers, etc.) is never touched.
+
+When adding or modifying roles, follow these steps:
 1. `types.ts` — Add the new role to the `UserRole` union type so TypeScript compiles.
-2. `constants.tsx` — Add the role to `availableRoles` and update `roleMappings` (fallback for fresh installs).
-3. `server.js` — Update the fallback `availableRoles` and `roleMappings` in `getSettings()` (fallback for fresh installs).
-4. **`db.json`** — Update the actual database settings object(s) to include the new role and mappings. **This is the authoritative runtime source.** If this step is skipped, the role will not appear in the UI on this machine, and any existing user already assigned to the old mapped role will lose or retain incorrect access.
+2. `constants.tsx` — Add the role to `availableRoles` and update `roleMappings` (used as defaults for fresh installs).
+3. `server.js` — **Add a migration function** in the `migrations` array that adds the role to `availableRoles` and sets its `roleMappings`. Then **increment `CURRENT_SCHEMA_VERSION`**.
+4. `App.tsx` — If needed, wire the new module route and nav item (only needed for entirely new views, not new roles).
 
-> ⚠️ **Critical:** Because `db.json` is `.gitignored` and machine-local, every development machine, staging server, and production server must be updated independently. There is no automatic migration. The recommended approach is to update the code (steps 1–3) and then, on each running instance, log in as an admin and add the role via **Settings → Roles** (or edit `db.json` directly while the server is stopped).
+> ⚠️ **Important:** Do not edit `db.json` manually on any machine. The migration system handles it. If you restore an old backup, the server will auto-migrate it on the next startup.
 
 ### 6. Dashboard Reporting
 The dashboard includes a PDF export feature (executive snapshot, status distribution, critical margin alerts, and customer/supplier summaries) restricted to the `management` role. Export logic lives in `App.tsx` and uses the `jspdf` library.
