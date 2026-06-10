@@ -62,13 +62,15 @@ When a line item's quantity can be lowered post-creation, use alteredQty + alter
 User-initiated actions (record payment, issue PO, alter qty) open a local modal with draft state. The modal validates, calls dataService, then triggers a parent refresh via callback. Modals clean up on close.
 
 ### 5. Role-Based Gating
-Every top-level module route checks ModuleGate against the user's role. New features must add their role mapping to constants.tsx.
+Every top-level module route checks `ModuleGate` against the user's role. **The actual list of available roles and their module mappings live in `db.json` (the `settings.availableRoles` and `settings.roleMappings` fields).** The frontend pulls them at runtime via API. `constants.tsx` and `server.js` are merely **bootstrap fallbacks** used only when the database is empty. Once `db.json` is populated, changes to these fallback files will have **no effect** unless the database is also updated.
 
-**Important:** The application reads roles and role mappings from the database (`db.json`), which overrides the frontend constants. When adding or modifying roles, you must update the following files in this order:
-1. `types.ts` — Add the new role to the `UserRole` union type.
-2. `constants.tsx` — Add the role to `availableRoles` and update `roleMappings`.
-3. `server.js` — Update the fallback `availableRoles` and `roleMappings` in the `getSettings()` function.
-4. `db.json` — Update the actual database settings object to include the new role and mappings. This is the authoritative source.
+When adding or modifying roles, you **must** update all of the following:
+1. `types.ts` — Add the new role to the `UserRole` union type so TypeScript compiles.
+2. `constants.tsx` — Add the role to `availableRoles` and update `roleMappings` (fallback for fresh installs).
+3. `server.js` — Update the fallback `availableRoles` and `roleMappings` in `getSettings()` (fallback for fresh installs).
+4. **`db.json`** — Update the actual database settings object(s) to include the new role and mappings. **This is the authoritative runtime source.** If this step is skipped, the role will not appear in the UI on this machine, and any existing user already assigned to the old mapped role will lose or retain incorrect access.
+
+> ⚠️ **Critical:** Because `db.json` is `.gitignored` and machine-local, every development machine, staging server, and production server must be updated independently. There is no automatic migration. The recommended approach is to update the code (steps 1–3) and then, on each running instance, log in as an admin and add the role via **Settings → Roles** (or edit `db.json` directly while the server is stopped).
 
 ### 6. Dashboard Reporting
 The dashboard includes a PDF export feature (executive snapshot, status distribution, critical margin alerts, and customer/supplier summaries) restricted to the `management` role. Export logic lives in `App.tsx` and uses the `jspdf` library.
@@ -77,7 +79,6 @@ The dashboard includes a PDF export feature (executive snapshot, status distribu
 Orders progress through a strict enum (OrderStatus in types.ts). Server-side dispatch actions enforce valid transitions. The frontend renders stage-specific UI based on order.status, not derived flags.
 
 ### 8. Backup Segregation
-Full system archive (/api/v1/full-backup) excludes users and userGroups. Those are backed up separately via /api/v1/backup-users-groups ("Export Identities").
 Full system archive (/api/v1/full-backup) excludes users and userGroups. Those are backed up separately via /api/v1/backup-users-groups ("Export Identities").
 
 ## Environment & Data Persistence
@@ -147,7 +148,7 @@ The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults 
 3. Service: Add API methods to dataService.ts.
 4. Server: Add dispatch action cases to server.js.
 5. Constants: Register role mapping in constants.tsx.
-6. Database: If the feature involves new roles or settings, update db.json (the authoritative source).
+6. **Database (`db.json`):** If the feature involves new roles or settings, update the actual database settings object. This is the **authoritative runtime source** — if skipped, the feature will not appear on this machine even though the code is correct.
 7. Router: Wire the component + ModuleGate into App.tsx.
 
 ## Key Files to Read First
