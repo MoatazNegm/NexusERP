@@ -21,7 +21,7 @@ components/          # Feature modules — one file per major business function
   InventoryModule.tsx     # Stock levels, reservations, manufacturing completion
   ShipmentModule.tsx      # Dispatch, POD, transit tracking
   GovEInvoiceModule.tsx   # Government e-invoice upload/tracking
-  CRMModule.tsx           # Customers, contacts, opportunities
+  CRMModule.tsx           # Customers, contacts, opportunities (supports up to 3 secondary contacts + delivery address)
   FactoryModule.tsx       # Manufacturing floor operations
   DataMaintenance.tsx     # Settings, ledger accounts, thresholds, backups
   {Feature}Modal.tsx      # Action modals (OrderDetails, AddCustomer, etc.)
@@ -43,6 +43,8 @@ locales/
 scripts/                  # One-off maintenance scripts (.cjs)
 public/                   # Static assets served as-is
 uploads/                  # User-uploaded files (PODs, invoices)
+.postman/                 # Postman API collection and environment definitions
+postman/                  # Postman workspace globals and shared resources
 `
 
 ## Coding Patterns
@@ -68,7 +70,11 @@ Every top-level module route checks ModuleGate against the user's role. New feat
 3. `server.js` — Update the fallback `availableRoles` and `roleMappings` in the `getSettings()` function.
 4. `db.json` — Update the actual database settings object to include the new role and mappings. This is the authoritative source.
 
-### 6. Status-Driven Workflow
+### 6. Dashboard Reporting
+The dashboard includes a PDF export feature (executive snapshot, status distribution, critical margin alerts, and customer/supplier summaries) restricted to the `management` role. Export logic lives in `App.tsx` and uses the `jspdf` library.
+
+### 7. Status-Driven Workflow
+Orders progress through a strict enum (OrderStatus in types.ts). Server-side dispatch actions enforce valid transitions. The frontend renders stage-specific UI based on order.status, not derived flags.
 Orders progress through a strict enum (OrderStatus in types.ts). Server-side dispatch actions enforce valid transitions. The frontend renders stage-specific UI based on order.status, not derived flags.
 
 ### 7. Backup Segregation
