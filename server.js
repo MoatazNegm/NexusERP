@@ -20,6 +20,11 @@ if (!fs.existsSync(UPLOADS_BASE)) {
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
 
+const getItemEffectiveQty = (item) => {
+    if (item && item.alteredQty !== undefined && item.alteredQty !== null) return item.alteredQty;
+    return (item && item.quantity) || 0;
+};
+
 // --- MULTER CONFIG ---
 const podStorage = multer.diskStorage({
     destination: function (req, file, cb) {
