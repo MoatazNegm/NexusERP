@@ -2578,10 +2578,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
 app.get('/api/v1/backup', (req, res) => {
     const db = readDb();
-    // Decrypt settings for export so the backup contains usable data
-    if (db.settings && Array.isArray(db.settings)) {
-        db.settings = db.settings.map(s => decryptSettings(s));
-    }
+    // Settings remain encrypted in the backup file for security.
+    // The restore endpoint handles both encrypted and plaintext settings.
     res.json(db);
 });
 

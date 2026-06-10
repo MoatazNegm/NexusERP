@@ -75,9 +75,9 @@ The dashboard includes a PDF export feature (executive snapshot, status distribu
 
 ### 7. Status-Driven Workflow
 Orders progress through a strict enum (OrderStatus in types.ts). Server-side dispatch actions enforce valid transitions. The frontend renders stage-specific UI based on order.status, not derived flags.
-Orders progress through a strict enum (OrderStatus in types.ts). Server-side dispatch actions enforce valid transitions. The frontend renders stage-specific UI based on order.status, not derived flags.
 
-### 7. Backup Segregation
+### 8. Backup Segregation
+Full system archive (/api/v1/full-backup) excludes users and userGroups. Those are backed up separately via /api/v1/backup-users-groups ("Export Identities").
 Full system archive (/api/v1/full-backup) excludes users and userGroups. Those are backed up separately via /api/v1/backup-users-groups ("Export Identities").
 
 ## Environment & Data Persistence
@@ -113,6 +113,33 @@ This configuration decouples application code updates from your database and fil
 
 ### `db.stub.json` Template
 The `db.stub.json` file should only contain the empty structure for a fresh database. Do not add production data, users, or custom settings to it.
+
+### Sensitive Data Encryption (LLM Tokens, SMTP Password)
+Sensitive API keys and passwords are protected using AES-256-CBC encryption at rest in `db.json`. The encryption key is derived from the factory server passphrase (`FACTORY_PASS`) and should **never** be changed once the system is in production, as it would render existing encrypted values unreadable.
+
+**Encrypted fields:**
+- `settings.geminiConfig.apiKey`
+- `settings.openaiConfig.apiKey`
+- `settings.emailConfig.password`
+
+**How it works:**
+- **On read (GET /api/v1/settings):** The server decrypts these fields before sending them to the frontend so the app can use the keys.
+- **On write (PUT/POST /api/v1/settings):** The server encrypts these fields before saving them to `db.json`.
+- **On backup (/api/v1/backup):** Settings remain encrypted in the backup file; they are **not** decrypted for export.
+- **On restore (/api/v1/restore):** The server checks if incoming values are already encrypted (skips re-encryption if they are) or encrypts plaintext values. This makes restore idempotent and safe.
+- **On full-backup (/api/v1/full-backup):** The entire archive is encrypted with the user's passcode using AES-256-GCM. On full-restore, the archive is decrypted and extracted as-is (settings remain encrypted on disk).
+
+### VITE_BACKEND_URL Configuration
+The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults to an empty string, which causes all requests to use relative paths (same origin).
+
+**Development:**
+- Vite dev server runs on port `3005` and proxies `/api` to `http://localhost:3006` (see `vite.config.ts`).
+- No need to set `VITE_BACKEND_URL` in local development if the backend runs on port `3006`.
+
+**Production (e.g. Render):**
+- The Express server (`server.js`) serves the built frontend from `dist/` on the same origin.
+- Leave `VITE_BACKEND_URL` unset (or set to `''`). The `render.yaml` `startCommand` is `node server.js`.
+- If you ever deploy the frontend and backend on **separate origins**, set `VITE_BACKEND_URL` to the backend origin (e.g. `https://api.example.com`).
 
 ## Adding a New Feature
 1. Component: Create components/{Feature}Module.tsx (or Modal.tsx if it's an action).
