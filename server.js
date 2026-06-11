@@ -360,25 +360,41 @@ const resolveSettings = (db) => {
 // They must be idempotent (running twice produces the same result).
 
 const migrations = [
-    // v0 → v1: Ensure shipment & suppliers roles exist and are unlinked
+    // v0 → v1: Ensure shipment, suppliers & planning roles exist and are unlinked
     (settings) => {
         const roles = new Set(settings.availableRoles || []);
         if (!roles.has('shipment')) roles.add('shipment');
         if (!roles.has('suppliers')) roles.add('suppliers');
+        if (!roles.has('planning')) roles.add('planning');
         settings.availableRoles = Array.from(roles);
 
+        const mappings = settings.roleMappings || {};
+
+        // Explicitly correct mappings that changed across releases
         settings.roleMappings = {
-            ...(settings.roleMappings || {}),
+            ...mappings,
             shipment: ['shipment'],
             suppliers: ['procurement', 'suppliers'],
+            technicalReview: ['planning'],
         };
+
+        // Scrub 'shipment' from any mapping other than 'shipment' itself
+        // (prevents old backups where shipment was bundled into order_management)
+        Object.keys(settings.roleMappings).forEach((key) => {
+            if (key !== 'shipment') {
+                settings.roleMappings[key] = settings.roleMappings[key].filter(
+                    (r) => r !== 'shipment'
+                );
+            }
+        });
+
         return settings;
     },
 ];
 
 const applySchemaMigrations = (db) => {
     if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) return;
-    const settings = db.settings[0];
+    let settings = db.settings[0];
     let version = settings.dbSchemaVersion || 0;
 
     if (version > CURRENT_SCHEMA_VERSION && !FORCE_SCHEMA_MIGRATION) {
