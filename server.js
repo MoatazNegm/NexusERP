@@ -3143,6 +3143,18 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
     }
 });
 
+// Request logging middleware for debugging
+app.use((req, res, next) => {
+    const originalJson = res.json.bind(res);
+    res.json = (body) => {
+        if (res.statusCode === 404 && req.path.startsWith('/api/v1')) {
+            console.error(`[404 DEBUG] ${req.method} ${req.path} - Not matched by any route`);
+        }
+        return originalJson(body);
+    };
+    next();
+});
+
 // SPA Catch-all: Redirect all non-API requests to index.html
 app.get('{*path}', (req, res) => {
     if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
