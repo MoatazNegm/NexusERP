@@ -19,6 +19,13 @@ if (!fs.existsSync(UPLOADS_BASE)) {
 }
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
+const CURRENT_SCHEMA_VERSION = 2; // Increment when introducing new schema migrations
+const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
+
+const getItemEffectiveQty = (item) => {
+    if (item && item.alteredQty !== undefined && item.alteredQty !== null) return item.alteredQty;
+    return (item && item.quantity) || 0;
+};
 
 // --- MULTER CONFIG ---
 const podStorage = multer.diskStorage({
@@ -233,7 +240,9 @@ const readDb = () => {
             }
         }
         const data = fs.readFileSync(DB_PATH, 'utf8');
-        return JSON.parse(data);
+        const db = JSON.parse(data);
+        applySchemaMigrations(db);
+        return db;
     } catch (err) {
         console.error("Error reading DB:", err);
         return {};
@@ -324,7 +333,7 @@ const resolveSettings = (db) => {
             senderEmail: 'erpalerts@quickstor.net',
             useSsl: true
         },
-        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers'],
+        availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers', 'shipment'],
         roleMappings: {
             dashboard: ['management'],
             orders: ['order_management'],
@@ -333,7 +342,7 @@ const resolveSettings = (db) => {
             procurement: ['procurement'],
             factory: ['factory'],
             inventory: ['inventory'],
-            shipment: ['order_management'],
+            shipment: ['shipment'],
             crm: ['crm'],
             suppliers: ['procurement', 'suppliers'],
             reporting: ['management'],
@@ -344,6 +353,79 @@ const resolveSettings = (db) => {
 
     // Decrypt sensitive fields for internal use
     return decryptSettings(merged);
+};
+
+// --- SCHEMA MIGRATIONS ---
+// Each migration function upgrades settings from version N to N+1.
+// They must be idempotent (running twice produces the same result).
+
+const migrations = [
+    // v0 → v1: Ensure shipment, suppliers & planning roles exist and are unlinked
+    (settings) => {
+        const roles = new Set(settings.availableRoles || []);
+        if (!roles.has('shipment')) roles.add('shipment');
+        if (!roles.has('suppliers')) roles.add('suppliers');
+        if (!roles.has('planning')) roles.add('planning');
+        settings.availableRoles = Array.from(roles);
+
+        const mappings = settings.roleMappings || {};
+
+        // Explicitly correct mappings that changed across releases
+        settings.roleMappings = {
+            ...mappings,
+            shipment: ['shipment'],
+            suppliers: ['procurement', 'suppliers'],
+            technicalReview: ['planning'],
+        };
+
+        // Scrub 'shipment' from any mapping other than 'shipment' itself
+        // (prevents old backups where shipment was bundled into order_management)
+        Object.keys(settings.roleMappings).forEach((key) => {
+            if (key !== 'shipment') {
+                settings.roleMappings[key] = settings.roleMappings[key].filter(
+                    (r) => r !== 'shipment'
+                );
+            }
+        });
+
+        return settings;
+    },
+    // v1 → v2: Initialize helpLinks array if it doesn't exist
+    (settings) => {
+        if (!settings.helpLinks) {
+            settings.helpLinks = [];
+        }
+        return settings;
+    },
+];
+
+const applySchemaMigrations = (db) => {
+    if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) return;
+    let settings = db.settings[0];
+    let version = settings.dbSchemaVersion || 0;
+
+    if (version > CURRENT_SCHEMA_VERSION && !FORCE_SCHEMA_MIGRATION) {
+        const msg = `[FATAL] db.json schema version (${version}) is newer than code schema version (${CURRENT_SCHEMA_VERSION}). \n` +
+                    `       It looks like you restored a backup created with a newer release of this app. \n` +
+                    `       To proceed, update the application code to the matching version, or set \n` +
+                    `       FORCE_SCHEMA_MIGRATION=true to run anyway (may cause data loss).`;
+        console.error(msg);
+        process.exit(1);
+    }
+
+    if (version === CURRENT_SCHEMA_VERSION) return;
+
+    while (version < CURRENT_SCHEMA_VERSION) {
+        const migration = migrations[version];
+        if (!migration) break;
+        settings = migration(settings);
+        version++;
+    }
+
+    settings.dbSchemaVersion = CURRENT_SCHEMA_VERSION;
+    db.settings[0] = encryptSettings(settings);
+    writeDb(db);
+    console.log(`[System] Migrated db schema from v${settings.dbSchemaVersion - (CURRENT_SCHEMA_VERSION - version)} to v${CURRENT_SCHEMA_VERSION}`);
 };
 
 const getRecipients = (groupIds, db) => {
@@ -2578,10 +2660,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
 app.get('/api/v1/backup', (req, res) => {
     const db = readDb();
-    // Decrypt settings for export so the backup contains usable data
-    if (db.settings && Array.isArray(db.settings)) {
-        db.settings = db.settings.map(s => decryptSettings(s));
-    }
+    // Settings remain encrypted in the backup file for security.
+    // The restore endpoint handles both encrypted and plaintext settings.
     res.json(db);
 });
 
@@ -2645,6 +2725,9 @@ app.post('/api/v1/restore', (req, res) => {
         data.settings = data.settings.map(s => encryptSettings(s));
     }
 
+    // Migrate schema after restore so old backups work on new code versions
+    applySchemaMigrations(data);
+
     if (writeDb(data)) {
         console.log(`[System] Database restored manually at ${new Date().toISOString()}`);
         res.json({ message: "Restored" });
@@ -2696,6 +2779,10 @@ app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => 
 
         // Unpack everything to root
         zip.extractAllTo(__dirname, true);
+
+        // Migrate schema after restore so old backups work on new code versions
+        const restoredDb = readDb();
+        applySchemaMigrations(restoredDb);
 
         console.log(`[System] Full system restore completed at ${new Date().toISOString()}`);
         res.json({ message: "Full system restored successfully" });
@@ -3061,6 +3148,18 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message || "Failed to compute supplier ledger" });
     }
+});
+
+// Request logging middleware for debugging
+app.use((req, res, next) => {
+    const originalJson = res.json.bind(res);
+    res.json = (body) => {
+        if (res.statusCode === 404 && req.path.startsWith('/api/v1')) {
+            console.error(`[404 DEBUG] ${req.method} ${req.path} - Not matched by any route`);
+        }
+        return originalJson(body);
+    };
+    next();
 });
 
 // SPA Catch-all: Redirect all non-API requests to index.html

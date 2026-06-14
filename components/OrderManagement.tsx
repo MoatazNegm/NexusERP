@@ -269,21 +269,32 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           throw new Error("Gemini API Key is not configured.");
         }
 
+        console.log('[AI Scan] Using Gemini model:', modelName);
         const ai = new GoogleGenAI({ apiKey });
         const response = await ai.models.generateContent({
           model: modelName,
-          contents: {
-            parts: [
-              { inlineData: { mimeType: inputMimeType, data: base64Data } },
-              { text: prompt }
-            ]
-          },
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType: file.type, data: base64Data } },
+                { text: prompt }
+              ]
+            }
+          ],
           config: { responseMimeType: "application/json" }
         });
+        console.log('[AI Scan] Gemini raw response:', response);
         textOutput = response.text || "{}";
+        console.log('[AI Scan] Gemini text output:', textOutput);
       } else {
         const { apiKey, baseUrl, modelName } = config.settings.openaiConfig;
+        console.log('[AI Scan] OpenAI config from settings:', { baseUrl, modelName, apiKeyExists: !!apiKey, apiKeyLength: apiKey?.length, apiKeyPrefix: apiKey?.substring(0, 15) });
         const endpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
+        console.log('[AI Scan] Using OpenAI endpoint:', endpoint, 'model:', modelName);
+        if (!apiKey) {
+          throw new Error("OpenAI API Key is not configured. Please add your API key in Settings > AI Configuration.");
+        }
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -310,17 +321,20 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           })
         });
         const data = await response.json();
+        console.log('[AI Scan] OpenAI raw response:', data);
         textOutput = data.choices?.[0]?.message?.content || "{}";
+        console.log('[AI Scan] OpenAI text output:', textOutput);
       }
 
+      console.log('[AI Scan] Parsing extracted text:', textOutput);
       const extracted = JSON.parse(textOutput);
-      let extractedFieldCount = 0;
+      console.log('[AI Scan] Parsed extracted:', extracted);
 
-      const extractedCustomerName = typeof extracted.customer?.name === 'string' ? extracted.customer.name.trim() : '';
-      if (extractedCustomerName) {
-        extractedFieldCount += 1;
-        const existingCust = customers.find(c => c.name.toLowerCase() === extractedCustomerName.toLowerCase());
+      if (extracted.customer?.name) {
+        console.log('[AI Scan] Found customer:', extracted.customer.name);
+        const existingCust = customers.find(c => c.name.toLowerCase() === extracted.customer.name.toLowerCase());
         if (!existingCust) {
+          console.log('[AI Scan] Creating new customer...');
           const newCust = await dataService.addCustomer({
             name: extractedCustomerName,
             email: extracted.customer.email || '',
@@ -332,13 +346,21 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             contactEmail: extracted.customer.email || '',
             contactAddress: extracted.customer.address || ''
           });
+          console.log('[AI Scan] New customer created:', newCust);
           setCustomers(prev => [...prev, newCust]);
           setIsNewCustomerCreated(true);
+        } else {
+          console.log('[AI Scan] Existing customer found:', existingCust.name);
         }
         setCustomerName(extractedCustomerName);
         if (existingCust) {
           setAppliesWithholdingTax(existingCust.appliesWithholdingTax || false);
         }
+        if (extracted.paymentSlaDays) {
+          setPaymentSlaDays(extracted.paymentSlaDays);
+        }
+      } else {
+        console.log('[AI Scan] No customer name found in extraction');
       }
 
       const extractedPaymentSlaDays = Number(extracted.paymentSlaDays);
@@ -347,22 +369,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         setPaymentSlaDays(extractedPaymentSlaDays);
       }
 
-      const extractedPoRef = typeof extracted.poRef === 'string' ? extracted.poRef.trim() : '';
-      if (extractedPoRef) {
-        extractedFieldCount += 1;
-        setCustomerReferenceNumber(extractedPoRef);
-      }
-
-      const extractedDate = typeof extracted.date === 'string' ? extracted.date.trim() : '';
-      if (extractedDate) {
-        extractedFieldCount += 1;
-        setOrderDate(extractedDate);
-      }
-
-      if (Array.isArray(extracted.items)) {
-        const normalizedItems = extracted.items
-          .filter((i: any) => i && (i.description || i.quantity !== undefined || i.price !== undefined))
-          .map((i: any, idx: number) => {
+      if (extracted.items) {
+        console.log('[AI Scan] Found items:', extracted.items.length);
+        setItems(extracted.items.map((i: any, idx: number) => {
           const hasTax = i.taxPercent !== null && i.taxPercent !== undefined;
           return {
             id: `temp_${Date.now()}_${idx}`,
@@ -374,26 +383,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             taxDetected: true,
             logs: []
           };
-        });
-
-        if (normalizedItems.length > 0) {
-          extractedFieldCount += 1;
-          setItems(normalizedItems);
-        }
-      }
-
-      if (extractedFieldCount === 0) {
-        setMessage({
-          type: 'error',
-          text: isPdfUpload
-            ? 'No PO fields were detected from this PDF. Try a clearer PDF or upload a page as an image (JPG/PNG).'
-            : 'No PO fields were detected from this file. Please verify document clarity and try again.'
-        });
+        }));
       } else {
-        setMessage({ type: 'success', text: 'Vision mapping complete.' });
+        console.log('[AI Scan] No items found in extraction');
       }
     } catch (err: any) {
-      console.error("AI Error:", err);
+      console.error("[AI Scan] Caught error:", err);
+      console.error("[AI Scan] Error message:", err.message);
+      console.error("[AI Scan] Error stack:", err.stack);
       setMessage({ type: 'error', text: `Extraction failed: ${err.message}` });
     }
     setIsScanning(false);

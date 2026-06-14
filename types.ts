@@ -21,7 +21,7 @@ export enum OrderStatus {
   FULFILLED = 'FULFILLED'
 }
 
-export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice' | 'planning' | 'suppliers';
+export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice' | 'planning' | 'suppliers' | 'shipment';
 
 export interface UserGroup {
   id: string;
@@ -265,6 +265,11 @@ export interface CustomerOrder {
   whtCertificateFile?: string;
 }
 
+export interface HelpLink {
+  url: string;
+  description: string;
+}
+
 export interface OpenAIConfig {
   apiKey: string;
   baseUrl: string;
@@ -344,6 +349,7 @@ export interface AppConfig {
     ledgerAccounts?: string[];
     ledgerAccountGroups?: Record<string, string[]>; // groupName -> [accountNames]
     availableRoles?: UserRole[];
+    helpLinks?: HelpLink[];
     helpVideos?: string[];
     roleMappings?: Record<string, UserRole[]>;
   };

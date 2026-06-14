@@ -21,6 +21,8 @@ import { AIAssistant } from './components/AIAssistant';
 import { OrderReport } from './components/OrderReport';
 import { SystemLogs } from './components/SystemLogs';
 import { MinimumsModule } from './components/MinimumsModule';
+import { HelpModule } from './components/HelpModule';
+import { VersionFooter } from './components/VersionFooter';
 import { Login } from './components/Login';
 
 import { dataService } from './services/dataService';
@@ -173,13 +175,14 @@ const App: React.FC = () => {
       { id: 'procurement', icon: 'fa-diagram-project', label: 'Procurement', roles: mapping['procurement'] || ['procurement'] as UserRole[], module: 'procurement' as keyof AppConfig['modules'] },
       { id: 'factory', icon: 'fa-industry', label: 'Factory Build', roles: mapping['factory'] || ['factory'] as UserRole[], module: 'factory' as keyof AppConfig['modules'] },
       { id: 'inventory', icon: 'fa-warehouse', label: 'Inventory & Hub', roles: mapping['inventory'] || ['inventory'] as UserRole[], module: 'inventory' as keyof AppConfig['modules'] },
-      { id: 'shipment', icon: 'fa-truck-ramp-box', label: 'Shipment', roles: mapping['shipment'] || ['order_management'] as UserRole[], module: 'shipping' as keyof AppConfig['modules'] },
+      { id: 'shipment', icon: 'fa-truck-ramp-box', label: 'Shipment', roles: mapping['shipment'] || ['shipment'] as UserRole[], module: 'shipping' as keyof AppConfig['modules'] },
       { id: 'crm', icon: 'fa-users', label: 'CRM Contacts', roles: mapping['crm'] || ['crm'] as UserRole[], module: 'crm' as keyof AppConfig['modules'] },
       { id: 'suppliers', icon: 'fa-truck-field', label: 'Suppliers', roles: mapping['suppliers'] || ['procurement'] as UserRole[], module: 'suppliers' as keyof AppConfig['modules'] },
       { id: 'reporting', icon: 'fa-chart-column', label: 'Profitability', roles: mapping['reporting'] || ['management'] as UserRole[], module: 'finance' as keyof AppConfig['modules'] },
       { id: 'govEInvoice', icon: 'fa-file-invoice-dollar', label: 'Gov.EInvoice', roles: mapping['govEInvoice'] || ['Gov.EInvoice'] as UserRole[], module: 'govEInvoice' as keyof AppConfig['modules'] },
       { id: 'minimums', icon: 'fa-percent', label: 'Minimums', roles: ['management'] as UserRole[], hidden: !isManager },
       { id: 'systemLogs', icon: 'fa-shield-halved', label: 'System Audit', roles: ['admin'] as UserRole[] },
+      { id: 'help', icon: 'fa-circle-question', label: 'Help Center', roles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers', 'shipment'] as UserRole[] },
       { id: 'settings', icon: 'fa-gears', label: 'Settings', roles: ['admin'] as UserRole[] },
     ];
     return items.filter((item: any) => {
@@ -560,6 +563,7 @@ const App: React.FC = () => {
       case 'systemLogs': return <SystemLogs refreshKey={refreshKey} />;
       case 'govEInvoice': return <GovEInvoiceModule refreshKey={refreshKey} currentUser={currentUser} />;
       case 'minimums': return <MinimumsModule currentUser={currentUser} refreshKey={refreshKey} />;
+      case 'help': return <HelpModule config={config} currentUser={currentUser} />;
       case 'settings': return <DataMaintenance config={config} onConfigUpdate={setConfig} onRefresh={() => setRefreshKey(p => p + 1)} currentUser={currentUser} isAdmin={hasRole('admin')} />;
       default: return null;
     }
@@ -694,11 +698,12 @@ const App: React.FC = () => {
           </div>
         )}
       </aside>
-      <main className={`flex-1 transition-all duration-300 min-w-0 ${effectivelyCollapsed ? 'ml-20' : 'ml-72'}`}>
-        <div className="p-8 max-w-[1600px] mx-auto min-h-screen">
-          {renderContent()}
-        </div>
-      </main>
+       <main className={`flex-1 transition-all duration-300 min-w-0 ${effectivelyCollapsed ? 'ml-20' : 'ml-72'}`}>
+         <div className="p-8 max-w-[1600px] mx-auto min-h-screen">
+           {renderContent()}
+           <VersionFooter />
+         </div>
+       </main>
       {isChangePassOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
           <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-8 shadow-2xl relative overflow-hidden">
@@ -764,5 +769,5 @@ const App: React.FC = () => {
   );
 };
 
-export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice' | 'minimums';
+export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice' | 'minimums' | 'help';
 export default App;

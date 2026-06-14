@@ -14,16 +14,17 @@
 ## Directory Layout
 `
 components/          # Feature modules — one file per major business function
-  FinanceModule.tsx       # Invoicing, payments, P&L, tax clearances
-  TechnicalReviewModule.tsx  # Part history, BoM review, line-item qty alteration
-  OrderManagement.tsx     # Order CRUD, item logging, status workflow
-  ProcurementModule.tsx   # POs, supplier contracts, component sourcing
-  InventoryModule.tsx     # Stock levels, reservations, manufacturing completion
-  ShipmentModule.tsx      # Dispatch, POD, transit tracking
-  GovEInvoiceModule.tsx   # Government e-invoice upload/tracking
-  CRMModule.tsx           # Customers, contacts, opportunities
-  FactoryModule.tsx       # Manufacturing floor operations
-  DataMaintenance.tsx     # Settings, ledger accounts, thresholds, backups
+   FinanceModule.tsx       # Invoicing, payments, P&L, tax clearances
+   TechnicalReviewModule.tsx  # Part history, BoM review, line-item qty alteration
+   OrderManagement.tsx     # Order CRUD, item logging, status workflow
+   ProcurementModule.tsx   # POs, supplier contracts, component sourcing
+   InventoryModule.tsx     # Stock levels, reservations, manufacturing completion
+   ShipmentModule.tsx      # Dispatch, POD, transit tracking
+   GovEInvoiceModule.tsx   # Government e-invoice upload/tracking
+   CRMModule.tsx           # Customers, contacts, opportunities (supports up to 3 secondary contacts + delivery address)
+   FactoryModule.tsx       # Manufacturing floor operations
+   HelpModule.tsx          # Help Center with admin-managed links and video guides
+   DataMaintenance.tsx     # Settings, ledger accounts, thresholds, backups
   {Feature}Modal.tsx      # Action modals (OrderDetails, AddCustomer, etc.)
   SortableTable.tsx       # Reusable sortable/draggable data table
   ModuleGate.tsx          # Role-based access wrapper
@@ -43,6 +44,8 @@ locales/
 scripts/                  # One-off maintenance scripts (.cjs)
 public/                   # Static assets served as-is
 uploads/                  # User-uploaded files (PODs, invoices)
+.postman/                 # Postman API collection and environment definitions
+postman/                  # Postman workspace globals and shared resources
 `
 
 ## Coding Patterns
@@ -59,19 +62,26 @@ When a line item's quantity can be lowered post-creation, use alteredQty + alter
 ### 4. Modal Action Pattern
 User-initiated actions (record payment, issue PO, alter qty) open a local modal with draft state. The modal validates, calls dataService, then triggers a parent refresh via callback. Modals clean up on close.
 
-### 5. Role-Based Gating
-Every top-level module route checks ModuleGate against the user's role. New features must add their role mapping to constants.tsx.
+### 5. Role-Based Gating & Schema Migrations
+Every top-level module route checks `ModuleGate` against the user's role. **The actual list of available roles and their module mappings live in `db.json` (the `settings.availableRoles` and `settings.roleMappings` fields).** The frontend pulls them at runtime via API.
 
-**Important:** The application reads roles and role mappings from the database (`db.json`), which overrides the frontend constants. When adding or modifying roles, you must update the following files in this order:
-1. `types.ts` — Add the new role to the `UserRole` union type.
-2. `constants.tsx` — Add the role to `availableRoles` and update `roleMappings`.
-3. `server.js` — Update the fallback `availableRoles` and `roleMappings` in the `getSettings()` function.
-4. `db.json` — Update the actual database settings object to include the new role and mappings. This is the authoritative source.
+**Schema migrations are automated.** When you add or change roles, there is no need to manually edit `db.json` on every machine. Instead, you write a small migration function in `server.js` and bump `CURRENT_SCHEMA_VERSION`. The server automatically upgrades any `db.json` on startup (or after restore) by running the migration chain. Business data (orders, customers, etc.) is never touched.
 
-### 6. Status-Driven Workflow
+When adding or modifying roles, follow these steps:
+1. `types.ts` — Add the new role to the `UserRole` union type so TypeScript compiles.
+2. `constants.tsx` — Add the role to `availableRoles` and update `roleMappings` (used as defaults for fresh installs).
+3. `server.js` — **Add a migration function** in the `migrations` array that adds the role to `availableRoles` and sets its `roleMappings`. Then **increment `CURRENT_SCHEMA_VERSION`**.
+4. `App.tsx` — If needed, wire the new module route and nav item (only needed for entirely new views, not new roles).
+
+> ⚠️ **Important:** Do not edit `db.json` manually on any machine. The migration system handles it. If you restore an old backup, the server will auto-migrate it on the next startup.
+
+### 6. Dashboard Reporting
+The dashboard includes a PDF export feature (executive snapshot, status distribution, critical margin alerts, and customer/supplier summaries) restricted to the `management` role. Export logic lives in `App.tsx` and uses the `jspdf` library.
+
+### 7. Status-Driven Workflow
 Orders progress through a strict enum (OrderStatus in types.ts). Server-side dispatch actions enforce valid transitions. The frontend renders stage-specific UI based on order.status, not derived flags.
 
-### 7. Backup Segregation
+### 8. Backup Segregation
 Full system archive (/api/v1/full-backup) excludes users and userGroups. Those are backed up separately via /api/v1/backup-users-groups ("Export Identities").
 
 ## Environment & Data Persistence
@@ -108,17 +118,70 @@ This configuration decouples application code updates from your database and fil
 ### `db.stub.json` Template
 The `db.stub.json` file should only contain the empty structure for a fresh database. Do not add production data, users, or custom settings to it.
 
+### Sensitive Data Encryption (LLM Tokens, SMTP Password)
+Sensitive API keys and passwords are protected using AES-256-CBC encryption at rest in `db.json`. The encryption key is derived from the factory server passphrase (`FACTORY_PASS`) and should **never** be changed once the system is in production, as it would render existing encrypted values unreadable.
+
+**Encrypted fields:**
+- `settings.geminiConfig.apiKey`
+- `settings.openaiConfig.apiKey`
+- `settings.emailConfig.password`
+
+**How it works:**
+- **On read (GET /api/v1/settings):** The server decrypts these fields before sending them to the frontend so the app can use the keys.
+- **On write (PUT/POST /api/v1/settings):** The server encrypts these fields before saving them to `db.json`.
+- **On backup (/api/v1/backup):** Settings remain encrypted in the backup file; they are **not** decrypted for export.
+- **On restore (/api/v1/restore):** The server checks if incoming values are already encrypted (skips re-encryption if they are) or encrypts plaintext values. This makes restore idempotent and safe.
+- **On full-backup (/api/v1/full-backup):** The entire archive is encrypted with the user's passcode using AES-256-GCM. On full-restore, the archive is decrypted and extracted as-is (settings remain encrypted on disk).
+
+### VITE_BACKEND_URL Configuration
+The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults to an empty string, which causes all requests to use relative paths (same origin).
+
+**Development:**
+- Vite dev server runs on port `3005` and proxies `/api` to `http://localhost:3006` (see `vite.config.ts`).
+- No need to set `VITE_BACKEND_URL` in local development if the backend runs on port `3006`.
+
+**Production (e.g. Render):**
+- The Express server (`server.js`) serves the built frontend from `dist/` on the same origin.
+- Leave `VITE_BACKEND_URL` unset (or set to `''`). The `render.yaml` `startCommand` is `node server.js`.
+- If you ever deploy the frontend and backend on **separate origins**, set `VITE_BACKEND_URL` to the backend origin (e.g. `https://api.example.com`).
+
 ## Adding a New Feature
 1. Component: Create components/{Feature}Module.tsx (or Modal.tsx if it's an action).
 2. Types: Add interfaces to types.ts. Export runtime helpers alongside interfaces if needed.
 3. Service: Add API methods to dataService.ts.
 4. Server: Add dispatch action cases to server.js.
 5. Constants: Register role mapping in constants.tsx.
-6. Database: If the feature involves new roles or settings, update db.json (the authoritative source).
+6. **Database (`db.json`):** If the feature involves new roles or settings, update the actual database settings object. This is the **authoritative runtime source** — if skipped, the feature will not appear on this machine even though the code is correct.
 7. Router: Wire the component + ModuleGate into App.tsx.
+
+## Application Versioning Protocol
+
+Every code update must advance the application version by **+0.00001**.
+
+### How It Works
+- The application version is defined in `constants.tsx` as `APP_VERSION` (string format)
+- Starting version: `1.0000000`
+- Increment: `0.00001` per update
+- Displayed at the bottom of every page in small font via `components/VersionFooter.tsx`
+
+### Steps on Every Code Change
+1. Open `constants.tsx`
+2. Locate `export const APP_VERSION = 'X.XXXXXX';`
+3. Increment the version by 0.00001 (e.g. `1.0000000` → `1.00001`)
+4. Save the file alongside your other changes
+
+> ⚠️ **Important:** Developers must remember to bump the version with every code modification. This is a manual step — there is no automated enforcement.
 
 ## Key Files to Read First
 - types.ts — Domain model
 - server.js (lines 1-300) — Dispatch router + action patterns
 - services/dataService.ts — API surface
 - constants.tsx — Status colors, role definitions, module config
+
+### Help View & Help Settings
+- `types.ts` — Contains `HelpLink` interface and `helpLinks?: HelpLink[]` in `AppConfig.settings`
+- `components/HelpModule.tsx` — User-facing help view accessible to all roles, displays clickable links with descriptions
+- `components/DataMaintenance.tsx` — Admin-only settings tab for managing help links (URL + description) and video URLs
+- Help links are stored in `settings.helpLinks` and displayed in the Help Center
+- Video URLs are stored in `settings.helpVideos` and displayed as YouTube links
+- Schema migration v2 initializes `helpLinks` array if missing on db.json load

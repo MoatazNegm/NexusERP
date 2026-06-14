@@ -1,6 +1,9 @@
 
 import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGroup, CustomerOrderItem, ManufacturingComponent, CustomerOrder } from './types';
 
+// Application Version - Increment by 0.00001 for every code update
+export const APP_VERSION = '1.0000000';
+
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
     orderManagement: true,
@@ -42,7 +45,7 @@ export const INITIAL_CONFIG: AppConfig = {
     enableDeliveryAlerts: false,
     deliveryAlertGroupIds: [],
     deliveryWarningDays: 5,
-    availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'suppliers'],
+    availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'suppliers', 'shipment'],
     roleMappings: {
       dashboard: ['management'],
       orders: ['order_management'],
@@ -51,7 +54,7 @@ export const INITIAL_CONFIG: AppConfig = {
       procurement: ['procurement'],
       factory: ['factory'],
       inventory: ['inventory'],
-      shipment: ['order_management'],
+      shipment: ['shipment'],
       crm: ['crm'],
       suppliers: ['procurement', 'suppliers'],
       reporting: ['management'],

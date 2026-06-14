@@ -45,3 +45,6 @@ test_*.js
 verify_*.js
 item_matches.txt
 .kilo/
+
+# Temp workspace
+scratch/
