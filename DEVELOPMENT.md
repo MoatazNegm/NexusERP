@@ -84,6 +84,8 @@ Orders progress through a strict enum (OrderStatus in types.ts). Server-side dis
 ### 8. Backup Segregation
 Full system archive (/api/v1/full-backup) excludes users and userGroups. Those are backed up separately via /api/v1/backup-users-groups ("Export Identities").
 
+> **Note:** The users/groups archive (`/api/v1/backup-users-groups`) also includes `helpLinks` and `helpVideos` from settings, so help center content travels with identity backups.
+
 ## Environment & Data Persistence
 
 ### `db.json` is Machine-Local

@@ -2,7 +2,7 @@
 import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGroup, CustomerOrderItem, ManufacturingComponent, CustomerOrder } from './types';
 
 // Application Version - Increment by 0.00001 for every code update
-export const APP_VERSION = '1.0000200';
+export const APP_VERSION = '1.0000300';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {

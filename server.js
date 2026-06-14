@@ -2801,9 +2801,14 @@ app.get('/api/v1/backup-users-groups', (req, res) => {
         }
 
         const db = readDb();
+        const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
+            ? db.settings[0]
+            : (db.settings || {});
         const payload = {
             users: db.users || [],
-            userGroups: db.userGroups || []
+            userGroups: db.userGroups || [],
+            helpLinks: dbSettings.helpLinks || [],
+            helpVideos: dbSettings.helpVideos || []
         };
         const jsonStr = JSON.stringify(payload);
 
@@ -2868,9 +2873,21 @@ app.post('/api/v1/restore-users-groups', restoreUpload.single('archive'), (req, 
         db.users = data.users;
         db.userGroups = data.userGroups;
 
+        // Restore help content if present in archive
+        if (db.settings && Array.isArray(db.settings) && db.settings.length > 0) {
+            const settings = db.settings[0];
+            if (data.helpLinks !== undefined) {
+                settings.helpLinks = data.helpLinks;
+            }
+            if (data.helpVideos !== undefined) {
+                settings.helpVideos = data.helpVideos;
+            }
+            db.settings[0] = encryptSettings(settings);
+        }
+
         if (writeDb(db)) {
-            console.log(`[System] Users and groups restored at ${new Date().toISOString()}`);
-            res.json({ message: "Users and groups restored successfully" });
+            console.log(`[System] Users, groups, and help content restored at ${new Date().toISOString()}`);
+            res.json({ message: "Users, groups, and help content restored successfully" });
         } else {
             res.status(500).json({ error: "Restore failed during file write" });
         }

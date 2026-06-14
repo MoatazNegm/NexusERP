@@ -1696,7 +1696,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Encrypted Export • All Identities & Organizational Units</p>
                   </div>
                 </div>
-                <p className="text-xs text-slate-500 leading-relaxed italic">Generates an AES-256 encrypted archive containing all user accounts, passwords, and group configurations with their role mappings.</p>
+                <p className="text-xs text-slate-500 leading-relaxed italic">Generates an AES-256 encrypted archive containing all user accounts, passwords, group configurations with their role mappings, and help center content (links and videos).</p>
                 <div className="grid grid-cols-2 gap-4 pt-2">
                   <button onClick={() => {
                     setBackupFileName(`nexus-users-groups-${new Date().toISOString().slice(0, 10)}`);
