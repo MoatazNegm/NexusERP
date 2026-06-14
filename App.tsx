@@ -21,6 +21,7 @@ import { AIAssistant } from './components/AIAssistant';
 import { OrderReport } from './components/OrderReport';
 import { SystemLogs } from './components/SystemLogs';
 import { MinimumsModule } from './components/MinimumsModule';
+import { HelpModule } from './components/HelpModule';
 import { Login } from './components/Login';
 
 import { dataService } from './services/dataService';
@@ -180,6 +181,7 @@ const App: React.FC = () => {
       { id: 'govEInvoice', icon: 'fa-file-invoice-dollar', label: 'Gov.EInvoice', roles: mapping['govEInvoice'] || ['Gov.EInvoice'] as UserRole[], module: 'govEInvoice' as keyof AppConfig['modules'] },
       { id: 'minimums', icon: 'fa-percent', label: 'Minimums', roles: ['management'] as UserRole[], hidden: !isManager },
       { id: 'systemLogs', icon: 'fa-shield-halved', label: 'System Audit', roles: ['admin'] as UserRole[] },
+      { id: 'help', icon: 'fa-circle-question', label: 'Help Center', roles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers', 'shipment'] as UserRole[] },
       { id: 'settings', icon: 'fa-gears', label: 'Settings', roles: ['admin'] as UserRole[] },
     ];
     return items.filter((item: any) => {
@@ -560,6 +562,7 @@ const App: React.FC = () => {
       case 'systemLogs': return <SystemLogs refreshKey={refreshKey} />;
       case 'govEInvoice': return <GovEInvoiceModule refreshKey={refreshKey} currentUser={currentUser} />;
       case 'minimums': return <MinimumsModule currentUser={currentUser} refreshKey={refreshKey} />;
+      case 'help': return <HelpModule config={config} currentUser={currentUser} />;
       case 'settings': return <DataMaintenance config={config} onConfigUpdate={setConfig} onRefresh={() => setRefreshKey(p => p + 1)} currentUser={currentUser} isAdmin={hasRole('admin')} />;
       default: return null;
     }
@@ -764,5 +767,5 @@ const App: React.FC = () => {
   );
 };
 
-export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice' | 'minimums';
+export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice' | 'minimums' | 'help';
 export default App;

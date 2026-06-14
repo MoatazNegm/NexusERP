@@ -14,16 +14,17 @@
 ## Directory Layout
 `
 components/          # Feature modules — one file per major business function
-  FinanceModule.tsx       # Invoicing, payments, P&L, tax clearances
-  TechnicalReviewModule.tsx  # Part history, BoM review, line-item qty alteration
-  OrderManagement.tsx     # Order CRUD, item logging, status workflow
-  ProcurementModule.tsx   # POs, supplier contracts, component sourcing
-  InventoryModule.tsx     # Stock levels, reservations, manufacturing completion
-  ShipmentModule.tsx      # Dispatch, POD, transit tracking
-  GovEInvoiceModule.tsx   # Government e-invoice upload/tracking
-  CRMModule.tsx           # Customers, contacts, opportunities (supports up to 3 secondary contacts + delivery address)
-  FactoryModule.tsx       # Manufacturing floor operations
-  DataMaintenance.tsx     # Settings, ledger accounts, thresholds, backups
+   FinanceModule.tsx       # Invoicing, payments, P&L, tax clearances
+   TechnicalReviewModule.tsx  # Part history, BoM review, line-item qty alteration
+   OrderManagement.tsx     # Order CRUD, item logging, status workflow
+   ProcurementModule.tsx   # POs, supplier contracts, component sourcing
+   InventoryModule.tsx     # Stock levels, reservations, manufacturing completion
+   ShipmentModule.tsx      # Dispatch, POD, transit tracking
+   GovEInvoiceModule.tsx   # Government e-invoice upload/tracking
+   CRMModule.tsx           # Customers, contacts, opportunities (supports up to 3 secondary contacts + delivery address)
+   FactoryModule.tsx       # Manufacturing floor operations
+   HelpModule.tsx          # Help Center with admin-managed links and video guides
+   DataMaintenance.tsx     # Settings, ledger accounts, thresholds, backups
   {Feature}Modal.tsx      # Action modals (OrderDetails, AddCustomer, etc.)
   SortableTable.tsx       # Reusable sortable/draggable data table
   ModuleGate.tsx          # Role-based access wrapper
@@ -158,3 +159,11 @@ The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults 
 - server.js (lines 1-300) — Dispatch router + action patterns
 - services/dataService.ts — API surface
 - constants.tsx — Status colors, role definitions, module config
+
+### Help View & Help Settings
+- `types.ts` — Contains `HelpLink` interface and `helpLinks?: HelpLink[]` in `AppConfig.settings`
+- `components/HelpModule.tsx` — User-facing help view accessible to all roles, displays clickable links with descriptions
+- `components/DataMaintenance.tsx` — Admin-only settings tab for managing help links (URL + description) and video URLs
+- Help links are stored in `settings.helpLinks` and displayed in the Help Center
+- Video URLs are stored in `settings.helpVideos` and displayed as YouTube links
+- Schema migration v2 initializes `helpLinks` array if missing on db.json load

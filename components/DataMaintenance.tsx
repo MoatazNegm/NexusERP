@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig } from '../types';
+import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink } from '../types';
 
 interface DataMaintenanceProps {
   config: AppConfig;
@@ -51,7 +51,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [editingAccount, setEditingAccount] = useState<{ index: number, name: string } | null>(null);
 
   const [helpVideos, setHelpVideos] = useState<string[]>(config.settings.helpVideos || []);
+  const [helpLinks, setHelpLinks] = useState<HelpLink[]>(config.settings.helpLinks || []);
   const [newVideoUrl, setNewVideoUrl] = useState('');
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+  const [newLinkDesc, setNewLinkDesc] = useState('');
   const [showUserGuideVideos, setShowUserGuideVideos] = useState(false);
 
   const handleAddVideo = () => {
@@ -67,6 +70,22 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     const updatedVideos = helpVideos.filter((_, idx) => idx !== indexToRemove);
     setHelpVideos(updatedVideos);
     updateSetting('settings', 'helpVideos', updatedVideos);
+  };
+
+  const handleAddHelpLink = () => {
+    if (newLinkUrl.trim() && newLinkDesc.trim()) {
+      const updatedLinks = [...helpLinks, { url: newLinkUrl.trim(), description: newLinkDesc.trim() }];
+      setHelpLinks(updatedLinks);
+      setNewLinkUrl('');
+      setNewLinkDesc('');
+      updateSetting('settings', 'helpLinks', updatedLinks);
+    }
+  };
+
+  const handleRemoveHelpLink = (indexToRemove: number) => {
+    const updatedLinks = helpLinks.filter((_, idx) => idx !== indexToRemove);
+    setHelpLinks(updatedLinks);
+    updateSetting('settings', 'helpLinks', updatedLinks);
   };
 
   // Check if an account has any transactions
@@ -1714,78 +1733,164 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
           )}
           {activeTab === 'help' && (
             <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Help Links Management */}
               <div className="p-8 bg-blue-50 rounded-[2.5rem] border border-blue-100 space-y-6">
                 <div className="flex items-center gap-3 border-b border-blue-100 pb-4">
-                  <i className="fa-solid fa-question-circle text-blue-600 text-xl"></i>
-                  <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">Help & Support</h4>
+                  <i className="fa-solid fa-link text-blue-600 text-xl"></i>
+                  <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">Help Links</h4>
                 </div>
+                <p className="text-sm text-slate-600">Add or remove links that appear in the Help Center for all users. Each link requires a URL and a short description.</p>
+
                 <div className="space-y-4">
-                  <p className="text-sm text-slate-600">Welcome to Nexus ERP Help Center. Here you can find resources to help you get the most out of the system.</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="flex flex-col gap-2">
-                      <div 
-                        onClick={() => setShowUserGuideVideos(!showUserGuideVideos)}
-                        className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm hover:border-blue-400 transition-colors group cursor-pointer"
-                      >
-                        <h5 className="text-xs font-black text-slate-700 uppercase flex items-center justify-between">
-                          User Guide
-                          <i className={`fa-solid ${showUserGuideVideos ? 'fa-chevron-up' : 'fa-chevron-down'} text-[10px] text-slate-300 group-hover:text-blue-500 transition-colors`}></i>
-                        </h5>
-                        <p className="text-xs text-slate-500 mt-1">Comprehensive guide and video tutorials.</p>
+                  {/* Add new link form */}
+                  <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Link URL</label>
+                        <input
+                          type="url"
+                          placeholder="https://example.com/guide"
+                          value={newLinkUrl}
+                          onChange={(e) => setNewLinkUrl(e.target.value)}
+                          className="w-full p-3 text-xs border rounded-xl outline-none focus:border-blue-500 font-medium"
+                        />
                       </div>
-                      
-                      {showUserGuideVideos && (
-                        <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-4 animate-in fade-in slide-in-from-top-2">
-                          {helpVideos.length > 0 ? (
-                            <ul className="space-y-2">
-                              {helpVideos.map((url, idx) => (
-                                <li key={idx} className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
-                                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-700 hover:underline truncate flex-1 flex items-center gap-2">
-                                    <i className="fa-brands fa-youtube text-red-500"></i>
-                                    {url}
-                                  </a>
-                                  {isAdmin && (
-                                    <button onClick={() => handleRemoveVideo(idx)} className="w-6 h-6 rounded-md flex items-center justify-center text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-colors">
-                                      <i className="fa-solid fa-times text-[10px]"></i>
-                                    </button>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="text-xs text-slate-400 italic text-center py-2">No videos added yet.</p>
-                          )}
-                          
-                          {isAdmin && (
-                            <div className="flex items-center gap-2 mt-2 pt-4 border-t border-slate-100">
-                              <input
-                                type="text"
-                                placeholder="Paste video URL here..."
-                                value={newVideoUrl}
-                                onChange={(e) => setNewVideoUrl(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleAddVideo()}
-                                className="flex-1 p-2 text-xs border rounded-lg outline-none focus:border-blue-500"
-                              />
-                              <button 
-                                onClick={handleAddVideo}
-                                disabled={!newVideoUrl.trim()}
-                                className="px-3 py-2 bg-blue-600 text-white text-[10px] font-black uppercase rounded-lg disabled:opacity-50 hover:bg-blue-700 transition-colors"
-                              >
-                                Add
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Description</label>
+                        <input
+                          type="text"
+                          placeholder="Short description of the link..."
+                          value={newLinkDesc}
+                          onChange={(e) => setNewLinkDesc(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleAddHelpLink()}
+                          className="w-full p-3 text-xs border rounded-xl outline-none focus:border-blue-500 font-medium"
+                        />
+                      </div>
                     </div>
-                    <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm hover:border-blue-400 transition-colors group cursor-pointer">
-                      <h5 className="text-xs font-black text-slate-700 uppercase flex items-center justify-between">
-                        Contact Support
-                        <i className="fa-solid fa-arrow-right text-[10px] text-slate-300 group-hover:text-blue-500 transition-colors"></i>
-                      </h5>
-                      <p className="text-xs text-slate-500 mt-1">Get help from our technical support team.</p>
+                    <button
+                      onClick={handleAddHelpLink}
+                      disabled={!newLinkUrl.trim() || !newLinkDesc.trim()}
+                      className="px-4 py-2 bg-blue-600 text-white text-[10px] font-black uppercase rounded-xl disabled:opacity-50 hover:bg-blue-700 transition-colors"
+                    >
+                      <i className="fa-solid fa-plus mr-2"></i>Add Link
+                    </button>
+                  </div>
+
+                  {/* Existing links list */}
+                  {helpLinks.length > 0 ? (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="bg-slate-50/50 border-b border-slate-100">
+                            <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Description</th>
+                            <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">URL</th>
+                            <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {helpLinks.map((link, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="px-6 py-3">
+                                <span className="text-xs font-bold text-slate-700">{link.description}</span>
+                              </td>
+                              <td className="px-6 py-3">
+                                <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline truncate block max-w-xs">
+                                  {link.url}
+                                </a>
+                              </td>
+                              <td className="px-6 py-3 text-right">
+                                <button
+                                  onClick={() => handleRemoveHelpLink(idx)}
+                                  className="w-6 h-6 rounded-md flex items-center justify-center text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                                >
+                                  <i className="fa-solid fa-trash-can text-[10px]"></i>
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-8 bg-white rounded-xl border border-slate-200 text-center">
+                      <i className="fa-solid fa-link-slash text-slate-300 text-2xl mb-2"></i>
+                      <p className="text-xs text-slate-400 font-bold">No help links configured yet.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Video Guides Management */}
+              <div className="p-8 bg-red-50 rounded-[2.5rem] border border-red-100 space-y-6">
+                <div className="flex items-center gap-3 border-b border-red-100 pb-4">
+                  <i className="fa-brands fa-youtube text-red-600 text-xl"></i>
+                  <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">Video Guides</h4>
+                </div>
+                <p className="text-sm text-slate-600">Manage YouTube video links that appear in the Help Center.</p>
+
+                <div className="space-y-4">
+                  {/* Add new video form */}
+                  <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Video URL</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="url"
+                          placeholder="https://youtube.com/watch?v=..."
+                          value={newVideoUrl}
+                          onChange={(e) => setNewVideoUrl(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleAddVideo()}
+                          className="flex-1 p-3 text-xs border rounded-xl outline-none focus:border-red-500 font-medium"
+                        />
+                        <button
+                          onClick={handleAddVideo}
+                          disabled={!newVideoUrl.trim()}
+                          className="px-4 py-2 bg-red-600 text-white text-[10px] font-black uppercase rounded-xl disabled:opacity-50 hover:bg-red-700 transition-colors"
+                        >
+                          <i className="fa-solid fa-plus mr-2"></i>Add Video
+                        </button>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Existing videos list */}
+                  {helpVideos.length > 0 ? (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="bg-slate-50/50 border-b border-slate-100">
+                            <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Video URL</th>
+                            <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {helpVideos.map((url, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="px-6 py-3">
+                                <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline truncate block max-w-md flex items-center gap-2">
+                                  <i className="fa-brands fa-youtube text-red-500"></i>
+                                  {url}
+                                </a>
+                              </td>
+                              <td className="px-6 py-3 text-right">
+                                <button
+                                  onClick={() => handleRemoveVideo(idx)}
+                                  className="w-6 h-6 rounded-md flex items-center justify-center text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                                >
+                                  <i className="fa-solid fa-trash-can text-[10px]"></i>
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-8 bg-white rounded-xl border border-slate-200 text-center">
+                      <i className="fa-brands fa-youtube text-slate-300 text-2xl mb-2"></i>
+                      <p className="text-xs text-slate-400 font-bold">No videos configured yet.</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

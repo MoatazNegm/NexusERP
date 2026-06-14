@@ -19,7 +19,7 @@ if (!fs.existsSync(UPLOADS_BASE)) {
 }
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 1; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 2; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -388,6 +388,13 @@ const migrations = [
             }
         });
 
+        return settings;
+    },
+    // v1 → v2: Initialize helpLinks array if it doesn't exist
+    (settings) => {
+        if (!settings.helpLinks) {
+            settings.helpLinks = [];
+        }
         return settings;
     },
 ];
