@@ -336,7 +336,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         if (!existingCust) {
           console.log('[AI Scan] Creating new customer...');
           const newCust = await dataService.addCustomer({
-            name: extractedCustomerName,
+            name: extracted.customer.name,
             email: extracted.customer.email || '',
             phone: extracted.customer.phone || '',
             address: extracted.customer.address || '',
@@ -352,7 +352,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         } else {
           console.log('[AI Scan] Existing customer found:', existingCust.name);
         }
-        setCustomerName(extractedCustomerName);
+        setCustomerName(extracted.customer.name);
         if (existingCust) {
           setAppliesWithholdingTax(existingCust.appliesWithholdingTax || false);
         }
@@ -363,9 +363,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         console.log('[AI Scan] No customer name found in extraction');
       }
 
+      setCustomerReferenceNumber(extracted.poRef || '');
+      if (extracted.date) setOrderDate(extracted.date);
+
       const extractedPaymentSlaDays = Number(extracted.paymentSlaDays);
       if (Number.isFinite(extractedPaymentSlaDays) && extractedPaymentSlaDays > 0) {
-        extractedFieldCount += 1;
         setPaymentSlaDays(extractedPaymentSlaDays);
       }
 
