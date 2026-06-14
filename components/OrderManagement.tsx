@@ -275,12 +275,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       }
 
       const extracted = JSON.parse(textOutput);
+      let extractedFieldCount = 0;
+      const isPdfUpload = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 
-      if (extracted.customer?.name) {
-        const existingCust = customers.find(c => c.name.toLowerCase() === extracted.customer.name.toLowerCase());
+      const extractedCustomerName = typeof extracted.customer?.name === 'string' ? extracted.customer.name.trim() : '';
+      if (extractedCustomerName) {
+        extractedFieldCount += 1;
+        const existingCust = customers.find(c => c.name.toLowerCase() === extractedCustomerName.toLowerCase());
         if (!existingCust) {
           const newCust = await dataService.addCustomer({
-            name: extracted.customer.name,
+            name: extractedCustomerName,
             email: extracted.customer.email || '',
             phone: extracted.customer.phone || '',
             address: extracted.customer.address || '',
@@ -293,20 +297,34 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           setCustomers(prev => [...prev, newCust]);
           setIsNewCustomerCreated(true);
         }
-        setCustomerName(extracted.customer.name);
+        setCustomerName(extractedCustomerName);
         if (existingCust) {
           setAppliesWithholdingTax(existingCust.appliesWithholdingTax || false);
         }
-        if (extracted.paymentSlaDays) {
-          setPaymentSlaDays(extracted.paymentSlaDays);
-        }
       }
 
-      setCustomerReferenceNumber(extracted.poRef || '');
-      if (extracted.date) setOrderDate(extracted.date);
+      const extractedPaymentSlaDays = Number(extracted.paymentSlaDays);
+      if (Number.isFinite(extractedPaymentSlaDays) && extractedPaymentSlaDays > 0) {
+        extractedFieldCount += 1;
+        setPaymentSlaDays(extractedPaymentSlaDays);
+      }
 
-      if (extracted.items) {
-        setItems(extracted.items.map((i: any, idx: number) => {
+      const extractedPoRef = typeof extracted.poRef === 'string' ? extracted.poRef.trim() : '';
+      if (extractedPoRef) {
+        extractedFieldCount += 1;
+        setCustomerReferenceNumber(extractedPoRef);
+      }
+
+      const extractedDate = typeof extracted.date === 'string' ? extracted.date.trim() : '';
+      if (extractedDate) {
+        extractedFieldCount += 1;
+        setOrderDate(extractedDate);
+      }
+
+      if (Array.isArray(extracted.items)) {
+        const normalizedItems = extracted.items
+          .filter((i: any) => i && (i.description || i.quantity !== undefined || i.price !== undefined))
+          .map((i: any, idx: number) => {
           const hasTax = i.taxPercent !== null && i.taxPercent !== undefined;
           return {
             id: `temp_${Date.now()}_${idx}`,
@@ -318,9 +336,24 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             taxDetected: true,
             logs: []
           };
-        }));
+        });
+
+        if (normalizedItems.length > 0) {
+          extractedFieldCount += 1;
+          setItems(normalizedItems);
+        }
       }
-      setMessage({ type: 'success', text: 'Vision mapping complete.' });
+
+      if (extractedFieldCount === 0) {
+        setMessage({
+          type: 'error',
+          text: isPdfUpload
+            ? 'No PO fields were detected from this PDF. Try a clearer PDF or upload a page as an image (JPG/PNG).'
+            : 'No PO fields were detected from this file. Please verify document clarity and try again.'
+        });
+      } else {
+        setMessage({ type: 'success', text: 'Vision mapping complete.' });
+      }
     } catch (err: any) {
       console.error("AI Error:", err);
       setMessage({ type: 'error', text: `Extraction failed: ${err.message}` });
