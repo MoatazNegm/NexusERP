@@ -22,6 +22,7 @@ import { OrderReport } from './components/OrderReport';
 import { SystemLogs } from './components/SystemLogs';
 import { MinimumsModule } from './components/MinimumsModule';
 import { HelpModule } from './components/HelpModule';
+import { VersionFooter } from './components/VersionFooter';
 import { Login } from './components/Login';
 
 import { dataService } from './services/dataService';
@@ -697,11 +698,12 @@ const App: React.FC = () => {
           </div>
         )}
       </aside>
-      <main className={`flex-1 transition-all duration-300 min-w-0 ${effectivelyCollapsed ? 'ml-20' : 'ml-72'}`}>
-        <div className="p-8 max-w-[1600px] mx-auto min-h-screen">
-          {renderContent()}
-        </div>
-      </main>
+       <main className={`flex-1 transition-all duration-300 min-w-0 ${effectivelyCollapsed ? 'ml-20' : 'ml-72'}`}>
+         <div className="p-8 max-w-[1600px] mx-auto min-h-screen">
+           {renderContent()}
+           <VersionFooter />
+         </div>
+       </main>
       {isChangePassOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
           <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-8 shadow-2xl relative overflow-hidden">

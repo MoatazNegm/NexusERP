@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, User, UserGroup, LogEntry, Customer, Supplier, InventoryItem } from '../types';
+import { VersionFooter } from './VersionFooter';
 
 interface FlattenedLog extends LogEntry {
    sourceType: 'ORDER' | 'ITEM' | 'COMPONENT' | 'CUSTOMER' | 'SUPPLIER' | 'INVENTORY' | 'USER' | 'SETTING';
@@ -376,8 +377,9 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
                      )}
                   </tbody>
                </table>
-            </div>
-         </div>
-      </div>
-   );
+             </div>
+          </div>
+          <VersionFooter />
+       </div>
+    );
 };

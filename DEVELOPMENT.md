@@ -154,6 +154,24 @@ The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults 
 6. **Database (`db.json`):** If the feature involves new roles or settings, update the actual database settings object. This is the **authoritative runtime source** — if skipped, the feature will not appear on this machine even though the code is correct.
 7. Router: Wire the component + ModuleGate into App.tsx.
 
+## Application Versioning Protocol
+
+Every code update must advance the application version by **+0.00001**.
+
+### How It Works
+- The application version is defined in `constants.tsx` as `APP_VERSION` (string format)
+- Starting version: `1.0000000`
+- Increment: `0.00001` per update
+- Displayed at the bottom of every page in small font via `components/VersionFooter.tsx`
+
+### Steps on Every Code Change
+1. Open `constants.tsx`
+2. Locate `export const APP_VERSION = 'X.XXXXXX';`
+3. Increment the version by 0.00001 (e.g. `1.0000000` → `1.00001`)
+4. Save the file alongside your other changes
+
+> ⚠️ **Important:** Developers must remember to bump the version with every code modification. This is a manual step — there is no automated enforcement.
+
 ## Key Files to Read First
 - types.ts — Domain model
 - server.js (lines 1-300) — Dispatch router + action patterns
