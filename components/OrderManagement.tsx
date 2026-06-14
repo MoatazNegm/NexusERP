@@ -242,21 +242,46 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       const existingCustomerNames = customers.map(c => c.name).slice(0, 50).join(', '); // Passing a sample of known names
       const prompt = `
-        Context: The following customers already exist in our database: [${existingCustomerNames}]. 
+        Context: The following customers already exist in our database: [${existingCustomerNames}].
         If the name on the PO is a logical match (e.g., "Google" vs "Google Inc"), you MUST use the exact name from the database.
 
-        Extract all details from this Purchase Order image. 
+        Extract all details from this Purchase Order image.
         Structure the response as valid JSON with these keys:
         - customer: { name, email, phone, address, contactName }
         - poRef: (The customer's PO number string)
-        - paymentSlaDays: (Extract the number of days for payment terms like 'Net 30', '45 days', 'Payment due in 15 days'. Only return the integer)
-        - date: (The date on the PO in YYYY-MM-DD format)
-        - items: [ { description, quantity, unit, price, taxPercent } ]
-        
-        Rules: 
-        1. Output ONLY the JSON object. 
-        2. Default items taxPercent to 14 if tax is detected but the specific rate is not clearly legible (standard VAT).
-        3. If "Net 30" is found, paymentSlaDays should be 30.
+        - paymentSlaDays: (Payment terms in DAYS ONLY as an integer. Look EVERYWHERE on the PO: header, footer, terms & conditions, line item columns, and notes. Extract the number of days for payment terms like 'Net 30', '45 days', 'Payment due in 15 days', 'payable within 60 days of delivery', 'settlement 30 days post-delivery'. Only return the integer number of days.)
+        - paymentFromDelivery: (boolean, true if payment is calculated from delivery date like '30 days after delivery', 'payment due within 15 days of delivery', 'settlement post-delivery'. false if from PO/invoice date like 'Net 30', 'payment terms 45 days'.)
+        - date: (The PO issue date in YYYY-MM-DD format)
+        - deliveryDate: (Expected delivery date in YYYY-MM-DD format if found anywhere on the PO: headers, footers, terms & conditions, line item columns, notes, or delivery schedules. Leave empty string if not found.)
+        - deliveryTerms: (Free text describing any delivery terms or expectations found anywhere on the document. Leave empty string if not found.)
+        - incoterms: (Incoterms code if found: FOB, CIF, CFR, DDP, DAP, EXW, FCA, CPT, CIP. Leave empty string if not found.)
+        - currency: (Currency code if explicitly stated on the PO: USD, EUR, GBP, EGP, L.E., etc. Leave empty string if not found.)
+        - partialShipment: (boolean, true if the PO explicitly allows partial deliveries or split shipments. false otherwise.)
+        - items: [ { description, quantity, unit, price, taxPercent, deliveryDate?, deliveryTerms? } ]
+
+        CRITICAL EXTRACTION RULES:
+        1. Output ONLY the JSON object.
+        2. Scan the ENTIRE document including headers, footers, side margins, terms & conditions blocks, and line item columns for ALL fields.
+        3. For paymentSlaDays and paymentFromDelivery, look for phrases like:
+           - "Net 30" → 30, paymentFromDelivery: false
+           - "Payment due within 45 days" → 45, paymentFromDelivery: false
+           - "Payable 60 days after delivery" → 60, paymentFromDelivery: true
+           - "Settlement 30 days post-delivery" → 30, paymentFromDelivery: true
+           - "Payment terms: 90 days" → 90, paymentFromDelivery: false
+           - "Due in 15 days from invoice date" → 15, paymentFromDelivery: false
+           - "Due 30 days after receipt of goods" → 30, paymentFromDelivery: true
+        4. For deliveryDate and deliveryTerms, look in:
+           - Header/footer sections
+           - Terms & conditions blocks
+           - Line item columns (some POs have delivery dates per item)
+           - Side notes or annotations
+           - Delivery schedule tables
+           - Phrases like "Delivery within 2 weeks", "Expected delivery: 2024-03-15", "Ship by March 1st"
+        5. For incoterms, look for standard trade terms anywhere on the PO: FOB, CIF, CFR, DDP, DAP, EXW, FCA, CPT, CIP.
+        6. For partialShipment, look for phrases like: "partial shipments allowed", "split delivery permitted", "multiple deliveries accepted".
+        7. Default items taxPercent to 14 if tax is detected but the specific rate is not clearly legible (standard VAT).
+        8. If delivery info is found per line item, include it in that item's deliveryDate and deliveryTerms fields.
+        9. If a general delivery date applies to the whole PO, put it in the top-level deliveryDate field.
       `;
 
       let textOutput = "";
@@ -356,9 +381,6 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         if (existingCust) {
           setAppliesWithholdingTax(existingCust.appliesWithholdingTax || false);
         }
-        if (extracted.paymentSlaDays) {
-          setPaymentSlaDays(extracted.paymentSlaDays);
-        }
       } else {
         console.log('[AI Scan] No customer name found in extraction');
       }
@@ -366,9 +388,52 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       setCustomerReferenceNumber(extracted.poRef || '');
       if (extracted.date) setOrderDate(extracted.date);
 
-      const extractedPaymentSlaDays = Number(extracted.paymentSlaDays);
-      if (Number.isFinite(extractedPaymentSlaDays) && extractedPaymentSlaDays > 0) {
-        setPaymentSlaDays(extractedPaymentSlaDays);
+      if (extracted.deliveryDate) {
+        console.log('[AI Scan] Found delivery date:', extracted.deliveryDate);
+        setTargetDeliveryDate(extracted.deliveryDate);
+        const start = new Date(extracted.date || orderDate);
+        const end = new Date(extracted.deliveryDate);
+        const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+        if (diff > 0) setTargetDeliveryDays(diff);
+      }
+      if (extracted.deliveryTerms) {
+        console.log('[AI Scan] Found delivery terms:', extracted.deliveryTerms);
+      }
+
+      // Extract Incoterms if found
+      if (extracted.incoterms) {
+        console.log('[AI Scan] Found incoterms:', extracted.incoterms);
+      }
+
+      // Extract currency if found
+      if (extracted.currency) {
+        console.log('[AI Scan] Found currency:', extracted.currency);
+      }
+
+      // Extract partial shipment flag
+      if (extracted.partialShipment === true) {
+        console.log('[AI Scan] Partial shipments allowed');
+      }
+
+      // Smart payment SLA parsing - handles string values like "30 days"
+      const smartParseDays = (value: any): number | null => {
+        if (value === null || value === undefined) return null;
+        if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : null;
+        if (typeof value === 'string') {
+          const match = value.match(/(\d+)/);
+          if (match) {
+            const num = parseInt(match[1], 10);
+            return num > 0 ? num : null;
+          }
+        }
+        return null;
+      };
+
+      const parsedPaymentDays = smartParseDays(extracted.paymentSlaDays);
+      if (parsedPaymentDays !== null) {
+        setPaymentSlaDays(parsedPaymentDays);
+        console.log('[AI Scan] Parsed payment SLA:', parsedPaymentDays, 'days',
+          extracted.paymentFromDelivery ? '(from delivery date)' : '(from PO/invoice date)');
       }
 
       if (extracted.items) {
