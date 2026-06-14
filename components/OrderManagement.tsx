@@ -3,11 +3,40 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrderItem, OrderStatus, Customer, AppConfig, CustomerOrder, User } from '../types';
 import { GoogleGenAI } from "@google/genai";
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { STATUS_CONFIG } from '../constants';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
 import { AddCustomerModal } from './AddCustomerModal';
+
+GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+
+const convertPdfToJpegBase64 = async (file: File): Promise<string> => {
+  const data = new Uint8Array(await file.arrayBuffer());
+  const pdf = await getDocument({ data }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2 });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    throw new Error('Failed to initialize PDF conversion canvas.');
+  }
+
+  await page.render({ canvasContext: context, viewport }).promise;
+  const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+  const base64 = jpegDataUrl.split(',')[1];
+  if (!base64) {
+    throw new Error('Failed to convert PDF to JPEG data.');
+  }
+
+  return base64;
+};
 
 interface OrderManagementProps {
   onGoToCRM?: () => void;
@@ -195,11 +224,21 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setMessage({ type: 'info', text: 'Vision intelligence mapping PO entities...' });
 
     try {
-      const reader = new FileReader();
-      const base64Data = await new Promise<string>((res) => {
-        reader.onload = () => res((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(file);
-      });
+      const isPdfUpload = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      let inputMimeType = file.type || 'application/octet-stream';
+      let base64Data = '';
+
+      if (isPdfUpload) {
+        setMessage({ type: 'info', text: 'PDF detected. Converting first page to JPG for AI extraction...' });
+        base64Data = await convertPdfToJpegBase64(file);
+        inputMimeType = 'image/jpeg';
+      } else {
+        const reader = new FileReader();
+        base64Data = await new Promise<string>((res) => {
+          reader.onload = () => res((reader.result as string).split(',')[1]);
+          reader.readAsDataURL(file);
+        });
+      }
 
       const existingCustomerNames = customers.map(c => c.name).slice(0, 50).join(', '); // Passing a sample of known names
       const prompt = `
@@ -273,7 +312,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   {
                     type: "image_url",
                     image_url: {
-                      url: `data:${file.type};base64,${base64Data}`
+                      url: `data:${inputMimeType};base64,${base64Data}`
                     }
                   }
                 ]
@@ -297,7 +336,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         if (!existingCust) {
           console.log('[AI Scan] Creating new customer...');
           const newCust = await dataService.addCustomer({
-            name: extracted.customer.name,
+            name: extractedCustomerName,
             email: extracted.customer.email || '',
             phone: extracted.customer.phone || '',
             address: extracted.customer.address || '',
@@ -313,7 +352,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         } else {
           console.log('[AI Scan] Existing customer found:', existingCust.name);
         }
-        setCustomerName(extracted.customer.name);
+        setCustomerName(extractedCustomerName);
         if (existingCust) {
           setAppliesWithholdingTax(existingCust.appliesWithholdingTax || false);
         }
@@ -324,8 +363,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         console.log('[AI Scan] No customer name found in extraction');
       }
 
-      setCustomerReferenceNumber(extracted.poRef || '');
-      if (extracted.date) setOrderDate(extracted.date);
+      const extractedPaymentSlaDays = Number(extracted.paymentSlaDays);
+      if (Number.isFinite(extractedPaymentSlaDays) && extractedPaymentSlaDays > 0) {
+        extractedFieldCount += 1;
+        setPaymentSlaDays(extractedPaymentSlaDays);
+      }
 
       if (extracted.items) {
         console.log('[AI Scan] Found items:', extracted.items.length);
@@ -345,7 +387,6 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       } else {
         console.log('[AI Scan] No items found in extraction');
       }
-      setMessage({ type: 'success', text: 'Vision mapping complete.' });
     } catch (err: any) {
       console.error("[AI Scan] Caught error:", err);
       console.error("[AI Scan] Error message:", err.message);
