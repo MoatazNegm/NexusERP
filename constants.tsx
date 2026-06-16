@@ -1,8 +1,9 @@
 
 import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGroup, CustomerOrderItem, ManufacturingComponent, CustomerOrder } from './types';
+import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.00001 for every code update
-export const APP_VERSION = '1.0000300';
+export const APP_VERSION = '1.0000340';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
@@ -199,7 +200,7 @@ export const getPartialStateMetrics = (order: CustomerOrder) => {
   let revenue = 0;
 
   order.items.forEach(item => {
-    const qty = item.quantity || 0;
+    const qty = getItemEffectiveQty(item);
     totalQty += qty;
     mfgQty += item.manufacturedQty || 0;
     delQty += item.deliveredQty || 0;

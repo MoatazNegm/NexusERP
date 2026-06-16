@@ -9,6 +9,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import multer from 'multer';
 import AdmZip from 'adm-zip';
+import { isMarginBreach } from './shared/margin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,8 +24,8 @@ const CURRENT_SCHEMA_VERSION = 2; // Increment when introducing new schema migra
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
-    if (item && item.alteredQty !== undefined && item.alteredQty !== null) return item.alteredQty;
-    return (item && item.quantity) || 0;
+    const qty = (item && item.alteredQty !== undefined && item.alteredQty !== null) ? item.alteredQty : (item && item.quantity);
+    return qty || 1;
 };
 
 // --- MULTER CONFIG ---
@@ -140,16 +141,16 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     // Safeguard: Don't auto-transition terminal or manual statuses
     if ([OrderStatus.REJECTED, OrderStatus.IN_HOLD].includes(currentStatus)) return currentStatus;
 
-    // Priority 1: Margin Protection (if components present)
-    if (hasComponents && markupPct < minMargin) return OrderStatus.NEGATIVE_MARGIN;
+    // Priority 1: Margin Protection (only when costs have been identified)
+    if (hasComponents && isMarginBreach(totalCost, markupPct, minMargin)) return OrderStatus.NEGATIVE_MARGIN;
 
     // Priority 2: Technical Workflow Transition
     if ((hasActiveTechReview || anyAccepted) && currentStatus === OrderStatus.LOGGED) {
         return OrderStatus.TECHNICAL_REVIEW;
     }
 
-    // Priority 3: Recovery from Negative Margin
-    if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || markupPct >= minMargin)) {
+    // Priority 3: Recovery from Negative Margin (sticky: only exit when costs are known and margin recovers, or components are removed)
+    if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || (totalCost > 0 && markupPct >= minMargin))) {
         return (hasActiveTechReview || anyAccepted) ? OrderStatus.TECHNICAL_REVIEW : OrderStatus.LOGGED;
     }
 
@@ -465,6 +466,27 @@ const createAuditLog = (message, status, user) => ({
     user
 });
 
+// One-time repair: orders that were incorrectly blocked as NEGATIVE_MARGIN when no
+// costs had been identified are reset to LOGGED on server start.
+const repairNegativeMarginOrders = (db) => {
+    if (!db.orders || db.orders.length === 0) return;
+    let changed = false;
+    db.orders.forEach(order => {
+        if (order.status !== OrderStatus.NEGATIVE_MARGIN) return;
+        const totalCost = (order.items || []).reduce((sum, item) =>
+            sum + (item.components || []).reduce((cSum, c) =>
+                cSum + ((c.quantity || 0) * (c.unitCost || 0)), 0), 0);
+        if (totalCost === 0) {
+            order.status = OrderStatus.LOGGED;
+            order.loggingComplianceViolation = false;
+            if (!order.logs) order.logs = [];
+            order.logs.push(createAuditLog('[AUTO] Data repair: NEGATIVE_MARGIN reset to LOGGED because no costs were identified', OrderStatus.LOGGED, 'System'));
+            changed = true;
+        }
+    });
+    if (changed) writeDb(db);
+};
+
 const generateInternalOrderNumber = (db) => {
     const orders = db.orders || [];
     const count = orders.length;
@@ -611,7 +633,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                 const newComp = {
                     id: `c_${Date.now()}_${idx}_0`,
                     description: item.description,
-                    quantity: item.quantity,
+                    quantity: getItemEffectiveQty(item),
                     unit: item.unit || 'pcs',
                     unitCost: 0,
                     taxPercent: 14,
@@ -2194,7 +2216,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!itemId) throw new Error("itemId is required for quantity alteration");
                 const targetItem = order.items.find(i => i.id === itemId);
                 if (!targetItem) throw new Error("Line item not found in order");
-                const currentQty = targetItem.quantity || 0;
+                const currentQty = targetItem.quantity || 1;
                 const delivered = targetItem.deliveredQty || 0;
                 if (newQty > currentQty) {
                     throw new Error(`Cannot increase quantity above original order quantity (${currentQty}).`);
@@ -3184,6 +3206,9 @@ app.get('{*path}', (req, res) => {
     if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
+
+const startupDb = readDb();
+repairNegativeMarginOrders(startupDb);
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Backend] Running on http://localhost:${PORT}`);

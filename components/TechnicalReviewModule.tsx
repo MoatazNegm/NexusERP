@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
 import { getItemEffectiveQty } from '../utils';
+import { isMarginBreach } from '../shared/margin';
 import { PartHistory } from './PartHistory';
 
 interface AlterLineItemsViewProps {
@@ -107,7 +108,7 @@ const AlterOrderCard: React.FC<{ order: CustomerOrder; savingId: string | null; 
       </div>
       <div className="divide-y divide-slate-100">
         {order.items.map(item => {
-          const originalQty = item.quantity || 0;
+          const originalQty = item.quantity || 1;
           const effQty = getItemEffectiveQty(item);
           const delivered = item.deliveredQty || 0;
           const isAltered = item.alteredQty !== undefined && item.alteredQty !== null;
@@ -796,7 +797,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
     const marginAmt = totalRevenue - totalCost;
     const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
-    const isViolated = markupPct < config.settings.minimumMarginPct;
+    const isViolated = isMarginBreach(totalCost, markupPct, config.settings.minimumMarginPct);
 
     return {
       revenue: totalRevenue,

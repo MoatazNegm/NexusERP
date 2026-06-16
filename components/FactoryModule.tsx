@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, User, getItemEffectiveStatus } from '../types';
+import { getItemEffectiveQty } from '../utils';
 import { STATUS_CONFIG } from '../constants';
 
 interface FactoryModuleProps {
@@ -54,7 +55,7 @@ export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey
     setProcessingId(`${orderId}-${itemId}`);
     try {
       // Check if this manufacture completes the item AND if there are unconsumed components
-      const target = item.quantity;
+      const target = getItemEffectiveQty(item);
       const current = item.manufacturedQty || 0;
       let confirmRelease = false;
 
@@ -144,7 +145,7 @@ export const FactoryModule: React.FC<FactoryModuleProps> = ({ config, refreshKey
               <div className="flex-1 mb-4 flex flex-col gap-2">
                 <div className="text-[10px] font-black text-slate-800 uppercase tracking-widest border-b border-slate-200 pb-2 mb-2">Production Lines</div>
                 {o.items.map(item => {
-                  const target = item.quantity;
+                  const target = getItemEffectiveQty(item);
                   const current = item.manufacturedQty || 0;
                   const isComplete = current >= target;
                   const inputKey = `${o.id}-${item.id}`;

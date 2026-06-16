@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, getItemEffectiveStatus } from '../types';
+import { getStatusLimitHours } from '../utils';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle, getPartialStateMetrics } from '../constants';
 import { OrderDetailsModal } from './OrderDetailsModal';
 
@@ -10,29 +11,12 @@ interface OrderReportProps {
   dashboardFilter?: OrderStatus | null;
 }
 
-const getStatusLimit = (status: OrderStatus, settings: any) => {
-  switch (status) {
-    case OrderStatus.LOGGED: return settings.orderEditTimeLimitHrs;
-    case OrderStatus.TECHNICAL_REVIEW: return settings.technicalReviewLimitHrs;
-    case OrderStatus.WAITING_SUPPLIERS: return settings.pendingOfferLimitHrs;
-    case OrderStatus.WAITING_FACTORY: return settings.waitingFactoryLimitHrs;
-    case OrderStatus.MANUFACTURING: return settings.mfgFinishLimitHrs;
-    case OrderStatus.TRANSITION_TO_STOCK: return settings.transitToHubLimitHrs;
-    case OrderStatus.IN_PRODUCT_HUB: return settings.productHubLimitHrs;
-    case OrderStatus.ISSUE_INVOICE: return settings.invoicedLimitHrs;
-    case OrderStatus.INVOICED: return settings.hubReleasedLimitHrs;
-    case OrderStatus.HUB_RELEASED: return settings.deliveryLimitHrs;
-    case OrderStatus.DELIVERY: return settings.deliveredLimitHrs;
-    default: return 0;
-  }
-};
-
 const ThresholdTimer: React.FC<{ order: CustomerOrder, config: AppConfig }> = ({ order, config }) => {
   const [remaining, setRemaining] = useState<number>(0);
 
   useEffect(() => {
     const calc = () => {
-      const limitHrs = getStatusLimit(order.status, config.settings);
+      const limitHrs = getStatusLimitHours(order.status, config.settings);
       if (limitHrs === 0) return;
       const lastLog = [...order.logs].reverse().find(l => l.status === order.status);
       const startTime = lastLog ? new Date(lastLog.timestamp).getTime() : new Date(order.dataEntryTimestamp).getTime();
@@ -44,7 +28,7 @@ const ThresholdTimer: React.FC<{ order: CustomerOrder, config: AppConfig }> = ({
     return () => clearInterval(timer);
   }, [order.status, config.settings]);
 
-  const limitHrs = getStatusLimit(order.status, config.settings);
+  const limitHrs = getStatusLimitHours(order.status, config.settings);
   if (limitHrs === 0) return null;
 
   const isOver = remaining < 0;
