@@ -3201,6 +3201,32 @@ app.use((req, res, next) => {
     next();
 });
 
+// AI Proxy: forwards OpenAI-compatible requests server-side to avoid browser CORS restrictions
+app.post('/api/v1/ai-proxy/chat', async (req, res) => {
+    try {
+        const { endpoint, apiKey, payload } = req.body;
+        if (!endpoint || !apiKey || !payload) {
+            return res.status(400).json({ error: 'Missing endpoint, apiKey, or payload.' });
+        }
+        const upstream = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(payload)
+        });
+        const data = await upstream.json();
+        if (!upstream.ok) {
+            console.error(`[AI Proxy] Upstream error ${upstream.status}:`, JSON.stringify(data));
+        }
+        res.status(upstream.status).json(data);
+    } catch (err) {
+        console.error('[AI Proxy] Error:', err.message);
+        res.status(502).json({ error: `Upstream request failed: ${err.message}` });
+    }
+});
+
 // SPA Catch-all: Redirect all non-API requests to index.html
 app.get('{*path}', (req, res) => {
     if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
