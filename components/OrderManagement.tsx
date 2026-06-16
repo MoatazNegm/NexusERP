@@ -223,11 +223,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setIsNewCustomerCreated(false);
     setMessage({ type: 'info', text: 'Vision intelligence mapping PO entities...' });
 
+    const perf: Record<string, number> = {};
+    const t0 = performance.now();
+
     try {
       const isPdfUpload = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       let inputMimeType = file.type || 'application/octet-stream';
       let base64Data = '';
 
+      const t_read_start = performance.now();
       if (isPdfUpload) {
         setMessage({ type: 'info', text: 'PDF detected. Converting first page to JPG for AI extraction...' });
         base64Data = await convertPdfToJpegBase64(file);
@@ -239,6 +243,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           reader.readAsDataURL(file);
         });
       }
+      perf['1_file_read_ms'] = performance.now() - t_read_start;
 
       const existingCustomerNames = customers.map(c => c.name).slice(0, 50).join(', '); // Passing a sample of known names
       const prompt = `
@@ -286,6 +291,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       let textOutput = "";
 
+      const t_ai_start = performance.now();
       if (config.settings.aiProvider === 'gemini') {
         const apiKey = config.settings.geminiConfig?.apiKey;
         const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
@@ -315,34 +321,35 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       } else {
         const { apiKey, baseUrl, modelName } = config.settings.openaiConfig;
         console.log('[AI Scan] OpenAI config from settings:', { baseUrl, modelName, apiKeyExists: !!apiKey, apiKeyLength: apiKey?.length, apiKeyPrefix: apiKey?.substring(0, 15) });
-        const endpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
-        console.log('[AI Scan] Using OpenAI endpoint:', endpoint, 'model:', modelName);
+        const upstreamEndpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
+        console.log('[AI Scan] Using OpenAI endpoint (via server proxy):', upstreamEndpoint, 'model:', modelName);
         if (!apiKey) {
           throw new Error("OpenAI API Key is not configured. Please add your API key in Settings > AI Configuration.");
         }
-        const response = await fetch(endpoint, {
+        const response = await fetch('/api/v1/ai-proxy/chat', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: modelName,
-            response_format: { type: "json_object" },
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: prompt },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: `data:${inputMimeType};base64,${base64Data}`
+            endpoint: upstreamEndpoint,
+            apiKey,
+            payload: {
+              model: modelName,
+              response_format: { type: "json_object" },
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: prompt },
+                    {
+                      type: "image_url",
+                      image_url: {
+                        url: `data:${inputMimeType};base64,${base64Data}`
+                      }
                     }
-                  }
-                ]
-              }
-            ]
+                  ]
+                }
+              ]
+            }
           })
         });
         const data = await response.json();
@@ -350,13 +357,17 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         textOutput = data.choices?.[0]?.message?.content || "{}";
         console.log('[AI Scan] OpenAI text output:', textOutput);
       }
+      perf['2_ai_inference_ms'] = performance.now() - t_ai_start;
 
       console.log('[AI Scan] Parsing extracted text:', textOutput);
+      const t_parse_start = performance.now();
       const extracted = JSON.parse(textOutput);
+      perf['3_json_parse_ms'] = performance.now() - t_parse_start;
       console.log('[AI Scan] Parsed extracted:', extracted);
 
       if (extracted.customer?.name) {
         console.log('[AI Scan] Found customer:', extracted.customer.name);
+        const t_crm_start = performance.now();
         const existingCust = customers.find(c => c.name.toLowerCase() === extracted.customer.name.toLowerCase());
         if (!existingCust) {
           console.log('[AI Scan] Creating new customer...');
@@ -381,6 +392,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         if (existingCust) {
           setAppliesWithholdingTax(existingCust.appliesWithholdingTax || false);
         }
+        perf['4_crm_lookup_or_create_ms'] = performance.now() - t_crm_start;
       } else {
         console.log('[AI Scan] No customer name found in extraction');
       }
@@ -438,6 +450,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       if (extracted.items) {
         console.log('[AI Scan] Found items:', extracted.items.length);
+        const t_items_start = performance.now();
         setItems(extracted.items.map((i: any, idx: number) => {
           const hasTax = i.taxPercent !== null && i.taxPercent !== undefined;
           return {
@@ -451,10 +464,28 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             logs: []
           };
         }));
+        perf['5_items_mapping_ms'] = performance.now() - t_items_start;
       } else {
         console.log('[AI Scan] No items found in extraction');
       }
+
+      perf['total_ms'] = performance.now() - t0;
+      const provider = config.settings.aiProvider === 'gemini'
+        ? `Gemini (${config.settings.geminiConfig?.modelName || 'gemini-1.5-flash'})`
+        : `OpenAI (${config.settings.openaiConfig?.modelName})`;
+      console.group(`%c[NexusERP] OCR Profiling — ${provider}`, 'color: #6366f1; font-weight: bold;');
+      console.table(
+        Object.entries(perf).map(([step, ms]) => ({ step, 'time (ms)': ms.toFixed(2) }))
+      );
+      console.groupEnd();
+
     } catch (err: any) {
+      perf['total_ms'] = performance.now() - t0;
+      console.group('%c[NexusERP] OCR Profiling — FAILED', 'color: #ef4444; font-weight: bold;');
+      console.table(
+        Object.entries(perf).map(([step, ms]) => ({ step, 'time (ms)': ms.toFixed(2) }))
+      );
+      console.groupEnd();
       console.error("[AI Scan] Caught error:", err);
       console.error("[AI Scan] Error message:", err.message);
       console.error("[AI Scan] Error stack:", err.stack);
