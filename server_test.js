@@ -182,8 +182,11 @@ const createAuditLog = (message, status, user) => ({
 
 const generateInternalOrderNumber = (db) => {
     const orders = db.orders || [];
-    const count = orders.length;
-    return `INT-2024-${String(count + 1).padStart(4, '0')}`;
+    const maxNum = orders.reduce((max, o) => {
+        const match = (o.internalOrderNumber || '').match(/INT-2024-(\d{4,})/);
+        return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+    return `INT-2024-${String(maxNum + 1).padStart(4, '0')}`;
 };
 
 /**
@@ -883,21 +886,43 @@ const addToCollection = (col) => (req, res) => {
     const db = readDb();
     if (!db[col]) db[col] = [];
 
-    // Specialized validation for orders: prevent duplicate PO IDs
-    if (col === 'orders' && req.body.customerReferenceNumber) {
-        const poId = req.body.customerReferenceNumber.trim().toLowerCase();
-        // Check for duplicates, but ignore REJECTED orders
-        const isDuplicate = db[col].some(o =>
-            o.customerReferenceNumber?.trim().toLowerCase() === poId &&
-            o.status !== 'REJECTED'
-        );
-        if (isDuplicate) {
-            return res.status(400).json({ error: `Duplicate PO ID: "${req.body.customerReferenceNumber}" already exists.` });
-        }
-    }
-
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     const user = req.headers['x-user'] || 'System';
+
+    if (col === 'orders') {
+        // Pre-generate internal order number so uniqueness can be validated before processing
+        if (!newItem.internalOrderNumber) {
+            newItem.internalOrderNumber = generateInternalOrderNumber(db);
+        }
+
+        // Validate combined PO reference + customer name uniqueness (ignore REJECTED orders)
+        const poRef = String(newItem.customerReferenceNumber || '').trim();
+        const custName = String(newItem.customerName || '').trim();
+        if (custName) {
+            const poRefLower = poRef.toLowerCase();
+            const custNameLower = custName.toLowerCase();
+            const isDuplicate = db[col].some(o =>
+                o.status !== 'REJECTED' &&
+                String(o.customerReferenceNumber || '').trim().toLowerCase() === poRefLower &&
+                String(o.customerName || '').trim().toLowerCase() === custNameLower
+            );
+            if (isDuplicate) {
+                const displayRef = poRef || '(empty)';
+                return res.status(400).json({ error: `Duplicate PO reference "${displayRef}" already exists for customer "${custName}".` });
+            }
+        }
+
+        // Validate internal order number uniqueness (skip if empty)
+        const internalLower = String(newItem.internalOrderNumber || '').trim().toLowerCase();
+        if (internalLower) {
+            const isDuplicateInternal = db[col].some(o =>
+                String(o.internalOrderNumber || '').trim().toLowerCase() === internalLower
+            );
+            if (isDuplicateInternal) {
+                return res.status(400).json({ error: `Duplicate Internal PO reference "${newItem.internalOrderNumber}" already exists.` });
+            }
+        }
+    }
 
     if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
 
@@ -929,6 +954,36 @@ const updateInCollection = (col) => (req, res) => {
     if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
 
     if (col === 'orders') {
+        // Validate combined PO reference + customer name uniqueness (ignore REJECTED orders), excluding current order
+        const poRef = String(updated.customerReferenceNumber || '').trim();
+        const custName = String(updated.customerName || '').trim();
+        if (custName) {
+            const poRefLower = poRef.toLowerCase();
+            const custNameLower = custName.toLowerCase();
+            const isDuplicate = db[col].some(o =>
+                o.id !== updated.id &&
+                o.status !== 'REJECTED' &&
+                String(o.customerReferenceNumber || '').trim().toLowerCase() === poRefLower &&
+                String(o.customerName || '').trim().toLowerCase() === custNameLower
+            );
+            if (isDuplicate) {
+                const displayRef = poRef || '(empty)';
+                return res.status(400).json({ error: `Duplicate PO reference "${displayRef}" already exists for customer "${custName}".` });
+            }
+        }
+
+        // Validate internal order number uniqueness, excluding current order (skip if empty)
+        const internalLower = String(updated.internalOrderNumber || '').trim().toLowerCase();
+        if (internalLower) {
+            const isDuplicateInternal = db[col].some(o =>
+                o.id !== updated.id &&
+                String(o.internalOrderNumber || '').trim().toLowerCase() === internalLower
+            );
+            if (isDuplicateInternal) {
+                return res.status(400).json({ error: `Duplicate Internal PO reference "${updated.internalOrderNumber}" already exists.` });
+            }
+        }
+
         updated = processedOrderInternal(updated, db, user, false, oldItem);
         reconcileInventory(oldItem, updated, db);
         if (!req.body.status) {

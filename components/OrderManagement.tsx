@@ -154,10 +154,19 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     if (!customerReferenceNumber || editingOrderId || isScanning) return;
 
     const normalizedRef = customerReferenceNumber.trim().toLowerCase();
-    const match = existingOrders.find(o =>
-      o.customerReferenceNumber?.trim().toLowerCase() === normalizedRef ||
-      o.internalOrderNumber?.trim().toLowerCase() === normalizedRef
-    );
+    const normalizedCustomerName = customerName.trim().toLowerCase();
+    const match = existingOrders.find(o => {
+      // Internal order numbers are globally unique
+      if (o.internalOrderNumber?.trim().toLowerCase() === normalizedRef) {
+        return true;
+      }
+      // Customer PO references are unique per customer
+      if (o.customerReferenceNumber?.trim().toLowerCase() === normalizedRef) {
+        if (!normalizedCustomerName) return true;
+        return o.customerName?.trim().toLowerCase() === normalizedCustomerName;
+      }
+      return false;
+    });
 
     if (match && match.id !== lastAutoLoadedRef.current) {
       console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber}`);
@@ -549,12 +558,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, items: normalizedItems as any });
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
-        // Prevent duplicate PO IDs on the frontend side
+        // Prevent duplicate PO reference for the same customer on the frontend side
         const isDuplicate = existingOrders.some(o =>
-          o.customerReferenceNumber?.trim().toLowerCase() === customerReferenceNumber.trim().toLowerCase()
+          o.status !== 'REJECTED' &&
+          o.customerReferenceNumber?.trim().toLowerCase() === customerReferenceNumber.trim().toLowerCase() &&
+          o.customerName?.trim().toLowerCase() === customerName.trim().toLowerCase()
         );
         if (isDuplicate) {
-          setMessage({ type: 'error', text: `Duplicate PO ID: ${customerReferenceNumber} already exists in the system.` });
+          setMessage({ type: 'error', text: `Duplicate PO reference ${customerReferenceNumber} already exists for customer ${customerName}.` });
           return;
         }
 
