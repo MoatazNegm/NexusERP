@@ -607,6 +607,12 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         if (!item.logs) item.logs = [];
         if (!item.components) item.components = [];
 
+        // Normalize quantity: blank, null, undefined, NaN, or <= 0 becomes 1
+        const qtyNum = Number(item.quantity);
+        if (isNaN(qtyNum) || qtyNum <= 0) {
+            item.quantity = 1;
+        }
+
         // Automation: If BoM changed compared to old order, revoke approval
         if (oldOrder) {
             const oldItem = (oldOrder.items || []).find(i => i.id === item.id);
@@ -1324,6 +1330,28 @@ const getItemFromCollection = (col) => (req, res) => {
     res.json(item);
 };
 
+const validateOrderItems = (items) => {
+    if (!Array.isArray(items)) return 'Order items must be an array';
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const qty = Number(item.quantity);
+        if (!Number.isFinite(qty) || qty <= 0) return `Item ${i + 1} quantity must be a positive number`;
+        const price = Number(item.pricePerUnit);
+        if (!Number.isFinite(price) || price <= 0) return `Item ${i + 1} unit price must be a positive number`;
+        if (!item.unit || String(item.unit).trim() === '') return `Item ${i + 1} unit is required`;
+        const components = item.components || [];
+        for (let j = 0; j < components.length; j++) {
+            const comp = components[j];
+            const cQty = Number(comp.quantity);
+            if (!Number.isFinite(cQty) || cQty <= 0) return `Item ${i + 1} component ${j + 1} quantity must be a positive number`;
+            const cost = Number(comp.unitCost);
+            if (!Number.isFinite(cost) || cost <= 0) return `Item ${i + 1} component ${j + 1} unit cost must be a positive number`;
+            if (!comp.unit || String(comp.unit).trim() === '') return `Item ${i + 1} component ${j + 1} unit is required`;
+        }
+    }
+    return null;
+};
+
 const addToCollection = (col) => (req, res) => {
     const db = readDb();
     if (!db[col]) db[col] = [];
@@ -1338,6 +1366,13 @@ const addToCollection = (col) => (req, res) => {
         );
         if (isDuplicate) {
             return res.status(400).json({ error: `Duplicate PO ID: "${req.body.customerReferenceNumber}" already exists.` });
+        }
+    }
+
+    if (col === 'orders') {
+        const itemValidationError = validateOrderItems(req.body.items);
+        if (itemValidationError) {
+            return res.status(400).json({ error: itemValidationError });
         }
     }
 

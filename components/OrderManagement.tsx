@@ -194,6 +194,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     return { type: 'warning', label: `EDITABLE: Lifecycle window expires in ${Math.max(0, (limit - ageHrs) * 60).toFixed(0)} mins.`, isFrozen: false };
   }, [editingOrderId, existingOrders, config.settings.orderEditTimeLimitHrs, currentUser]);
 
+  const normalizeQty = (qty: any): number => {
+    const num = Number(qty);
+    return (!isNaN(num) && num > 0) ? num : 1;
+  };
+
   const loadOrder = (match: CustomerOrder) => {
     setCustomerName(match.customerName);
     setCustomerReferenceNumber(match.customerReferenceNumber || match.internalOrderNumber);
@@ -202,7 +207,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
     setTargetDeliveryDays(match.targetDeliveryDays || 0);
     setTargetDeliveryDate(match.targetDeliveryDate || match.orderDate);
-    setItems(match.items.map(it => ({ ...it, taxDetected: true })));
+    setItems(match.items.map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
     setEditingOrderId(match.id);
     setActiveTab('new');
     setIsNewCustomerCreated(false);
@@ -481,9 +486,36 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editStatus.isFrozen) return;
+
+    // Validate: every line item must have positive quantity, price and unit; components are also checked for new orders
+    const validationErrors: string[] = [];
+    items.forEach((item, idx) => {
+      const qty = Number(item.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) validationErrors.push(`Item ${idx + 1}: quantity must be greater than 0.`);
+      const price = Number(item.pricePerUnit);
+      if (!Number.isFinite(price) || price <= 0) validationErrors.push(`Item ${idx + 1}: unit price must be greater than 0.`);
+      if (!item.unit || String(item.unit).trim() === '') validationErrors.push(`Item ${idx + 1}: unit is required.`);
+      if (!editingOrderId) {
+        (item.components || []).forEach((comp, cidx) => {
+          const cQty = Number(comp.quantity);
+          if (!Number.isFinite(cQty) || cQty <= 0) validationErrors.push(`Item ${idx + 1} component ${cidx + 1}: quantity must be greater than 0.`);
+          const cost = Number(comp.unitCost);
+          if (!Number.isFinite(cost) || cost <= 0) validationErrors.push(`Item ${idx + 1} component ${cidx + 1}: unit cost must be greater than 0.`);
+          if (!comp.unit || String(comp.unit).trim() === '') validationErrors.push(`Item ${idx + 1} component ${cidx + 1}: unit is required.`);
+        });
+      }
+    });
+    if (validationErrors.length > 0) {
+      setMessage({ type: 'error', text: validationErrors.join(' ') });
+      return;
+    }
+
+    // Normalize quantities before sending
+    const normalizedItems = items.map(item => ({ ...item, quantity: normalizeQty(item.quantity) }));
+
     try {
       if (editingOrderId) {
-        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, items: items as any });
+        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, items: normalizedItems as any });
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
         // Prevent duplicate PO IDs on the frontend side
@@ -503,7 +535,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           appliesWithholdingTax,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
           targetDeliveryDate,
-          items: items as any
+          items: normalizedItems as any
         });
         setMessage({ 
           type: 'success', 
@@ -827,7 +859,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                           </div>
                           <div className="flex-1 space-y-1.5">
                             <label className="text-9px font-black text-slate-400 uppercase">Quantity</label>
-                            <input disabled={editStatus.isFrozen} type="number" step="any" className="w-full p-3 border-2 border-white rounded-xl bg-white font-bold text-center shadow-sm" value={item.quantity} onChange={e => { const n = [...items]; n[idx].quantity = parseFloat(e.target.value) || 1; setItems(n); }} />
+                            <input disabled={editStatus.isFrozen} type="number" step="any" className="w-full p-3 border-2 border-white rounded-xl bg-white font-bold text-center shadow-sm" value={item.quantity} onChange={e => { const n = [...items]; n[idx].quantity = parseFloat(e.target.value) || 1; setItems(n); }} onBlur={e => { const n = [...items]; n[idx].quantity = parseFloat(e.target.value) || 1; setItems(n); }} />
                           </div>
                           <div className="flex-1 space-y-1.5">
                             <label className="text-9px font-black text-slate-400 uppercase">Unit price (L.E.)</label>
