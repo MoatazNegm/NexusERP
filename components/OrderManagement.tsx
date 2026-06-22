@@ -128,6 +128,22 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     });
   }, [existingOrders, sortConfig]);
 
+  const formatOrderTimestamp = (timestamp?: string) => {
+    if (!timestamp) return 'N/A';
+    const parsed = new Date(timestamp);
+    if (Number.isNaN(parsed.getTime())) return 'N/A';
+    return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  };
+
+  const getLastEditedTimestamp = (order: CustomerOrder) => {
+    const logTimestamps = (order.logs || [])
+      .map(log => log.timestamp)
+      .filter((timestamp): timestamp is string => !!timestamp)
+      .sort();
+
+    return logTimestamps[logTimestamps.length - 1] || order.dataEntryTimestamp;
+  };
+
   const requestSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
     if (sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -974,7 +990,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       PO Received <SortIcon column="orderDate" />
                     </th>
                     <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('dataEntryTimestamp')}>
-                      Logged On <SortIcon column="dataEntryTimestamp" />
+                      Submitted Into The System <SortIcon column="dataEntryTimestamp" />
+                    </th>
+                    <th className="px-8 py-5">
+                      Last Edited
                     </th>
                     <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('customer')}>
                       Customer Entity <SortIcon column="customer" />
@@ -999,8 +1018,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         {draft.orderDate ? new Date(draft.orderDate).toLocaleDateString() : 'N/A'}
                       </td>
                       <td className="px-8 py-6 text-[10px] text-slate-500 font-bold uppercase">
-                        {new Date(draft.dataEntryTimestamp).toLocaleDateString()}
-                        <div className="text-[8px] opacity-60">{new Date(draft.dataEntryTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                        {formatOrderTimestamp(draft.dataEntryTimestamp)}
+                      </td>
+                      <td className="px-8 py-6 text-[10px] text-slate-500 font-bold uppercase">
+                        {formatOrderTimestamp(getLastEditedTimestamp(draft))}
                       </td>
                       <td className="px-8 py-6 font-black text-slate-800">{draft.customerName}</td>
 
