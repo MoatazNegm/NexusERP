@@ -51,6 +51,7 @@ interface ItemWithTaxStatus extends Partial<CustomerOrderItem> {
 }
 
 type ManagementTab = 'new' | 'logged';
+const DEFAULT_TAX_PERCENT = 14;
 
 export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refreshKey, currentUser }) => {
   const today = new Date().toISOString().split('T')[0];
@@ -66,8 +67,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
   const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(0);
   const [targetDeliveryDate, setTargetDeliveryDate] = useState(today);
+  const [orderTaxPercent, setOrderTaxPercent] = useState(DEFAULT_TAX_PERCENT);
   const [items, setItems] = useState<ItemWithTaxStatus[]>([
-    { id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, isAccepted: false, taxDetected: true }
+    { id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, isAccepted: false, taxDetected: true }
   ]);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
@@ -135,13 +137,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   };
 
-  const getLastEditedTimestamp = (order: CustomerOrder) => {
-    const logTimestamps = (order.logs || [])
-      .map(log => log.timestamp)
-      .filter((timestamp): timestamp is string => !!timestamp)
-      .sort();
+  const getLastEditedInfo = (order: CustomerOrder) => {
+    const latestLog = (order.logs || [])
+      .filter(log => !!log.timestamp)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      .pop();
 
-    return logTimestamps[logTimestamps.length - 1] || order.dataEntryTimestamp;
+    return {
+      timestamp: latestLog?.timestamp || order.dataEntryTimestamp,
+      user: latestLog?.user || 'System'
+    };
   };
 
   const requestSort = (key: string) => {
@@ -232,7 +237,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
     setTargetDeliveryDays(match.targetDeliveryDays || 0);
     setTargetDeliveryDate(match.targetDeliveryDate || match.orderDate);
+
     setItems(match.items.map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
+
     setEditingOrderId(match.id);
     setActiveTab('new');
     setIsNewCustomerCreated(false);
@@ -243,13 +250,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     let subtotal = 0;
     let taxTotal = 0;
     items.forEach(item => {
+
       const base = (Number(item.quantity) || 1) * (Number(item.pricePerUnit) || 0);
       const tax = base * ((Number(item.taxPercent) || 0) / 100);
+
       subtotal += base;
       taxTotal += tax;
     });
     return { subtotal, taxTotal, total: subtotal + taxTotal };
-  }, [items]);
+  }, [items, orderTaxPercent]);
 
   const handleAIScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -486,15 +495,17 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       if (extracted.items) {
         console.log('[AI Scan] Found items:', extracted.items.length);
         const t_items_start = performance.now();
+        const firstDetectedTax = extracted.items.find((i: any) => i?.taxPercent !== null && i?.taxPercent !== undefined)?.taxPercent;
+        const normalizedOrderTax = Number.isFinite(Number(firstDetectedTax)) ? Number(firstDetectedTax) : DEFAULT_TAX_PERCENT;
+        setOrderTaxPercent(normalizedOrderTax);
         setItems(extracted.items.map((i: any, idx: number) => {
-          const hasTax = i.taxPercent !== null && i.taxPercent !== undefined;
           return {
             id: `temp_${Date.now()}_${idx}`,
             description: i.description,
             quantity: i.quantity || 1,
             unit: i.unit || 'pcs',
             pricePerUnit: i.price,
-            taxPercent: hasTax ? i.taxPercent : 14, // Default to 14% if tax is implied but not set
+            taxPercent: normalizedOrderTax,
             taxDetected: true,
             logs: []
           };
@@ -535,7 +546,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setAppliesWithholdingTax(false);
     setTargetDeliveryDays(0);
     setTargetDeliveryDate(today);
-    setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true, logs: [] }]);
+    setOrderTaxPercent(DEFAULT_TAX_PERCENT);
+    setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, taxDetected: true, logs: [] }]);
     setEditingOrderId(null); setMessage(null); setIsNewCustomerCreated(false);
   };
 
@@ -571,6 +583,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
     try {
       if (editingOrderId) {
+
         await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, items: normalizedItems as any });
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
@@ -593,7 +606,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           appliesWithholdingTax,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
           targetDeliveryDate,
+
           items: normalizedItems as any
+
         });
         setMessage({ 
           type: 'success', 
@@ -636,7 +651,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setOrderDate(today);
     setPaymentSlaDays(0);
     setAppliesWithholdingTax(false);
-    setItems([{ id: 'temp_1', description: 'Stock Replenishment', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 0, taxDetected: true, logs: [] }]);
+    setOrderTaxPercent(DEFAULT_TAX_PERCENT);
+    setItems([{ id: 'temp_1', description: 'Stock Replenishment', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, taxDetected: true, logs: [] }]);
     setMessage({ type: 'info', text: 'Internal Stock Order template loaded.' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -937,9 +953,22 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     );
                   })}
                   {!editStatus.isFrozen && (
-                    <button type="button" onClick={() => setItems([...items, { id: `temp_${Date.now()}`, description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true, logs: [] }])} className="px-6 py-3 bg-white border border-blue-100 text-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2">
-                      <i className="fa-solid fa-plus"></i> Append Line Item
-                    </button>
+                    <div className="space-y-4">
+                      <button type="button" onClick={() => setItems([...items, { id: `temp_${Date.now()}`, description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: orderTaxPercent, taxDetected: true, logs: [] }])} className="px-6 py-3 bg-white border border-blue-100 text-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2">
+                        <i className="fa-solid fa-plus"></i> Append Line Item
+                      </button>
+                      <div className="max-w-[220px] space-y-1.5">
+                        <label className="text-9px font-black text-slate-400 uppercase">Tax % (Order Level)</label>
+                        <input
+                          disabled={editStatus.isFrozen}
+                          type="number"
+                          step="any"
+                          className="w-full p-3 border-2 border-slate-100 rounded-xl bg-white font-black text-rose-500 text-center shadow-sm"
+                          value={orderTaxPercent}
+                          onChange={e => setOrderTaxPercent(parseFloat(e.target.value) || 0)}
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
 
@@ -947,7 +976,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   <div className="absolute top-0 right-0 p-8 opacity-5"><i className="fa-solid fa-coins text-9xl"></i></div>
                   <div className="flex flex-col md:flex-row gap-12 relative z-10">
                     <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest">Subtotal Value</div><div className="text-3xl font-black">{totals.subtotal.toLocaleString()} <span className="text-sm opacity-30">L.E.</span></div></div>
-                    <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-rose-400">Total VAT (14%)</div><div className="text-3xl font-black text-rose-400">{totals.taxTotal.toLocaleString()}</div></div>
+                    <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-rose-400">Total Tax</div><div className="text-3xl font-black text-rose-400">{totals.taxTotal.toLocaleString()}</div></div>
                     <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-emerald-400">Grand Transaction Total</div><div className="text-4xl font-black text-emerald-400">{totals.total.toLocaleString()}</div></div>
                   </div>
                   <button
@@ -1007,7 +1036,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
                 <tbody className="divide-y divide-slate-50">
                   {loggedOrders.map(draft => (
+
                     <tr key={draft.id} className={`hover:bg-slate-50/80 transition-all group ${draft.loggingComplianceViolation ? 'bg-rose-50 hover:!bg-rose-100 border-l-4 border-rose-500' : ''} ${draft.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/30 hover:!bg-rose-50 border-l-4 border-rose-400' : ''}`}>
+
                       <td className="px-8 py-6">
                         <div className="font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</div>
                         <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">PO: {draft.customerReferenceNumber || 'N/A'}</div>
@@ -1021,7 +1052,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         {formatOrderTimestamp(draft.dataEntryTimestamp)}
                       </td>
                       <td className="px-8 py-6 text-[10px] text-slate-500 font-bold uppercase">
-                        {formatOrderTimestamp(getLastEditedTimestamp(draft))}
+                        {formatOrderTimestamp(lastEdited.timestamp)}
+                        <div className="text-[8px] opacity-60 normal-case">by {lastEdited.user}</div>
                       </td>
                       <td className="px-8 py-6 font-black text-slate-800">{draft.customerName}</td>
 
@@ -1035,6 +1067,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         </button>
                       </td>
                     </tr>
+                      );
+                    })()
                   ))}
                   {loggedOrders.length === 0 && (
                     <tr>

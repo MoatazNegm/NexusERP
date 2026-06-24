@@ -1,7 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { dataService } from '../services/dataService';
-import { Supplier, SupplierPart, LogEntry, User, UserRole } from '../types';
+import { Supplier, SupplierPart, LogEntry, User, UserRole, AppConfig } from '../types';
+import * as XLSX from 'xlsx';
+import { GoogleGenAI } from '@google/genai';
 
 const LogTimeline: React.FC<{ logs: LogEntry[] }> = ({ logs }) => (
   <div className="space-y-4 relative pl-4 border-l-2 border-slate-100 py-2">
@@ -25,9 +27,10 @@ interface SupplierModuleProps {
   currentUser: User;
   userRoles: UserRole[];
   refreshKey?: number;
+  config: AppConfig;
 }
 
-export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, userRoles, refreshKey }) => {
+export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, userRoles, refreshKey, config }) => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [suppForm, setSuppForm] = useState<Omit<Supplier, 'id' | 'logs' | 'priceList'>>({
     name: '',
@@ -46,8 +49,10 @@ export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, use
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [priceListUploadMessage, setPriceListUploadMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   const [newPart, setNewPart] = useState({ partNumber: '', description: '', price: 0, currency: 'L.E.' });
+  const priceListFileInputRef = useRef<HTMLInputElement>(null);
 
   const canEdit = userRoles.includes('admin') || userRoles.includes('procurement') || userRoles.includes('suppliers');
 
@@ -152,6 +157,248 @@ export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, use
         setIsDetectingLocation(false);
       }
     );
+  };
+
+  const downloadPriceListTemplate = () => {
+    if (!editingSupplier) return;
+
+    const worksheet = XLSX.utils.aoa_to_sheet([['Item Description', 'Part Number', 'Unit Price']]);
+    worksheet['!cols'] = [{ wch: 24 }, { wch: 50 }, { wch: 18 }];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'PriceListTemplate');
+
+    const safeSupplierName = (editingSupplier.name || 'supplier').replace(/[^a-zA-Z0-9_-]/g, '_');
+    XLSX.writeFile(workbook, `${safeSupplierName}_price_list_template.xlsx`);
+    setPriceListUploadMessage({ type: 'info', text: 'Template downloaded. Fill all required columns, then use Bulk Upload.' });
+  };
+
+  const parsePrice = (raw: unknown): number | null => {
+    if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+    if (typeof raw !== 'string') return null;
+    const normalized = raw.replace(/,/g, '').replace(/[^0-9.-]/g, '').trim();
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const normalizeHeader = (value: string): string => {
+    return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  };
+
+  const resolveColumnKey = (availableKeys: string[], aliases: string[]): string | null => {
+    const aliasSet = new Set(aliases.map(normalizeHeader));
+    return availableKeys.find((key) => aliasSet.has(normalizeHeader(key))) || null;
+  };
+
+  const findExistingHeader = (availableKeys: string[], candidate: unknown): string | null => {
+    if (!candidate || typeof candidate !== 'string') return null;
+    const normalizedCandidate = normalizeHeader(candidate);
+    return availableKeys.find((key) => normalizeHeader(key) === normalizedCandidate) || null;
+  };
+
+  const inferColumnMappingWithAI = async (
+    availableKeys: string[],
+    rows: Record<string, unknown>[]
+  ): Promise<{ partNumberKey: string; descriptionKey: string; unitPriceKey: string } | null> => {
+    const sampleRows = rows.slice(0, 5).map((row) => {
+      const sample: Record<string, string> = {};
+      availableKeys.forEach((key) => {
+        sample[key] = String(row[key] ?? '').slice(0, 120);
+      });
+      return sample;
+    });
+
+    const prompt = `
+You are mapping spreadsheet headers for a supplier price list import.
+Required target fields are:
+1) partNumber
+2) description
+3) unitPrice
+
+Given headers and sample rows, choose exactly one existing header for each target field.
+Use only headers that exist in the provided headers list.
+Return JSON ONLY in this format:
+{
+  "partNumberHeader": "...",
+  "descriptionHeader": "...",
+  "unitPriceHeader": "..."
+}
+
+Headers: ${JSON.stringify(availableKeys)}
+Sample rows: ${JSON.stringify(sampleRows)}
+    `.trim();
+
+    let textOutput = '{}';
+
+    if (config.settings.aiProvider === 'gemini') {
+      const apiKey = config.settings.geminiConfig?.apiKey;
+      const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
+      if (!apiKey) throw new Error('Gemini API key is not configured.');
+
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: { responseMimeType: 'application/json' }
+      });
+      textOutput = response.text || '{}';
+    } else {
+      const { apiKey, baseUrl, modelName } = config.settings.openaiConfig;
+      if (!apiKey) throw new Error('OpenAI API key is not configured.');
+
+      const upstreamEndpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
+      const response = await fetch('/api/v1/ai-proxy/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: upstreamEndpoint,
+          apiKey,
+          payload: {
+            model: modelName,
+            response_format: { type: 'json_object' },
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0
+          }
+        })
+      });
+
+      const data = await response.json();
+      textOutput = data.choices?.[0]?.message?.content || '{}';
+    }
+
+    const parsed = JSON.parse(textOutput);
+    const partNumberKey = findExistingHeader(availableKeys, parsed.partNumberHeader);
+    const descriptionKey = findExistingHeader(availableKeys, parsed.descriptionHeader);
+    const unitPriceKey = findExistingHeader(availableKeys, parsed.unitPriceHeader);
+
+    if (!partNumberKey || !descriptionKey || !unitPriceKey) return null;
+
+    const uniqueKeys = new Set([partNumberKey, descriptionKey, unitPriceKey]);
+    if (uniqueKeys.size < 3) return null;
+
+    return { partNumberKey, descriptionKey, unitPriceKey };
+  };
+
+  const handleBulkPriceListUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingSupplier || !canEdit) return;
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+
+      if (!firstSheetName) {
+        setPriceListUploadMessage({ type: 'error', text: 'Upload failed: workbook has no sheets.' });
+        return;
+      }
+
+      const sheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+      if (!rows.length) {
+        setPriceListUploadMessage({ type: 'error', text: 'Upload failed: sheet is empty.' });
+        return;
+      }
+
+      const availableKeys = Object.keys(rows[0] || {});
+      let partNumberKey = resolveColumnKey(availableKeys, [
+        'Part Number', 'Part No', 'Part #', 'PartNum', 'Part ID', 'SKU', 'Item Code', 'Product Code', 'Model Number'
+      ]);
+      let descriptionKey = resolveColumnKey(availableKeys, [
+        'Item Description', 'Description', 'Item Name', 'Part Description', 'Product Description', 'Material Description', 'Name'
+      ]);
+      let unitPriceKey = resolveColumnKey(availableKeys, [
+        'Unit Price', 'Price', 'Unit Cost', 'Cost', 'Rate', 'Unit Rate', 'Amount', 'Selling Price'
+      ]);
+
+      let usedAiFallback = false;
+      if (!partNumberKey || !descriptionKey || !unitPriceKey) {
+        try {
+          const aiMapping = await inferColumnMappingWithAI(availableKeys, rows);
+          if (aiMapping) {
+            partNumberKey = partNumberKey || aiMapping.partNumberKey;
+            descriptionKey = descriptionKey || aiMapping.descriptionKey;
+            unitPriceKey = unitPriceKey || aiMapping.unitPriceKey;
+            usedAiFallback = true;
+          }
+        } catch (error: any) {
+          setPriceListUploadMessage({ type: 'error', text: `Upload failed. Automatic mapping failed: ${error?.message || 'AI mapping error'}` });
+          return;
+        }
+      }
+
+      if (!partNumberKey || !descriptionKey || !unitPriceKey) {
+        setPriceListUploadMessage({
+          type: 'error',
+          text: `Upload failed. Could not detect required columns. Detected headers: ${availableKeys.join(', ') || 'none'}. Required fields: part number, item description, unit price.`
+        });
+        return;
+      }
+
+      const mappedParts: Omit<SupplierPart, 'id'>[] = [];
+      const invalidRows: string[] = [];
+
+      rows.forEach((row, index) => {
+        const rowNumber = index + 2;
+        const partNumber = String(row[partNumberKey] ?? '').trim();
+        const description = String(row[descriptionKey] ?? '').trim();
+        const priceRaw = row[unitPriceKey];
+        const price = parsePrice(priceRaw);
+
+        if (!partNumber || !description || price === null) {
+          invalidRows.push(`Row ${rowNumber}`);
+          return;
+        }
+
+        mappedParts.push({
+          partNumber,
+          description,
+          price,
+          currency: 'L.E.'
+        });
+      });
+
+      if (invalidRows.length > 0) {
+        setPriceListUploadMessage({
+          type: 'error',
+          text: `Upload failed. Invalid or missing fields in: ${invalidRows.join(', ')}. Required fields are part number, item description, and unit price.`
+        });
+        return;
+      }
+
+      const existingPriceList = editingSupplier.priceList || [];
+      const existingMap = new Map(existingPriceList.map(part => [part.partNumber.trim().toLowerCase(), part]));
+
+      const mergedPriceList: SupplierPart[] = mappedParts.map((part, idx) => {
+        const existing = existingMap.get(part.partNumber.trim().toLowerCase());
+        return {
+          id: existing?.id || `spl_${Date.now()}_${idx}`,
+          partNumber: part.partNumber,
+          description: part.description,
+          price: part.price,
+          currency: existing?.currency || 'L.E.'
+        };
+      });
+
+      await dataService.updateSupplier(editingSupplier.id!, {
+        ...editingSupplier,
+        priceList: mergedPriceList
+      });
+
+      await loadSuppliers();
+      setPriceListUploadMessage({
+        type: 'success',
+        text: `Bulk upload successful. ${mergedPriceList.length} price list rows saved.${usedAiFallback ? ' Mapping inferred using AI.' : ''}`
+      });
+    } catch (error) {
+      setPriceListUploadMessage({ type: 'error', text: 'Bulk upload failed. Please use a valid Excel file (.xlsx).' });
+    } finally {
+      if (priceListFileInputRef.current) {
+        priceListFileInputRef.current.value = '';
+      }
+    }
   };
 
   return (
@@ -300,6 +547,45 @@ export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, use
                   </h4>
                   <div className="text-[9px] text-slate-400 uppercase font-bold">{editingSupplier?.priceList.length} items defined</div>
                 </div>
+
+                {canEdit && (
+                  <div className="flex flex-wrap items-center gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={downloadPriceListTemplate}
+                      className="px-4 py-2 bg-emerald-600 text-white text-xs font-black uppercase tracking-wider rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2"
+                    >
+                      <i className="fa-solid fa-file-excel"></i>
+                      Download Template
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => priceListFileInputRef.current?.click()}
+                      className="px-4 py-2 bg-indigo-600 text-white text-xs font-black uppercase tracking-wider rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                    >
+                      <i className="fa-solid fa-upload"></i>
+                      Bulk Upload
+                    </button>
+                    <input
+                      ref={priceListFileInputRef}
+                      type="file"
+                      accept=".xlsx,.xls"
+                      className="hidden"
+                      onChange={handleBulkPriceListUpload}
+                    />
+                  </div>
+                )}
+
+                {priceListUploadMessage && (
+                  <div className={`p-3 rounded-lg border text-xs font-bold uppercase tracking-wide ${priceListUploadMessage.type === 'success'
+                    ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
+                    : priceListUploadMessage.type === 'info'
+                      ? 'bg-blue-50 border-blue-100 text-blue-700'
+                      : 'bg-rose-50 border-rose-100 text-rose-700'
+                    }`}>
+                    {priceListUploadMessage.text}
+                  </div>
+                )}
 
                 {canEdit && (
                   <form onSubmit={handleAddPart} className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 bg-slate-50 rounded-xl border border-slate-200">
