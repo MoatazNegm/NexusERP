@@ -137,13 +137,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   };
 
-  const getLastEditedTimestamp = (order: CustomerOrder) => {
-    const logTimestamps = (order.logs || [])
-      .map(log => log.timestamp)
-      .filter((timestamp): timestamp is string => !!timestamp)
-      .sort();
+  const getLastEditedInfo = (order: CustomerOrder) => {
+    const latestLog = (order.logs || [])
+      .filter(log => !!log.timestamp)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      .pop();
 
-    return logTimestamps[logTimestamps.length - 1] || order.dataEntryTimestamp;
+    return {
+      timestamp: latestLog?.timestamp || order.dataEntryTimestamp,
+      user: latestLog?.user || 'System'
+    };
   };
 
   const requestSort = (key: string) => {
@@ -980,6 +983,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
                 <tbody className="divide-y divide-slate-50">
                   {loggedOrders.map(draft => (
+                    (() => {
+                      const lastEdited = getLastEditedInfo(draft);
+                      return (
                     <tr key={draft.id} className={`hover:bg-slate-50/80 transition-all group ${draft.loggingComplianceViolation ? 'bg-rose-50 hover:!bg-rose-100 border-l-4 border-rose-500' : ''}`}>
                       <td className="px-8 py-6">
                         <div className="font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</div>
@@ -993,7 +999,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         {formatOrderTimestamp(draft.dataEntryTimestamp)}
                       </td>
                       <td className="px-8 py-6 text-[10px] text-slate-500 font-bold uppercase">
-                        {formatOrderTimestamp(getLastEditedTimestamp(draft))}
+                        {formatOrderTimestamp(lastEdited.timestamp)}
+                        <div className="text-[8px] opacity-60 normal-case">by {lastEdited.user}</div>
                       </td>
                       <td className="px-8 py-6 font-black text-slate-800">{draft.customerName}</td>
 
@@ -1007,6 +1014,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         </button>
                       </td>
                     </tr>
+                      );
+                    })()
                   ))}
                   {loggedOrders.length === 0 && (
                     <tr>
