@@ -149,7 +149,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
             item,
             hubQty,
             mfdQty: item.manufacturedQty || 0,
-            target: item.quantity,
+            target: getItemEffectiveQty(item),
             allMfgDone: allDone
           });
         }
@@ -167,7 +167,8 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
       if (!hasItemLevel && order.status === OrderStatus.MANUFACTURING_COMPLETED) {
         // Fallback row for legacy orders
         order.items.forEach(item => {
-          rows.push({ order, item, mfd: item.quantity, hub: 0, readyForIntake: item.quantity, isFallback: true });
+          const qty = getItemEffectiveQty(item);
+          rows.push({ order, item, mfd: qty, hub: 0, readyForIntake: qty, isFallback: true });
         });
       } else {
         order.items.forEach(item => {
@@ -444,7 +445,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
               emptyMessage="No pending intake from plant."
               columns={[
                 { key: 'refCustomer', label: 'Reference / Customer', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.order.internalOrderNumber, render: r => (<><div className="font-mono text-xs font-black text-blue-600">{r.order.internalOrderNumber}</div><div className="font-bold text-slate-800 text-sm mt-0.5">{r.order.customerName}</div><div className="text-[9px] font-bold text-slate-400 mt-1">{r.order.status === OrderStatus.MANUFACTURING_COMPLETED ? 'MFG Complete' : 'In Production'}</div></>) },
-                { key: 'lineItem', label: 'Line Item', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.item.description, render: r => (<><div className="font-bold text-slate-700 text-xs">{r.item.description}</div><div className="text-[9px] text-slate-400 mt-0.5">Target: {r.item.quantity} {r.item.unit}</div></>) },
+                { key: 'lineItem', label: 'Line Item', headerClassName: 'px-8 py-4 text-white', sortValue: r => r.item.description, render: r => (<><div className="font-bold text-slate-700 text-xs">{r.item.description}</div><div className="text-[9px] text-slate-400 mt-0.5">Target: {getItemEffectiveQty(r.item)} {r.item.unit}</div></>) },
                 { key: 'manufactured', label: 'Manufactured', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.mfd, render: r => (<><div className="font-black text-blue-600 text-sm">{r.mfd.toLocaleString()}</div><div className="text-[9px] text-slate-400">{r.item.unit}</div></>) },
                 { key: 'inHub', label: 'In Hub', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.hub, render: r => (<><div className="font-black text-emerald-600 text-sm">{r.hub.toLocaleString()}</div><div className="text-[9px] text-slate-400">{r.item.unit}</div></>) },
                 { key: 'readyIntake', label: 'Ready for Intake', headerClassName: 'px-8 py-4 text-white text-center', cellClassName: 'px-8 py-6 text-center', sortValue: r => r.readyForIntake, render: r => (<><div className="font-black text-amber-600 text-sm">{r.readyForIntake.toLocaleString()}</div><div className="text-[9px] text-slate-400">{r.item.unit}</div></>) },

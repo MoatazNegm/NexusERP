@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus } from '../types';
-import { getItemEffectiveQty } from '../utils';
+import { getItemEffectiveQty, getStatusLimitHours } from '../utils';
+import { isMarginBreach } from '../shared/margin';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -47,22 +48,10 @@ interface FinanceModuleProps {
 type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
-  const status = order.status;
-  switch (status) {
-    case OrderStatus.LOGGED: return settings.orderEditTimeLimitHrs;
-    case OrderStatus.TECHNICAL_REVIEW: return settings.technicalReviewLimitHrs;
-    case OrderStatus.WAITING_SUPPLIERS: return settings.pendingOfferLimitHrs;
-    case OrderStatus.WAITING_FACTORY: return settings.waitingFactoryLimitHrs;
-    case OrderStatus.MANUFACTURING: return settings.mfgFinishLimitHrs;
-    case OrderStatus.TRANSITION_TO_STOCK: return settings.transitToHubLimitHrs;
-    case OrderStatus.IN_PRODUCT_HUB: return settings.productHubLimitHrs;
-    case OrderStatus.ISSUE_INVOICE: return settings.invoicedLimitHrs;
-    case OrderStatus.INVOICED: return settings.hubReleasedLimitHrs;
-    case OrderStatus.HUB_RELEASED: return settings.deliveryLimitHrs;
-    case OrderStatus.DELIVERED:
-      return (order.paymentSlaDays || settings.defaultPaymentSlaDays) * 24;
-    default: return 0;
+  if (order.status === OrderStatus.DELIVERED) {
+    return (order.paymentSlaDays || settings.defaultPaymentSlaDays) * 24;
   }
+  return getStatusLimitHours(order.status, settings);
 };
 
 const ThresholdSentinel: React.FC<{ order: CustomerOrder, config: AppConfig }> = ({ order, config }) => {
@@ -1752,7 +1741,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </>
             ) : filteredOrders.map(o => {
               const pl = (o as any).pl;
-              const isBreach = pl.markupPct < config.settings.minimumMarginPct;
+              const isBreach = isMarginBreach(pl.cost, pl.markupPct, config.settings.minimumMarginPct);
               const showRow = activeTab === 'orders' ||
                 (activeTab === 'billing_details' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
                 (activeTab === 'orders' && o.status === OrderStatus.WAITING_GOVE);

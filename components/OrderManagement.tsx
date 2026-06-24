@@ -92,8 +92,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   };
 
   const loggedOrders = useMemo(() => {
-    const filtered = existingOrders.filter(o => o.status === OrderStatus.LOGGED);
-    
+    const filtered = existingOrders.filter(o => o.status === OrderStatus.LOGGED || o.status === OrderStatus.NEGATIVE_MARGIN);
+
     return filtered.sort((a, b) => {
       let aVal: any = '';
       let bVal: any = '';
@@ -175,10 +175,19 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     if (!customerReferenceNumber || editingOrderId || isScanning) return;
 
     const normalizedRef = customerReferenceNumber.trim().toLowerCase();
-    const match = existingOrders.find(o =>
-      o.customerReferenceNumber?.trim().toLowerCase() === normalizedRef ||
-      o.internalOrderNumber?.trim().toLowerCase() === normalizedRef
-    );
+    const normalizedCustomerName = customerName.trim().toLowerCase();
+    const match = existingOrders.find(o => {
+      // Internal order numbers are globally unique
+      if (o.internalOrderNumber?.trim().toLowerCase() === normalizedRef) {
+        return true;
+      }
+      // Customer PO references are unique per customer
+      if (o.customerReferenceNumber?.trim().toLowerCase() === normalizedRef) {
+        if (!normalizedCustomerName) return true;
+        return o.customerName?.trim().toLowerCase() === normalizedCustomerName;
+      }
+      return false;
+    });
 
     if (match && match.id !== lastAutoLoadedRef.current) {
       console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber}`);
@@ -199,6 +208,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     const order = existingOrders.find(o => o.id === editingOrderId);
     if (!order) return { type: 'new', label: '', isFrozen: false };
 
+    const isManager = currentUser.roles?.includes('management') || false;
+    if (isManager) {
+      return { type: 'warning', label: 'MANAGER OVERRIDE: Edit time limit bypassed.', isFrozen: false };
+    }
+
     const entryTime = new Date(order.dataEntryTimestamp).getTime();
     const now = new Date().getTime();
     const ageHrs = (now - entryTime) / 3600000;
@@ -208,7 +222,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       return { type: 'frozen', label: `LOCKED: This PO exceeded the ${limit}h edit threshold.`, isFrozen: true };
     }
     return { type: 'warning', label: `EDITABLE: Lifecycle window expires in ${Math.max(0, (limit - ageHrs) * 60).toFixed(0)} mins.`, isFrozen: false };
-  }, [editingOrderId, existingOrders, config.settings.orderEditTimeLimitHrs]);
+  }, [editingOrderId, existingOrders, config.settings.orderEditTimeLimitHrs, currentUser]);
+
+  const normalizeQty = (qty: any): number => {
+    const num = Number(qty);
+    return (!isNaN(num) && num > 0) ? num : 1;
+  };
 
   const loadOrder = (match: CustomerOrder) => {
     setCustomerName(match.customerName);
@@ -218,8 +237,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
     setTargetDeliveryDays(match.targetDeliveryDays || 0);
     setTargetDeliveryDate(match.targetDeliveryDate || match.orderDate);
-    setOrderTaxPercent(match.items?.[0]?.taxPercent ?? DEFAULT_TAX_PERCENT);
-    setItems(match.items.map(it => ({ ...it, taxDetected: true })));
+
+    setItems(match.items.map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
+
     setEditingOrderId(match.id);
     setActiveTab('new');
     setIsNewCustomerCreated(false);
@@ -230,8 +250,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     let subtotal = 0;
     let taxTotal = 0;
     items.forEach(item => {
-      const base = (Number(item.quantity) || 0) * (Number(item.pricePerUnit) || 0);
-      const tax = base * ((Number(orderTaxPercent) || 0) / 100);
+
+      const base = (Number(item.quantity) || 1) * (Number(item.pricePerUnit) || 0);
+      const tax = base * ((Number(item.taxPercent) || 0) / 100);
+
       subtotal += base;
       taxTotal += tax;
     });
@@ -480,7 +502,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           return {
             id: `temp_${Date.now()}_${idx}`,
             description: i.description,
-            quantity: i.quantity,
+            quantity: i.quantity || 1,
             unit: i.unit || 'pcs',
             pricePerUnit: i.price,
             taxPercent: normalizedOrderTax,
@@ -532,18 +554,47 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editStatus.isFrozen) return;
+
+    // Validate: every line item must have positive quantity, price and unit; components are also checked for new orders
+    const validationErrors: string[] = [];
+    items.forEach((item, idx) => {
+      const qty = Number(item.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) validationErrors.push(`Item ${idx + 1}: quantity must be greater than 0.`);
+      const price = Number(item.pricePerUnit);
+      if (!Number.isFinite(price) || price <= 0) validationErrors.push(`Item ${idx + 1}: unit price must be greater than 0.`);
+      if (!item.unit || String(item.unit).trim() === '') validationErrors.push(`Item ${idx + 1}: unit is required.`);
+      if (!editingOrderId) {
+        (item.components || []).forEach((comp, cidx) => {
+          const cQty = Number(comp.quantity);
+          if (!Number.isFinite(cQty) || cQty <= 0) validationErrors.push(`Item ${idx + 1} component ${cidx + 1}: quantity must be greater than 0.`);
+          const cost = Number(comp.unitCost);
+          if (!Number.isFinite(cost) || cost <= 0) validationErrors.push(`Item ${idx + 1} component ${cidx + 1}: unit cost must be greater than 0.`);
+          if (!comp.unit || String(comp.unit).trim() === '') validationErrors.push(`Item ${idx + 1} component ${cidx + 1}: unit is required.`);
+        });
+      }
+    });
+    if (validationErrors.length > 0) {
+      setMessage({ type: 'error', text: validationErrors.join(' ') });
+      return;
+    }
+
+    // Normalize quantities before sending
+    const normalizedItems = items.map(item => ({ ...item, quantity: normalizeQty(item.quantity) }));
+
     try {
       if (editingOrderId) {
-        const normalizedItems = items.map(item => ({ ...item, taxPercent: orderTaxPercent }));
+
         await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, items: normalizedItems as any });
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
-        // Prevent duplicate PO IDs on the frontend side
+        // Prevent duplicate PO reference for the same customer on the frontend side
         const isDuplicate = existingOrders.some(o =>
-          o.customerReferenceNumber?.trim().toLowerCase() === customerReferenceNumber.trim().toLowerCase()
+          o.status !== 'REJECTED' &&
+          o.customerReferenceNumber?.trim().toLowerCase() === customerReferenceNumber.trim().toLowerCase() &&
+          o.customerName?.trim().toLowerCase() === customerName.trim().toLowerCase()
         );
         if (isDuplicate) {
-          setMessage({ type: 'error', text: `Duplicate PO ID: ${customerReferenceNumber} already exists in the system.` });
+          setMessage({ type: 'error', text: `Duplicate PO reference ${customerReferenceNumber} already exists for customer ${customerName}.` });
           return;
         }
 
@@ -555,7 +606,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           appliesWithholdingTax,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
           targetDeliveryDate,
-          items: items.map(item => ({ ...item, taxPercent: orderTaxPercent })) as any
+
+          items: normalizedItems as any
+
         });
         setMessage({ 
           type: 'success', 
@@ -870,7 +923,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Transaction Line Items</h4>
                   </div>
                   {items.map((item, idx) => {
-                    const lineTotal = (Number(item.quantity) || 0) * (Number(item.pricePerUnit) || 0);
+                    const lineTotal = (Number(item.quantity) || 1) * (Number(item.pricePerUnit) || 0);
                     return (
                       <div key={item.id} className="p-6 bg-slate-50/50 rounded-3xl border border-slate-100 group hover:border-blue-200 transition-all">
                         <div className="flex flex-col lg:flex-row gap-4">
@@ -880,7 +933,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                           </div>
                           <div className="flex-1 space-y-1.5">
                             <label className="text-9px font-black text-slate-400 uppercase">Quantity</label>
-                            <input disabled={editStatus.isFrozen} type="number" step="any" className="w-full p-3 border-2 border-white rounded-xl bg-white font-bold text-center shadow-sm" value={item.quantity} onChange={e => { const n = [...items]; n[idx].quantity = parseFloat(e.target.value) || 0; setItems(n); }} />
+                            <input disabled={editStatus.isFrozen} type="number" step="any" className="w-full p-3 border-2 border-white rounded-xl bg-white font-bold text-center shadow-sm" value={item.quantity} onChange={e => { const n = [...items]; n[idx].quantity = parseFloat(e.target.value) || 1; setItems(n); }} onBlur={e => { const n = [...items]; n[idx].quantity = parseFloat(e.target.value) || 1; setItems(n); }} />
                           </div>
                           <div className="flex-1 space-y-1.5">
                             <label className="text-9px font-black text-slate-400 uppercase">Unit price (L.E.)</label>
@@ -983,14 +1036,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
                 <tbody className="divide-y divide-slate-50">
                   {loggedOrders.map(draft => (
-                    (() => {
-                      const lastEdited = getLastEditedInfo(draft);
-                      return (
-                    <tr key={draft.id} className={`hover:bg-slate-50/80 transition-all group ${draft.loggingComplianceViolation ? 'bg-rose-50 hover:!bg-rose-100 border-l-4 border-rose-500' : ''}`}>
+
+                    <tr key={draft.id} className={`hover:bg-slate-50/80 transition-all group ${draft.loggingComplianceViolation ? 'bg-rose-50 hover:!bg-rose-100 border-l-4 border-rose-500' : ''} ${draft.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/30 hover:!bg-rose-50 border-l-4 border-rose-400' : ''}`}>
+
                       <td className="px-8 py-6">
                         <div className="font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</div>
                         <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">PO: {draft.customerReferenceNumber || 'N/A'}</div>
                         {draft.loggingComplianceViolation && <div className="mt-1"><span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-200 uppercase tracking-wider">Logging Delay</span></div>}
+                        {draft.status === OrderStatus.NEGATIVE_MARGIN && <div className="mt-1"><span className="text-[9px] font-black text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-300 uppercase tracking-wider">Negative Margin</span></div>}
                       </td>
                       <td className="px-8 py-6 text-xs text-slate-700 font-black">
                         {draft.orderDate ? new Date(draft.orderDate).toLocaleDateString() : 'N/A'}

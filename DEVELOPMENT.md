@@ -34,7 +34,8 @@ services/
   dataService.ts          # Central API client — all backend calls go here
 
 types.ts                  # Shared TypeScript interfaces & enums
-utils.ts                  # Runtime utilities (e.g. getItemEffectiveQty)
+utils.ts                  # Runtime utilities (e.g. getItemEffectiveQty, getStatusLimitHours)
+shared/                   # Client + server shared code (e.g. shared/margin.js)
 server.js                 # Express backend — REST API + business logic
 constants.tsx             # App-wide constants (status maps, role configs)
 contexts/
@@ -58,6 +59,12 @@ All server communication routes through services/dataService.ts. Backend actions
 
 ### 3. Quantity Alteration Convention
 When a line item's quantity can be lowered post-creation, use alteredQty + alterationComment on the item. The helper getItemEffectiveQty(item) must be used everywhere revenue, fulfillment, or BoM scaling is calculated. Original quantity is never mutated.
+
+- **Zero/Blank Quantity Fallback:** For PO line items, a quantity of `0` or blank is automatically treated as `1` in all calculations. The fallback is read-only and enforced by `getItemEffectiveQty`; `processedOrderInternal` does **not** mutate the stored `quantity`, so original data is preserved.
+
+- **Margin Protection Rule:** A negative-margin workflow block (`NEGATIVE_MARGIN`) is only applied when component costs have actually been identified (`totalCost > 0`) and the markup percentage falls below the configured minimum. Newly logged POs with no costs remain in `LOGGED`. Once an order enters `NEGATIVE_MARGIN`, the status is sticky: it only exits when costs are present, the markup recovers, or components are removed — preventing silent auto-regression while costs are still unknown.
+
+- **Shared Margin / SLA Helpers:** Use `isMarginBreach(cost, markupPct, minMargin)` from `shared/margin.js` (shared by client and server) and `getStatusLimitHours(status, settings)` from `utils.ts` instead of duplicating switch statements across modules.
 
 ### 4. Modal Action Pattern
 User-initiated actions (record payment, issue PO, alter qty) open a local modal with draft state. The modal validates, calls dataService, then triggers a parent refresh via callback. Modals clean up on close.

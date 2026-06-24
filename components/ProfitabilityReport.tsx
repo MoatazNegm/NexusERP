@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { CustomerOrder, AppConfig, OrderStatus, Customer, Supplier, LedgerEntry } from '../types';
 import { getItemEffectiveQty } from '../utils';
+import { isMarginBreach } from '../shared/margin';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 
@@ -83,7 +84,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       const marginAmt = revenue - cost;
       const marginPctOnSales = revenue > 0 ? (marginAmt / revenue) * 100 : 0;
       const markupPct = cost > 0 ? (marginAmt / cost) * 100 : (revenue > 0 ? 100 : 0);
-      const isBelowThreshold = markupPct < config.settings.minimumMarginPct;
+      const isBelowThreshold = isMarginBreach(cost, markupPct, config.settings.minimumMarginPct);
       return { id: order.id, internalOrderNumber: order.internalOrderNumber, customerName: order.customerName, status: order.status, revenue, cost, marginAmt, marginPctOnSales, markupPct, hasPendingCosts, isBelowThreshold, _originalOrder: order };
     });
   };

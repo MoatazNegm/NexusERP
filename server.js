@@ -9,6 +9,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import multer from 'multer';
 import AdmZip from 'adm-zip';
+import { isMarginBreach } from './shared/margin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,8 +24,8 @@ const CURRENT_SCHEMA_VERSION = 2; // Increment when introducing new schema migra
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
-    if (item && item.alteredQty !== undefined && item.alteredQty !== null) return item.alteredQty;
-    return (item && item.quantity) || 0;
+    const qty = (item && item.alteredQty !== undefined && item.alteredQty !== null) ? item.alteredQty : (item && item.quantity);
+    return qty || 1;
 };
 
 // --- MULTER CONFIG ---
@@ -140,16 +141,16 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     // Safeguard: Don't auto-transition terminal or manual statuses
     if ([OrderStatus.REJECTED, OrderStatus.IN_HOLD].includes(currentStatus)) return currentStatus;
 
-    // Priority 1: Margin Protection (if components present)
-    if (hasComponents && markupPct < minMargin) return OrderStatus.NEGATIVE_MARGIN;
+    // Priority 1: Margin Protection (only when costs have been identified)
+    if (hasComponents && isMarginBreach(totalCost, markupPct, minMargin)) return OrderStatus.NEGATIVE_MARGIN;
 
     // Priority 2: Technical Workflow Transition
     if ((hasActiveTechReview || anyAccepted) && currentStatus === OrderStatus.LOGGED) {
         return OrderStatus.TECHNICAL_REVIEW;
     }
 
-    // Priority 3: Recovery from Negative Margin
-    if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || markupPct >= minMargin)) {
+    // Priority 3: Recovery from Negative Margin (sticky: only exit when costs are known and margin recovers, or components are removed)
+    if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || (totalCost > 0 && markupPct >= minMargin))) {
         return (hasActiveTechReview || anyAccepted) ? OrderStatus.TECHNICAL_REVIEW : OrderStatus.LOGGED;
     }
 
@@ -465,10 +466,34 @@ const createAuditLog = (message, status, user) => ({
     user
 });
 
+// One-time repair: orders that were incorrectly blocked as NEGATIVE_MARGIN when no
+// costs had been identified are reset to LOGGED on server start.
+const repairNegativeMarginOrders = (db) => {
+    if (!db.orders || db.orders.length === 0) return;
+    let changed = false;
+    db.orders.forEach(order => {
+        if (order.status !== OrderStatus.NEGATIVE_MARGIN) return;
+        const totalCost = (order.items || []).reduce((sum, item) =>
+            sum + (item.components || []).reduce((cSum, c) =>
+                cSum + ((c.quantity || 0) * (c.unitCost || 0)), 0), 0);
+        if (totalCost === 0) {
+            order.status = OrderStatus.LOGGED;
+            order.loggingComplianceViolation = false;
+            if (!order.logs) order.logs = [];
+            order.logs.push(createAuditLog('[AUTO] Data repair: NEGATIVE_MARGIN reset to LOGGED because no costs were identified', OrderStatus.LOGGED, 'System'));
+            changed = true;
+        }
+    });
+    if (changed) writeDb(db);
+};
+
 const generateInternalOrderNumber = (db) => {
     const orders = db.orders || [];
-    const count = orders.length;
-    return `INT-2024-${String(count + 1).padStart(4, '0')}`;
+    const maxNum = orders.reduce((max, o) => {
+        const match = (o.internalOrderNumber || '').match(/INT-2024-(\d{4,})/);
+        return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+    return `INT-2024-${String(maxNum + 1).padStart(4, '0')}`;
 };
 
 /**
@@ -585,6 +610,12 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         if (!item.logs) item.logs = [];
         if (!item.components) item.components = [];
 
+        // Normalize quantity: blank, null, undefined, NaN, or <= 0 becomes 1
+        const qtyNum = Number(item.quantity);
+        if (isNaN(qtyNum) || qtyNum <= 0) {
+            item.quantity = 1;
+        }
+
         // Automation: If BoM changed compared to old order, revoke approval
         if (oldOrder) {
             const oldItem = (oldOrder.items || []).find(i => i.id === item.id);
@@ -611,7 +642,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                 const newComp = {
                     id: `c_${Date.now()}_${idx}_0`,
                     description: item.description,
-                    quantity: item.quantity,
+                    quantity: getItemEffectiveQty(item),
                     unit: item.unit || 'pcs',
                     unitCost: 0,
                     taxPercent: 14,
@@ -1302,25 +1333,72 @@ const getItemFromCollection = (col) => (req, res) => {
     res.json(item);
 };
 
+const validateOrderItems = (items) => {
+    if (!Array.isArray(items)) return 'Order items must be an array';
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const qty = Number(item.quantity);
+        if (!Number.isFinite(qty) || qty <= 0) return `Item ${i + 1} quantity must be a positive number`;
+        const price = Number(item.pricePerUnit);
+        if (!Number.isFinite(price) || price <= 0) return `Item ${i + 1} unit price must be a positive number`;
+        if (!item.unit || String(item.unit).trim() === '') return `Item ${i + 1} unit is required`;
+        const components = item.components || [];
+        for (let j = 0; j < components.length; j++) {
+            const comp = components[j];
+            const cQty = Number(comp.quantity);
+            if (!Number.isFinite(cQty) || cQty <= 0) return `Item ${i + 1} component ${j + 1} quantity must be a positive number`;
+            const cost = Number(comp.unitCost);
+            if (!Number.isFinite(cost) || cost <= 0) return `Item ${i + 1} component ${j + 1} unit cost must be a positive number`;
+            if (!comp.unit || String(comp.unit).trim() === '') return `Item ${i + 1} component ${j + 1} unit is required`;
+        }
+    }
+    return null;
+};
+
 const addToCollection = (col) => (req, res) => {
     const db = readDb();
     if (!db[col]) db[col] = [];
 
-    // Specialized validation for orders: prevent duplicate PO IDs
-    if (col === 'orders' && req.body.customerReferenceNumber) {
-        const poId = req.body.customerReferenceNumber.trim().toLowerCase();
-        // Check for duplicates, but ignore REJECTED orders
-        const isDuplicate = db[col].some(o =>
-            o.customerReferenceNumber?.trim().toLowerCase() === poId &&
-            o.status !== 'REJECTED'
-        );
-        if (isDuplicate) {
-            return res.status(400).json({ error: `Duplicate PO ID: "${req.body.customerReferenceNumber}" already exists.` });
-        }
-    }
-
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     const user = req.headers['x-user'] || 'System';
+
+    if (col === 'orders') {
+        const itemValidationError = validateOrderItems(req.body.items);
+        if (itemValidationError) {
+            return res.status(400).json({ error: itemValidationError });
+        }
+
+        // Pre-generate internal order number so uniqueness can be validated before processing
+        if (!newItem.internalOrderNumber) {
+            newItem.internalOrderNumber = generateInternalOrderNumber(db);
+        }
+
+        // Validate combined PO reference + customer name uniqueness (ignore REJECTED orders)
+        const poRef = String(newItem.customerReferenceNumber || '').trim();
+        const custName = String(newItem.customerName || '').trim();
+        if (custName) {
+            const poRefLower = poRef.toLowerCase();
+            const custNameLower = custName.toLowerCase();
+            const isDuplicate = db[col].some(o =>
+                o.status !== 'REJECTED' &&
+                String(o.customerReferenceNumber || '').trim().toLowerCase() === poRefLower &&
+                String(o.customerName || '').trim().toLowerCase() === custNameLower
+            );
+            if (isDuplicate) {
+                const displayRef = poRef || '(empty)';
+                return res.status(400).json({ error: `Duplicate PO reference "${displayRef}" already exists for customer "${custName}".` });
+            }
+        }
+
+        // Validate internal order number uniqueness
+        const internalLower = String(newItem.internalOrderNumber || '').trim().toLowerCase();
+        const isDuplicateInternal = db[col].some(o =>
+            String(o.internalOrderNumber || '').trim().toLowerCase() === internalLower
+        );
+        if (isDuplicateInternal) {
+            return res.status(400).json({ error: `Duplicate Internal PO reference "${newItem.internalOrderNumber}" already exists.` });
+        }
+    }
 
     if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
 
@@ -1357,6 +1435,36 @@ const updateInCollection = (col) => (req, res) => {
     }
 
     if (col === 'orders') {
+        // Validate combined PO reference + customer name uniqueness (ignore REJECTED orders), excluding current order
+        const poRef = String(updated.customerReferenceNumber || '').trim();
+        const custName = String(updated.customerName || '').trim();
+        if (custName) {
+            const poRefLower = poRef.toLowerCase();
+            const custNameLower = custName.toLowerCase();
+            const isDuplicate = db[col].some(o =>
+                o.id !== updated.id &&
+                o.status !== 'REJECTED' &&
+                String(o.customerReferenceNumber || '').trim().toLowerCase() === poRefLower &&
+                String(o.customerName || '').trim().toLowerCase() === custNameLower
+            );
+            if (isDuplicate) {
+                const displayRef = poRef || '(empty)';
+                return res.status(400).json({ error: `Duplicate PO reference "${displayRef}" already exists for customer "${custName}".` });
+            }
+        }
+
+        // Validate internal order number uniqueness, excluding current order (skip if empty)
+        const internalLower = String(updated.internalOrderNumber || '').trim().toLowerCase();
+        if (internalLower) {
+            const isDuplicateInternal = db[col].some(o =>
+                o.id !== updated.id &&
+                String(o.internalOrderNumber || '').trim().toLowerCase() === internalLower
+            );
+            if (isDuplicateInternal) {
+                return res.status(400).json({ error: `Duplicate Internal PO reference "${updated.internalOrderNumber}" already exists.` });
+            }
+        }
+
         updated = processedOrderInternal(updated, db, user, false, oldItem);
         reconcileInventory(oldItem, updated, db);
         if (!req.body.status) {
@@ -2194,7 +2302,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!itemId) throw new Error("itemId is required for quantity alteration");
                 const targetItem = order.items.find(i => i.id === itemId);
                 if (!targetItem) throw new Error("Line item not found in order");
-                const currentQty = targetItem.quantity || 0;
+                const currentQty = targetItem.quantity || 1;
                 const delivered = targetItem.deliveredQty || 0;
                 if (newQty > currentQty) {
                     throw new Error(`Cannot increase quantity above original order quantity (${currentQty}).`);
@@ -3210,6 +3318,9 @@ app.get('{*path}', (req, res) => {
     if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
+
+const startupDb = readDb();
+repairNegativeMarginOrders(startupDb);
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Backend] Running on http://localhost:${PORT}`);

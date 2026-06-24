@@ -38,6 +38,27 @@ interface CRMModuleProps {
   currentUser: User;
 }
 
+// Resilience: some legacy records store address as an object
+// with keys like { city, street, postalCode, country }. React cannot render
+// an object as a child, so this helper normalizes it to a string and warns.
+const formatAddress = (
+  addr: string | { city?: string; street?: string; postalCode?: string; country?: string } | null | undefined,
+  context?: string
+): string => {
+  if (addr == null || addr === '') return '';
+  if (typeof addr === 'string') return addr;
+  if (typeof addr === 'object') {
+    console.warn(
+      `[CRMModule] Object address detected${context ? ` (${context})` : ''}:`,
+      addr,
+      'Normalizing to string for render.'
+    );
+    const { street, city, postalCode, country } = addr;
+    return [street, city, postalCode, country].filter(Boolean).join(', ');
+  }
+  return String(addr);
+};
+
 export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser }) => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [custForm, setCustForm] = useState<Omit<Customer, 'id' | 'logs'>>({
@@ -172,20 +193,20 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
       email: cust.email,
       secondaryEmail: cust.secondaryEmail || '',
       phone: cust.phone,
-      address: cust.address,
-      deliveryAddress: cust.deliveryAddress || '',
-      location: cust.location || '',
+      address: formatAddress(cust.address, cust.name),
+      deliveryAddress: formatAddress(cust.deliveryAddress, cust.name) || '',
+      location: formatAddress(cust.location, cust.name) || '',
       contactName: cust.contactName || '',
       contactPhone: cust.contactPhone || '',
-      contactAddress: cust.contactAddress || '',
+      contactAddress: formatAddress(cust.contactAddress, cust.name) || '',
       contactEmail: cust.contactEmail || '',
       contactName2: cust.contactName2 || '',
       contactPhone2: cust.contactPhone2 || '',
-      contactAddress2: cust.contactAddress2 || '',
+      contactAddress2: formatAddress(cust.contactAddress2, cust.name) || '',
       contactEmail2: cust.contactEmail2 || '',
       contactName3: cust.contactName3 || '',
       contactPhone3: cust.contactPhone3 || '',
-      contactAddress3: cust.contactAddress3 || '',
+      contactAddress3: formatAddress(cust.contactAddress3, cust.name) || '',
       contactEmail3: cust.contactEmail3 || '',
       paymentTermDays: cust.paymentTermDays || 45,
       appliesWithholdingTax: cust.appliesWithholdingTax || false
@@ -326,11 +347,11 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Headquarters Address</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.address} onChange={e => setCustForm({ ...custForm, address: e.target.value })} />
+                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={formatAddress(custForm.address)} onChange={e => setCustForm({ ...custForm, address: e.target.value })} />
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Delivery Address</label>
-                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.deliveryAddress || ''} onChange={e => setCustForm({ ...custForm, deliveryAddress: e.target.value })} />
+                        <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={formatAddress(custForm.deliveryAddress)} onChange={e => setCustForm({ ...custForm, deliveryAddress: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Payment Term (Days)</label>
@@ -339,7 +360,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-slate-500 uppercase">Google Maps Location</label>
                         <div className="flex gap-2">
-                          <input className="flex-1 px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none text-xs" placeholder="https://google.com/maps/..." value={custForm.location} onChange={e => setCustForm({ ...custForm, location: e.target.value })} />
+                           <input className="flex-1 px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none text-xs" placeholder="https://google.com/maps/..." value={formatAddress(custForm.location)} onChange={e => setCustForm({ ...custForm, location: e.target.value })} />
                           <button
                             type="button"
                             onClick={detectLocation}
@@ -395,7 +416,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                           </div>
                           <div className="md:col-span-3 space-y-1">
                             <label className="text-xs font-bold text-slate-500 uppercase">Personal Contact Address</label>
-                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress || ''} onChange={e => setCustForm({ ...custForm, contactAddress: e.target.value })} />
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={formatAddress(custForm.contactAddress)} onChange={e => setCustForm({ ...custForm, contactAddress: e.target.value })} />
                           </div>
                         </div>
                       </div>
@@ -417,7 +438,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                           </div>
                           <div className="md:col-span-3 space-y-1">
                             <label className="text-xs font-bold text-slate-500 uppercase">Personal Contact Address</label>
-                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress2 || ''} onChange={e => setCustForm({ ...custForm, contactAddress2: e.target.value })} />
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={formatAddress(custForm.contactAddress2)} onChange={e => setCustForm({ ...custForm, contactAddress2: e.target.value })} />
                           </div>
                         </div>
                       </div>
@@ -439,7 +460,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                           </div>
                           <div className="md:col-span-3 space-y-1">
                             <label className="text-xs font-bold text-slate-500 uppercase">Personal Contact Address</label>
-                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.contactAddress3 || ''} onChange={e => setCustForm({ ...custForm, contactAddress3: e.target.value })} />
+                            <input className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={formatAddress(custForm.contactAddress3)} onChange={e => setCustForm({ ...custForm, contactAddress3: e.target.value })} />
                           </div>
                         </div>
                       </div>
@@ -512,7 +533,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                                 <div className="flex-1">
                                   <div className="text-sm font-bold text-slate-800">{c.name}</div>
                                   <div className="text-[10px] text-slate-500 flex gap-4 mt-1">
-                                    <span><i className="fa-solid fa-location-dot"></i> {c.address || 'No Address'}</span>
+                                    <span><i className="fa-solid fa-location-dot"></i> {formatAddress(c.address, c.name) || 'No Address'}</span>
                                     <span><i className="fa-solid fa-envelope"></i> {c.email || 'No Email'}</span>
                                   </div>
                                 </div>
@@ -576,11 +597,11 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                         </a>
                       )}
                     </div>
-                    <div className="text-xs text-slate-500 mt-1">{cust.address}</div>
+                    <div className="text-xs text-slate-500 mt-1">{formatAddress(cust.address, cust.name)}</div>
                     {cust.deliveryAddress && (
                       <div className="text-[10px] text-slate-400 mt-1">
                         <i className="fa-solid fa-truck text-[9px] mr-1"></i>
-                        Delivery: {cust.deliveryAddress}
+                        Delivery: {formatAddress(cust.deliveryAddress, cust.name)}
                       </div>
                     )}
                     <div className="flex gap-4 mt-2">

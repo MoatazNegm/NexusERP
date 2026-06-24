@@ -21,7 +21,13 @@ export default defineConfig(({ mode }) => {
     preview: {
       port: parseInt(process.env.PORT || '3005'),
       host: '0.0.0.0',
-      allowedHosts: true
+      allowedHosts: true,
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3006',
+          changeOrigin: true
+        }
+      }
     },
     plugins: [react()],
     define: {

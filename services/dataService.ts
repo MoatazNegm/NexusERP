@@ -87,7 +87,10 @@ class DataService {
       headers: this.getHeaders(),
       body: JSON.stringify(data)
     });
-    if (!res.ok) throw new Error(`Failed to create in ${endpoint}: ${res.statusText}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to create in ${endpoint}: ${res.statusText}`);
+    }
     return await res.json();
   }
 
@@ -97,7 +100,10 @@ class DataService {
       headers: this.getHeaders(),
       body: JSON.stringify(data)
     });
-    if (!res.ok) throw new Error(`Failed to update ${endpoint}/${id}: ${res.statusText}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to update ${endpoint}/${id}: ${res.statusText}`);
+    }
     return await res.json();
   }
 
