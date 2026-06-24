@@ -1052,8 +1052,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         {formatOrderTimestamp(draft.dataEntryTimestamp)}
                       </td>
                       <td className="px-8 py-6 text-[10px] text-slate-500 font-bold uppercase">
-                        {formatOrderTimestamp(lastEdited.timestamp)}
-                        <div className="text-[8px] opacity-60 normal-case">by {lastEdited.user}</div>
+                        {(() => {
+                          const lastEdited = getLastEditedInfo(draft);
+                          return (
+                            <>
+                              {formatOrderTimestamp(lastEdited.timestamp)}
+                              <div className="text-[8px] opacity-60 normal-case">by {lastEdited.user}</div>
+                            </>
+                          );
+                        })()}
                       </td>
                       <td className="px-8 py-6 font-black text-slate-800">{draft.customerName}</td>
 
@@ -1067,8 +1074,6 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         </button>
                       </td>
                     </tr>
-                      );
-                    })()
                   ))}
                   {loggedOrders.length === 0 && (
                     <tr>
