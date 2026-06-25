@@ -910,6 +910,17 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </span>
                     </div>
                   </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tax % (Order Level)</label>
+                    <input
+                      disabled={editStatus.isFrozen}
+                      type="number"
+                      step="any"
+                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner text-center"
+                      value={orderTaxPercent}
+                      onChange={e => setOrderTaxPercent(parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
                 </div>
 
                 <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-4">
@@ -965,25 +976,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </div>
                     );
                   })}
-                  {!editStatus.isFrozen && (
-                    <div className="space-y-4">
-                      <button type="button" onClick={() => setItems([...items, { id: `temp_${Date.now()}`, description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: orderTaxPercent, taxDetected: true, logs: [] }])} className="px-6 py-3 bg-white border border-blue-100 text-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2">
-                        <i className="fa-solid fa-plus"></i> Append Line Item
-                      </button>
-                      <div className="max-w-[220px] space-y-1.5">
-                        <label className="text-9px font-black text-slate-400 uppercase">Tax % (Order Level)</label>
-                        <input
-                          disabled={editStatus.isFrozen}
-                          type="number"
-                          step="any"
-                          className="w-full p-3 border-2 border-slate-100 rounded-xl bg-white font-black text-rose-500 text-center shadow-sm"
-                          value={orderTaxPercent}
-                          onChange={e => setOrderTaxPercent(parseFloat(e.target.value) || 0)}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
+{!editStatus.isFrozen && (
+                     <div className="space-y-4">
+                       <button type="button" onClick={() => setItems([...items, { id: `temp_${Date.now()}`, description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: orderTaxPercent, taxDetected: true, logs: [] }])} className="px-6 py-3 bg-white border border-blue-100 text-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2">
+                         <i className="fa-solid fa-plus"></i> Append Line Item
+                       </button>
+                     </div>
+                   )}
+                 </div>
 
                 <div className="bg-slate-900 p-10 rounded-[3rem] text-white flex flex-col lg:flex-row justify-between items-center gap-10 shadow-2xl relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-8 opacity-5"><i className="fa-solid fa-coins text-9xl"></i></div>
