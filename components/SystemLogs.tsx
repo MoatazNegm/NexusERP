@@ -7,6 +7,7 @@ import { VersionFooter } from './VersionFooter';
 interface FlattenedLog extends LogEntry {
    sourceType: 'ORDER' | 'ITEM' | 'COMPONENT' | 'CUSTOMER' | 'SUPPLIER' | 'INVENTORY' | 'USER' | 'SETTING';
    poRef: string;
+   poCustomerRef: string;
    customerName: string;
    userFullName: string;
    itemRef?: string;
@@ -72,6 +73,7 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
                ...log,
                sourceType: 'ORDER',
                poRef: order.internalOrderNumber,
+               poCustomerRef: order.customerReferenceNumber,
                customerName: order.customerName,
                userFullName: fullName,
                userGroups
@@ -91,6 +93,7 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
                   ...log,
                   sourceType: isCompAction ? 'COMPONENT' : 'ITEM',
                   poRef: order.internalOrderNumber,
+                  poCustomerRef: order.customerReferenceNumber,
                   customerName: order.customerName,
                   userFullName: fullName,
                   itemRef: item.description,
@@ -106,15 +109,16 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
       customers.forEach(cust => {
          cust.logs?.forEach(log => {
             const { fullName, userGroups } = getUserInfo(log.user);
-            list.push({
-               ...log,
-               sourceType: 'CUSTOMER',
-               poRef: 'CUSTOMER_MGMT',
-               customerName: cust.name,
-               userFullName: fullName,
-               userGroups,
-               entityName: cust.name
-            });
+             list.push({
+                ...log,
+                sourceType: 'CUSTOMER',
+                poRef: 'CUSTOMER_MGMT',
+                poCustomerRef: '',
+                customerName: cust.name,
+                userFullName: fullName,
+                userGroups,
+                entityName: cust.name
+             });
          });
       });
 
@@ -122,15 +126,16 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
       suppliers.forEach(supp => {
          supp.logs?.forEach(log => {
             const { fullName, userGroups } = getUserInfo(log.user);
-            list.push({
-               ...log,
-               sourceType: 'SUPPLIER',
-               poRef: 'SUPPLIER_REL',
-               customerName: supp.name,
-               userFullName: fullName,
-               userGroups,
-               entityName: supp.name
-            });
+             list.push({
+                ...log,
+                sourceType: 'SUPPLIER',
+                poRef: 'SUPPLIER_REL',
+                poCustomerRef: '',
+                customerName: supp.name,
+                userFullName: fullName,
+                userGroups,
+                entityName: supp.name
+             });
          });
       });
 
@@ -138,15 +143,16 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
       inventory.forEach(inv => {
          inv.logs?.forEach(log => {
             const { fullName, userGroups } = getUserInfo(log.user);
-            list.push({
-               ...log,
-               sourceType: 'INVENTORY',
-               poRef: inv.sku || 'INV_SKU',
-               customerName: 'Internal Stock',
-               userFullName: fullName,
-               userGroups,
-               entityName: inv.description
-            });
+             list.push({
+                ...log,
+                sourceType: 'INVENTORY',
+                poRef: inv.sku || 'INV_SKU',
+                poCustomerRef: '',
+                customerName: 'Internal Stock',
+                userFullName: fullName,
+                userGroups,
+                entityName: inv.description
+             });
          });
       });
 
@@ -154,15 +160,16 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
       users.forEach(u => {
          u.logs?.forEach(log => {
             const { fullName, userGroups } = getUserInfo(log.user);
-            list.push({
-               ...log,
-               sourceType: 'USER',
-               poRef: 'USER_ADMIN',
-               customerName: 'System Security',
-               userFullName: fullName,
-               userGroups,
-               entityName: `@${u.username}`
-            });
+             list.push({
+                ...log,
+                sourceType: 'USER',
+                poRef: 'USER_ADMIN',
+                poCustomerRef: '',
+                customerName: 'System Security',
+                userFullName: fullName,
+                userGroups,
+                entityName: `@${u.username}`
+             });
          });
       });
 
@@ -172,15 +179,16 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
    const filteredLogs = useMemo(() => {
       const query = search.toLowerCase().trim();
       return allLogs.filter(log => {
-         const matchesSearch =
-            log.message.toLowerCase().includes(query) ||
-            log.poRef.toLowerCase().includes(query) ||
-            log.customerName.toLowerCase().includes(query) ||
-            (log.user || '').toLowerCase().includes(query) ||
-            (log.userFullName.toLowerCase().includes(query) || (log.entityName?.toLowerCase() || '').includes(query)) ||
-            (log.itemRef?.toLowerCase() || '').includes(query) ||
-            (log.itemId?.toLowerCase() || '').includes(query) ||
-            (log.compRef?.toLowerCase() || '').includes(query);
+          const matchesSearch =
+             log.message.toLowerCase().includes(query) ||
+             log.poRef.toLowerCase().includes(query) ||
+             log.poCustomerRef.toLowerCase().includes(query) ||
+             log.customerName.toLowerCase().includes(query) ||
+             (log.user || '').toLowerCase().includes(query) ||
+             (log.userFullName.toLowerCase().includes(query) || (log.entityName?.toLowerCase() || '').includes(query)) ||
+             (log.itemRef?.toLowerCase() || '').includes(query) ||
+             (log.itemId?.toLowerCase() || '').includes(query) ||
+             (log.compRef?.toLowerCase() || '').includes(query);
 
          const matchesUser = selectedUser === 'all' || log.user === selectedUser;
          const matchesGroup = selectedGroup === 'all' || log.userGroups.includes(groups.find(g => g.id === selectedGroup)?.name || '');
@@ -227,7 +235,7 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
                <div className="lg:col-span-2 relative">
                   <input
                      type="text"
-                     placeholder="Search Identity, PO, Item, or Part..."
+                     placeholder="Search Identity, PO #, PO Ref, Item, or Part..."
                      className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl bg-slate-50 focus:bg-white focus:border-blue-500 transition-all outline-none font-bold text-sm shadow-inner"
                      value={search} onChange={e => setSearch(e.target.value)}
                   />
