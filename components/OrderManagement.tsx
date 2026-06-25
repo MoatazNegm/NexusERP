@@ -138,15 +138,28 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   };
 
   const getLastEditedInfo = (order: CustomerOrder) => {
-    const latestLog = (order.logs || [])
-      .filter(log => !!log.timestamp)
-      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-      .pop();
+    const realUserLogs = (order.logs || [])
+      .filter(log =>
+        !!log.timestamp &&
+        !!log.user &&
+        log.user.trim().toLowerCase() !== 'system'
+      )
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+    const latestLog = realUserLogs.pop();
 
     return {
       timestamp: latestLog?.timestamp || order.dataEntryTimestamp,
       user: latestLog?.user || 'System'
     };
+  };
+
+  const getSubmittedBy = (order: CustomerOrder) => {
+    const submitLog = (order.logs || [])
+      .filter(log => log.message === 'Order acquisition recorded')
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))[0];
+
+    return submitLog?.user || 'System';
   };
 
   const requestSort = (key: string) => {
@@ -1050,6 +1063,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </td>
                       <td className="px-8 py-6 text-[10px] text-slate-500 font-bold uppercase">
                         {formatOrderTimestamp(draft.dataEntryTimestamp)}
+                        <div className="text-[8px] opacity-60 normal-case">by {getSubmittedBy(draft)}</div>
                       </td>
                       <td className="px-8 py-6 text-[10px] text-slate-500 font-bold uppercase">
                         {(() => {
