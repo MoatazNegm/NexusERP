@@ -1042,7 +1042,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
                   {/* Compact fields row: Payment SLA, Tax %, Currency */}
                   <div className="flex flex-row gap-4 items-start">
-                    <div className="flex-1 space-y-1.5">
+                    <div className="flex-2 space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment SLA (Days)</label>
                       <input
                         disabled={editStatus.isFrozen}
