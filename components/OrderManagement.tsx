@@ -150,6 +150,11 @@ const DEFAULT_TAX_PERCENT = 14;
 
 export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refreshKey, currentUser }) => {
   const today = new Date().toISOString().split('T')[0];
+  const getDatePlusDays = (dateStr: string, days: number) => {
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
+  };
 
   const [activeTab, setActiveTab] = useState<ManagementTab>('new');
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -160,8 +165,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [paymentSlaDays, setPaymentSlaDays] = useState(config.settings.defaultPaymentSlaDays);
   const [appliesWithholdingTax, setAppliesWithholdingTax] = useState(false);
   const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
-  const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(0);
-  const [targetDeliveryDate, setTargetDeliveryDate] = useState(today);
+  const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(30);
+  const [targetDeliveryDate, setTargetDeliveryDate] = useState(getDatePlusDays(today, 30));
   const [orderTaxPercent, setOrderTaxPercent] = useState(DEFAULT_TAX_PERCENT);
   const [currency, setCurrency] = useState<Currency>(DEFAULT_CURRENCY);
   const [conversionRate, setConversionRate] = useState<number>(1);
@@ -346,8 +351,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setOrderDate(match.orderDate);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
-    setTargetDeliveryDays(match.targetDeliveryDays || 0);
-    setTargetDeliveryDate(match.targetDeliveryDate || match.orderDate);
+    const loadedDeliveryDays = match.targetDeliveryDays || 30;
+    setTargetDeliveryDays(loadedDeliveryDays);
+    setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate, loadedDeliveryDays));
     // Multi-currency amendment: hydrate currency + conversionRate from the
     // existing record so editing a USD order does not silently reset it to L.E.
     setCurrency(match.currency || DEFAULT_CURRENCY);
@@ -695,8 +701,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCustomerName(''); setCustomerReferenceNumber(''); setOrderDate(today);
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(false);
-    setTargetDeliveryDays(0);
-    setTargetDeliveryDate(today);
+    setTargetDeliveryDays(30);
+    setTargetDeliveryDate(getDatePlusDays(today, 30));
     setOrderTaxPercent(DEFAULT_TAX_PERCENT);
     setCurrency(DEFAULT_CURRENCY);
     setConversionRate(1);
@@ -806,6 +812,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setOrderDate(today);
     setPaymentSlaDays(0);
     setAppliesWithholdingTax(false);
+    setTargetDeliveryDays(30);
+    setTargetDeliveryDate(getDatePlusDays(today, 30));
     setOrderTaxPercent(DEFAULT_TAX_PERCENT);
     setItems([{ id: 'temp_1', description: 'Stock Replenishment', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, taxDetected: true, logs: [] }]);
     setMessage({ type: 'info', text: 'Internal Stock Order template loaded.' });
