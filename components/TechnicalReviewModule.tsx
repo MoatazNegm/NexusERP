@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
-import { getItemEffectiveQty } from '../utils';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { PartHistory } from './PartHistory';
 
@@ -783,7 +783,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   };
 
   const orderFinancials = useMemo(() => {
-    if (!selectedOrder) return { revenue: 0, cost: 0, marginPct: 0, isViolated: false };
+    if (!selectedOrder) return { revenue: 0, cost: 0, costInOrderCurrency: 0, marginPct: 0, isViolated: false, currency: 'L.E.' };
 
     let totalRevenue = 0;
     let totalCost = 0;
@@ -795,13 +795,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       });
     });
 
-    const marginAmt = totalRevenue - totalCost;
-    const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
-    const isViolated = isMarginBreach(totalCost, markupPct, config.settings.minimumMarginPct);
+    // Multi-currency amendment: bring the cost side into the order's revenue
+    // currency via the per-order conversion rate before checking the margin
+    // threshold. The displayed `cost` is the raw PO currency value.
+    const rate = getOrderConversionRate(selectedOrder);
+    const costInOrderCurrency = totalCost * rate;
+    const marginAmt = totalRevenue - costInOrderCurrency;
+    const markupPct = costInOrderCurrency > 0 ? (marginAmt / costInOrderCurrency) * 100 : (totalRevenue > 0 ? 100 : 0);
+    const isViolated = isMarginBreach(costInOrderCurrency, markupPct, config.settings.minimumMarginPct);
 
     return {
       revenue: totalRevenue,
       cost: totalCost,
+      costInOrderCurrency,
+      conversionRate: rate,
+      currency: getOrderCurrency(selectedOrder),
       marginPct: markupPct,
       isViolated
     };
@@ -1021,7 +1029,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                           <div className="text-right">
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Accumulated BoM Cost</p>
                             <div className="text-4xl font-black text-slate-900">
-                              {selectedItem.components?.reduce((s, c) => s + (c.quantity * c.unitCost), 0).toLocaleString()} <span className="text-sm font-bold opacity-30">L.E.</span>
+                              {selectedItem.components?.reduce((s, c) => s + (c.quantity * c.unitCost), 0).toLocaleString()} <span className="text-sm font-bold opacity-30">{getOrderCurrency(selectedOrder)}</span>
                             </div>
                           </div>
                         </div>

@@ -26,8 +26,8 @@ import { VersionFooter } from './components/VersionFooter';
 import { Login } from './components/Login';
 
 import { dataService } from './services/dataService';
-import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, UserGroup } from './types';
-import { getItemEffectiveQty } from './utils';
+import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, UserGroup, DEFAULT_CURRENCY } from './types';
+import { getItemEffectiveQty, getOrderCurrency } from './utils';
 
 // Backend handles threshold calculation (isOverdue flag)
 
@@ -206,16 +206,23 @@ const App: React.FC = () => {
 
 
   const dashboardMetrics = useMemo(() => {
-    let totalRevenue = 0;
+    // Multi-currency amendment: revenue is split by currency so the dashboard
+    // shows L.E. + other currencies as-is (no conversion). Margin still uses
+    // the order's native currency via per-order conversionRate.
+    const revenueByCurrency: Record<string, number> = {};
     let totalCost = 0;
     const open = orders.filter(o => ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status));
 
     open.forEach(o => {
+      const orderCurrency = getOrderCurrency(o);
+      const convRate = (Number.isFinite(Number(o.conversionRate)) && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
       o.items.forEach(it => {
-        totalRevenue += (getItemEffectiveQty(it) * it.pricePerUnit);
-        it.components?.forEach(c => totalCost += (c.quantity * (c.unitCost || 0)));
+        revenueByCurrency[orderCurrency] = (revenueByCurrency[orderCurrency] || 0) + (getItemEffectiveQty(it) * it.pricePerUnit);
+        it.components?.forEach(c => totalCost += ((c.quantity || 0) * (c.unitCost || 0)) * convRate);
       });
     });
+
+    const totalRevenue = Object.values(revenueByCurrency).reduce((s, v) => s + v, 0);
 
     const statusCounts = Object.keys(STATUS_CONFIG).reduce((acc, status) => {
       const ordersInStatus = orders.filter(o => o.status === status);
@@ -231,6 +238,7 @@ const App: React.FC = () => {
 
     return {
       totalRevenue,
+      revenueByCurrency,
       totalCost,
       marginPct: totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : 0,
       statusCounts,
@@ -316,10 +324,15 @@ const App: React.FC = () => {
     y += 8;
 
     addSectionTitle('Executive Snapshot');
+    // Multi-currency amendment: per-currency revenue lines for the executive snapshot.
+    const currencyRows: string[][] = Object.entries(dashboardMetrics.revenueByCurrency)
+      .sort(([a], [b]) => (a === DEFAULT_CURRENCY ? -1 : b === DEFAULT_CURRENCY ? 1 : a.localeCompare(b)))
+      .map(([cur, val]) => [`Revenue (${cur})`, `${val.toLocaleString()} ${cur}`]);
+    if (currencyRows.length === 0) currencyRows.push(['Revenue', '0.00 L.E.']);
     drawTable(
       ['Metric', 'Value'],
       [
-        ['Gross Portfolio', `${dashboardMetrics.totalRevenue.toLocaleString()} L.E.`],
+        ...currencyRows,
         ['Portfolio Margin', `${dashboardMetrics.marginPct.toFixed(1)}%`],
         ['Active Records', `${openOrders}`],
         ['Risk Alerts', `${dashboardMetrics.riskCount}`]
@@ -366,41 +379,56 @@ const App: React.FC = () => {
     }
 
     addSectionTitle('Customers & Suppliers Summary');
-    const customerSummaryMap = new Map<string, { orders: number; value: number }>();
-    const supplierSummaryMap = new Map<string, { components: number; spend: number }>();
+    const customerSummaryMap = new Map<string, { orders: number; valueByCurrency: Record<string, number> }>();
+    const supplierSummaryMap = new Map<string, { components: number; spendByCurrency: Record<string, number> }>();
 
     orders.forEach(order => {
       const customerName = order.customerName || 'Unknown Customer';
+      const orderCurrency = getOrderCurrency(order);
       let orderValue = 0;
 
       (order.items || []).forEach(item => {
         orderValue += (item.quantity || 0) * (item.pricePerUnit || 0);
         (item.components || []).forEach(comp => {
           const supplierName = comp.supplierName || comp.supplierId || 'Unassigned Supplier';
-          const prevSupplier = supplierSummaryMap.get(supplierName) || { components: 0, spend: 0 };
-          supplierSummaryMap.set(supplierName, {
-            components: prevSupplier.components + 1,
-            spend: prevSupplier.spend + ((comp.quantity || 0) * (comp.unitCost || 0))
-          });
+          const prevSupplier = supplierSummaryMap.get(supplierName) || { components: 0, spendByCurrency: {} as Record<string, number> };
+          const prevSpend = prevSupplier.spendByCurrency[orderCurrency] || 0;
+          prevSupplier.spendByCurrency[orderCurrency] = prevSpend + ((comp.quantity || 0) * (comp.unitCost || 0));
+          prevSupplier.components += 1;
+          supplierSummaryMap.set(supplierName, prevSupplier);
         });
       });
 
-      const prevCustomer = customerSummaryMap.get(customerName) || { orders: 0, value: 0 };
-      customerSummaryMap.set(customerName, {
-        orders: prevCustomer.orders + 1,
-        value: prevCustomer.value + orderValue
-      });
+      const prevCustomer = customerSummaryMap.get(customerName) || { orders: 0, valueByCurrency: {} as Record<string, number> };
+      prevCustomer.orders += 1;
+      prevCustomer.valueByCurrency[orderCurrency] = (prevCustomer.valueByCurrency[orderCurrency] || 0) + orderValue;
+      customerSummaryMap.set(customerName, prevCustomer);
     });
 
+    // Multi-currency amendment: customer/supplier totals are shown as
+    // "<value> <currency>" lines joined by comma, not collapsed to L.E.
+    const formatValueByCurrency = (m: Record<string, number>) => Object.entries(m)
+      .sort(([a], [b]) => (a === DEFAULT_CURRENCY ? -1 : b === DEFAULT_CURRENCY ? 1 : a.localeCompare(b)))
+      .map(([c, v]) => `${v.toLocaleString()} ${c}`)
+      .join(' • ');
+
     const topCustomers = Array.from(customerSummaryMap.entries())
-      .sort((a, b) => b[1].value - a[1].value)
+      .sort((a, b) => {
+        const sumA = Object.values(a[1].valueByCurrency).reduce((s, v) => s + v, 0);
+        const sumB = Object.values(b[1].valueByCurrency).reduce((s, v) => s + v, 0);
+        return sumB - sumA;
+      })
       .slice(0, 5)
-      .map(([name, stats]) => [name, `${stats.orders}`, `${stats.value.toLocaleString()} L.E.`]);
+      .map(([name, stats]) => [name, `${stats.orders}`, formatValueByCurrency(stats.valueByCurrency) || '-']);
 
     const topSuppliers = Array.from(supplierSummaryMap.entries())
-      .sort((a, b) => b[1].spend - a[1].spend)
+      .sort((a, b) => {
+        const sumA = Object.values(a[1].spendByCurrency).reduce((s, v) => s + v, 0);
+        const sumB = Object.values(b[1].spendByCurrency).reduce((s, v) => s + v, 0);
+        return sumB - sumA;
+      })
       .slice(0, 5)
-      .map(([name, stats]) => [name, `${stats.components}`, `${stats.spend.toLocaleString()} L.E.`]);
+      .map(([name, stats]) => [name, `${stats.components}`, formatValueByCurrency(stats.spendByCurrency) || '-']);
 
     const summaryRows: string[][] = [];
     const maxRows = Math.max(topCustomers.length, topSuppliers.length, 1);
@@ -421,7 +449,7 @@ const App: React.FC = () => {
     drawTable(
       ['Customer', 'Orders', 'Value', 'Supplier', 'Components', 'Spend'],
       summaryRows,
-      [contentWidth * 0.22, contentWidth * 0.1, contentWidth * 0.18, contentWidth * 0.22, contentWidth * 0.12, contentWidth * 0.16]
+      [contentWidth * 0.2, contentWidth * 0.08, contentWidth * 0.22, contentWidth * 0.2, contentWidth * 0.1, contentWidth * 0.2]
     );
 
     const fileTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -437,7 +465,24 @@ const App: React.FC = () => {
             {/* High Level Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <DashboardCard id="revenue" title="Gross Portfolio" icon="fa-coins" onClose={() => { }}>
-                <div className="p-4"><div className="text-2xl font-black text-slate-800">{dashboardMetrics.totalRevenue.toLocaleString()} L.E.</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Open Contract Value</div></div>
+                <div className="p-4 space-y-2">
+                  {/* Multi-currency amendment: always show L.E. as the headline
+                      value plus any other currencies as-is (no conversion). */}
+                  <div>
+                    <div className="text-2xl font-black text-slate-800">
+                      {(dashboardMetrics.revenueByCurrency[DEFAULT_CURRENCY] || 0).toLocaleString()} {DEFAULT_CURRENCY}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Open Contract Value</div>
+                  </div>
+                  {Object.entries(dashboardMetrics.revenueByCurrency)
+                    .filter(([cur]) => cur !== DEFAULT_CURRENCY)
+                    .map(([cur, val]) => (
+                      <div key={cur} className="flex justify-between items-baseline pt-2 border-t border-slate-100">
+                        <span className="text-[10px] font-black text-slate-400 uppercase">{cur} Revenue</span>
+                        <span className="text-sm font-black text-slate-700">{val.toLocaleString()} {cur}</span>
+                      </div>
+                    ))}
+                </div>
               </DashboardCard>
               <DashboardCard id="margin" title="Portfolio Margin" icon="fa-chart-pie" onClose={() => { }}>
                 <div className="p-4"><div className="text-2xl font-black text-emerald-600">{dashboardMetrics.marginPct.toFixed(1)}%</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Average Yield</div></div>

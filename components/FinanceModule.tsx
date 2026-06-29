@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus } from '../types';
-import { getItemEffectiveQty, getStatusLimitHours } from '../utils';
+import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { jsPDF } from 'jspdf';
@@ -513,7 +513,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [whtPeriod, setWhtPeriod] = useState<'this_year' | 'last_year'>('this_year');
   const [whtSearch, setWhtSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'desc' });
-  const [columnOrder, setColumnOrder] = useState<string[]>(['context', 'date', 'revenue', 'markup', 'status', 'actions']);
+  const [columnOrder, setColumnOrder] = useState<string[]>(['context', 'date', 'currency', 'revenue', 'markup', 'status', 'actions']);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
   const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
 
@@ -716,11 +716,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       grossRevenue += lineNet * (1 + (it.taxPercent / 100));
       it.components?.forEach(c => cost += (c.quantity * (c.unitCost || 0)));
     });
+    // Multi-currency amendment: the displayed cost is the raw PO currency; the
+    // cost-in-order-currency is the value used for the P/L threshold comparison
+    // so revenue and cost are in the same units.
+    const rate = getOrderConversionRate(order);
+    const costInOrderCurrency = cost * rate;
     const paid = (order.payments || []).reduce((s, p) => s + p.amount, 0);
-    const marginPct = revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0;
-    const markupPct = cost > 0 ? ((revenue - cost) / cost) * 100 : (revenue > 0 ? 100 : 0);
+    const marginPct = revenue > 0 ? ((revenue - costInOrderCurrency) / revenue) * 100 : 0;
+    const markupPct = costInOrderCurrency > 0 ? ((revenue - costInOrderCurrency) / costInOrderCurrency) * 100 : (revenue > 0 ? 100 : 0);
     const targetRev = order.appliesWithholdingTax ? grossRevenue * 0.99 : grossRevenue;
-    return { revenue, grossRevenue, cost, marginPct, markupPct, paid, outstanding: Math.max(0, targetRev - paid) };
+    return { revenue, grossRevenue, cost, costInOrderCurrency, conversionRate: rate, currency: getOrderCurrency(order), paid, outstanding: Math.max(0, targetRev - paid) };
   };
 
   const ordersWithPL = useMemo(() => orders.map(o => ({ ...o, pl: getPL(o) })), [orders]);
@@ -998,7 +1003,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 <div className="w-64 border-2 divide-y-2 font-black" style={{ borderColor: '#0f172a' }}>
                   <div className="grid grid-cols-2" style={{ backgroundColor: '#f1f5f9' }}>
                     <div className="p-3 border-r-2 text-sm uppercase" style={{ borderColor: '#0f172a', color: '#0f172a' }}>GRAND TOTAL</div>
-                    <div className="p-3 text-end text-xl" style={{ color: '#0f172a' }}>{getPrintTotal().toLocaleString()} L.E.</div>
+                    <div className="p-3 text-end text-xl" style={{ color: '#0f172a' }}>{getPrintTotal().toLocaleString()} {getOrderCurrency(printOrder)}</div>
                   </div>
                 </div>
               </div>
@@ -1026,6 +1031,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           const subtotal = proratedItems.reduce((s: number, it: any) => s + it.proratedNet, 0);
           const totalTax = proratedItems.reduce((s: number, it: any) => s + it.proratedTax, 0);
           const totalPaidBefore = prevPay.reduce((s: number, p: any) => s + p.amount, 0);
+          // Multi-currency amendment: render all amounts on this receipt in the
+          // order's native currency.
+          const pCurrency = getOrderCurrency(pOrder);
 
           return (
             <div ref={paymentInvoiceRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
@@ -1058,7 +1066,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
                   <div className="grid grid-cols-3">
                     <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-end" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Customer:</div>
-                    <div className="col-span-2 p-3 font-black text-sm uppercase" style={{ color: '#0f172a' }}>{pOrder.customerName}</div>
+                    <div className="col-span-2 p-3 font-black text-sm uppercase" style={{ color: '#0f172a' }}>
+                    {pOrder.customerName}
+                    <span className="ml-2 px-2 py-0.5 rounded bg-slate-900 text-white text-[9px] font-black uppercase">{pCurrency}</span>
+                  </div>
                   </div>
                   <div className="grid grid-cols-3">
                     <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-end" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Invoice No:</div>
@@ -1112,15 +1123,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 <div className="w-80 border-2 divide-y-2 font-black" style={{ borderColor: '#0f172a' }}>
                   <div className="grid grid-cols-2">
                     <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Subtotal (Excl. Tax)</div>
-                    <div className="p-3 text-end text-sm" style={{ color: '#0f172a' }}>{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                    <div className="p-3 text-end text-sm" style={{ color: '#0f172a' }}>{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {pCurrency}</div>
                   </div>
                   <div className="grid grid-cols-2">
                     <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>{t("finance.billing.taxTotal") || "Total Tax"}</div>
-                    <div className="p-3 text-end text-sm" style={{ color: '#b45309' }}>{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                    <div className="p-3 text-end text-sm" style={{ color: '#b45309' }}>{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {pCurrency}</div>
                   </div>
                   <div className="grid grid-cols-2" style={{ backgroundColor: isFinal ? '#ecfdf5' : '#eff6ff' }}>
                     <div className="p-3 border-r-2 text-sm uppercase" style={{ borderColor: '#0f172a', color: '#0f172a' }}>AMOUNT PAID</div>
-                    <div className="p-3 text-end text-xl" style={{ color: isFinal ? '#047857' : '#1d4ed8' }}>{pAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                    <div className="p-3 text-end text-xl" style={{ color: isFinal ? '#047857' : '#1d4ed8' }}>{pAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {pCurrency}</div>
                   </div>
                 </div>
               </div>
@@ -1133,12 +1144,12 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     {prevPay.map((p: any, idx: number) => (
                       <div key={idx} className="flex justify-between px-4 py-2 text-xs font-bold border-b last:border-0" style={{ borderColor: '#f1f5f9' }}>
                         <span style={{ color: '#64748b' }}>{p.receiptNumber || `#${idx + 1}`} — {new Date(p.date).toLocaleDateString()}</span>
-                        <span style={{ color: '#1e293b' }}>{p.amount.toLocaleString()} L.E.</span>
+                        <span style={{ color: '#1e293b' }}>{p.amount.toLocaleString()} {pCurrency}</span>
                       </div>
                     ))}
                     <div className="flex justify-between px-4 py-2 text-xs font-black border-t" style={{ backgroundColor: '#f8fafc', borderColor: '#e2e8f0', color: '#0f172a' }}>
                       <span>{t("finance.orders.totalPreviouslyPaid") || "Total Previously Paid"}</span>
-                      <span>{totalPaidBefore.toLocaleString()} L.E.</span>
+                      <span>{totalPaidBefore.toLocaleString()} {pCurrency}</span>
                     </div>
                   </div>
                 </div>
@@ -1146,10 +1157,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
               {/* Balance Summary */}
               <div className="flex justify-between items-center p-4 border-2 rounded mt-4" style={{ backgroundColor: '#f8fafc', borderColor: '#e2e8f0' }}>
-                <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>Order Total: {grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.</div>
-                <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>Total Paid: {(totalPaidBefore + pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.</div>
+                <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>Order Total: {grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} {pCurrency}</div>
+                <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>Total Paid: {(totalPaidBefore + pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} {pCurrency}</div>
                 <div className="text-sm font-black uppercase" style={{ color: isFinal ? '#059669' : '#d97706' }}>
-                  {isFinal ? 'FULLY SETTLED ✓' : `Outstanding: ${Math.max(0, grossTotal - totalPaidBefore - pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} L.E.`}
+                  {isFinal ? 'FULLY SETTLED ✓' : `Outstanding: ${Math.max(0, grossTotal - totalPaidBefore - pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} ${pCurrency}`}
                 </div>
               </div>
             </div>
@@ -1595,6 +1606,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         {activeTab === 'tax_clearances' ? (t("finance.orders.targetRevenue") || 'Target Revenue (99%)') : (t("finance.orders.orderDate") || 'Order Date')} {sortConfig.key === 'orderDate' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                       </th>
                     );
+                    if (col === 'currency') return (
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-4 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('currency')}>
+                        Currency {sortConfig.key === 'currency' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
+                      </th>
+                    );
                     if (col === 'revenue') return (
                       <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('grossRevenue')}>
                         {activeTab === 'tax_clearances' ? (t("finance.orders.whtValue") || 'WHT Value (1%)') : (t("finance.orders.revenueMetrics") || 'Revenue Metrics')} {sortConfig.key === 'grossRevenue' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
@@ -1684,6 +1700,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   o.items.forEach(it => grossRevenue += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
                   const whtAmount = grossRevenue * 0.01;
                   const targetRevenue = grossRevenue * 0.99;
+                  const oCurrency = getOrderCurrency(o);
 
                   return (
                     <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
@@ -1700,10 +1717,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             <div className="text-[9px] text-slate-400 font-bold mt-1 uppercase tracking-tighter">{o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}</div>
                           </td>
                         );
+                        if (col === 'currency') {
+                          return (
+                            <td key={col} className="px-4 py-6">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{oCurrency}</span>
+                            </td>
+                          );
+                        }
                         if (col === 'date' || col === 'revenue' || col === 'markup' || col === 'status' || col === 'actions') {
                           // Tax clearances mapping: date->revenue, revenue->WHT, markup->status
-                          if (col === 'date') return <td key={col} className="px-8 py-6 text-sm font-black text-slate-700">{targetRevenue.toLocaleString()} L.E.</td>;
-                          if (col === 'revenue') return <td key={col} className="px-8 py-6 text-sm font-black text-amber-600">{whtAmount.toLocaleString()} L.E.</td>;
+                          if (col === 'date') return <td key={col} className="px-8 py-6 text-sm font-black text-slate-700">{targetRevenue.toLocaleString()} {oCurrency}</td>;
+                          if (col === 'revenue') return <td key={col} className="px-8 py-6 text-sm font-black text-amber-600">{whtAmount.toLocaleString()} {oCurrency}</td>;
                           if (col === 'markup') return (
                             <td key={col} className="px-8 py-6 text-end">
                               {o.whtCertificateFile ? (
@@ -1741,7 +1765,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </>
             ) : filteredOrders.map(o => {
               const pl = (o as any).pl;
-              const isBreach = isMarginBreach(pl.cost, pl.markupPct, config.settings.minimumMarginPct);
+              const isBreach = isMarginBreach(pl.costInOrderCurrency ?? pl.cost, pl.markupPct, config.settings.minimumMarginPct);
               const showRow = activeTab === 'orders' ||
                 (activeTab === 'billing_details' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
                 (activeTab === 'orders' && o.status === OrderStatus.WAITING_GOVE);
@@ -1782,13 +1806,42 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           <div className="text-[9px] text-slate-400 font-bold mt-1">{t("finance.tax.acquisitionDate") || "Acquisition Date"}</div>
                         </td>
                       );
+                      if (col === 'currency') return (
+                        <td key={col} className="px-4 py-6">
+                          <div className="flex items-center gap-1">
+                            <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{pl.currency}</span>
+                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest leading-tight">
+                              <div>Conv. Rate</div>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                className="w-20 px-2 py-1 mt-0.5 border border-slate-200 rounded-md text-[10px] font-black text-slate-700 outline-none focus:border-blue-500"
+                                defaultValue={pl.conversionRate}
+                                title="Multiplier to bring PO cost into the order's revenue currency. Used only for the P/L threshold check. Default 1 = no conversion."
+                                onBlur={async (e) => {
+                                  const v = parseFloat(e.target.value);
+                                  const next = (!Number.isFinite(v) || v <= 0) ? 1 : v;
+                                  if (next === pl.conversionRate) return;
+                                  try {
+                                    await dataService.updateOrder(o.id, { conversionRate: next });
+                                    await fetchData();
+                                  } catch (err) {
+                                    // ignore — fetchData will reconcile on next render
+                                  }
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      );
                       if (col === 'revenue') return (
                         <td key={col} className="px-8 py-6">
                           <div className="flex items-center gap-2">
-                            <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} L.E.</div>
+                            <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} {pl.currency}</div>
                           </div>
                           <div className="text-[9px] text-slate-400 font-bold mt-1">
-                            Paid: {pl.paid.toLocaleString()} L.E. • Bal: {pl.outstanding.toLocaleString()}
+                            Paid: {pl.paid.toLocaleString()} {pl.currency} • Bal: {pl.outstanding.toLocaleString()} {pl.currency}
                           </div>
                         </td>
                       );
@@ -1797,7 +1850,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           <div className={`px-3 py-1.5 rounded-xl border-2 text-[10px] font-black w-fit shadow-sm ${isBreach ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-emerald-50 border-emerald-100 text-emerald-600'}`}>
                             {pl.markupPct.toFixed(1)}% Markup
                           </div>
-                          <div className="text-[8px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Target: {config.settings.minimumMarginPct}%</div>
+                          <div className="text-[8px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Target: {config.settings.minimumMarginPct}% (in {pl.currency})</div>
                         </td>
                       );
                       if (col === 'status') {
@@ -1905,7 +1958,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               <div className="col-span-5">
                                 <div className="font-bold text-xs text-slate-800 line-clamp-1">{it.description}</div>
                                 <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                                  Tgt: {getItemEffectiveQty(it)} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} L.E.
+                                  Tgt: {getItemEffectiveQty(it)} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} {pl.currency}
                                 </div>
                               </div>
                               <div className="col-span-1 text-center font-black text-sky-600 text-xs">{inHub}</div>
@@ -2197,7 +2250,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         orderStatus: o.status,
                         type: 'payment',
                         amount: payment.amount,
-                        message: `Payment recorded: ${payment.amount.toLocaleString()} L.E.`,
+                        message: `Payment recorded: ${payment.amount.toLocaleString()} ${getOrderCurrency(o)}`,
                         timestamp: payment.date || new Date().toISOString(),
                         user: payment.user || 'System',
                                   receiptNumber: payment.receiptNumber || `RCV-${order.internalOrderNumber.replace(/[^\w]/g, '').slice(-6)}-${String(idx + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`
@@ -2476,7 +2529,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         <tr key={idx} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-5 font-mono text-xs font-black text-blue-600 uppercase">{p.receiptNumber || `RCV-${order.internalOrderNumber.replace(/[^\w]/g, '').slice(-6)}-${String(idx + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`}</td>
                           <td className="px-4 py-5 font-bold text-slate-500 text-xs">{new Date(p.date).toLocaleDateString()}</td>
-                          <td className="px-4 py-5 font-black text-slate-800">{p.amount.toLocaleString()} L.E.</td>
+                          <td className="px-4 py-5 font-black text-slate-800">{p.amount.toLocaleString()} {getOrderCurrency(viewPaymentsOrder)}</td>
                           <td className="px-4 py-5 text-end">
                             <button
                               onClick={() => {
@@ -2504,7 +2557,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               <div className="mt-8 pt-8 border-t border-slate-100 flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                  Total Received: {(viewPaymentsOrder.payments || []).reduce((s, p) => s + p.amount, 0).toLocaleString()} L.E.
+                  Total Received: {(viewPaymentsOrder.payments || []).reduce((s, p) => s + p.amount, 0).toLocaleString()} {getOrderCurrency(viewPaymentsOrder)}
                 </div>
                 <button onClick={() => setViewPaymentsOrder(null)} className="px-8 py-3 bg-slate-900 text-white rounded-xl hover:bg-black transition-all">{t("common.close")}</button>
               </div>

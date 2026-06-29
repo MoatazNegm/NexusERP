@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { CustomerOrder, AppConfig, OrderStatus, Customer, Supplier, LedgerEntry } from '../types';
-import { getItemEffectiveQty } from '../utils';
+import { CustomerOrder, AppConfig, OrderStatus, Customer, Supplier, LedgerEntry, DEFAULT_CURRENCY } from '../types';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
@@ -81,19 +81,50 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       });
       if (order.appliesWithholdingTax) revenue *= 0.99;
 
-      const marginAmt = revenue - cost;
+      // Multi-currency amendment: bring the cost side into the order's revenue
+      // currency via the per-order conversion rate before the margin threshold
+      // check. The displayed `cost` stays in its raw PO currency.
+      const rate = getOrderConversionRate(order);
+      const costInOrderCurrency = cost * rate;
+      const marginAmt = revenue - costInOrderCurrency;
       const marginPctOnSales = revenue > 0 ? (marginAmt / revenue) * 100 : 0;
-      const markupPct = cost > 0 ? (marginAmt / cost) * 100 : (revenue > 0 ? 100 : 0);
-      const isBelowThreshold = isMarginBreach(cost, markupPct, config.settings.minimumMarginPct);
-      return { id: order.id, internalOrderNumber: order.internalOrderNumber, customerName: order.customerName, status: order.status, revenue, cost, marginAmt, marginPctOnSales, markupPct, hasPendingCosts, isBelowThreshold, _originalOrder: order };
+      const markupPct = costInOrderCurrency > 0 ? (marginAmt / costInOrderCurrency) * 100 : (revenue > 0 ? 100 : 0);
+      const isBelowThreshold = isMarginBreach(costInOrderCurrency, markupPct, config.settings.minimumMarginPct);
+      return { id: order.id, internalOrderNumber: order.internalOrderNumber, customerName: order.customerName, status: order.status, revenue, cost, costInOrderCurrency, conversionRate: rate, currency: getOrderCurrency(order), marginAmt, marginPctOnSales, markupPct, hasPendingCosts, isBelowThreshold, _originalOrder: order };
     });
   };
 
   const activeAuditData = useMemo(() => processAuditData(auditOpenOrders), [auditOpenOrders, config.settings.minimumMarginPct]);
   const fulfilledAuditData = useMemo(() => processAuditData(auditFulfilledOrders), [auditFulfilledOrders, config.settings.minimumMarginPct]);
 
-  const auditActiveTotals = useMemo(() => activeAuditData.reduce((acc, curr) => ({ revenue: acc.revenue + curr.revenue, cost: acc.cost + curr.cost, margin: acc.margin + curr.marginAmt }), { revenue: 0, cost: 0, margin: 0 }), [activeAuditData]);
-  const auditFulfilledTotals = useMemo(() => fulfilledAuditData.reduce((acc, curr) => ({ revenue: acc.revenue + curr.revenue, cost: acc.cost + curr.cost, margin: acc.margin + curr.marginAmt }), { revenue: 0, cost: 0, margin: 0 }), [fulfilledAuditData]);
+  // Multi-currency amendment: totals split by currency. Margin totals are the
+  // sum of the order-native margins (no cross-currency conversion).
+  const auditActiveTotals = useMemo(() => {
+    const revenueByCurrency: Record<string, number> = {};
+    let cost = 0;
+    let costInOrderCurrencyTotal = 0;
+    let margin = 0;
+    activeAuditData.forEach(curr => {
+      revenueByCurrency[curr.currency] = (revenueByCurrency[curr.currency] || 0) + curr.revenue;
+      cost += curr.cost;
+      costInOrderCurrencyTotal += curr.costInOrderCurrency;
+      margin += curr.marginAmt;
+    });
+    return { revenue: revenueByCurrency[DEFAULT_CURRENCY] || 0, revenueByCurrency, cost, costInOrderCurrency: costInOrderCurrencyTotal, margin };
+  }, [activeAuditData]);
+  const auditFulfilledTotals = useMemo(() => {
+    const revenueByCurrency: Record<string, number> = {};
+    let cost = 0;
+    let costInOrderCurrencyTotal = 0;
+    let margin = 0;
+    fulfilledAuditData.forEach(curr => {
+      revenueByCurrency[curr.currency] = (revenueByCurrency[curr.currency] || 0) + curr.revenue;
+      cost += curr.cost;
+      costInOrderCurrencyTotal += curr.costInOrderCurrency;
+      margin += curr.marginAmt;
+    });
+    return { revenue: revenueByCurrency[DEFAULT_CURRENCY] || 0, revenueByCurrency, cost, costInOrderCurrency: costInOrderCurrencyTotal, margin };
+  }, [fulfilledAuditData]);
 
   // --- LOGIC FOR TAB 2: CUSTOMER ANALYSIS (NEW) ---
   const getDateRange = (period: Period) => {
@@ -127,8 +158,12 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
     });
     if (order.appliesWithholdingTax) revenueExclTax *= 0.99;
 
-    const netProfit = revenueExclTax - totalCostInclTax;
-    return { revenueExclTax, totalCostInclTax, netProfit };
+    // Multi-currency amendment: bring the cost side into the order's revenue
+    // currency via the per-order conversion rate before computing net profit.
+    const rate = getOrderConversionRate(order);
+    const costInOrderCurrency = totalCostInclTax * rate;
+    const netProfit = revenueExclTax - costInOrderCurrency;
+    return { revenueExclTax, totalCostInclTax, costInOrderCurrency, netProfit, currency: getOrderCurrency(order), conversionRate: rate };
   };
 
   const analysisRange = useMemo(() => getDateRange(selectedPeriod), [selectedPeriod]);
@@ -139,10 +174,21 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
     return custMatch && isOrderInPeriod(o, analysisRange) && o.status !== OrderStatus.REJECTED;
   }), [orders, selectedCustomerId, analysisRange, customers]);
 
-  const analysisTotals = useMemo(() => analysisOrdersFiltered.reduce((acc, o) => {
-    const m = calculateAnalysisMetrics(o);
-    return { revenue: acc.revenue + m.revenueExclTax, cost: acc.cost + m.totalCostInclTax, profit: acc.profit + m.netProfit };
-  }, { revenue: 0, cost: 0, profit: 0 }), [analysisOrdersFiltered]);
+  // Multi-currency amendment: aggregate revenue per currency.
+  const analysisTotals = useMemo(() => {
+    const revenueByCurrency: Record<string, number> = {};
+    let cost = 0;
+    let costInOrderCurrencyTotal = 0;
+    let profit = 0;
+    analysisOrdersFiltered.forEach(o => {
+      const m = calculateAnalysisMetrics(o);
+      revenueByCurrency[m.currency] = (revenueByCurrency[m.currency] || 0) + m.revenueExclTax;
+      cost += m.totalCostInclTax;
+      costInOrderCurrencyTotal += m.costInOrderCurrency;
+      profit += m.netProfit;
+    });
+    return { revenue: revenueByCurrency[DEFAULT_CURRENCY] || 0, revenueByCurrency, cost, costInOrderCurrency: costInOrderCurrencyTotal, profit };
+  }, [analysisOrdersFiltered]);
 
   const contributionWeight = companyAnalysisProfit > 0 ? (analysisTotals.profit / companyAnalysisProfit) * 100 : 0;
 
@@ -206,16 +252,32 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
           <div className="no-print space-y-4 font-bold">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Portfolio Gross Value</div>
-                <div className="text-2xl font-black text-slate-800">{(auditActiveTotals.revenue + auditFulfilledTotals.revenue).toLocaleString()} <span className="text-xs font-bold opacity-30">L.E.</span></div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Portfolio Gross Value ({DEFAULT_CURRENCY})</div>
+                <div className="text-2xl font-black text-slate-800">{((auditActiveTotals.revenueByCurrency?.[DEFAULT_CURRENCY] || 0) + (auditFulfilledTotals.revenueByCurrency?.[DEFAULT_CURRENCY] || 0)).toLocaleString()} <span className="text-xs font-bold opacity-30">{DEFAULT_CURRENCY}</span></div>
+                {Object.entries(auditActiveTotals.revenueByCurrency || {})
+                  .concat(Object.entries(auditFulfilledTotals.revenueByCurrency || {}))
+                  .reduce((acc: Record<string, number>, [cur, val]) => { acc[cur] = (acc[cur] || 0) + val; return acc; }, {})
+                  // De-duplicate (we already summed in the L.E. card above)
+                  && Object.entries(
+                    Object.entries(auditActiveTotals.revenueByCurrency || {})
+                      .concat(Object.entries(auditFulfilledTotals.revenueByCurrency || {}))
+                      .reduce((acc: Record<string, number>, [cur, val]) => { acc[cur] = (acc[cur] || 0) + val; return acc; }, {})
+                  )
+                    .filter(([cur]) => cur !== DEFAULT_CURRENCY)
+                    .map(([cur, val]) => (
+                      <div key={cur} className="flex justify-between text-[10px] font-bold text-slate-500 mt-1 border-t border-slate-100 pt-1">
+                        <span className="uppercase">{cur}</span>
+                        <span>{val.toLocaleString()} {cur}</span>
+                      </div>
+                    ))}
               </div>
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Realized Margin</div>
-                <div className="text-2xl font-black text-emerald-600">{(auditActiveTotals.margin + auditFulfilledTotals.margin).toLocaleString()} <span className="text-xs font-bold opacity-30 text-slate-400">L.E.</span></div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Margin (in order currencies)</div>
+                <div className="text-2xl font-black text-emerald-600">{(auditActiveTotals.margin + auditFulfilledTotals.margin).toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-xs font-bold opacity-30 text-slate-400">mixed</span></div>
               </div>
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Global Audit Yield</div>
-                <div className="text-2xl font-black text-blue-600">{(auditActiveTotals.revenue + auditFulfilledTotals.revenue) > 0 ? (((auditActiveTotals.margin + auditFulfilledTotals.margin) / (auditActiveTotals.revenue + auditFulfilledTotals.revenue)) * 100).toFixed(2) : '0.0'}%</div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Global Audit Yield ({DEFAULT_CURRENCY} basis)</div>
+                <div className="text-2xl font-black text-blue-600">{((auditActiveTotals.revenueByCurrency?.[DEFAULT_CURRENCY] || 0) + (auditFulfilledTotals.revenueByCurrency?.[DEFAULT_CURRENCY] || 0)) > 0 ? (((auditActiveTotals.margin + auditFulfilledTotals.margin) / ((auditActiveTotals.revenueByCurrency?.[DEFAULT_CURRENCY] || 0) + (auditFulfilledTotals.revenueByCurrency?.[DEFAULT_CURRENCY] || 0))) * 100).toFixed(2) : '0.0'}%</div>
               </div>
             </div>
           </div>
@@ -259,10 +321,13 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                               </div>
                             )}
                           </td>
-                          <td className="px-4 py-4 font-bold text-slate-800 text-xs truncate max-w-[150px]">{d.customerName}</td>
-                          <td className="px-4 py-4 text-right font-black text-slate-700 text-xs">{d.revenue.toLocaleString()}</td>
-                          <td className="px-4 py-4 text-right font-bold text-slate-500 text-xs">{d.cost.toLocaleString()}</td>
-                          <td className={`px-4 py-4 text-right font-black text-xs ${d.marginAmt < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>{d.marginAmt.toLocaleString()}</td>
+                          <td className="px-4 py-4 font-bold text-slate-800 text-xs truncate max-w-[150px]">
+                            {d.customerName}
+                            <div className="text-[9px] font-black text-slate-400 uppercase mt-0.5">{d.currency}{d.conversionRate !== 1 ? ` · conv ${d.conversionRate}` : ''}</div>
+                          </td>
+                          <td className="px-4 py-4 text-right font-black text-slate-700 text-xs">{d.revenue.toLocaleString()} {d.currency}</td>
+                          <td className="px-4 py-4 text-right font-bold text-slate-500 text-xs">{d.cost.toLocaleString()} {d.currency}</td>
+                          <td className={`px-4 py-4 text-right font-black text-xs ${d.marginAmt < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>{d.marginAmt.toLocaleString()} {d.currency}</td>
                           <td className="px-4 py-4 text-center font-bold text-slate-600 text-xs">{d.marginPctOnSales.toFixed(1)}%</td>
                           <td className="px-4 py-4 text-center"><div className={`inline-flex px-2 py-0.5 rounded text-[10px] font-black ${d.isBelowThreshold ? 'bg-rose-600 text-white' : 'bg-emerald-100 text-emerald-800'}`}>{d.markupPct.toFixed(1)}%</div></td>
                           <td className="px-4 py-4 text-right no-print">
@@ -275,11 +340,16 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                     </tbody>
                     <tfoot className={`bg-slate-900 text-white border-t-2 border-slate-900`}>
                       <tr className="font-black text-xs">
-                        <td colSpan={2} className="px-4 py-6 text-right uppercase tracking-[0.2em] text-slate-400">Section Totals</td>
-                        <td className="px-4 py-6 text-right">{sec.totals.revenue.toLocaleString()}</td>
-                        <td className="px-4 py-6 text-right">{sec.totals.cost.toLocaleString()}</td>
-                        <td className="px-4 py-6 text-right text-blue-400">{sec.totals.margin.toLocaleString()}</td>
-                        <td colSpan={3} className="px-4 py-6 text-right text-[10px] text-slate-400 uppercase tracking-widest">Yield: {(sec.totals.revenue > 0 ? (sec.totals.margin / sec.totals.revenue) * 100 : 0).toFixed(2)}%</td>
+                        <td colSpan={2} className="px-4 py-6 text-right uppercase tracking-[0.2em] text-slate-400">Section Totals ({DEFAULT_CURRENCY})</td>
+                        <td className="px-4 py-6 text-right">{(sec.totals.revenueByCurrency?.[DEFAULT_CURRENCY] || 0).toLocaleString()}</td>
+                        <td className="px-4 py-6 text-right">{(sec.totals.costInOrderCurrency || 0).toLocaleString()}</td>
+                        <td className="px-4 py-6 text-right text-blue-400">{sec.totals.margin.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        <td colSpan={3} className="px-4 py-6 text-right text-[10px] text-slate-400 uppercase tracking-widest">
+                          {Object.entries(sec.totals.revenueByCurrency || {})
+                            .filter(([cur]) => cur !== DEFAULT_CURRENCY)
+                            .map(([cur, val]) => `${cur}: ${val.toLocaleString()}`)
+                            .join(' • ')}
+                        </td>
                       </tr>
                     </tfoot>
                   </table>
@@ -314,16 +384,24 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Revenue (Excl Tax)</p>
-              <div className="text-2xl font-black text-slate-800">{analysisTotals.revenue.toLocaleString()} <span className="text-[10px] opacity-30">L.E.</span></div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Revenue (Excl Tax) — {DEFAULT_CURRENCY}</p>
+              <div className="text-2xl font-black text-slate-800">{(analysisTotals.revenueByCurrency?.[DEFAULT_CURRENCY] || 0).toLocaleString()} <span className="text-[10px] opacity-30">{DEFAULT_CURRENCY}</span></div>
+              {Object.entries(analysisTotals.revenueByCurrency || {})
+                .filter(([cur]) => cur !== DEFAULT_CURRENCY)
+                .map(([cur, val]) => (
+                  <div key={cur} className="flex justify-between text-[10px] font-bold text-slate-500 mt-1 border-t border-slate-100 pt-1">
+                    <span className="uppercase">{cur}</span>
+                    <span>{val.toLocaleString()} {cur}</span>
+                  </div>
+                ))}
             </div>
             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Cost (Incl Tax)</p>
-              <div className="text-2xl font-black text-slate-800">{analysisTotals.cost.toLocaleString()} <span className="text-[10px] opacity-30">L.E.</span></div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Cost (in order currencies)</p>
+              <div className="text-2xl font-black text-slate-800">{(analysisTotals.costInOrderCurrency || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] opacity-30">mixed</span></div>
             </div>
             <div className={`p-6 rounded-[2rem] shadow-2xl text-white ${analysisTotals.profit >= 0 ? 'bg-slate-900' : 'bg-rose-900'} transition-all`}>
-              <p className="text-[10px] font-black opacity-40 uppercase tracking-widest mb-1">Net Portfolio Profit</p>
-              <div className="text-2xl font-black">{analysisTotals.profit.toLocaleString()} <span className="text-[10px] opacity-30">L.E.</span></div>
+              <p className="text-[10px] font-black opacity-40 uppercase tracking-widest mb-1">Net Portfolio Profit (mixed)</p>
+              <div className="text-2xl font-black">{analysisTotals.profit.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] opacity-30">mixed</span></div>
             </div>
             <div className="bg-indigo-600 p-6 rounded-[2rem] shadow-2xl text-white relative overflow-hidden group">
               <div className="absolute -right-4 -bottom-4 opacity-10 rotate-12 group-hover:rotate-0 transition-transform">
@@ -371,10 +449,16 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                     const m = calculateAnalysisMetrics(o);
                     return (
                       <tr key={o.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-8 py-5 whitespace-nowrap"><div className="font-mono font-black text-blue-600 text-xs">{o.internalOrderNumber}</div><div className="text-[8px] font-bold text-slate-400 mt-1 uppercase italic">{o.customerName}</div></td>
-                        <td className="px-8 py-5 text-right font-black text-slate-700 text-xs">{m.revenueExclTax.toLocaleString()}</td>
-                        <td className="px-8 py-5 text-right font-bold text-slate-500 text-xs">{m.totalCostInclTax.toLocaleString()}</td>
-                        <td className={`px-8 py-5 text-right font-black text-xs ${m.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{m.netProfit.toLocaleString()}</td>
+                        <td className="px-8 py-5 whitespace-nowrap">
+                          <div className="font-mono font-black text-blue-600 text-xs">{o.internalOrderNumber}</div>
+                          <div className="text-[8px] font-bold text-slate-400 mt-1 uppercase italic flex items-center gap-1">
+                            <span>{o.customerName}</span>
+                            <span className="px-1 rounded bg-slate-900 text-white">{m.currency}</span>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5 text-right font-black text-slate-700 text-xs">{m.revenueExclTax.toLocaleString()} {m.currency}</td>
+                        <td className="px-8 py-5 text-right font-bold text-slate-500 text-xs">{m.totalCostInclTax.toLocaleString()} {m.currency}</td>
+                        <td className={`px-8 py-5 text-right font-black text-xs ${m.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{m.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {m.currency}</td>
                         <td className="px-8 py-5 text-center"><div className="inline-flex px-3 py-1 rounded bg-slate-100 text-[10px] font-black text-slate-700">{(m.revenueExclTax > 0 ? (m.netProfit / m.revenueExclTax) * 100 : 0).toFixed(1)}%</div></td>
                         <td className="px-8 py-5 text-right"><span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>{getDynamicOrderStatusStyle(o, config).label}</span></td>
                       </tr>

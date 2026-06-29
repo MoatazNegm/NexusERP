@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, User } from '../types';
-import { getItemEffectiveQty } from '../utils';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate } from '../utils';
 
 interface GovEInvoiceModuleProps {
     refreshKey?: number;
@@ -93,6 +93,7 @@ export const GovEInvoiceModule: React.FC<GovEInvoiceModuleProps> = ({ refreshKey
                             const totalComponentCost = components.reduce((s, c) => s + (c.quantity * (c.unitCost || 0) * (1 + (c.taxPercent || 0) / 100)), 0);
                             const poPriceExcludingTaxes = order.items.reduce((s, it) => s + (getItemEffectiveQty(it) * it.pricePerUnit), 0);
                             const netProfit = poPriceExcludingTaxes - totalComponentCost;
+                            const orderCurrency = getOrderCurrency(order);
 
                             return (
                                 <React.Fragment key={order.id}>
@@ -152,23 +153,23 @@ export const GovEInvoiceModule: React.FC<GovEInvoiceModuleProps> = ({ refreshKey
                                                     <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
                                                         <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
                                                             <div className="text-[10px] font-black text-slate-400 uppercase mb-1">Total Order Value (Gross)</div>
-                                                            <div className="text-lg font-black text-slate-800">{grossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                                                            <div className="text-lg font-black text-slate-800">{grossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {orderCurrency}</div>
                                                         </div>
                                                         <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100">
                                                             <div className="text-[10px] font-black text-emerald-600 uppercase mb-1">Total Paid Value</div>
-                                                            <div className="text-lg font-black text-emerald-700">{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                                                            <div className="text-lg font-black text-emerald-700">{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {orderCurrency}</div>
                                                         </div>
                                                         <div className={`p-4 rounded-xl border ${outstanding > 0 ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
                                                             <div className={`text-[10px] font-black uppercase mb-1 ${outstanding > 0 ? 'text-amber-600' : 'text-slate-400'}`}>Left Value (Balance)</div>
-                                                            <div className={`text-lg font-black ${outstanding > 0 ? 'text-amber-700' : 'text-slate-800'}`}>{outstanding.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                                                            <div className={`text-lg font-black ${outstanding > 0 ? 'text-amber-700' : 'text-slate-800'}`}>{outstanding.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {orderCurrency}</div>
                                                         </div>
                                                         <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
                                                             <div className="text-[10px] font-black text-blue-600 uppercase mb-1">Total Cost of Manufacture</div>
-                                                            <div className="text-lg font-black text-blue-800">{totalComponentCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                                                            <div className="text-lg font-black text-blue-800">{totalComponentCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {orderCurrency}</div>
                                                         </div>
                                                         <div className={`p-4 rounded-xl border ${netProfit > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-rose-50 border-rose-100'}`}>
                                                             <div className={`text-[10px] font-black uppercase mb-1 ${netProfit > 0 ? 'text-indigo-600' : 'text-rose-600'}`}>Net Profit</div>
-                                                            <div className={`text-lg font-black ${netProfit > 0 ? 'text-indigo-700' : 'text-rose-700'}`}>{netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                                                            <div className={`text-lg font-black ${netProfit > 0 ? 'text-indigo-700' : 'text-rose-700'}`}>{netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {orderCurrency}</div>
                                                         </div>
                                                     </div>
 
@@ -181,7 +182,7 @@ export const GovEInvoiceModule: React.FC<GovEInvoiceModuleProps> = ({ refreshKey
                                                                     {order.payments.map((p, idx) => (
                                                                         <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
                                                                             <div>
-                                                                                <div className="text-sm font-black text-emerald-700">{p.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                                                                                <div className="text-sm font-black text-emerald-700">{p.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {orderCurrency}</div>
                                                                                 <div className="text-[10px] font-bold text-slate-500 mt-0.5">{new Date(p.date).toLocaleDateString()}</div>
                                                                             </div>
                                                                             <div className="text-[9px] font-black text-slate-500 uppercase">{p.receiptNumber}</div>
@@ -238,7 +239,7 @@ export const GovEInvoiceModule: React.FC<GovEInvoiceModuleProps> = ({ refreshKey
                                                                             <div className="col-span-5 font-bold text-slate-800">{c.description}</div>
                                                                             <div className="col-span-2 font-mono text-[10px] font-black text-blue-600 uppercase">{c.poNumber || 'N/A'}</div>
                                                                             <div className="col-span-2 text-center font-bold text-slate-500">{c.quantity} {c.unit}</div>
-                                                                            <div className="col-span-3 text-right font-black text-amber-700">{purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.</div>
+                                                                            <div className="col-span-3 text-right font-black text-amber-700">{purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {orderCurrency}</div>
                                                                         </div>
                                                                     );
                                                                 })}

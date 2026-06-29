@@ -1,8 +1,27 @@
-﻿import { CustomerOrderItem, OrderStatus } from './types';
+﻿import { CustomerOrder, CustomerOrderItem, DEFAULT_CURRENCY, OrderStatus } from './types';
 
 export const getItemEffectiveQty = (item: CustomerOrderItem): number => {
     const qty = item.alteredQty !== undefined && item.alteredQty !== null ? item.alteredQty : item.quantity;
     return qty || 1;
+};
+
+/**
+ * Returns the native currency for a customer order, defaulting to 'L.E.'
+ * when the order was created before the currency feature existed.
+ */
+export const getOrderCurrency = (order: CustomerOrder | null | undefined): string => {
+    return order?.currency || DEFAULT_CURRENCY;
+};
+
+/**
+ * Returns the conversion rate used to bring costs (denominated in PO currency)
+ * into the order's revenue currency for the P/L threshold check. Defaults to 1
+ * (no conversion) when the rate is missing or non-finite.
+ */
+export const getOrderConversionRate = (order: CustomerOrder | null | undefined): number => {
+    const r = Number(order?.conversionRate);
+    if (!Number.isFinite(r) || r <= 0) return 1;
+    return r;
 };
 
 export const getStatusLimitHours = (status: OrderStatus, settings: any): number => {

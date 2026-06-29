@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CustomerOrder, LogEntry, ManufacturingComponent, OrderStatus, AppConfig } from '../types';
-import { getItemEffectiveQty } from '../utils';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate } from '../utils';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 import { jsPDF } from 'jspdf';
@@ -94,7 +94,7 @@ const BoMTable: React.FC<{ components: ManufacturingComponent[] }> = ({ componen
         <div className="text-right">
           <div className="text-[10px] font-bold text-slate-400 uppercase">Est. Mfg Cost</div>
           <div className="text-sm font-black text-slate-900">
-            {components.reduce((sum, c) => sum + (c.quantity * c.unitCost), 0).toLocaleString()} L.E.
+            {components.reduce((sum, c) => sum + (c.quantity * c.unitCost), 0).toLocaleString()} {orderCurrency}
           </div>
         </div>
       </div>
@@ -120,7 +120,7 @@ const BoMTable: React.FC<{ components: ManufacturingComponent[] }> = ({ componen
                   <td className="px-4 py-3 font-medium text-slate-500">{comp.quantity} <span className="text-[9px] uppercase">{comp.unit}</span></td>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-md text-[8px] font-black border uppercase tracking-tighter ${comp.source === 'STOCK' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>{comp.source}</span></td>
                   <td className="px-4 py-3"><div className="flex items-center gap-1.5"><div className={`w-1.5 h-1.5 rounded-full ${comp.status === 'RECEIVED' || comp.status === 'AVAILABLE' || comp.status === 'RESERVED' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-amber-400'}`}></div><span className="text-[9px] font-bold text-slate-500 uppercase">{comp.status.replace('_', ' ')}</span></div></td>
-                  <td className="px-4 py-3 text-right font-mono font-black text-slate-900">{comp.unitCost > 0 ? `${(comp.quantity * comp.unitCost).toLocaleString()} L.E.` : 'PENDING'}</td>
+                  <td className="px-4 py-3 text-right font-mono font-black text-slate-900">{comp.unitCost > 0 ? `${(comp.quantity * comp.unitCost).toLocaleString()} ${orderCurrency}` : 'PENDING'}</td>
                 </tr>
               );
             })}
@@ -165,6 +165,11 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
 
   const totalSalesValue = order.items.reduce((s, i) => s + (getItemEffectiveQty(i) * i.pricePerUnit), 0);
   const isFinanceBlocked = order.status === OrderStatus.IN_HOLD || isOverdue;
+  // Multi-currency amendment: order details always render in the order's
+  // native currency. costLine in the BoM remains in its PO currency (which
+  // is its native denomination) — currency only applies to revenue-side
+  // totals and per-line price.
+  const orderCurrency = getOrderCurrency(order);
   const invoiceTemplateRef = React.useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
@@ -277,7 +282,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
             <div className="w-64 border-2 border-slate-900 divide-y-2 divide-slate-900 font-black">
               <div className="grid grid-cols-2 bg-slate-100">
                 <div className="p-3 border-r-2 border-slate-900 text-sm uppercase">GRAND TOTAL</div>
-                <div className="p-3 text-right text-xl">{totalSalesValue.toLocaleString()} L.E.</div>
+                <div className="p-3 text-right text-xl">{totalSalesValue.toLocaleString()} {orderCurrency}</div>
               </div>
             </div>
           </div>
@@ -322,6 +327,9 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                 <h3 className="text-2xl font-black text-slate-800 tracking-tight">{order.customerName}</h3>
                 <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-[10px] font-black uppercase tracking-widest border border-slate-200">
                   {order.internalOrderNumber}
+                </span>
+                <span className="px-3 py-1 bg-slate-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest" title="Order currency">
+                  <i className="fa-solid fa-coins mr-1 opacity-60"></i>{orderCurrency}
                 </span>
                 {order.status === OrderStatus.REJECTED && (
                   <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-[10px] font-black uppercase border border-red-200">Permanently Closed</span>
@@ -426,7 +434,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
               </div>
               <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 group hover:border-emerald-200 transition-colors">
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Contract Value</div>
-                <div className="text-2xl font-black text-emerald-600">{totalSalesValue.toLocaleString()} <span className="text-xs font-bold opacity-60">L.E.</span></div>
+                <div className="text-2xl font-black text-emerald-600">{totalSalesValue.toLocaleString()} <span className="text-xs font-bold opacity-60">{orderCurrency}</span></div>
               </div>
               <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 group hover:border-indigo-200 transition-colors">
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Logged Date</div>
@@ -448,10 +456,10 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                       <div className="flex-1">
                         <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${item.isAccepted ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-slate-300'}`}></div><div className="font-mono text-[10px] text-blue-500 font-black uppercase tracking-wider">{item.orderNumber}</div></div>
                         <div className="font-bold text-slate-800 text-lg group-hover:text-blue-600 transition-colors">{item.description}</div>
-                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-4"><span className="font-medium">{getItemEffectiveQty(item)} {item.unit} @ {item.pricePerUnit.toLocaleString()} L.E.</span></div>
+                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-4"><span className="font-medium">{getItemEffectiveQty(item)} {item.unit} @ {item.pricePerUnit.toLocaleString()} {orderCurrency}</span></div>
                       </div>
                       <div className="text-right flex items-center gap-6">
-                        <div className="hidden sm:block"><div className="text-[10px] font-black text-slate-400 uppercase mb-0.5">Line Total</div><div className="font-black text-slate-900 text-lg">{(getItemEffectiveQty(item) * item.pricePerUnit).toLocaleString()} <span className="text-[10px] opacity-40">L.E.</span></div></div>
+                        <div className="hidden sm:block"><div className="text-[10px] font-black text-slate-400 uppercase mb-0.5">Line Total</div><div className="font-black text-slate-900 text-lg">{(getItemEffectiveQty(item) * item.pricePerUnit).toLocaleString()} <span className="text-[10px] opacity-40">{orderCurrency}</span></div></div>
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center bg-white border border-slate-200 text-slate-400 transition-transform duration-300 ${expandedItemId === item.id ? 'rotate-180 bg-blue-600 border-blue-600 text-white shadow-lg' : 'group-hover:border-blue-300 group-hover:text-blue-500'}`}><i className="fa-solid fa-chevron-down text-xs"></i></div>
                       </div>
                     </div>

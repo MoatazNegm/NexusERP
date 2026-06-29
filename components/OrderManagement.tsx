@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrderItem, OrderStatus, Customer, AppConfig, CustomerOrder, User } from '../types';
+import { CustomerOrderItem, OrderStatus, Customer, AppConfig, CustomerOrder, User, Currency, DEFAULT_CURRENCY, SUPPORTED_CURRENCIES } from '../types';
 import { GoogleGenAI } from "@google/genai";
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -163,6 +163,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(0);
   const [targetDeliveryDate, setTargetDeliveryDate] = useState(today);
   const [orderTaxPercent, setOrderTaxPercent] = useState(DEFAULT_TAX_PERCENT);
+  const [currency, setCurrency] = useState<Currency>(DEFAULT_CURRENCY);
+  const [conversionRate, setConversionRate] = useState<number>(1);
   const [items, setItems] = useState<ItemWithTaxStatus[]>([
     { id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, isAccepted: false, taxDetected: true }
   ]);
@@ -346,6 +348,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
     setTargetDeliveryDays(match.targetDeliveryDays || 0);
     setTargetDeliveryDate(match.targetDeliveryDate || match.orderDate);
+    // Multi-currency amendment: hydrate currency + conversionRate from the
+    // existing record so editing a USD order does not silently reset it to L.E.
+    setCurrency(match.currency || DEFAULT_CURRENCY);
+    setConversionRate(match.conversionRate || 1);
 
     setItems(match.items.map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
 
@@ -603,9 +609,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         console.log('[AI Scan] Found incoterms:', extracted.incoterms);
       }
 
-      // Extract currency if found
-      if (extracted.currency) {
+      // Extract currency if found — only set when the AI detected a value AND that
+      // value is in our supported list, otherwise fall through to the form's
+      // current default (L.E.).
+      if (extracted.currency && SUPPORTED_CURRENCIES.includes(extracted.currency)) {
         console.log('[AI Scan] Found currency:', extracted.currency);
+        setCurrency(extracted.currency);
       }
 
       // Extract partial shipment flag
@@ -689,6 +698,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setTargetDeliveryDays(0);
     setTargetDeliveryDate(today);
     setOrderTaxPercent(DEFAULT_TAX_PERCENT);
+    setCurrency(DEFAULT_CURRENCY);
+    setConversionRate(1);
     setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, taxDetected: true, logs: [] }]);
     setEditingOrderId(null); setMessage(null); setIsNewCustomerCreated(false);
   };
@@ -726,7 +737,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     try {
       if (editingOrderId) {
 
-        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, items: normalizedItems as any });
+        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, currency, conversionRate, items: normalizedItems as any });
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
         // Prevent duplicate PO reference for the same customer on the frontend side
@@ -746,6 +757,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           orderDate,
           paymentSlaDays,
           appliesWithholdingTax,
+          currency,
+          conversionRate,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
           targetDeliveryDate,
 
@@ -973,19 +986,6 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </div>
                     )}
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment SLA (Days)</label>
-                    <input
-                      disabled={editStatus.isFrozen}
-                      type="number"
-                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
-                      placeholder="Collection Limit..."
-                      value={paymentSlaDays}
-                      onChange={e => setPaymentSlaDays(parseInt(e.target.value) || 0)}
-                      required
-                    />
-                  </div>
-
                   <div className="space-y-2 col-span-1 md:col-span-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between">
                       <span>Target Delivery</span>
@@ -1039,16 +1039,46 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </span>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tax % (Order Level)</label>
-                    <input
-                      disabled={editStatus.isFrozen}
-                      type="number"
-                      step="any"
-                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner text-center"
-                      value={orderTaxPercent}
-                      onChange={e => setOrderTaxPercent(parseFloat(e.target.value) || 0)}
-                    />
+
+                  {/* Compact fields row: Payment SLA, Tax %, Currency */}
+                  <div className="flex flex-row gap-4 items-start">
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment SLA (Days)</label>
+                      <input
+                        disabled={editStatus.isFrozen}
+                        type="number"
+                        className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                        placeholder="e.g. 30"
+                        value={paymentSlaDays}
+                        onChange={e => setPaymentSlaDays(parseInt(e.target.value) || 0)}
+                        required
+                      />
+                    </div>
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tax %</label>
+                      <input
+                        disabled={editStatus.isFrozen}
+                        type="number"
+                        step="any"
+                        className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner text-center"
+                        value={orderTaxPercent}
+                        onChange={e => setOrderTaxPercent(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Currency</label>
+                      <select
+                        disabled={editStatus.isFrozen}
+                        className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                        value={currency}
+                        onChange={e => setCurrency(e.target.value as Currency)}
+                        title="Order currency. Prices on this order are denominated in this currency. Defaults to L.E."
+                      >
+                        {SUPPORTED_CURRENCIES.map(c => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -1089,7 +1119,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                             <input disabled={editStatus.isFrozen} type="number" step="any" className="w-full p-3 border-2 border-white rounded-xl bg-white font-bold text-center shadow-sm" value={item.quantity} onChange={e => { const n = [...items]; n[idx].quantity = parseFloat(e.target.value) || 1; setItems(n); }} onBlur={e => { const n = [...items]; n[idx].quantity = parseFloat(e.target.value) || 1; setItems(n); }} />
                           </div>
                           <div className="flex-1 space-y-1.5">
-                            <label className="text-9px font-black text-slate-400 uppercase">Unit price (L.E.)</label>
+                            <label className="text-9px font-black text-slate-400 uppercase">Unit price ({currency})</label>
                             <input disabled={editStatus.isFrozen} type="number" step="any" className="w-full p-3 border-2 border-white rounded-xl bg-white font-black text-emerald-600 shadow-sm" value={item.pricePerUnit} onChange={e => { const n = [...items]; n[idx].pricePerUnit = parseFloat(e.target.value) || 0; setItems(n); }} />
                           </div>
                           <div className="flex-1 space-y-1.5">
@@ -1117,7 +1147,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                 <div className="bg-slate-900 p-10 rounded-[3rem] text-white flex flex-col lg:flex-row justify-between items-center gap-10 shadow-2xl relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-8 opacity-5"><i className="fa-solid fa-coins text-9xl"></i></div>
                   <div className="flex flex-col md:flex-row gap-12 relative z-10">
-                    <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest">Subtotal Value</div><div className="text-3xl font-black">{totals.subtotal.toLocaleString()} <span className="text-sm opacity-30">L.E.</span></div></div>
+                    <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest">Subtotal Value</div><div className="text-3xl font-black">{totals.subtotal.toLocaleString()} <span className="text-sm opacity-30">{currency}</span></div></div>
                     <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-rose-400">Total Tax</div><div className="text-3xl font-black text-rose-400">{totals.taxTotal.toLocaleString()}</div></div>
                     <div><div className="text-[10px] opacity-40 uppercase font-black tracking-widest text-emerald-400">Grand Transaction Total</div><div className="text-4xl font-black text-emerald-400">{totals.total.toLocaleString()}</div></div>
                   </div>

@@ -1,4 +1,18 @@
 
+/**
+ * Supported order currencies. The application NEVER converts between currencies —
+ * revenue and cost are tracked in the order's native currency. Currency conversion
+ * is only used to bring the cost side into the order's revenue currency when
+ * checking the P/L threshold (see the `conversionRate` field on CustomerOrder).
+ *
+ * 'L.E.' (Egyptian Pound) is the default for any order that does not explicitly
+ * identify a currency.
+ */
+export type Currency = 'L.E.' | 'USD' | 'EUR' | 'SAR' | 'AED' | 'GBP';
+
+export const DEFAULT_CURRENCY: Currency = 'L.E.';
+export const SUPPORTED_CURRENCIES: Currency[] = ['L.E.', 'USD', 'EUR', 'SAR', 'AED', 'GBP'];
+
 export enum OrderStatus {
   LOGGED = 'LOGGED',
   TECHNICAL_REVIEW = 'TECHNICAL_REVIEW',
@@ -263,6 +277,18 @@ export interface CustomerOrder {
   targetDeliveryDate?: string;
   appliesWithholdingTax?: boolean;
   whtCertificateFile?: string;
+  /**
+   * Native currency for this order. Prices, costs, payments and any revenue
+   * figure derived from this order are denominated in this currency. Defaults
+   * to 'L.E.' if not explicitly set.
+   */
+  currency?: Currency;
+  /**
+   * Multiplier used to bring costs (which are denominated in their own PO
+   * currency) into the order's revenue currency for the P/L threshold check.
+   * Defaults to 1 (i.e. no conversion). Editable from the Finance view.
+   */
+  conversionRate?: number;
 }
 
 export interface HelpLink {

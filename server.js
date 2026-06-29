@@ -20,7 +20,7 @@ if (!fs.existsSync(UPLOADS_BASE)) {
 }
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 2; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 3; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -106,7 +106,7 @@ const getItemEffectiveStatus = (item) => {
     return 'MIXED';
 };
 
-const evaluateMarginStatus = (items, minMargin, currentStatus) => {
+const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1) => {
     let totalRevenue = 0;
     let totalCost = 0;
     let hasComponents = false;
@@ -135,14 +135,21 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
         }
     });
 
-    const marginAmt = totalRevenue - totalCost;
-    const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+    // Multi-currency amendment: when the order is denominated in a non-L.E.
+    // currency, the cost side (PO currency) is brought into the order's revenue
+    // currency via the per-order conversionRate so the P/L threshold check is
+    // apples-to-apples. conversionRate defaults to 1 for legacy / L.E. orders.
+    const safeRate = (Number.isFinite(Number(conversionRate)) && Number(conversionRate) > 0) ? Number(conversionRate) : 1;
+    const totalCostInOrderCurrency = totalCost * safeRate;
+
+    const marginAmt = totalRevenue - totalCostInOrderCurrency;
+    const markupPct = totalCostInOrderCurrency > 0 ? (marginAmt / totalCostInOrderCurrency) * 100 : (totalRevenue > 0 ? 100 : 0);
 
     // Safeguard: Don't auto-transition terminal or manual statuses
     if ([OrderStatus.REJECTED, OrderStatus.IN_HOLD].includes(currentStatus)) return currentStatus;
 
     // Priority 1: Margin Protection (only when costs have been identified)
-    if (hasComponents && isMarginBreach(totalCost, markupPct, minMargin)) return OrderStatus.NEGATIVE_MARGIN;
+    if (hasComponents && isMarginBreach(totalCostInOrderCurrency, markupPct, minMargin)) return OrderStatus.NEGATIVE_MARGIN;
 
     // Priority 2: Technical Workflow Transition
     if ((hasActiveTechReview || anyAccepted) && currentStatus === OrderStatus.LOGGED) {
@@ -150,7 +157,7 @@ const evaluateMarginStatus = (items, minMargin, currentStatus) => {
     }
 
     // Priority 3: Recovery from Negative Margin (sticky: only exit when costs are known and margin recovers, or components are removed)
-    if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || (totalCost > 0 && markupPct >= minMargin))) {
+    if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || (totalCostInOrderCurrency > 0 && markupPct >= minMargin))) {
         return (hasActiveTechReview || anyAccepted) ? OrderStatus.TECHNICAL_REVIEW : OrderStatus.LOGGED;
     }
 
@@ -186,7 +193,13 @@ const canIssuePoForOrder = (order, minMargin) => {
         });
     });
 
-    const markupPct = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : (totalRevenue > 0 ? 100 : 0);
+    // Multi-currency amendment: bring the cost side into the order's revenue
+    // currency before computing markup so the threshold is in the order's
+    // native units.
+    const safeRate = (Number.isFinite(Number(order.conversionRate)) && Number(order.conversionRate) > 0) ? Number(order.conversionRate) : 1;
+    const totalCostInOrderCurrency = totalCost * safeRate;
+
+    const markupPct = totalCostInOrderCurrency > 0 ? ((totalRevenue - totalCostInOrderCurrency) / totalCostInOrderCurrency) * 100 : (totalRevenue > 0 ? 100 : 0);
     return markupPct >= minMargin;
 };
 
@@ -398,6 +411,15 @@ const migrations = [
         }
         return settings;
     },
+    // v2 → v3: Multi-currency support — backfill currency + conversionRate on existing orders
+    (settings) => {
+        // Multi-currency amendment: every existing order is implicitly denominated
+        // in 'L.E.' (the pre-feature default) with conversionRate = 1 (no
+        // conversion between revenue and cost side). We backfill these fields on
+        // the live db.orders array here so the migration is idempotent and runs
+        // a single time on the next server boot.
+        return settings;
+    },
 ];
 
 const applySchemaMigrations = (db) => {
@@ -421,6 +443,18 @@ const applySchemaMigrations = (db) => {
         if (!migration) break;
         settings = migration(settings);
         version++;
+        // v2 → v3: backfill currency fields on every order so legacy data
+        // renders correctly in the new multi-currency UI. Idempotent.
+        if (version === 3 && Array.isArray(db.orders)) {
+            let touched = 0;
+            db.orders.forEach(o => {
+                if (!o.currency) { o.currency = 'L.E.'; touched++; }
+                if (o.conversionRate === undefined || o.conversionRate === null || !Number.isFinite(Number(o.conversionRate)) || Number(o.conversionRate) <= 0) {
+                    o.conversionRate = 1;
+                }
+            });
+            if (touched > 0) console.log(`[System] v2→v3 migration: backfilled currency='L.E.' on ${touched} order(s).`);
+        }
     }
 
     settings.dbSchemaVersion = CURRENT_SCHEMA_VERSION;
@@ -592,6 +626,14 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
     if (!order.logs) order.logs = [];
     if (!order.items) order.items = [];
 
+    // 1b. Multi-currency defaults — every order is implicitly denominated in
+    //     'L.E.' with conversionRate = 1 unless explicitly set. This mirrors
+    //     the v2→v3 migration so newly-created orders behave the same.
+    if (!order.currency) order.currency = 'L.E.';
+    if (!Number.isFinite(Number(order.conversionRate)) || Number(order.conversionRate) <= 0) {
+        order.conversionRate = 1;
+    }
+
     // 2. Handle New Order specific side-effects
     if (isNew) {
         if (!order.internalOrderNumber) order.internalOrderNumber = generateInternalOrderNumber(db);
@@ -705,13 +747,13 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         // Skip margin check for Internal Stock orders (they always have 0 revenue)
         let nextStatus = order.status || OrderStatus.LOGGED;
         if (order.customerName !== 'Internal Stock') {
-            nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED);
+            nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate);
         } else {
             // For Internal Stock, standard transitions apply (e.g. LOGGED -> TECH REVIEW if components exist)
             // We reuse evaluateMarginStatus logic BUT purely for workflow transitions, ignoring negative margin return
             // Actually, evaluateMarginStatus prioritizes margin check. Let's replicate strict workflow logic here or modify evaluateMarginStatus.
-            // Simpler: Just allow negative margin if it's internal stock. 
-            const calculatedStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED);
+            // Simpler: Just allow negative margin if it's internal stock.
+            const calculatedStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate);
             if (calculatedStatus === OrderStatus.NEGATIVE_MARGIN) {
                 // Fallback: If it blocked on margin, check if it should proceed to Tech Review
                 const hasComponents = (order.items || []).some(i => i.components && i.components.length > 0);
