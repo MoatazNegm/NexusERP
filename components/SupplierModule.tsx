@@ -176,14 +176,238 @@ export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, use
   const parsePrice = (raw: unknown): number | null => {
     if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
     if (typeof raw !== 'string') return null;
-    const normalized = raw.replace(/,/g, '').replace(/[^0-9.-]/g, '').trim();
+    const normalizedDigits = raw
+      .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+      .replace(/[\u06F0-\u06F9]/g, (digit) => String(digit.charCodeAt(0) - 0x06F0));
+    const normalized = normalizedDigits
+      .replace(/[،,\s]/g, '')
+      .replace(/[٫]/g, '.')
+      .replace(/[^0-9.-]/g, '')
+      .trim();
     if (!normalized) return null;
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : null;
   };
 
+  const partNumberAliases = [
+    'Part Number', 'Part No', 'Part #', 'PartNum', 'Part ID', 'SKU', 'Item Code', 'Product Code', 'Model Number',
+    'رقم الصنف', 'رقم القطعة', 'رقم المنتج', 'كود الصنف', 'كود المنتج', 'كود القطعة', 'رقم المادة', 'رمز الصنف', 'رمز المنتج'
+  ];
+
+  const descriptionAliases = [
+    'Item Description', 'Description', 'Item Name', 'Part Description', 'Product Description', 'Material Description', 'Name',
+    'الوصف', 'وصف الصنف', 'وصف المنتج', 'وصف القطعة', 'اسم الصنف', 'اسم المنتج', 'بيان الصنف', 'بيان المنتج'
+  ];
+
+  const unitPriceAliases = [
+    'Unit Price', 'Price', 'Unit Cost', 'Cost', 'Rate', 'Unit Rate', 'Amount', 'Selling Price',
+    'سعر الوحدة', 'السعر', 'سعر', 'التكلفة', 'تكلفة الوحدة', 'القيمة', 'المبلغ', 'سعر البيع'
+  ];
+
   const normalizeHeader = (value: string): string => {
-    return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return value
+      .normalize('NFKC')
+      .toLocaleLowerCase()
+      .replace(/[\u0640\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ى/g, 'ي')
+      .replace(/ة/g, 'ه')
+      .replace(/[^\p{L}\p{N}]/gu, '');
+  };
+
+  const normalizeCellText = (value: unknown): string => {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  };
+
+  const getColumnLabel = (index: number): string => {
+    let current = index;
+    let label = '';
+
+    while (current >= 0) {
+      label = String.fromCharCode(65 + (current % 26)) + label;
+      current = Math.floor(current / 26) - 1;
+    }
+
+    return `Column ${label}`;
+  };
+
+  const buildUniqueHeaders = (row: unknown[], columnCount: number): string[] => {
+    const seen = new Map<string, number>();
+
+    return Array.from({ length: columnCount }, (_, index) => {
+      const rawValue = normalizeCellText(row[index]);
+      const baseHeader = rawValue || getColumnLabel(index);
+      const occurrenceCount = seen.get(baseHeader) || 0;
+      seen.set(baseHeader, occurrenceCount + 1);
+      return occurrenceCount === 0 ? baseHeader : `${baseHeader} (${occurrenceCount + 1})`;
+    });
+  };
+
+  const rowHasContent = (row: unknown[]): boolean => row.some((cell) => normalizeCellText(cell) !== '');
+
+  const toObjectRows = (matrix: unknown[][], headers: string[], startRowIndex: number): Record<string, unknown>[] => {
+    return matrix
+      .slice(startRowIndex)
+      .filter(rowHasContent)
+      .map((row) => {
+        const record: Record<string, unknown> = {};
+        headers.forEach((header, index) => {
+          record[header] = row[index] ?? '';
+        });
+        return record;
+      });
+  };
+
+  const getRowValues = (row: Record<string, unknown>, keys: string[]) => {
+    return keys.map((key) => normalizeCellText(row[key]));
+  };
+
+  const scoreMappedRows = (
+    rows: Record<string, unknown>[],
+    mapping: { partNumberKey: string; descriptionKey: string; unitPriceKey: string } | null,
+    sampleSize = 12
+  ): number => {
+    if (!mapping) return 0;
+
+    return rows.slice(0, sampleSize).reduce((score, row) => {
+      const partNumber = normalizeCellText(row[mapping.partNumberKey]);
+      const description = normalizeCellText(row[mapping.descriptionKey]);
+      const price = parsePrice(row[mapping.unitPriceKey]);
+      return score + (partNumber && description && price !== null ? 1 : 0);
+    }, 0);
+  };
+
+  const resolveColumnMapping = (availableKeys: string[]) => {
+    const partNumberKey = resolveColumnKey(availableKeys, partNumberAliases);
+    const descriptionKey = resolveColumnKey(availableKeys, descriptionAliases);
+    const unitPriceKey = resolveColumnKey(availableKeys, unitPriceAliases);
+
+    if (!partNumberKey || !descriptionKey || !unitPriceKey) return null;
+
+    const uniqueKeys = new Set([partNumberKey, descriptionKey, unitPriceKey]);
+    if (uniqueKeys.size < 3) return null;
+
+    return { partNumberKey, descriptionKey, unitPriceKey };
+  };
+
+  const extractSheetMatrix = (sheet: XLSX.WorkSheet): unknown[][] => {
+    return XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      defval: '',
+      blankrows: false,
+      raw: false
+    });
+  };
+
+  const findBestHeaderCandidate = (matrix: unknown[][]) => {
+    const maxColumnCount = matrix.reduce((max, row) => Math.max(max, row.length), 0);
+    let bestCandidate: { headerRowIndex: number; headers: string[]; rows: Record<string, unknown>[]; mapping: { partNumberKey: string; descriptionKey: string; unitPriceKey: string } | null; score: number } | null = null;
+
+    for (let rowIndex = 0; rowIndex < matrix.length; rowIndex += 1) {
+      const row = matrix[rowIndex] || [];
+      const nonEmptyCells = row.filter((cell) => normalizeCellText(cell) !== '');
+      if (nonEmptyCells.length < 2) continue;
+
+      const headers = buildUniqueHeaders(row, maxColumnCount);
+      const rows = toObjectRows(matrix, headers, rowIndex + 1);
+      if (!rows.length) continue;
+
+      const mapping = resolveColumnMapping(headers);
+      const mappedRowScore = scoreMappedRows(rows, mapping);
+      const aliasScore = [
+        resolveColumnKey(headers, partNumberAliases),
+        resolveColumnKey(headers, descriptionAliases),
+        resolveColumnKey(headers, unitPriceAliases)
+      ].filter(Boolean).length;
+      const score = mappedRowScore * 10 + aliasScore * 5;
+
+      if (!bestCandidate || score > bestCandidate.score) {
+        bestCandidate = { headerRowIndex: rowIndex, headers, rows, mapping, score };
+      }
+    }
+
+    return bestCandidate;
+  };
+
+  const inferMappingFromHeaderlessRows = (matrix: unknown[][]) => {
+    const nonEmptyRows = matrix
+      .map((row, rowIndex) => ({ row, rowIndex }))
+      .filter(({ row }) => rowHasContent(row));
+
+    if (!nonEmptyRows.length) return null;
+
+    const dataStart = nonEmptyRows.findIndex(({ row }, index) => {
+      const window = nonEmptyRows.slice(index, index + 6);
+      if (window.length < 2) return false;
+
+      const wideRows = window.filter(({ row: candidateRow }) => candidateRow.filter((cell) => normalizeCellText(cell) !== '').length >= 3);
+      return wideRows.length >= 2;
+    });
+
+    if (dataStart === -1) return null;
+
+    const startEntry = nonEmptyRows[dataStart];
+    const sampleEntries = nonEmptyRows.slice(dataStart, dataStart + 25);
+    const columnCount = sampleEntries.reduce((max, { row }) => Math.max(max, row.length), 0);
+    const headers = buildUniqueHeaders([], columnCount);
+    const rows = toObjectRows(matrix, headers, startEntry.rowIndex);
+
+    type ColumnStats = { nonEmpty: number; priceLike: number; alphaNumeric: number; longTextScore: number };
+    const stats: ColumnStats[] = Array.from({ length: columnCount }, () => ({ nonEmpty: 0, priceLike: 0, alphaNumeric: 0, longTextScore: 0 }));
+
+    sampleEntries.forEach(({ row }) => {
+      for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+        const value = normalizeCellText(row[columnIndex]);
+        if (!value) continue;
+
+        stats[columnIndex].nonEmpty += 1;
+        if (parsePrice(value) !== null) stats[columnIndex].priceLike += 1;
+        if (/[a-z]/i.test(value) && /\d/.test(value)) stats[columnIndex].alphaNumeric += 1;
+        stats[columnIndex].longTextScore += value.length;
+      }
+    });
+
+    const eligibleColumns = stats
+      .map((column, index) => ({ ...column, index }))
+      .filter((column) => column.nonEmpty > 0);
+
+    const priceColumn = eligibleColumns
+      .slice()
+      .sort((left, right) => (right.priceLike / right.nonEmpty) - (left.priceLike / left.nonEmpty))[0];
+
+    if (!priceColumn || priceColumn.priceLike === 0) return null;
+
+    const descriptionColumn = eligibleColumns
+      .filter((column) => column.index !== priceColumn.index)
+      .slice()
+      .sort((left, right) => (right.longTextScore / right.nonEmpty) - (left.longTextScore / left.nonEmpty))[0];
+
+    const partNumberColumn = eligibleColumns
+      .filter((column) => column.index !== priceColumn.index && column.index !== descriptionColumn?.index)
+      .slice()
+      .sort((left, right) => {
+        const alphaNumericDiff = (right.alphaNumeric / right.nonEmpty) - (left.alphaNumeric / left.nonEmpty);
+        if (alphaNumericDiff !== 0) return alphaNumericDiff;
+        return (right.nonEmpty - left.nonEmpty);
+      })[0];
+
+    if (!descriptionColumn || !partNumberColumn) return null;
+
+    const mapping = {
+      partNumberKey: headers[partNumberColumn.index],
+      descriptionKey: headers[descriptionColumn.index],
+      unitPriceKey: headers[priceColumn.index]
+    };
+
+    if (scoreMappedRows(rows, mapping) === 0) return null;
+
+    return {
+      headerRowIndex: null,
+      headers,
+      rows,
+      mapping
+    };
   };
 
   const resolveColumnKey = (availableKeys: string[], aliases: string[]): string | null => {
@@ -295,28 +519,48 @@ Sample rows: ${JSON.stringify(sampleRows)}
       }
 
       const sheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+      const matrix = extractSheetMatrix(sheet);
 
-      if (!rows.length) {
+      if (!matrix.length) {
         setPriceListUploadMessage({ type: 'error', text: 'Upload failed: sheet is empty.' });
         return;
       }
 
-      const availableKeys = Object.keys(rows[0] || {});
-      let partNumberKey = resolveColumnKey(availableKeys, [
-        'Part Number', 'Part No', 'Part #', 'PartNum', 'Part ID', 'SKU', 'Item Code', 'Product Code', 'Model Number'
-      ]);
-      let descriptionKey = resolveColumnKey(availableKeys, [
-        'Item Description', 'Description', 'Item Name', 'Part Description', 'Product Description', 'Material Description', 'Name'
-      ]);
-      let unitPriceKey = resolveColumnKey(availableKeys, [
-        'Unit Price', 'Price', 'Unit Cost', 'Cost', 'Rate', 'Unit Rate', 'Amount', 'Selling Price'
-      ]);
+      const headerCandidate = findBestHeaderCandidate(matrix);
+      const headerlessCandidate = inferMappingFromHeaderlessRows(matrix);
+
+      let selectedRows = headerCandidate?.rows || [];
+      let availableKeys = headerCandidate?.headers || [];
+      let partNumberKey = headerCandidate?.mapping?.partNumberKey || null;
+      let descriptionKey = headerCandidate?.mapping?.descriptionKey || null;
+      let unitPriceKey = headerCandidate?.mapping?.unitPriceKey || null;
+      let detectedHeaderRowIndex = headerCandidate?.headerRowIndex ?? null;
+      let usedGeneratedHeaders = false;
+
+      const headerScore = scoreMappedRows(selectedRows, partNumberKey && descriptionKey && unitPriceKey
+        ? { partNumberKey, descriptionKey, unitPriceKey }
+        : null);
+      const headerlessScore = headerlessCandidate ? scoreMappedRows(headerlessCandidate.rows, headerlessCandidate.mapping) : 0;
+
+      if ((!partNumberKey || !descriptionKey || !unitPriceKey) && headerlessCandidate && headerlessScore > headerScore) {
+        selectedRows = headerlessCandidate.rows;
+        availableKeys = headerlessCandidate.headers;
+        partNumberKey = headerlessCandidate.mapping.partNumberKey;
+        descriptionKey = headerlessCandidate.mapping.descriptionKey;
+        unitPriceKey = headerlessCandidate.mapping.unitPriceKey;
+        detectedHeaderRowIndex = null;
+        usedGeneratedHeaders = true;
+      }
+
+      if (!selectedRows.length) {
+        setPriceListUploadMessage({ type: 'error', text: 'Upload failed: could not detect a usable table in the sheet.' });
+        return;
+      }
 
       let usedAiFallback = false;
       if (!partNumberKey || !descriptionKey || !unitPriceKey) {
         try {
-          const aiMapping = await inferColumnMappingWithAI(availableKeys, rows);
+          const aiMapping = await inferColumnMappingWithAI(availableKeys, selectedRows);
           if (aiMapping) {
             partNumberKey = partNumberKey || aiMapping.partNumberKey;
             descriptionKey = descriptionKey || aiMapping.descriptionKey;
@@ -332,7 +576,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
       if (!partNumberKey || !descriptionKey || !unitPriceKey) {
         setPriceListUploadMessage({
           type: 'error',
-          text: `Upload failed. Could not detect required columns. Detected headers: ${availableKeys.join(', ') || 'none'}. Required fields: part number, item description, unit price.`
+          text: `Upload failed. Could not detect required columns. Detected ${usedGeneratedHeaders ? 'columns' : 'headers'}: ${availableKeys.join(', ') || 'none'}. Required fields: part number, item description, unit price.`
         });
         return;
       }
@@ -340,22 +584,45 @@ Sample rows: ${JSON.stringify(sampleRows)}
       const mappedParts: Omit<SupplierPart, 'id'>[] = [];
       const invalidRows: string[] = [];
 
-      rows.forEach((row, index) => {
-        const rowNumber = index + 2;
+      const parsedRows = selectedRows.map((row, index) => {
+        const rowNumber = detectedHeaderRowIndex === null ? index + 1 : detectedHeaderRowIndex + index + 2;
         const partNumber = String(row[partNumberKey] ?? '').trim();
         const description = String(row[descriptionKey] ?? '').trim();
         const priceRaw = row[unitPriceKey];
+        const priceText = normalizeCellText(priceRaw);
         const price = parsePrice(priceRaw);
 
-        if (!partNumber || !description || price === null) {
-          invalidRows.push(`Row ${rowNumber}`);
+        return {
+          rowNumber,
+          partNumber,
+          description,
+          price,
+          hasAnyValue: Boolean(partNumber || description || priceText)
+        };
+      });
+
+      const firstValidRowIndex = parsedRows.findIndex((row) => row.partNumber && row.description && row.price !== null);
+
+      if (firstValidRowIndex === -1) {
+        setPriceListUploadMessage({
+          type: 'error',
+          text: 'Upload failed. Could not find any valid data rows with part number, item description, and unit price.'
+        });
+        return;
+      }
+
+      parsedRows.slice(firstValidRowIndex).forEach((row) => {
+        if (!row.hasAnyValue) return;
+
+        if (!row.partNumber || !row.description || row.price === null) {
+          invalidRows.push(`Row ${row.rowNumber}`);
           return;
         }
 
         mappedParts.push({
-          partNumber,
-          description,
-          price,
+          partNumber: row.partNumber,
+          description: row.description,
+          price: row.price,
           currency: 'L.E.'
         });
       });
@@ -390,7 +657,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
       await loadSuppliers();
       setPriceListUploadMessage({
         type: 'success',
-        text: `Bulk upload successful. ${mergedPriceList.length} price list rows saved.${usedAiFallback ? ' Mapping inferred using AI.' : ''}`
+        text: `Bulk upload successful. ${mergedPriceList.length} price list rows saved.${detectedHeaderRowIndex !== null ? ` Header row detected at row ${detectedHeaderRowIndex + 1}.` : ''}${usedGeneratedHeaders ? ' Table imported without a header row.' : ''}${usedAiFallback ? ' Mapping inferred using AI.' : ''}`
       });
     } catch (error) {
       setPriceListUploadMessage({ type: 'error', text: 'Bulk upload failed. Please use a valid Excel file (.xlsx).' });

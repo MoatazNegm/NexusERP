@@ -13,10 +13,9 @@ import { AddCustomerModal } from './AddCustomerModal';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
-const convertPdfToJpegBase64 = async (file: File): Promise<string> => {
-  const data = new Uint8Array(await file.arrayBuffer());
-  const pdf = await getDocument({ data }).promise;
-  const page = await pdf.getPage(1);
+const renderPdfPageToJpegBase64 = async (pdf: any, pageNumber: number): Promise<string> => {
+  const clampedPage = Math.max(1, Math.min(pageNumber, pdf.numPages || 1));
+  const page = await pdf.getPage(clampedPage);
   const viewport = page.getViewport({ scale: 2 });
 
   const canvas = document.createElement('canvas');
@@ -28,7 +27,7 @@ const convertPdfToJpegBase64 = async (file: File): Promise<string> => {
     throw new Error('Failed to initialize PDF conversion canvas.');
   }
 
-  await page.render({ canvasContext: context, viewport }).promise;
+  await page.render({ canvas, canvasContext: context, viewport }).promise;
   const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.9);
   const base64 = jpegDataUrl.split(',')[1];
   if (!base64) {
@@ -36,6 +35,102 @@ const convertPdfToJpegBase64 = async (file: File): Promise<string> => {
   }
 
   return base64;
+};
+
+const scorePdfPageText = (text: string): number => {
+  const normalized = text.toLowerCase();
+  const has = (re: RegExp) => re.test(normalized);
+  let score = 0;
+
+  if (has(/purchase\s*order|\bpo\b|po\s*(number|no|ref|reference)/)) score += 6;
+  if (has(/\bitem\b|description|part\s*number|service/)) score += 3;
+  if (has(/\bqty\b|quantity|unit\s*price|price\s*per\s*unit|amount|subtotal|grand\s*total|total/)) score += 4;
+  if (has(/vat|tax|\btax\s*rate\b|\b14\s*%/)) score += 2;
+  if (has(/delivery\s*date|expected\s*delivery|ship\s*by/)) score += 2;
+  if (has(/net\s*\d+|payment\s*terms|due\s*within\s*\d+\s*days|after\s*delivery/)) score += 2;
+  if (has(/terms\s*(and|&)\s*conditions/)) score -= 2;
+
+  return score;
+};
+
+const pickPdfCandidatePages = async (pdf: any, maxPages = 2): Promise<number[]> => {
+  const pageCount = Math.min(Math.max(1, pdf.numPages || 1), maxPages);
+  const scoredPages: Array<{ page: number; score: number }> = [];
+
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const text = (textContent.items || [])
+      .map((item: any) => item?.str || '')
+      .join(' ');
+    scoredPages.push({ page: pageNumber, score: scorePdfPageText(text) });
+  }
+
+  return scoredPages.sort((a, b) => b.score - a.score).map(entry => entry.page);
+};
+
+const hasStrongExtraction = (extracted: any): boolean => {
+  if (!extracted || typeof extracted !== 'object') return false;
+
+  const hasCustomerName = !!String(extracted.customer?.name || '').trim();
+  const hasPoRef = !!String(extracted.poRef || '').trim();
+  const itemCount = Array.isArray(extracted.items) ? extracted.items.length : 0;
+  const hasUsefulItems = itemCount > 0 && extracted.items.some((item: any) => {
+    const hasDesc = !!String(item?.description || '').trim();
+    const hasPrice = Number.isFinite(Number(item?.price)) || Number.isFinite(Number(item?.pricePerUnit));
+    const hasQty = Number.isFinite(Number(item?.quantity));
+    return hasDesc || hasPrice || hasQty;
+  });
+
+  const hasDateSignal = !!String(extracted.date || extracted.deliveryDate || '').trim();
+
+  return hasPoRef && hasUsefulItems && (hasCustomerName || hasDateSignal);
+};
+
+const mergeExtractionResults = (primary: any, fallback: any): any => {
+  const merged = { ...(primary || {}) };
+  const fallbackObj = fallback || {};
+
+  merged.customer = {
+    ...(primary?.customer || {}),
+    ...(fallbackObj.customer || {}),
+    name: primary?.customer?.name || fallbackObj.customer?.name || '',
+    email: primary?.customer?.email || fallbackObj.customer?.email || '',
+    phone: primary?.customer?.phone || fallbackObj.customer?.phone || '',
+    address: primary?.customer?.address || fallbackObj.customer?.address || '',
+    contactName: primary?.customer?.contactName || fallbackObj.customer?.contactName || ''
+  };
+
+  const scalarKeys = [
+    'poRef',
+    'paymentSlaDays',
+    'paymentFromDelivery',
+    'date',
+    'deliveryDate',
+    'deliveryTerms',
+    'incoterms',
+    'currency',
+    'partialShipment'
+  ];
+
+  scalarKeys.forEach((key) => {
+    const primaryValue = merged[key];
+    const fallbackValue = fallbackObj[key];
+    const isEmptyPrimary = primaryValue === null || primaryValue === undefined || primaryValue === '';
+    if (isEmptyPrimary && fallbackValue !== undefined) {
+      merged[key] = fallbackValue;
+    }
+  });
+
+  const primaryItems = Array.isArray(primary?.items) ? primary.items : [];
+  const fallbackItems = Array.isArray(fallbackObj?.items) ? fallbackObj.items : [];
+  if (primaryItems.length === 0 && fallbackItems.length > 0) {
+    merged.items = fallbackItems;
+  } else {
+    merged.items = primaryItems;
+  }
+
+  return merged;
 };
 
 interface OrderManagementProps {
@@ -226,7 +321,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       return { type: 'warning', label: 'MANAGER OVERRIDE: Edit time limit bypassed.', isFrozen: false };
     }
 
-    const entryTime = new Date(order.dataEntryTimestamp).getTime();
+    const entrySource = order.dataEntryTimestamp ?? order.orderDate ?? new Date().toISOString();
+    const entryTime = new Date(String(entrySource)).getTime();
     const now = new Date().getTime();
     const ageHrs = (now - entryTime) / 3600000;
     const limit = config.settings.orderEditTimeLimitHrs;
@@ -244,7 +340,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
   const loadOrder = (match: CustomerOrder) => {
     setCustomerName(match.customerName);
-    setCustomerReferenceNumber(match.customerReferenceNumber || match.internalOrderNumber);
+    setCustomerReferenceNumber(String(match.customerReferenceNumber || match.internalOrderNumber || ''));
     setOrderDate(match.orderDate);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
@@ -287,11 +383,22 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       const isPdfUpload = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       let inputMimeType = file.type || 'application/octet-stream';
       let base64Data = '';
+      let parsedPdf: any = null;
+      let rankedPages: number[] = [1];
+      let primaryPage = 1;
 
       const t_read_start = performance.now();
       if (isPdfUpload) {
-        setMessage({ type: 'info', text: 'PDF detected. Converting first page to JPG for AI extraction...' });
-        base64Data = await convertPdfToJpegBase64(file);
+        setMessage({ type: 'info', text: 'PDF detected. Analyzing pages 1-2 to find the strongest PO data region...' });
+        const pdfData = new Uint8Array(await file.arrayBuffer());
+        parsedPdf = await getDocument({ data: pdfData }).promise;
+        const t_score_start = performance.now();
+        rankedPages = await pickPdfCandidatePages(parsedPdf, 2);
+        perf['1_pdf_page_scoring_ms'] = performance.now() - t_score_start;
+
+        primaryPage = rankedPages[0] || 1;
+        setMessage({ type: 'info', text: `PDF detected. Scanning page ${primaryPage} first based on PO signal scoring...` });
+        base64Data = await renderPdfPageToJpegBase64(parsedPdf, primaryPage);
         inputMimeType = 'image/jpeg';
       } else {
         const reader = new FileReader();
@@ -346,36 +453,34 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         9. If a general delivery date applies to the whole PO, put it in the top-level deliveryDate field.
       `;
 
-      let textOutput = "";
+      const runVisionInference = async (scanBase64Data: string, scanMimeType: string): Promise<string> => {
+        if (config.settings.aiProvider === 'gemini') {
+          const apiKey = config.settings.geminiConfig?.apiKey;
+          const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
 
-      const t_ai_start = performance.now();
-      if (config.settings.aiProvider === 'gemini') {
-        const apiKey = config.settings.geminiConfig?.apiKey;
-        const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
+          if (!apiKey) {
+            throw new Error("Gemini API Key is not configured.");
+          }
 
-        if (!apiKey) {
-          throw new Error("Gemini API Key is not configured.");
+          console.log('[AI Scan] Using Gemini model:', modelName);
+          const ai = new GoogleGenAI({ apiKey });
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  { inlineData: { mimeType: scanMimeType, data: scanBase64Data } },
+                  { text: prompt }
+                ]
+              }
+            ],
+            config: { responseMimeType: "application/json" }
+          });
+          console.log('[AI Scan] Gemini raw response:', response);
+          return response.text || "{}";
         }
 
-        console.log('[AI Scan] Using Gemini model:', modelName);
-        const ai = new GoogleGenAI({ apiKey });
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { inlineData: { mimeType: file.type, data: base64Data } },
-                { text: prompt }
-              ]
-            }
-          ],
-          config: { responseMimeType: "application/json" }
-        });
-        console.log('[AI Scan] Gemini raw response:', response);
-        textOutput = response.text || "{}";
-        console.log('[AI Scan] Gemini text output:', textOutput);
-      } else {
         const { apiKey, baseUrl, modelName } = config.settings.openaiConfig;
         console.log('[AI Scan] OpenAI config from settings:', { baseUrl, modelName, apiKeyExists: !!apiKey, apiKeyLength: apiKey?.length, apiKeyPrefix: apiKey?.substring(0, 15) });
         const upstreamEndpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
@@ -400,7 +505,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     {
                       type: "image_url",
                       image_url: {
-                        url: `data:${inputMimeType};base64,${base64Data}`
+                        url: `data:${scanMimeType};base64,${scanBase64Data}`
                       }
                     }
                   ]
@@ -411,16 +516,40 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         });
         const data = await response.json();
         console.log('[AI Scan] OpenAI raw response:', data);
-        textOutput = data.choices?.[0]?.message?.content || "{}";
-        console.log('[AI Scan] OpenAI text output:', textOutput);
-      }
-      perf['2_ai_inference_ms'] = performance.now() - t_ai_start;
+        return data.choices?.[0]?.message?.content || "{}";
+      };
+
+      const t_ai_primary_start = performance.now();
+      let textOutput = await runVisionInference(base64Data, inputMimeType);
+      perf['2_ai_primary_inference_ms'] = performance.now() - t_ai_primary_start;
+      console.log('[AI Scan] Primary text output:', textOutput);
 
       console.log('[AI Scan] Parsing extracted text:', textOutput);
       const t_parse_start = performance.now();
-      const extracted = JSON.parse(textOutput);
+      let extracted = JSON.parse(textOutput);
       perf['3_json_parse_ms'] = performance.now() - t_parse_start;
       console.log('[AI Scan] Parsed extracted:', extracted);
+
+      const fallbackPage = rankedPages.find(p => p !== primaryPage);
+      if (isPdfUpload && parsedPdf && fallbackPage && !hasStrongExtraction(extracted)) {
+        console.log('[AI Scan] Primary extraction incomplete. Running fallback scan on page:', fallbackPage);
+        setMessage({ type: 'info', text: `Primary page extraction incomplete. Scanning page ${fallbackPage} for missing order details...` });
+        const t_fallback_render_start = performance.now();
+        const fallbackBase64 = await renderPdfPageToJpegBase64(parsedPdf, fallbackPage);
+        perf['3b_pdf_fallback_render_ms'] = performance.now() - t_fallback_render_start;
+
+        const t_ai_fallback_start = performance.now();
+        const fallbackTextOutput = await runVisionInference(fallbackBase64, 'image/jpeg');
+        perf['3c_ai_fallback_inference_ms'] = performance.now() - t_ai_fallback_start;
+        console.log('[AI Scan] Fallback text output:', fallbackTextOutput);
+
+        const t_fallback_parse_start = performance.now();
+        const fallbackExtracted = JSON.parse(fallbackTextOutput);
+        perf['3d_json_fallback_parse_ms'] = performance.now() - t_fallback_parse_start;
+
+        extracted = mergeExtractionResults(extracted, fallbackExtracted);
+        console.log('[AI Scan] Merged extraction result:', extracted);
+      }
 
       if (extracted.customer?.name) {
         console.log('[AI Scan] Found customer:', extracted.customer.name);
