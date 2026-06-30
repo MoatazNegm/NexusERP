@@ -681,6 +681,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         Object.entries(perf).map(([step, ms]) => ({ step, 'time (ms)': ms.toFixed(2) }))
       );
       console.groupEnd();
+      setMessage({ type: 'success', text: 'finished' });
 
     } catch (err: any) {
       perf['total_ms'] = performance.now() - t0;
