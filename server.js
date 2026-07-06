@@ -521,6 +521,69 @@ const repairNegativeMarginOrders = (db) => {
     if (changed) writeDb(db);
 };
 
+const reconcileOrdersMarginOnThresholdChange = (db, oldMinMargin, newMinMargin, user) => {
+    if (oldMinMargin === newMinMargin) return;
+    if (!db.orders || db.orders.length === 0) return;
+
+    db.orders.forEach(order => {
+        // Skip final/hold statuses
+        if ([OrderStatus.REJECTED, OrderStatus.IN_HOLD, OrderStatus.DELIVERED, OrderStatus.FULFILLED].includes(order.status)) {
+            return;
+        }
+
+        // Check if customer override exists - if so, this order is unaffected by global changes
+        const customer = db.customers.find(c => c.name === order.customerName);
+        if (customer && customer.minimumMarginPct !== undefined && customer.minimumMarginPct !== null) {
+            return;
+        }
+
+        const oldStatus = order.status;
+        let nextStatus = oldStatus || OrderStatus.LOGGED;
+
+        if (order.customerName !== 'Internal Stock') {
+            nextStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate);
+        } else {
+            const calculatedStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate);
+            if (calculatedStatus === OrderStatus.NEGATIVE_MARGIN) {
+                const hasComponents = (order.items || []).some(i => i.components && i.components.length > 0);
+                if (hasComponents && oldStatus === OrderStatus.LOGGED) {
+                    nextStatus = OrderStatus.TECHNICAL_REVIEW;
+                }
+            } else {
+                nextStatus = calculatedStatus;
+            }
+        }
+
+        if (nextStatus !== oldStatus) {
+            order.status = nextStatus;
+            order.loggingComplianceViolation = false;
+
+            if (oldStatus === OrderStatus.NEGATIVE_MARGIN && nextStatus !== OrderStatus.NEGATIVE_MARGIN) {
+                if (!order.logs) order.logs = [];
+                order.logs.push(createAuditLog(
+                    'Alert removed due to altering the threshold of the margin.',
+                    nextStatus,
+                    user
+                ));
+            } else if (nextStatus === OrderStatus.NEGATIVE_MARGIN) {
+                if (!order.logs) order.logs = [];
+                order.logs.push(createAuditLog(
+                    `[AUTO] Margin Protection: Status moved from ${oldStatus} to ${OrderStatus.NEGATIVE_MARGIN}`,
+                    OrderStatus.NEGATIVE_MARGIN,
+                    'System'
+                ));
+            } else {
+                if (!order.logs) order.logs = [];
+                order.logs.push(createAuditLog(
+                    `[AUTO] Workflow Update: Status moved from ${oldStatus} to ${nextStatus}`,
+                    nextStatus,
+                    'System'
+                ));
+            }
+        }
+    });
+};
+
 const generateInternalOrderNumber = (db) => {
     const orders = db.orders || [];
     const maxNum = orders.reduce((max, o) => {
@@ -1479,6 +1542,12 @@ const updateInCollection = (col) => (req, res) => {
 
     // Encrypt sensitive settings before storing
     if (col === 'settings') {
+        const oldMinMargin = oldItem.minimumMarginPct;
+        const newMinMargin = req.body.minimumMarginPct;
+
+        if (newMinMargin !== undefined && Number(newMinMargin) !== Number(oldMinMargin)) {
+            reconcileOrdersMarginOnThresholdChange(db, Number(oldMinMargin), Number(newMinMargin), user);
+        }
         updated = encryptSettings(updated);
     }
 
