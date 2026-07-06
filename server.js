@@ -1285,7 +1285,13 @@ app.get('/api/log-crash', (req, res) => {
     res.send('ok');
 });
 
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, 'dist'), {
+    setHeaders: (res, filepath) => {
+        if (path.basename(filepath) === 'index.html') {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        }
+    }
+}));
 app.use('/uploads', express.static(UPLOADS_BASE));
 
 // --- HEALTH CHECK HELPER ---
@@ -3319,6 +3325,7 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
 
 // Request logging middleware for debugging
 app.use((req, res, next) => {
+    console.log(`[HTTP] ${req.method} ${req.url}`);
     const originalJson = res.json.bind(res);
     res.json = (body) => {
         if (res.statusCode === 404 && req.path.startsWith('/api/v1')) {
@@ -3358,6 +3365,7 @@ app.post('/api/v1/ai-proxy/chat', async (req, res) => {
 // SPA Catch-all: Redirect all non-API requests to index.html
 app.get('{*path}', (req, res) => {
     if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 

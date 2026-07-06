@@ -165,21 +165,55 @@ The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults 
 
 ## Application Versioning Protocol
 
-Every code update must advance the application version by **+0.00001**.
+Every code update must advance the application version by **+0.00001** just before rebuilding the application.
 
 ### How It Works
-- The application version is defined in `constants.tsx` as `APP_VERSION` (string format)
+- The application version is defined in `constants.tsx` as `APP_VERSION` (string format).
 - Starting version: `1.0000000`
 - Increment: `0.00001` per update
 - Displayed at the bottom of every page in small font via `components/VersionFooter.tsx`
 
-### Steps on Every Code Change
-1. Open `constants.tsx`
-2. Locate `export const APP_VERSION = 'X.XXXXXX';`
-3. Increment the version by 0.00001 (e.g. `1.0000000` → `1.00001`)
-4. Save the file alongside your other changes
+---
 
-> ⚠️ **Important:** Developers must remember to bump the version with every code modification. This is a manual step — there is no automated enforcement.
+## Build, Run, and Deploy Lifecycle
+
+To make development structured, building the application and pushing changes are treated as separate, distinct steps.
+
+### Step 1: Rebuilding and Restarting (Local Development / Staging)
+When you say **"rebuild"**, this command performs the following sequence *only* (it does not commit or push the code):
+
+1. **Advance the Version:** 
+   Open `constants.tsx`, locate `export const APP_VERSION = 'X.XXXXXX';`, increment the value by `0.00001`, and save the file.
+2. **Install Dependencies:**
+   Ensure dependencies are up to date:
+   ```bash
+   npm ci
+   ```
+3. **Build the Application:**
+   Compile the frontend production assets into `dist/`:
+   ```bash
+   npm run build
+   ```
+4. **Restart the Application:**
+   Start the Node.js Express server to serve the API and the newly compiled frontend:
+   ```bash
+   node server.js
+   ```
+
+### Step 2: Committing and Pushing (Separate Action)
+When you say **"commit and push"**, this triggers pushing the code to remote version control. This step is executed *only when explicitly requested* and does **not** trigger a rebuild.
+
+1. **Add and Commit Changes:**
+   ```bash
+   git add .
+   git commit -m "Fix/Feature: Description of the changes"
+   ```
+2. **Push to Branch:**
+   ```bash
+   git push origin <branch-name>
+   ```
+
+---
 
 ## Key Files to Read First
 - types.ts — Domain model
