@@ -75,7 +75,7 @@ const LogTimeline: React.FC<{ logs: LogEntry[], title?: string }> = ({ logs, tit
   </div>
 );
 
-const BoMTable: React.FC<{ components: ManufacturingComponent[] }> = ({ components }) => {
+const BoMTable: React.FC<{ components: ManufacturingComponent[]; orderCurrency: string }> = ({ components, orderCurrency }) => {
   const readyCount = components.filter(c => c.status === 'AVAILABLE' || c.status === 'RECEIVED').length;
   const progressPercent = components.length > 0 ? (readyCount / components.length) * 100 : 0;
 
@@ -469,7 +469,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                           <button onClick={(e) => { e.stopPropagation(); setExpandedTab('bom'); }} className={`pb-3 text-[10px] font-black uppercase tracking-[0.15em] transition-all relative ${expandedTab === 'bom' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>Manufacturing BoM{expandedTab === 'bom' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full"></div>}</button>
                           <button onClick={(e) => { e.stopPropagation(); setExpandedTab('logs'); }} className={`pb-3 text-[10px] font-black uppercase tracking-[0.15em] transition-all relative ${expandedTab === 'logs' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>Line Item Activity{expandedTab === 'logs' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full"></div>}</button>
                         </div>
-                        {expandedTab === 'bom' ? (<div className="animate-in fade-in duration-500">{item.components && item.components.length > 0 ? (<BoMTable components={item.components} />) : (<div className="py-12 text-center bg-white rounded-2xl border-2 border-dashed border-slate-100"><div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4"><i className="fa-solid fa-microscope text-2xl text-slate-200"></i></div><p className="text-xs text-slate-400 font-bold uppercase tracking-widest">No manufacturing study complete</p></div>)}</div>) : (<div className="animate-in fade-in duration-500"><div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm"><LogTimeline logs={item.logs} /></div></div>)}
+                        {expandedTab === 'bom' ? (<div className="animate-in fade-in duration-500">{item.components && item.components.length > 0 ? (<BoMTable components={item.components} orderCurrency={orderCurrency} />) : (<div className="py-12 text-center bg-white rounded-2xl border-2 border-dashed border-slate-100"><div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4"><i className="fa-solid fa-microscope text-2xl text-slate-200"></i></div><p className="text-xs text-slate-400 font-bold uppercase tracking-widest">No manufacturing study complete</p></div>)}</div>) : (<div className="animate-in fade-in duration-500"><div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm"><LogTimeline logs={item.logs} /></div></div>)}
                       </div>
                     )}
                   </div>
