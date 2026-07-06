@@ -725,7 +725,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     const marginPct = revenue > 0 ? ((revenue - costInOrderCurrency) / revenue) * 100 : 0;
     const markupPct = costInOrderCurrency > 0 ? ((revenue - costInOrderCurrency) / costInOrderCurrency) * 100 : (revenue > 0 ? 100 : 0);
     const targetRev = order.appliesWithholdingTax ? grossRevenue * 0.99 : grossRevenue;
-    return { revenue, grossRevenue, cost, costInOrderCurrency, conversionRate: rate, currency: getOrderCurrency(order), paid, outstanding: Math.max(0, targetRev - paid) };
+    return { revenue, grossRevenue, cost, costInOrderCurrency, conversionRate: rate, currency: getOrderCurrency(order), paid, outstanding: Math.max(0, targetRev - paid), marginPct, markupPct };
   };
 
   const ordersWithPL = useMemo(() => orders.map(o => ({ ...o, pl: getPL(o) })), [orders]);
