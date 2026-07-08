@@ -24,6 +24,11 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 class DataService {
   private appStartTime = Date.now();
+
+  private getAppOrigin(): string {
+    if (typeof window === 'undefined') return '';
+    return window.location.origin;
+  }
   
   private getCurrentUser(): string {
     if (typeof window === 'undefined') return 'System';
@@ -357,6 +362,61 @@ class DataService {
       throw new Error("File upload failed");
     }
     return await response.json();
+  }
+
+  async getGoogleDriveStatus() {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/google-drive/status`, {
+      headers: { 'x-user': this.getCurrentUser(), 'x-app-origin': this.getAppOrigin() }
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to read Google Drive status');
+    }
+    return response.json();
+  }
+
+  async getGoogleDriveAuthUrl() {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/google-drive/auth-url`, {
+      headers: { 'x-user': this.getCurrentUser(), 'x-app-origin': this.getAppOrigin() }
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to generate Google Drive auth URL');
+    }
+    return response.json() as Promise<{ url: string }>;
+  }
+
+  async disconnectGoogleDrive() {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/google-drive/disconnect`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to disconnect Google Drive');
+    }
+    return response.json();
+  }
+
+  async uploadExternalSubmissionToGoogleDrive(file: File, metadata: { orderId?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (metadata.orderId) formData.append('orderId', metadata.orderId);
+    if (metadata.internalOrderNumber) formData.append('internalOrderNumber', metadata.internalOrderNumber);
+    if (metadata.customerReferenceNumber) formData.append('customerReferenceNumber', metadata.customerReferenceNumber);
+    if (metadata.customerName) formData.append('customerName', metadata.customerName);
+
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/google-drive/upload`, {
+      method: 'POST',
+      headers: { 'x-user': this.getCurrentUser() },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to upload file to Google Drive');
+    }
+    return response.json();
   }
 
   async attachEInvoice(id: string, einvoiceFile: string) {

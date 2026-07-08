@@ -23,6 +23,11 @@ export const INITIAL_CONFIG: AppConfig = {
     aiProvider: 'gemini',
     openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
     geminiConfig: { apiKey: '', modelName: 'gemini-1.5-flash' },
+    googleDriveConfig: {
+      enabled: true,
+      autoUploadExternalSubmissions: true,
+      folderName: ''
+    },
     emailConfig: {
       smtpServer: 'mail.quickstor.net',
       smtpPort: 465,

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink } from '../types';
+import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig } from '../types';
 
 interface DataMaintenanceProps {
   config: AppConfig;
@@ -10,7 +10,7 @@ interface DataMaintenanceProps {
   isAdmin: boolean;
 }
 
-type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'email' | 'ledger' | 'data' | 'help';
+type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'integrations' | 'email' | 'ledger' | 'data' | 'help';
 
 export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConfigUpdate, onRefresh, currentUser, isAdmin }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('modules');
@@ -19,6 +19,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' });
   const [aiDraftOpenAI, setAiDraftOpenAI] = useState(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
+  const [driveDraft, setDriveDraft] = useState<GoogleDriveConfig>(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, folderName: '', folderId: '' });
+  const [driveStatus, setDriveStatus] = useState<{ configured: boolean; connected: boolean; connectedEmail?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
+  const [isDriveBusy, setIsDriveBusy] = useState(false);
+  const [driveDraftDirty, setDriveDraftDirty] = useState(false);
   const [isSavingAI, setIsSavingAI] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
@@ -192,6 +196,96 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       setAiDraftOpenAI(config.settings.openaiConfig); 
     }
   }, [config.settings.geminiConfig, config.settings.openaiConfig]);
+
+  useEffect(() => {
+    if (driveDraftDirty) return;
+    setDriveDraft(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, folderName: '', folderId: '' });
+  }, [config.settings.googleDriveConfig, driveDraftDirty]);
+
+  const refreshGoogleDriveStatus = async () => {
+    try {
+      const status = await dataService.getGoogleDriveStatus();
+      setDriveStatus(status);
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to fetch Google Drive status.' });
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'integrations') {
+      refreshGoogleDriveStatus();
+    }
+  }, [activeTab]);
+
+  const saveGoogleDriveConfig = async () => {
+    setIsDriveBusy(true);
+    try {
+      const existing = config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, folderName: '', folderId: '' };
+      const folderNameChanged = (existing.folderName || '').trim() !== (driveDraft.folderName || '').trim();
+      const next: GoogleDriveConfig = {
+        ...existing,
+        enabled: !!driveDraft.enabled,
+        autoUploadExternalSubmissions: !!driveDraft.autoUploadExternalSubmissions,
+        folderName: (driveDraft.folderName || '').trim(),
+        folderId: folderNameChanged ? '' : (existing.folderId || '')
+      };
+      await updateSetting('settings', 'googleDriveConfig', next);
+      setDriveDraft(next);
+      setDriveDraftDirty(false);
+      setMessage({ type: 'success', text: 'Google Drive settings saved.' });
+      await refreshGoogleDriveStatus();
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to save Google Drive settings.' });
+    } finally {
+      setIsDriveBusy(false);
+    }
+  };
+
+  const connectGoogleDrive = async () => {
+    setIsDriveBusy(true);
+    try {
+      const result = await dataService.getGoogleDriveAuthUrl();
+      const popup = window.open(result.url, '_blank', 'width=520,height=720');
+      if (!popup) {
+        setMessage({ type: 'error', text: 'Popup blocked by browser. Allow popups and try again.' });
+      } else {
+        setMessage({ type: 'info', text: 'Google authorization window opened. Waiting for completion...' });
+        const timer = window.setInterval(async () => {
+          if (!popup || popup.closed) {
+            window.clearInterval(timer);
+            await refreshGoogleDriveStatus();
+            setMessage({ type: 'success', text: 'Google authorization finished. Status refreshed.' });
+          }
+        }, 800);
+      }
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to start Google OAuth flow.' });
+    } finally {
+      setIsDriveBusy(false);
+    }
+  };
+
+  const disconnectGoogleDrive = async () => {
+    setIsDriveBusy(true);
+    try {
+      await dataService.disconnectGoogleDrive();
+      const next = {
+        ...driveDraft,
+        refreshToken: '',
+        connectedAt: '',
+        connectedEmail: ''
+      };
+      setDriveDraft(next);
+      await updateSetting('settings', 'googleDriveConfig', next);
+      setDriveDraftDirty(false);
+      setMessage({ type: 'success', text: 'Google Drive disconnected.' });
+      await refreshGoogleDriveStatus();
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to disconnect Google Drive.' });
+    } finally {
+      setIsDriveBusy(false);
+    }
+  };
 
 
 
@@ -573,9 +667,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex border-b border-slate-100 bg-slate-50/50 overflow-x-auto custom-scrollbar">
-          {(['modules', 'thresholds', 'ledger', 'groups', 'users', 'intelligence', 'email', 'data', 'help'] as const).map(tab => (
+          {(['modules', 'thresholds', 'ledger', 'groups', 'users', 'intelligence', 'integrations', 'email', 'data', 'help'] as const).map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`px-10 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative whitespace-nowrap ${activeTab === tab ? 'text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}>
-              {tab === 'email' ? 'Relay Node' : tab === 'intelligence' ? 'AI Engine' : tab === 'help' ? 'Help' : tab}
+              {tab === 'email' ? 'Relay Node' : tab === 'intelligence' ? 'AI Engine' : tab === 'integrations' ? 'Integrations' : tab === 'help' ? 'Help' : tab}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600"></div>}
             </button>
           ))}
@@ -997,6 +1091,83 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       <i className="fa-solid fa-shield-check mr-1"></i> Architecture Vetted: Dispatching emails via Backend Proxy ensures the client browser never initiates raw SMTP traffic, preventing CORS/TLS blocks and securing credentials.
                     </p>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'integrations' && (
+            <div className="space-y-8 animate-in fade-in">
+              <div className="p-8 bg-white rounded-3xl border border-slate-200 shadow-sm space-y-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest flex items-center gap-2">
+                      <i className="fa-brands fa-google text-blue-600"></i>
+                      Google Drive Archival
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-1">Archive externally submitted files (for example customer PO PDFs) directly to Drive after order creation.</p>
+                  </div>
+                  <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border ${driveStatus?.connected ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                    {driveStatus?.connected ? 'Connected' : 'Not Connected'}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Target Drive Folder Name</label>
+                    <input
+                      className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                      placeholder="e.g. External PO Archive"
+                      value={driveDraft.folderName || ''}
+                      onChange={e => {
+                        setDriveDraftDirty(true);
+                        setDriveDraft(prev => ({ ...prev, folderName: e.target.value, folderId: '' }));
+                      }}
+                    />
+                    <p className="text-[10px] text-slate-400">If this folder exists in Drive, it will be used. If not, it will be created automatically.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                      <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Integration</span>
+                      <input type="checkbox" checked={!!driveDraft.enabled} onChange={e => { setDriveDraftDirty(true); setDriveDraft(prev => ({ ...prev, enabled: e.target.checked })); }} />
+                    </label>
+                    <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                      <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Auto Upload External Submissions</span>
+                      <input type="checkbox" checked={!!driveDraft.autoUploadExternalSubmissions} onChange={e => { setDriveDraftDirty(true); setDriveDraft(prev => ({ ...prev, autoUploadExternalSubmissions: e.target.checked })); }} />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 pt-2">
+                  <button
+                    onClick={saveGoogleDriveConfig}
+                    disabled={isDriveBusy}
+                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isDriveBusy ? 'bg-slate-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700'}`}
+                  >
+                    Save Integration Settings
+                  </button>
+                  <button
+                    onClick={connectGoogleDrive}
+                    disabled={isDriveBusy}
+                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border ${isDriveBusy ? 'border-slate-200 text-slate-300 cursor-not-allowed' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}
+                  >
+                    Connect Google Account
+                  </button>
+                  <button
+                    onClick={disconnectGoogleDrive}
+                    disabled={isDriveBusy || !driveStatus?.connected}
+                    className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border ${isDriveBusy || !driveStatus?.connected ? 'border-slate-200 text-slate-300 cursor-not-allowed' : 'border-rose-300 text-rose-700 hover:bg-rose-50'}`}
+                  >
+                    Disconnect
+                  </button>
+                  <button
+                    onClick={refreshGoogleDriveStatus}
+                    disabled={isDriveBusy}
+                    className="px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-300 text-slate-600 hover:bg-slate-50"
+                  >
+                    Refresh Status
+                  </button>
                 </div>
               </div>
             </div>

@@ -177,6 +177,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isNewCustomerCreated, setIsNewCustomerCreated] = useState(false);
+  const [externalSubmissionFile, setExternalSubmissionFile] = useState<File | null>(null);
+  const [externalSubmissionSnapshot, setExternalSubmissionSnapshot] = useState<{ name: string; type: string; base64: string } | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'asc' });
@@ -384,6 +386,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const handleAIScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || isScanning) return;
+    setExternalSubmissionFile(file);
     setIsScanning(true);
     setIsNewCustomerCreated(false);
     setMessage({ type: 'info', text: 'Vision intelligence mapping PO entities...' });
@@ -392,6 +395,27 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     const t0 = performance.now();
 
     try {
+      const originalFileBase64 = await new Promise<string>((resolve, reject) => {
+        const originalReader = new FileReader();
+        originalReader.onload = () => {
+          const result = originalReader.result as string;
+          const base64 = result?.split(',')[1] || '';
+          if (!base64) {
+            reject(new Error('Failed to snapshot external submission file.'));
+            return;
+          }
+          resolve(base64);
+        };
+        originalReader.onerror = () => reject(new Error('Failed to read external submission file.'));
+        originalReader.readAsDataURL(file);
+      });
+
+      setExternalSubmissionSnapshot({
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+        base64: originalFileBase64
+      });
+
       const isPdfUpload = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       let inputMimeType = file.type || 'application/octet-stream';
       let base64Data = '';
@@ -698,7 +722,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setIsScanning(false);
   };
 
-  const resetForm = () => {
+  const resetForm = (clearMessage = true) => {
     setCustomerName(''); setCustomerReferenceNumber(''); setOrderDate(today);
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(false);
@@ -708,7 +732,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCurrency(DEFAULT_CURRENCY);
     setConversionRate(1);
     setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, taxDetected: true, logs: [] }]);
-    setEditingOrderId(null); setMessage(null); setIsNewCustomerCreated(false);
+    setEditingOrderId(null);
+    if (clearMessage) setMessage(null);
+    setIsNewCustomerCreated(false);
+    setExternalSubmissionFile(null);
+    setExternalSubmissionSnapshot(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -742,10 +773,74 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     const normalizedItems = items.map(item => ({ ...item, quantity: normalizeQty(item.quantity) }));
 
     try {
-      if (editingOrderId) {
+      const driveEnabled = !!config.settings.googleDriveConfig?.enabled;
+      const autoUpload = !!config.settings.googleDriveConfig?.autoUploadExternalSubmissions;
+      const submissionFile = externalSubmissionFile || fileInputRef.current?.files?.[0] || null;
+      const snapshotToFile = () => {
+        if (!externalSubmissionSnapshot) return null;
+        const binaryString = atob(externalSubmissionSnapshot.base64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        return new File([bytes], externalSubmissionSnapshot.name || 'external-submission.bin', {
+          type: externalSubmissionSnapshot.type || 'application/octet-stream'
+        });
+      };
+      const fallbackOrderFile = (orderLike: { internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) => {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const summary = {
+          generatedAt: new Date().toISOString(),
+          source: 'OrderManagementSubmitFallback',
+          orderId: editingOrderId || null,
+          internalOrderNumber: orderLike.internalOrderNumber || null,
+          customerReferenceNumber: orderLike.customerReferenceNumber || customerReferenceNumber,
+          customerName: orderLike.customerName || customerName,
+          orderDate,
+          paymentSlaDays,
+          appliesWithholdingTax,
+          currency,
+          conversionRate,
+          targetDeliveryDays,
+          targetDeliveryDate,
+          items: normalizedItems
+        };
+        const fileName = `${orderLike.internalOrderNumber || 'order'}_${stamp}.json`;
+        return new File([JSON.stringify(summary, null, 2)], fileName, { type: 'application/json' });
+      };
 
-        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, currency, conversionRate, items: normalizedItems as any });
-        setMessage({ type: 'success', text: 'Record updated.' });
+      const tryDriveUpload = async (orderLike: { id?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) => {
+        if (!(driveEnabled && autoUpload)) {
+          return { attempted: false, uploaded: false };
+        }
+        const effectiveUploadFile = submissionFile || snapshotToFile() || fallbackOrderFile(orderLike);
+        await dataService.uploadExternalSubmissionToGoogleDrive(effectiveUploadFile, {
+          orderId: orderLike.id,
+          internalOrderNumber: orderLike.internalOrderNumber,
+          customerReferenceNumber: orderLike.customerReferenceNumber,
+          customerName: orderLike.customerName
+        });
+        return { attempted: true, uploaded: true };
+      };
+
+      if (editingOrderId) {
+        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, currency, conversionRate, items: normalizedItems as any });
+        try {
+          const driveResult = await tryDriveUpload(updatedOrder as any);
+          if (driveResult.uploaded) {
+            setMessage({ type: 'success', text: 'Record updated. Source file archived to Google Drive.' });
+          } else if (driveEnabled && autoUpload) {
+            setMessage({ type: 'success', text: 'Record updated. Order snapshot archived to Google Drive.' });
+          } else {
+            setMessage({ type: 'success', text: 'Record updated.' });
+          }
+        } catch (driveError: any) {
+          const errMsg = driveError?.message ? ` Google Drive upload failed: ${driveError.message}` : ' Google Drive upload failed.';
+          setMessage({ type: 'error', text: `Record updated successfully.${errMsg}` });
+          await fetchData();
+          resetForm(false);
+          return;
+        }
       } else {
         // Prevent duplicate PO reference for the same customer on the frontend side
         const isDuplicate = existingOrders.some(o =>
@@ -772,13 +867,30 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           items: normalizedItems as any
 
         });
-        setMessage({ 
-          type: 'success', 
-          text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}` 
-        });
+
+        if (driveEnabled && autoUpload) {
+          try {
+            await tryDriveUpload(newOrder as any);
+            setMessage({
+              type: 'success',
+              text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}. Source file archived to Google Drive.`
+            });
+          } catch (driveError: any) {
+            const errMsg = driveError?.message ? ` Google Drive upload failed: ${driveError.message}` : ' Google Drive upload failed.';
+            setMessage({ type: 'error', text: `Order created successfully.${errMsg}` });
+            await fetchData();
+            resetForm();
+            return;
+          }
+        } else {
+          setMessage({ 
+            type: 'success', 
+            text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}` 
+          });
+        }
       }
       await fetchData();
-      resetForm();
+      resetForm(false);
     } catch (err) {
       setMessage({ type: 'error', text: 'Transaction failed.' });
     }
@@ -868,7 +980,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   </p>
                 </div>
               </div>
-              {editStatus.isFrozen && <button onClick={resetForm} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[10px] font-black uppercase">Start Fresh</button>}
+              {editStatus.isFrozen && <button onClick={() => resetForm()} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[10px] font-black uppercase">Start Fresh</button>}
             </div>
           )}
 
@@ -893,7 +1005,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                 </div>
               </div>
               {editingOrderId && !editStatus.isFrozen && (
-                <button onClick={resetForm} className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-[10px] font-black uppercase hover:bg-slate-50">Create New</button>
+                <button onClick={() => resetForm()} className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-[10px] font-black uppercase hover:bg-slate-50">Create New</button>
               )}
             </div>
 
