@@ -833,7 +833,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                   <div className="absolute -bottom-4 left-1 text-[8px] font-bold text-slate-400 uppercase">Auto-generated ID if left blank</div>
                                   <div className="relative flex-1 group">
                                     <textarea
-                                      placeholder={selectedItem.productionType === 'OUTSOURCING' ? "Enter Service or Contract Description..." : "Enter component SKU or Name..."}
+                                      placeholder={selectedItem.productionType === 'OUTSOURCING' ? (selectedItem.description || "Enter Service or Contract Description...") : "Enter component SKU or Name..."}
                                       className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all resize-none min-h-[58px]"
                                       rows={1}
                                       value={compSearch}
