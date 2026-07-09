@@ -65,6 +65,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [compDurationVal, setCompDurationVal] = useState<number | string>('');
   const [compDurationUnit, setCompDurationUnit] = useState<'Months' | 'Years'>('Months');
   const [compScope, setCompScope] = useState('');
+  const [contractId, setContractId] = useState('');
   const [showCompSuggestions, setShowCompSuggestions] = useState(false);
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -97,6 +98,17 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   useEffect(() => {
     fetchData();
   }, [refreshKey]);
+
+  // Auto-populate contract description with line item description for outsourcing
+  useEffect(() => {
+    if (selectedItem) {
+      if (selectedItem.productionType === 'OUTSOURCING' && selectedItem.description) {
+        setCompSearch(selectedItem.description);
+      } else if (selectedItem.productionType !== 'OUTSOURCING') {
+        setCompSearch('');
+      }
+    }
+  }, [selectedItem]);
 
   const fetchData = async (keepSelection = true) => {
     const [o, i, s] = await Promise.all([
@@ -346,19 +358,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const handleAddSupplierPart = async (supp: Supplier, part: SupplierPart) => {
     if (!selectedOrder || !selectedItem) return;
     const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
+    const finalContractId = contractId.trim() || `CTR-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    const isOutsourcing = selectedItem.productionType === 'OUTSOURCING';
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-      description: part.description,
+      description: isOutsourcing ? (compScope || 'Outsourced Service') : part.description,
       quantity: compQty,
-      unit: 'pcs',
+      unit: isOutsourcing ? 'lumpsum' : 'pcs',
       unitCost: part.price,
       taxPercent: 14,
       source: 'PROCUREMENT',
       supplierId: supp.id,
       supplierPartId: part.id,
-      supplierPartNumber: part.partNumber,
-      contractNumber: selectedItem.productionType === 'OUTSOURCING' ? part.partNumber : undefined,
+      supplierPartNumber: isOutsourcing ? undefined : part.partNumber,
+      contractId: isOutsourcing ? finalContractId : undefined,
       contractDuration: finalDuration,
-      scopeOfWork: compScope || part.description,
+      scopeOfWork: isOutsourcing ? (compScope || '') : (compScope || part.description),
       status: 'PENDING_OFFER'
     });
     setSelectedOrder(updated);
@@ -376,6 +390,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const handleAddCustomProcurement = async () => {
     if (!selectedOrder || !selectedItem || (!compSearch.trim() && !partNumSearch.trim())) return;
     const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
+    const finalContractId = contractId.trim() || `CTR-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
       description: compSearch.trim() || 'Custom Part',
       quantity: compQty,
@@ -385,9 +400,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       source: 'PROCUREMENT',
       status: 'PENDING_OFFER',
       supplierPartNumber: partNumSearch.trim() || undefined,
-      contractNumber: selectedItem.productionType === 'OUTSOURCING' ? partNumSearch.trim() : undefined,
+      contractId: selectedItem.productionType === 'OUTSOURCING' ? finalContractId : undefined,
       contractDuration: finalDuration,
-      scopeOfWork: compScope || compSearch.trim()
+      scopeOfWork: selectedItem.productionType === 'OUTSOURCING' ? (compScope || '') : (compScope || compSearch.trim())
     });
     setSelectedOrder(updated);
     setSelectedItem(updated.items.find(i => i.id === selectedItem.id)!);
@@ -937,6 +952,19 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               </div>
                             </div>
 
+                            {selectedItem.productionType === 'OUTSOURCING' && (
+                              <div className="w-full space-y-1.5 px-1">
+                                <label className="text-[9px] font-black text-violet-600 uppercase ml-1">Contract ID <span className="text-slate-400 font-normal normal-case">(auto-generated if left blank)</span></label>
+                                <input
+                                  type="text"
+                                  placeholder={`CTR-${new Date().getFullYear()}-XXXX`}
+                                  className="w-full p-4 border-2 border-violet-100 rounded-2xl text-sm font-mono font-black outline-none focus:border-violet-500 transition-all bg-violet-50/20 text-violet-800"
+                                  value={contractId}
+                                  onChange={e => setContractId(e.target.value)}
+                                />
+                              </div>
+                            )}
+
                             <div className="flex flex-col md:flex-row gap-4 animate-in fade-in slide-in-from-top-2 duration-300 w-full mt-4">
                               <div className="w-full md:w-32 space-y-1.5 px-1">
                                 <div className="flex justify-between items-center ml-1">
@@ -1018,7 +1046,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     </div>
                                     <div className="flex flex-col gap-0.5 mt-1">
                                       <div className="font-mono text-[9px] text-blue-500">
-                                        {selectedItem.productionType === 'OUTSOURCING' ? (c.contractNumber || c.componentNumber) : c.componentNumber}
+                                        {selectedItem.productionType === 'OUTSOURCING' ? (c.contractId || c.componentNumber) : c.componentNumber}
                                       </div>
                                       {selectedItem.productionType === 'OUTSOURCING' && c.contractDuration && (
                                         <div className="text-[8px] font-black text-violet-600 uppercase bg-violet-50 px-2 py-0.5 rounded-lg w-fit mt-1">Duration: {c.contractDuration}</div>
