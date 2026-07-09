@@ -155,16 +155,16 @@ The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults 
 - Leave `VITE_BACKEND_URL` unset (or set to `''`). The `render.yaml` `startCommand` is `node server.js`.
 - If you ever deploy the frontend and backend on **separate origins**, set `VITE_BACKEND_URL` to the backend origin (e.g. `https://api.example.com`).
 
-### Google Drive Integration Environment Variables
-For Google Drive archival in System Core Control -> Integrations, configure these on the backend host:
+### Google Drive Integration (Per-Customer Instance)
+This app is distributed per customer copy (not SaaS), so each customer configures Google Drive from the UI:
 
-- `GOOGLE_DRIVE_CLIENT_ID`
-- `GOOGLE_DRIVE_CLIENT_SECRET`
-- `GOOGLE_DRIVE_REDIRECT_URI` (optional; if omitted, server auto-builds callback URL from request host)
+- Open **System Core Control -> Integrations**
+- Enter **Google Client ID** and **Google Client Secret**
+- Optionally set **OAuth Redirect URI** (leave blank to auto-generate from current origin)
+- Set **Target Drive Folder Name**
+- Save settings, then click **Connect Google Account**
 
-For local development, `server.js` now loads `.env` automatically via `dotenv/config`, so setting the variables in `.env` is sufficient.
-
-Folder targeting now uses a human-friendly folder name in settings (`googleDriveConfig.folderName`). During upload the backend:
+Folder targeting uses a human-friendly folder name in settings (`googleDriveConfig.folderName`). During upload the backend:
 - searches Google Drive for a folder with that exact name,
 - reuses it if found,
 - otherwise creates it automatically,

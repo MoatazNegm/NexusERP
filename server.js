@@ -1,5 +1,4 @@
 
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -316,6 +315,7 @@ const SENSITIVE_PATHS = [
     ['geminiConfig', 'apiKey'],
     ['openaiConfig', 'apiKey'],
     ['emailConfig', 'password'],
+    ['googleDriveConfig', 'clientSecret'],
     ['googleDriveConfig', 'refreshToken']
 ];
 
@@ -348,6 +348,9 @@ const resolveSettings = (db) => {
         googleDriveConfig: {
             enabled: true,
             autoUploadExternalSubmissions: true,
+            clientId: '',
+            clientSecret: '',
+            redirectUri: '',
             folderName: '',
             folderId: ''
         },
@@ -382,9 +385,10 @@ const resolveSettings = (db) => {
     return decryptSettings(merged);
 };
 
-const getGoogleOAuthConfig = () => {
-    const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID || '';
-    const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET || '';
+const getGoogleOAuthConfig = (settings) => {
+    const cfg = settings?.googleDriveConfig || {};
+    const clientId = String(cfg.clientId || '').trim();
+    const clientSecret = String(cfg.clientSecret || '').trim();
     return {
         clientId,
         clientSecret,
@@ -403,10 +407,9 @@ const getBaseUrlFromRequest = (req) => {
     return `${proto}://${host}`;
 };
 
-const getGoogleCallbackUrl = (req) => {
-    if (process.env.GOOGLE_DRIVE_REDIRECT_URI) {
-        return process.env.GOOGLE_DRIVE_REDIRECT_URI;
-    }
+const getGoogleCallbackUrl = (req, settings) => {
+    const configuredRedirect = String(settings?.googleDriveConfig?.redirectUri || '').trim();
+    if (configuredRedirect) return configuredRedirect;
     return `${getBaseUrlFromRequest(req)}/api/v1/integrations/google-drive/callback`;
 };
 
@@ -415,10 +418,10 @@ const sanitizeDriveFileName = (name) => {
     return clean || 'submission.bin';
 };
 
-const fetchGoogleAccessToken = async (refreshToken, req) => {
-    const oauth = getGoogleOAuthConfig();
+const fetchGoogleAccessToken = async (refreshToken, req, settings) => {
+    const oauth = getGoogleOAuthConfig(settings);
     if (!oauth.configured) {
-        throw new Error('Google OAuth environment variables are missing.');
+        throw new Error('Google OAuth settings are missing in Integrations tab.');
     }
     if (!refreshToken) {
         throw new Error('Google Drive is not connected. Missing refresh token.');
@@ -429,7 +432,7 @@ const fetchGoogleAccessToken = async (refreshToken, req) => {
         client_secret: oauth.clientSecret,
         refresh_token: refreshToken,
         grant_type: 'refresh_token',
-        redirect_uri: getGoogleCallbackUrl(req)
+        redirect_uri: getGoogleCallbackUrl(req, settings)
     });
 
     const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
@@ -450,8 +453,8 @@ const fetchGoogleAccessToken = async (refreshToken, req) => {
     return tokenData.access_token;
 };
 
-const uploadBufferToGoogleDrive = async ({ req, buffer, mimeType, fileName, folderId, refreshToken }) => {
-    const accessToken = await fetchGoogleAccessToken(refreshToken, req);
+const uploadBufferToGoogleDrive = async ({ req, buffer, mimeType, fileName, folderId, refreshToken, settings }) => {
+    const accessToken = await fetchGoogleAccessToken(refreshToken, req, settings);
     const metadata = {
         name: sanitizeDriveFileName(fileName),
         ...(folderId ? { parents: [folderId] } : {})
@@ -479,13 +482,13 @@ const uploadBufferToGoogleDrive = async ({ req, buffer, mimeType, fileName, fold
 
 const escapeDriveQueryValue = (value) => String(value || '').replace(/'/g, "\\'");
 
-const resolveOrCreateDriveFolder = async ({ req, refreshToken, folderName, fallbackFolderId }) => {
+const resolveOrCreateDriveFolder = async ({ req, refreshToken, folderName, fallbackFolderId, settings }) => {
     const trimmedName = String(folderName || '').trim();
     if (!trimmedName) {
         return fallbackFolderId || '';
     }
 
-    const accessToken = await fetchGoogleAccessToken(refreshToken, req);
+    const accessToken = await fetchGoogleAccessToken(refreshToken, req, settings);
     const q = `mimeType='application/vnd.google-apps.folder' and trashed=false and name='${escapeDriveQueryValue(trimmedName)}'`;
     const listParams = new URLSearchParams({
         q,
@@ -3372,7 +3375,7 @@ app.get('/api/v1/integrations/google-drive/status', (req, res) => {
     try {
         const db = readDb();
         const settings = resolveSettings(db);
-        const oauth = getGoogleOAuthConfig();
+        const oauth = getGoogleOAuthConfig(settings);
         const gd = settings.googleDriveConfig || {};
         res.json({
             configured: oauth.configured,
@@ -3381,9 +3384,11 @@ app.get('/api/v1/integrations/google-drive/status', (req, res) => {
             connectedAt: gd.connectedAt || null,
             enabled: !!gd.enabled,
             autoUploadExternalSubmissions: gd.autoUploadExternalSubmissions !== false,
+            clientIdSet: !!gd.clientId,
+            clientSecretSet: !!gd.clientSecret,
             folderName: gd.folderName || '',
             folderId: gd.folderId || '',
-            callbackUrl: getGoogleCallbackUrl(req)
+            callbackUrl: getGoogleCallbackUrl(req, settings)
         });
     } catch (err) {
         res.status(500).json({ error: err.message || 'Failed to fetch Google Drive status' });
@@ -3392,12 +3397,14 @@ app.get('/api/v1/integrations/google-drive/status', (req, res) => {
 
 app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
     try {
-        const oauth = getGoogleOAuthConfig();
-        if (!oauth.configured) {
-            return res.status(400).json({ error: 'Set GOOGLE_DRIVE_CLIENT_ID and GOOGLE_DRIVE_CLIENT_SECRET on the server first.' });
+        const db = readDb();
+        const settings = resolveSettings(db);
+        const oauthFromSettings = getGoogleOAuthConfig(settings);
+        if (!oauthFromSettings.configured) {
+            return res.status(400).json({ error: 'Set Google Client ID and Client Secret in Integrations tab first.' });
         }
 
-        const callbackUrl = getGoogleCallbackUrl(req);
+        const callbackUrl = getGoogleCallbackUrl(req, settings);
         const statePayload = {
             t: Date.now(),
             u: String(req.headers['x-user'] || 'System')
@@ -3405,7 +3412,7 @@ app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
         const state = Buffer.from(JSON.stringify(statePayload)).toString('base64url');
 
         const params = new URLSearchParams({
-            client_id: oauth.clientId,
+            client_id: oauthFromSettings.clientId,
             redirect_uri: callbackUrl,
             response_type: 'code',
             scope: GOOGLE_DRIVE_SCOPE,
@@ -3422,7 +3429,9 @@ app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
 
 app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
     try {
-        const oauth = getGoogleOAuthConfig();
+        const db = readDb();
+        const settings = resolveSettings(db);
+        const oauth = getGoogleOAuthConfig(settings);
         if (!oauth.configured) {
             return res.status(400).send('Google OAuth is not configured on this server.');
         }
@@ -3435,7 +3444,7 @@ app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
             return res.status(400).send('Missing authorization code.');
         }
 
-        const callbackUrl = getGoogleCallbackUrl(req);
+        const callbackUrl = getGoogleCallbackUrl(req, settings);
         const tokenBody = new URLSearchParams({
             code: String(code),
             client_id: oauth.clientId,
@@ -3472,11 +3481,9 @@ app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
             }
         }
 
-        const db = readDb();
         if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
             db.settings = [{}];
         }
-        const settings = resolveSettings(db);
         const prev = settings.googleDriveConfig || {};
         const refreshToken = tokenData.refresh_token || prev.refreshToken || '';
         if (!refreshToken) {
@@ -3546,7 +3553,8 @@ app.post('/api/v1/integrations/google-drive/upload', uploadGoogleDriveFile.singl
             req,
             refreshToken: gd.refreshToken,
             folderName: gd.folderName || '',
-            fallbackFolderId: gd.folderId || ''
+            fallbackFolderId: gd.folderId || '',
+            settings
         });
 
         if (targetFolderId !== (gd.folderId || '')) {
@@ -3571,7 +3579,8 @@ app.post('/api/v1/integrations/google-drive/upload', uploadGoogleDriveFile.singl
             mimeType: req.file.mimetype,
             fileName: finalName,
             folderId: targetFolderId || '',
-            refreshToken: gd.refreshToken
+            refreshToken: gd.refreshToken,
+            settings
         });
 
         return res.json({

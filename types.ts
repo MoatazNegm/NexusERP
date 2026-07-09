@@ -310,6 +310,9 @@ export interface GeminiConfig {
 export interface GoogleDriveConfig {
   enabled: boolean;
   autoUploadExternalSubmissions: boolean;
+  clientId?: string;
+  clientSecret?: string;
+  redirectUri?: string;
   folderName: string;
   folderId?: string;
   refreshToken?: string;

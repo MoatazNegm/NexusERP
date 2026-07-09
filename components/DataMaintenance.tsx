@@ -19,10 +19,11 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' });
   const [aiDraftOpenAI, setAiDraftOpenAI] = useState(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
-  const [driveDraft, setDriveDraft] = useState<GoogleDriveConfig>(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, folderName: '', folderId: '' });
+  const [driveDraft, setDriveDraft] = useState<GoogleDriveConfig>(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
   const [driveStatus, setDriveStatus] = useState<{ configured: boolean; connected: boolean; connectedEmail?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
   const [isDriveBusy, setIsDriveBusy] = useState(false);
   const [driveDraftDirty, setDriveDraftDirty] = useState(false);
+  const [showDriveClientSecret, setShowDriveClientSecret] = useState(false);
   const [isSavingAI, setIsSavingAI] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
@@ -199,7 +200,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   useEffect(() => {
     if (driveDraftDirty) return;
-    setDriveDraft(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, folderName: '', folderId: '' });
+    setDriveDraft(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
   }, [config.settings.googleDriveConfig, driveDraftDirty]);
 
   const refreshGoogleDriveStatus = async () => {
@@ -220,14 +221,24 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const saveGoogleDriveConfig = async () => {
     setIsDriveBusy(true);
     try {
-      const existing = config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, folderName: '', folderId: '' };
+      const existing = config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' };
       const folderNameChanged = (existing.folderName || '').trim() !== (driveDraft.folderName || '').trim();
+      const credsChanged =
+        (existing.clientId || '').trim() !== (driveDraft.clientId || '').trim() ||
+        (existing.clientSecret || '').trim() !== (driveDraft.clientSecret || '').trim() ||
+        (existing.redirectUri || '').trim() !== (driveDraft.redirectUri || '').trim();
       const next: GoogleDriveConfig = {
         ...existing,
         enabled: !!driveDraft.enabled,
         autoUploadExternalSubmissions: !!driveDraft.autoUploadExternalSubmissions,
+        clientId: (driveDraft.clientId || '').trim(),
+        clientSecret: (driveDraft.clientSecret || '').trim(),
+        redirectUri: (driveDraft.redirectUri || '').trim(),
         folderName: (driveDraft.folderName || '').trim(),
-        folderId: folderNameChanged ? '' : (existing.folderId || '')
+        folderId: folderNameChanged ? '' : (existing.folderId || ''),
+        refreshToken: credsChanged ? '' : (existing.refreshToken || ''),
+        connectedEmail: credsChanged ? '' : (existing.connectedEmail || ''),
+        connectedAt: credsChanged ? '' : (existing.connectedAt || '')
       };
       await updateSetting('settings', 'googleDriveConfig', next);
       setDriveDraft(next);
@@ -1114,6 +1125,52 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Google Client ID</label>
+                    <input
+                      className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                      placeholder="e.g. 1234567890-abc.apps.googleusercontent.com"
+                      value={driveDraft.clientId || ''}
+                      onChange={e => {
+                        setDriveDraftDirty(true);
+                        setDriveDraft(prev => ({ ...prev, clientId: e.target.value }));
+                      }}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Google Client Secret</label>
+                    <div className="relative">
+                      <input
+                        type={showDriveClientSecret ? 'text' : 'password'}
+                        className="w-full p-3 border rounded-xl bg-white font-bold text-sm pr-10"
+                        placeholder="GOCSPX-..."
+                        value={driveDraft.clientSecret || ''}
+                        onChange={e => {
+                          setDriveDraftDirty(true);
+                          setDriveDraft(prev => ({ ...prev, clientSecret: e.target.value }));
+                        }}
+                      />
+                      <button type="button" onClick={() => setShowDriveClientSecret(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-blue-600">
+                        <i className={`fa-solid ${showDriveClientSecret ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">OAuth Redirect URI (Optional Override)</label>
+                    <input
+                      className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                      placeholder="Leave blank to use: {origin}/api/v1/integrations/google-drive/callback"
+                      value={driveDraft.redirectUri || ''}
+                      onChange={e => {
+                        setDriveDraftDirty(true);
+                        setDriveDraft(prev => ({ ...prev, redirectUri: e.target.value }));
+                      }}
+                    />
+                    <p className="text-[10px] text-slate-400">If blank, the system automatically builds callback URL from the current app URL.</p>
+                  </div>
+
+                  <div className="space-y-2 md:col-span-2">
                     <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Target Drive Folder Name</label>
                     <input
                       className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
@@ -1124,10 +1181,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                         setDriveDraft(prev => ({ ...prev, folderName: e.target.value, folderId: '' }));
                       }}
                     />
-                    <p className="text-[10px] text-slate-400">If this folder exists in Drive, it will be used. If not, it will be created automatically.</p>
+                    <p className="text-[10px] text-slate-400">If this folder exists in Drive, it is reused. Otherwise it is created automatically.</p>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-3 md:col-span-2">
                     <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
                       <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Integration</span>
                       <input type="checkbox" checked={!!driveDraft.enabled} onChange={e => { setDriveDraftDirty(true); setDriveDraft(prev => ({ ...prev, enabled: e.target.checked })); }} />
@@ -1168,6 +1225,19 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   >
                     Refresh Status
                   </button>
+                </div>
+
+                <div className="p-6 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                  <h5 className="text-[11px] font-black text-slate-700 uppercase tracking-widest">Google Cloud Setup Guide</h5>
+                  <ol className="list-decimal pl-5 text-xs text-slate-600 space-y-1">
+                    <li>Open Google Cloud Console and create/select a project.</li>
+                    <li>Enable the Google Drive API for that project.</li>
+                    <li>Configure OAuth Consent Screen (External or Internal) and add your admin email as a test user if needed.</li>
+                    <li>Create OAuth Client ID of type Web Application.</li>
+                    <li>Add your app origin in Authorized JavaScript origins.</li>
+                    <li>Add callback URL in Authorized redirect URIs: <span className="font-black">{driveStatus?.callbackUrl || 'current-origin/api/v1/integrations/google-drive/callback'}</span></li>
+                    <li>Copy Google Client ID and Google Client Secret into the fields above, save, then connect account.</li>
+                  </ol>
                 </div>
               </div>
             </div>

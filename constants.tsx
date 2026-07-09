@@ -26,6 +26,9 @@ export const INITIAL_CONFIG: AppConfig = {
     googleDriveConfig: {
       enabled: true,
       autoUploadExternalSubmissions: true,
+      clientId: '',
+      clientSecret: '',
+      redirectUri: '',
       folderName: ''
     },
     emailConfig: {
