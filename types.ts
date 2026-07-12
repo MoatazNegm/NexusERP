@@ -256,6 +256,9 @@ export interface CustomerOrder {
   status?: OrderStatus;
   previousStatus?: OrderStatus;
   invoiceNumber?: string;
+  googleDriveLink?: string;
+  googleDriveFileId?: string;
+  googleDriveFileName?: string;
   paymentSlaDays: number;
   items: CustomerOrderItem[];
   logs?: LogEntry[];

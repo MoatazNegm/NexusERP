@@ -249,6 +249,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
   const [selectedItem, setSelectedItem] = useState<CustomerOrderItem | null>(null);
+  const [isPoPreviewExpanded, setIsPoPreviewExpanded] = useState(false);
   const [compSearch, setCompSearch] = useState('');
   const [partNumSearch, setPartNumSearch] = useState('');
   const [compQty, setCompQty] = useState(1);
@@ -298,6 +299,10 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   useEffect(() => {
     fetchData();
   }, [refreshKey]);
+
+  useEffect(() => {
+    setIsPoPreviewExpanded(false);
+  }, [selectedOrder?.id]);
 
   const fetchData = async (keepSelection = true) => {
     const [o, i, s] = await Promise.all([
@@ -964,6 +969,17 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                       <div className="text-[9px] font-bold text-slate-400 mt-0.5 uppercase flex items-center gap-2">
                         <span className="bg-slate-800 px-2 py-0.5 rounded leading-none">ID: {selectedOrder.internalOrderNumber}</span>
                         <span className="bg-slate-800 px-2 py-0.5 rounded leading-none">PO: {selectedOrder.customerReferenceNumber}</span>
+                        {selectedOrder.googleDriveLink && (
+                          <a
+                            href={selectedOrder.googleDriveLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="bg-emerald-600 hover:bg-emerald-500 px-2 py-0.5 rounded leading-none text-white transition-colors"
+                            title={selectedOrder.googleDriveFileName || 'Open attached PO in Google Drive'}
+                          >
+                            Open PO
+                          </a>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1025,6 +1041,47 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                           <div>
                             <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Studying Line Item</h4>
                             <h2 className="text-3xl font-black text-slate-800 tracking-tight">{selectedItem.description}</h2>
+                            {selectedOrder.googleDriveFileId && (
+                              <div className="mt-5 rounded-[2rem] border border-slate-200 overflow-hidden bg-white shadow-sm">
+                                <button
+                                  type="button"
+                                  onClick={() => setIsPoPreviewExpanded(prev => !prev)}
+                                  className="w-full px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between hover:bg-slate-100 transition-colors"
+                                >
+                                  <div>
+                                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Attached PO Preview</div>
+                                    <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                                      {selectedOrder.googleDriveFileName || 'Google Drive attachment'}
+                                    </div>
+                                  </div>
+                                  <span className="px-3 py-1.5 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest">
+                                    {isPoPreviewExpanded ? 'Collapse' : 'Expand'}
+                                  </span>
+                                </button>
+                                {isPoPreviewExpanded && (
+                                  <div className="p-3 space-y-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                        Preview loads inside the app
+                                      </span>
+                                      <a
+                                        href={`https://drive.google.com/file/d/${selectedOrder.googleDriveFileId}/view`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-3 py-1.5 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-slate-700 transition-colors"
+                                      >
+                                        Open Full View
+                                      </a>
+                                    </div>
+                                    <iframe
+                                      title="Attached PO Preview"
+                                      src={`https://drive.google.com/file/d/${selectedOrder.googleDriveFileId}/preview`}
+                                      className="w-full h-[520px] bg-white rounded-[1.5rem] border border-slate-100"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div className="text-right">
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Accumulated BoM Cost</p>

@@ -811,16 +811,22 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       const tryDriveUpload = async (orderLike: { id?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) => {
         if (!(driveEnabled && autoUpload)) {
-          return { attempted: false, uploaded: false };
+          return { attempted: false, uploaded: false, link: '', fileId: '', fileName: '' };
         }
         const effectiveUploadFile = submissionFile || snapshotToFile() || fallbackOrderFile(orderLike);
-        await dataService.uploadExternalSubmissionToGoogleDrive(effectiveUploadFile, {
+        const uploaded = await dataService.uploadExternalSubmissionToGoogleDrive(effectiveUploadFile, {
           orderId: orderLike.id,
           internalOrderNumber: orderLike.internalOrderNumber,
           customerReferenceNumber: orderLike.customerReferenceNumber,
           customerName: orderLike.customerName
         });
-        return { attempted: true, uploaded: true };
+        return {
+          attempted: true,
+          uploaded: true,
+          link: uploaded.webViewLink || '',
+          fileId: uploaded.id || '',
+          fileName: uploaded.name || ''
+        };
       };
 
       if (editingOrderId) {
@@ -828,6 +834,13 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         try {
           const driveResult = await tryDriveUpload(updatedOrder as any);
           if (driveResult.uploaded) {
+            if (driveResult.link) {
+              await dataService.updateOrder(updatedOrder.id, {
+                googleDriveLink: driveResult.link,
+                googleDriveFileId: driveResult.fileId,
+                googleDriveFileName: driveResult.fileName
+              } as any);
+            }
             setMessage({ type: 'success', text: 'Record updated. Source file archived to Google Drive.' });
           } else if (driveEnabled && autoUpload) {
             setMessage({ type: 'success', text: 'Record updated. Order snapshot archived to Google Drive.' });
@@ -870,7 +883,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
         if (driveEnabled && autoUpload) {
           try {
-            await tryDriveUpload(newOrder as any);
+            const driveResult = await tryDriveUpload(newOrder as any);
+            if (driveResult.link) {
+              await dataService.updateOrder(newOrder.id, {
+                googleDriveLink: driveResult.link,
+                googleDriveFileId: driveResult.fileId,
+                googleDriveFileName: driveResult.fileName
+              } as any);
+            }
             setMessage({
               type: 'success',
               text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}. Source file archived to Google Drive.`
