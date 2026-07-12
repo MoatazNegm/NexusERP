@@ -67,6 +67,11 @@ const whtStorage = multer.diskStorage({
     }
 });
 const uploadWht = multer({ storage: whtStorage });
+const uploadGoogleDriveFile = multer({ storage: multer.memoryStorage() });
+
+const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const GOOGLE_OAUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 const OrderStatus = {
     LOGGED: 'LOGGED',
@@ -309,7 +314,9 @@ const decryptValue = (encText) => {
 const SENSITIVE_PATHS = [
     ['geminiConfig', 'apiKey'],
     ['openaiConfig', 'apiKey'],
-    ['emailConfig', 'password']
+    ['emailConfig', 'password'],
+    ['googleDriveConfig', 'clientSecret'],
+    ['googleDriveConfig', 'refreshToken']
 ];
 
 const transformSensitiveFields = (settings, fn) => {
@@ -338,6 +345,15 @@ const resolveSettings = (db) => {
         enableRollbackAlerts: true,
         rollbackAlertGroupIds: [],
         thresholdNotifications: {},
+        googleDriveConfig: {
+            enabled: true,
+            autoUploadExternalSubmissions: true,
+            clientId: '',
+            clientSecret: '',
+            redirectUri: '',
+            folderName: '',
+            folderId: ''
+        },
         emailConfig: {
             smtpServer: 'mail.quickstor.net',
             smtpPort: 465,
@@ -367,6 +383,160 @@ const resolveSettings = (db) => {
 
     // Decrypt sensitive fields for internal use
     return decryptSettings(merged);
+};
+
+const getGoogleOAuthConfig = (settings) => {
+    const cfg = settings?.googleDriveConfig || {};
+    const clientId = String(cfg.clientId || '').trim();
+    const clientSecret = String(cfg.clientSecret || '').trim();
+    return {
+        clientId,
+        clientSecret,
+        configured: !!clientId && !!clientSecret
+    };
+};
+
+const getBaseUrlFromRequest = (req) => {
+    const appOrigin = String(req.headers['x-app-origin'] || '').trim();
+    if (appOrigin) {
+        return appOrigin;
+    }
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const proto = forwardedProto || req.protocol || 'http';
+    const host = req.get('host');
+    return `${proto}://${host}`;
+};
+
+const getGoogleCallbackUrl = (req, settings) => {
+    const configuredRedirect = String(settings?.googleDriveConfig?.redirectUri || '').trim();
+    if (configuredRedirect) return configuredRedirect;
+    return `${getBaseUrlFromRequest(req)}/api/v1/integrations/google-drive/callback`;
+};
+
+const sanitizeDriveFileName = (name) => {
+    const clean = String(name || 'submission.bin').replace(/[\\/:*?"<>|]+/g, '_').trim();
+    return clean || 'submission.bin';
+};
+
+const fetchGoogleAccessToken = async (refreshToken, req, settings) => {
+    const oauth = getGoogleOAuthConfig(settings);
+    if (!oauth.configured) {
+        throw new Error('Google OAuth settings are missing in Integrations tab.');
+    }
+    if (!refreshToken) {
+        throw new Error('Google Drive is not connected. Missing refresh token.');
+    }
+
+    const tokenBody = new URLSearchParams({
+        client_id: oauth.clientId,
+        client_secret: oauth.clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+        redirect_uri: getGoogleCallbackUrl(req, settings)
+    });
+
+    const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody.toString()
+    });
+
+    if (!tokenResponse.ok) {
+        const errText = await tokenResponse.text();
+        throw new Error(`Google token refresh failed: ${errText}`);
+    }
+
+    const tokenData = await tokenResponse.json();
+    if (!tokenData.access_token) {
+        throw new Error('Google token refresh did not return an access token.');
+    }
+    return tokenData.access_token;
+};
+
+const uploadBufferToGoogleDrive = async ({ req, buffer, mimeType, fileName, folderId, refreshToken, settings }) => {
+    const accessToken = await fetchGoogleAccessToken(refreshToken, req, settings);
+    const metadata = {
+        name: sanitizeDriveFileName(fileName),
+        ...(folderId ? { parents: [folderId] } : {})
+    };
+
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    form.append('file', new Blob([buffer], { type: mimeType || 'application/octet-stream' }), sanitizeDriveFileName(fileName));
+
+    const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${accessToken}`
+        },
+        body: form
+    });
+
+    if (!uploadResponse.ok) {
+        const errText = await uploadResponse.text();
+        throw new Error(`Google Drive upload failed: ${errText}`);
+    }
+
+    return uploadResponse.json();
+};
+
+const escapeDriveQueryValue = (value) => String(value || '').replace(/'/g, "\\'");
+
+const resolveOrCreateDriveFolder = async ({ req, refreshToken, folderName, fallbackFolderId, settings }) => {
+    const trimmedName = String(folderName || '').trim();
+    if (!trimmedName) {
+        return fallbackFolderId || '';
+    }
+
+    const accessToken = await fetchGoogleAccessToken(refreshToken, req, settings);
+    const q = `mimeType='application/vnd.google-apps.folder' and trashed=false and name='${escapeDriveQueryValue(trimmedName)}'`;
+    const listParams = new URLSearchParams({
+        q,
+        spaces: 'drive',
+        fields: 'files(id,name)',
+        pageSize: '1'
+    });
+
+    const listResponse = await fetch(`https://www.googleapis.com/drive/v3/files?${listParams.toString()}`, {
+        headers: {
+            Authorization: `Bearer ${accessToken}`
+        }
+    });
+
+    if (!listResponse.ok) {
+        const errText = await listResponse.text();
+        throw new Error(`Google Drive folder lookup failed: ${errText}`);
+    }
+
+    const listData = await listResponse.json();
+    const existing = Array.isArray(listData.files) ? listData.files[0] : null;
+    if (existing?.id) {
+        return existing.id;
+    }
+
+    const createResponse = await fetch('https://www.googleapis.com/drive/v3/files?fields=id,name', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            name: trimmedName,
+            mimeType: 'application/vnd.google-apps.folder'
+        })
+    });
+
+    if (!createResponse.ok) {
+        const errText = await createResponse.text();
+        throw new Error(`Google Drive folder creation failed: ${errText}`);
+    }
+
+    const created = await createResponse.json();
+    if (!created?.id) {
+        throw new Error('Google Drive folder creation returned no folder ID.');
+    }
+
+    return created.id;
 };
 
 // --- SCHEMA MIGRATIONS ---
@@ -3198,6 +3368,231 @@ app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) 
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
+    }
+});
+
+app.get('/api/v1/integrations/google-drive/status', (req, res) => {
+    try {
+        const db = readDb();
+        const settings = resolveSettings(db);
+        const oauth = getGoogleOAuthConfig(settings);
+        const gd = settings.googleDriveConfig || {};
+        res.json({
+            configured: oauth.configured,
+            connected: !!gd.refreshToken,
+            connectedEmail: gd.connectedEmail || null,
+            connectedAt: gd.connectedAt || null,
+            enabled: !!gd.enabled,
+            autoUploadExternalSubmissions: gd.autoUploadExternalSubmissions !== false,
+            clientIdSet: !!gd.clientId,
+            clientSecretSet: !!gd.clientSecret,
+            folderName: gd.folderName || '',
+            folderId: gd.folderId || '',
+            callbackUrl: getGoogleCallbackUrl(req, settings)
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to fetch Google Drive status' });
+    }
+});
+
+app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
+    try {
+        const db = readDb();
+        const settings = resolveSettings(db);
+        const oauthFromSettings = getGoogleOAuthConfig(settings);
+        if (!oauthFromSettings.configured) {
+            return res.status(400).json({ error: 'Set Google Client ID and Client Secret in Integrations tab first.' });
+        }
+
+        const callbackUrl = getGoogleCallbackUrl(req, settings);
+        const statePayload = {
+            t: Date.now(),
+            u: String(req.headers['x-user'] || 'System')
+        };
+        const state = Buffer.from(JSON.stringify(statePayload)).toString('base64url');
+
+        const params = new URLSearchParams({
+            client_id: oauthFromSettings.clientId,
+            redirect_uri: callbackUrl,
+            response_type: 'code',
+            scope: GOOGLE_DRIVE_SCOPE,
+            access_type: 'offline',
+            prompt: 'consent',
+            state
+        });
+
+        res.json({ url: `${GOOGLE_OAUTH_BASE}?${params.toString()}` });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to build Google auth URL' });
+    }
+});
+
+app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
+    try {
+        const db = readDb();
+        const settings = resolveSettings(db);
+        const oauth = getGoogleOAuthConfig(settings);
+        if (!oauth.configured) {
+            return res.status(400).send('Google OAuth is not configured on this server.');
+        }
+
+        const { code, error } = req.query;
+        if (error) {
+            return res.status(400).send(`Google authorization failed: ${error}`);
+        }
+        if (!code) {
+            return res.status(400).send('Missing authorization code.');
+        }
+
+        const callbackUrl = getGoogleCallbackUrl(req, settings);
+        const tokenBody = new URLSearchParams({
+            code: String(code),
+            client_id: oauth.clientId,
+            client_secret: oauth.clientSecret,
+            redirect_uri: callbackUrl,
+            grant_type: 'authorization_code'
+        });
+
+        const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: tokenBody.toString()
+        });
+
+        if (!tokenResponse.ok) {
+            const errText = await tokenResponse.text();
+            return res.status(500).send(`Token exchange failed: ${errText}`);
+        }
+
+        const tokenData = await tokenResponse.json();
+
+        let connectedEmail = '';
+        if (tokenData.access_token) {
+            try {
+                const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+                    headers: { Authorization: `Bearer ${tokenData.access_token}` }
+                });
+                if (profileRes.ok) {
+                    const profile = await profileRes.json();
+                    connectedEmail = profile.email || '';
+                }
+            } catch (e) {
+                console.warn('[GoogleDrive] Failed to fetch connected account profile');
+            }
+        }
+
+        if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+            db.settings = [{}];
+        }
+        const prev = settings.googleDriveConfig || {};
+        const refreshToken = tokenData.refresh_token || prev.refreshToken || '';
+        if (!refreshToken) {
+            return res.status(500).send('No refresh token returned by Google and no existing token is stored. Revoke app access in Google Account and retry consent.');
+        }
+        settings.googleDriveConfig = {
+            ...prev,
+            refreshToken,
+            connectedEmail: connectedEmail || prev.connectedEmail || '',
+            connectedAt: new Date().toISOString(),
+            enabled: prev.enabled !== false,
+            autoUploadExternalSubmissions: prev.autoUploadExternalSubmissions !== false,
+            folderName: prev.folderName || '',
+            folderId: prev.folderId || ''
+        };
+
+        db.settings[0] = encryptSettings(settings);
+        writeDb(db);
+
+        return res.send('<html><body style="font-family: Arial, sans-serif; padding: 24px;"><h3>Google Drive connected.</h3><p>You can close this window and return to Nexus ERP.</p><script>setTimeout(function(){window.close();},1200);</script></body></html>');
+    } catch (err) {
+        console.error('[GoogleDrive] OAuth callback failed:', err);
+        return res.status(500).send(`OAuth callback failed: ${err.message || err}`);
+    }
+});
+
+app.post('/api/v1/integrations/google-drive/disconnect', (req, res) => {
+    try {
+        const db = readDb();
+        if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+            db.settings = [{}];
+        }
+        const settings = resolveSettings(db);
+        const prev = settings.googleDriveConfig || {};
+        settings.googleDriveConfig = {
+            ...prev,
+            refreshToken: '',
+            connectedEmail: '',
+            connectedAt: ''
+        };
+        db.settings[0] = encryptSettings(settings);
+        writeDb(db);
+        return res.json({ success: true });
+    } catch (err) {
+        return res.status(500).json({ error: err.message || 'Failed to disconnect Google Drive' });
+    }
+});
+
+app.post('/api/v1/integrations/google-drive/upload', uploadGoogleDriveFile.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file was uploaded.' });
+        }
+
+        const db = readDb();
+        const settings = resolveSettings(db);
+        const gd = settings.googleDriveConfig || {};
+
+        if (!gd.enabled) {
+            return res.status(400).json({ error: 'Google Drive integration is disabled in System Core Control.' });
+        }
+        if (!gd.refreshToken) {
+            return res.status(400).json({ error: 'Google Drive is not connected yet.' });
+        }
+
+        const targetFolderId = await resolveOrCreateDriveFolder({
+            req,
+            refreshToken: gd.refreshToken,
+            folderName: gd.folderName || '',
+            fallbackFolderId: gd.folderId || '',
+            settings
+        });
+
+        if (targetFolderId !== (gd.folderId || '')) {
+            settings.googleDriveConfig = {
+                ...gd,
+                folderId: targetFolderId
+            };
+            if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+                db.settings = [{}];
+            }
+            db.settings[0] = encryptSettings(settings);
+            writeDb(db);
+        }
+
+        const orderPrefix = req.body.internalOrderNumber ? `${req.body.internalOrderNumber}_` : '';
+        const poPrefix = req.body.customerReferenceNumber ? `${req.body.customerReferenceNumber}_` : '';
+        const finalName = `${orderPrefix}${poPrefix}${req.file.originalname}`;
+
+        const uploaded = await uploadBufferToGoogleDrive({
+            req,
+            buffer: req.file.buffer,
+            mimeType: req.file.mimetype,
+            fileName: finalName,
+            folderId: targetFolderId || '',
+            refreshToken: gd.refreshToken,
+            settings
+        });
+
+        return res.json({
+            success: true,
+            id: uploaded.id,
+            name: uploaded.name,
+            webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+            webContentLink: uploaded.webContentLink || ''
+        });
+    } catch (err) {
+        console.error('[GoogleDrive] Upload failed:', err);
+        return res.status(500).json({ error: err.message || 'Google Drive upload failed' });
     }
 });
 

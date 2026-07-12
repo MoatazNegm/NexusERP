@@ -256,6 +256,9 @@ export interface CustomerOrder {
   status?: OrderStatus;
   previousStatus?: OrderStatus;
   invoiceNumber?: string;
+  googleDriveLink?: string;
+  googleDriveFileId?: string;
+  googleDriveFileName?: string;
   paymentSlaDays: number;
   items: CustomerOrderItem[];
   logs?: LogEntry[];
@@ -307,6 +310,19 @@ export interface GeminiConfig {
   modelName: string;
 }
 
+export interface GoogleDriveConfig {
+  enabled: boolean;
+  autoUploadExternalSubmissions: boolean;
+  clientId?: string;
+  clientSecret?: string;
+  redirectUri?: string;
+  folderName: string;
+  folderId?: string;
+  refreshToken?: string;
+  connectedEmail?: string;
+  connectedAt?: string;
+}
+
 export interface EmailConfig {
   smtpServer: string;
   smtpPort: number;
@@ -335,6 +351,7 @@ export interface AppConfig {
     aiProvider: AIProvider;
     openaiConfig: OpenAIConfig;
     geminiConfig: GeminiConfig;
+    googleDriveConfig: GoogleDriveConfig;
     emailConfig: EmailConfig;
     companyName: string;
     companyAddress: string;

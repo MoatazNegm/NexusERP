@@ -134,6 +134,7 @@ Sensitive API keys and passwords are protected using AES-256-CBC encryption at r
 - `settings.geminiConfig.apiKey`
 - `settings.openaiConfig.apiKey`
 - `settings.emailConfig.password`
+- `settings.googleDriveConfig.refreshToken`
 
 **How it works:**
 - **On read (GET /api/v1/settings):** The server decrypts these fields before sending them to the frontend so the app can use the keys.
@@ -153,6 +154,26 @@ The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults 
 - The Express server (`server.js`) serves the built frontend from `dist/` on the same origin.
 - Leave `VITE_BACKEND_URL` unset (or set to `''`). The `render.yaml` `startCommand` is `node server.js`.
 - If you ever deploy the frontend and backend on **separate origins**, set `VITE_BACKEND_URL` to the backend origin (e.g. `https://api.example.com`).
+
+### Google Drive Integration (Per-Customer Instance)
+This app is distributed per customer copy (not SaaS), so each customer configures Google Drive from the UI:
+
+- Open **System Core Control -> Integrations**
+- Enter **Google Client ID** and **Google Client Secret**
+- Optionally set **OAuth Redirect URI** (leave blank to auto-generate from current origin)
+- Set **Target Drive Folder Name**
+- Save settings, then click **Connect Google Account**
+
+Folder targeting uses a human-friendly folder name in settings (`googleDriveConfig.folderName`). During upload the backend:
+- searches Google Drive for a folder with that exact name,
+- reuses it if found,
+- otherwise creates it automatically,
+- and caches its ID internally (`googleDriveConfig.folderId`).
+
+Recommended OAuth redirect URIs for this project:
+
+- `http://localhost:3005/api/v1/integrations/google-drive/callback`
+- `https://nexuserp-nrh3.onrender.com/api/v1/integrations/google-drive/callback`
 
 ## Adding a New Feature
 1. Component: Create components/{Feature}Module.tsx (or Modal.tsx if it's an action).
