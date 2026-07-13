@@ -202,13 +202,22 @@ const App: React.FC = () => {
   const dashboardMetrics = useMemo(() => {
     let totalRevenue = 0;
     let totalCost = 0;
+    let blanketRevenue = 0;
+    let blanketCost = 0;
     const open = orders.filter(o => ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status));
 
     open.forEach(o => {
-      o.items.forEach(it => {
-        totalRevenue += (it.quantity * it.pricePerUnit);
-        it.components?.forEach(c => totalCost += (c.quantity * (c.unitCost || 0)));
-      });
+      if (o.blanketOrder) {
+        o.items.forEach(it => {
+          blanketRevenue += (it.quantity * it.pricePerUnit);
+          it.components?.forEach(c => blanketCost += (c.quantity * (c.unitCost || 0)));
+        });
+      } else {
+        o.items.forEach(it => {
+          totalRevenue += (it.quantity * it.pricePerUnit);
+          it.components?.forEach(c => totalCost += (c.quantity * (c.unitCost || 0)));
+        });
+      }
     });
 
     const statusCounts = Object.keys(STATUS_CONFIG).reduce((acc, status) => {
@@ -226,6 +235,9 @@ const App: React.FC = () => {
     return {
       totalRevenue,
       totalCost,
+      blanketRevenue,
+      blanketCost,
+      blanketMarginPct: blanketRevenue > 0 ? ((blanketRevenue - blanketCost) / blanketRevenue) * 100 : 0,
       marginPct: totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : 0,
       statusCounts,
       negativeMarginOrders,
@@ -240,9 +252,12 @@ const App: React.FC = () => {
         return (
           <div className="space-y-8 animate-in fade-in duration-500">
             {/* High Level Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <DashboardCard id="revenue" title="Gross Portfolio" icon="fa-coins" onClose={() => { }}>
                 <div className="p-4"><div className="text-2xl font-black text-slate-800">{dashboardMetrics.totalRevenue.toLocaleString()} L.E.</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Open Contract Value</div></div>
+              </DashboardCard>
+              <DashboardCard id="blanket" title="Blanket Portfolio" icon="fa-layer-group" onClose={() => { }}>
+                <div className="p-4"><div className="text-2xl font-black text-teal-600">{dashboardMetrics.blanketRevenue.toLocaleString()} L.E.</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Blanket Order Value</div></div>
               </DashboardCard>
               <DashboardCard id="margin" title="Portfolio Margin" icon="fa-chart-pie" onClose={() => { }}>
                 <div className="p-4"><div className="text-2xl font-black text-emerald-600">{dashboardMetrics.marginPct.toFixed(1)}%</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Average Yield</div></div>

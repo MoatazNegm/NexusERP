@@ -12,6 +12,7 @@ import { AddCustomerModal } from './AddCustomerModal';
 interface OrderManagementProps {
   onGoToCRM?: () => void;
   onNavigateToReview?: (orderId: string, itemId: string) => void;
+  onOrderChange?: () => void;
   config: AppConfig;
   refreshKey?: number;
   currentUser: User;
@@ -34,6 +35,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [orderDate, setOrderDate] = useState(today);
   const [paymentSlaDays, setPaymentSlaDays] = useState(config.settings.defaultPaymentSlaDays);
   const [appliesWithholdingTax, setAppliesWithholdingTax] = useState(false);
+  const [blanketOrder, setBlanketOrder] = useState(false);
   const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
   const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(0);
   const [targetDeliveryDate, setTargetDeliveryDate] = useState(today);
@@ -166,6 +168,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setOrderDate(match.orderDate);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
+    setBlanketOrder(match.blanketOrder || false);
     setTargetDeliveryDays(match.targetDeliveryDays || 0);
     setTargetDeliveryDate(match.targetDeliveryDate || match.orderDate);
     setItems(match.items.map(it => ({ ...it, taxDetected: true })));
@@ -332,6 +335,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCustomerName(''); setCustomerReferenceNumber(''); setOrderDate(today);
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(false);
+    setBlanketOrder(false);
     setTargetDeliveryDays(0);
     setTargetDeliveryDate(today);
     setItems([{ id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 14, taxDetected: true, logs: [] }]);
@@ -343,7 +347,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     if (editStatus.isFrozen) return;
     try {
       if (editingOrderId) {
-        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, items: items as any });
+        await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, items: items as any });
         setMessage({ type: 'success', text: 'Record updated.' });
       } else {
         // Prevent duplicate PO IDs on the frontend side
@@ -361,6 +365,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           orderDate,
           paymentSlaDays,
           appliesWithholdingTax,
+          blanketOrder,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
           targetDeliveryDate,
           items: items as any
@@ -598,7 +603,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     />
                   </div>
 
-                  <div className="space-y-2 col-span-1 md:col-span-1">
+                  <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between">
                       <span>Target Delivery</span>
                       <div className="flex bg-slate-200 rounded-lg p-0.5 gap-1">
@@ -650,6 +655,22 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         {deliveryInputMode === 'days' ? `Scheduled: ${targetDeliveryDate}` : `Calculated: ${targetDeliveryDays} Days`}
                       </span>
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">&nbsp;</label>
+                    <label className="flex items-center gap-3 cursor-pointer p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 hover:bg-white hover:border-teal-400 transition-all w-full">
+                      <input
+                        disabled={editStatus.isFrozen}
+                        type="checkbox"
+                        className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500"
+                        checked={blanketOrder}
+                        onChange={e => setBlanketOrder(e.target.checked)}
+                      />
+                      <div>
+                        <span className="text-sm font-bold text-slate-800">Blanket Order</span>
+                      </div>
+                    </label>
                   </div>
                 </div>
 
