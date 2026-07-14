@@ -824,16 +824,16 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 <div className="flex gap-2 relative">
                                   <input
                                     type="text"
-                                    placeholder={selectedItem.productionType === 'OUTSOURCING' ? 'Contract Number...' : 'Mfr. Part Number...'}
+                                    placeholder={selectedItem.productionType === 'OUTSOURCING' ? `${selectedOrder?.customerReferenceNumber}-${(selectedOrder?.items?.findIndex(i => i.id === selectedItem.id) || 0) + 1}` : 'Mfr. Part Number...'}
                                     className={`w-1/3 p-4 border-2 rounded-2xl text-sm font-mono outline-none transition-all placeholder:font-sans placeholder:text-slate-300 ${selectedItem.productionType === 'OUTSOURCING' ? 'border-violet-100 text-violet-800 focus:border-violet-500' : 'border-blue-50 text-blue-800 focus:border-blue-500'}`}
-                                    value={partNumSearch}
+                                    value={selectedItem.productionType === 'OUTSOURCING' ? (partNumSearch || `${selectedOrder?.customerReferenceNumber}-${(selectedOrder?.items?.findIndex(i => i.id === selectedItem.id) || 0) + 1}` || '') : partNumSearch}
                                     onChange={e => { setPartNumSearch(e.target.value); setShowCompSuggestions(true); }}
                                     onFocus={() => setShowCompSuggestions(true)}
                                   />
                                   <div className="absolute -bottom-4 left-1 text-[8px] font-bold text-slate-400 uppercase">Auto-generated ID if left blank</div>
                                   <div className="relative flex-1 group">
                                     <textarea
-                                      placeholder={selectedItem.productionType === 'OUTSOURCING' ? "Enter Service or Contract Description..." : "Enter component SKU or Name..."}
+                                      placeholder={selectedItem.productionType === 'OUTSOURCING' ? (selectedItem.description || "Enter Service or Contract Description...") : "Enter component SKU or Name..."}
                                       className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all resize-none min-h-[58px]"
                                       rows={1}
                                       value={compSearch}
@@ -1010,7 +1010,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                              {selectedItem.components?.map(c => (
+                              {selectedItem.components?.map((c, index) => (
                                 <tr key={c.id} className="group hover:bg-slate-50/50 transition-colors">
                                   <td className="px-6 py-4">
                                     <div className="font-black text-slate-800 text-xs">
@@ -1018,7 +1018,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     </div>
                                     <div className="flex flex-col gap-0.5 mt-1">
                                       <div className="font-mono text-[9px] text-blue-500">
-                                        {selectedItem.productionType === 'OUTSOURCING' ? (c.contractNumber || c.componentNumber) : c.componentNumber}
+                                        {selectedItem.productionType === 'OUTSOURCING' ? `${selectedOrder?.customerReferenceNumber}-${index + 1}` : c.componentNumber}
                                       </div>
                                       {selectedItem.productionType === 'OUTSOURCING' && c.contractDuration && (
                                         <div className="text-[8px] font-black text-violet-600 uppercase bg-violet-50 px-2 py-0.5 rounded-lg w-fit mt-1">Duration: {c.contractDuration}</div>
