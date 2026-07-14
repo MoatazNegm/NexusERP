@@ -375,6 +375,30 @@ class DataService {
     return response.json();
   }
 
+  async getLocalStorageStatus() {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/local-storage/status`, {
+      headers: { 'x-user': this.getCurrentUser() }
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to read local storage status');
+    }
+    return response.json() as Promise<{ configured: boolean; reachable: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; storageIp: string; apiPort: number; consolePort: number; bucketName: string; buckets: string[] }>;
+  }
+
+  async createLocalStorageBucket(bucketName: string) {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/local-storage/buckets`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ bucketName })
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to create bucket');
+    }
+    return response.json() as Promise<{ success: boolean; bucketName: string }>;
+  }
+
   async getGoogleDriveAuthUrl() {
     const response = await fetch(`${BACKEND_URL}/api/v1/integrations/google-drive/auth-url`, {
       headers: { 'x-user': this.getCurrentUser(), 'x-app-origin': this.getAppOrigin() }
@@ -398,7 +422,7 @@ class DataService {
     return response.json();
   }
 
-  async uploadExternalSubmissionToGoogleDrive(file: File, metadata: { orderId?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) {
+  async uploadExternalSubmission(file: File, metadata: { orderId?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) {
     const formData = new FormData();
     formData.append('file', file);
     if (metadata.orderId) formData.append('orderId', metadata.orderId);
@@ -406,7 +430,7 @@ class DataService {
     if (metadata.customerReferenceNumber) formData.append('customerReferenceNumber', metadata.customerReferenceNumber);
     if (metadata.customerName) formData.append('customerName', metadata.customerName);
 
-    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/google-drive/upload`, {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/storage/upload`, {
       method: 'POST',
       headers: { 'x-user': this.getCurrentUser() },
       body: formData
@@ -414,7 +438,7 @@ class DataService {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to upload file to Google Drive');
+      throw new Error(err.error || 'Failed to upload file to configured storage');
     }
     return response.json();
   }

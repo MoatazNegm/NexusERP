@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig } from '../types';
+import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend } from '../types';
 
 interface DataMaintenanceProps {
   config: AppConfig;
@@ -19,11 +19,16 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' });
   const [aiDraftOpenAI, setAiDraftOpenAI] = useState(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
+  const [storageBackendDraft, setStorageBackendDraft] = useState<StorageBackend>(config.settings.storageBackend || 'google-drive');
   const [driveDraft, setDriveDraft] = useState<GoogleDriveConfig>(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
   const [driveStatus, setDriveStatus] = useState<{ configured: boolean; connected: boolean; connectedEmail?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
+  const [localStorageDraft, setLocalStorageDraft] = useState<LocalStorageConfig>(config.settings.localStorageConfig || { enabled: true, autoUploadExternalSubmissions: true, storageIp: '', apiPort: 9000, consolePort: 9001, accessKey: '', secretKey: '', bucketName: '' });
+  const [localStorageStatus, setLocalStorageStatus] = useState<{ configured: boolean; reachable: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; storageIp: string; apiPort: number; consolePort: number; bucketName: string; buckets: string[] } | null>(null);
   const [isDriveBusy, setIsDriveBusy] = useState(false);
   const [driveDraftDirty, setDriveDraftDirty] = useState(false);
   const [showDriveClientSecret, setShowDriveClientSecret] = useState(false);
+  const [showLocalStorageSecret, setShowLocalStorageSecret] = useState(false);
+  const [newBucketName, setNewBucketName] = useState('');
   const [isSavingAI, setIsSavingAI] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
@@ -201,7 +206,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   useEffect(() => {
     if (driveDraftDirty) return;
     setDriveDraft(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
-  }, [config.settings.googleDriveConfig, driveDraftDirty]);
+    setLocalStorageDraft(config.settings.localStorageConfig || { enabled: true, autoUploadExternalSubmissions: true, storageIp: '', apiPort: 9000, consolePort: 9001, accessKey: '', secretKey: '', bucketName: '' });
+    setStorageBackendDraft(config.settings.storageBackend || 'google-drive');
+  }, [config.settings.googleDriveConfig, config.settings.localStorageConfig, config.settings.storageBackend, driveDraftDirty]);
 
   const refreshGoogleDriveStatus = async () => {
     try {
@@ -212,9 +219,19 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     }
   };
 
+  const refreshLocalStorageStatus = async () => {
+    try {
+      const status = await dataService.getLocalStorageStatus();
+      setLocalStorageStatus(status);
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to fetch local storage status.' });
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'integrations') {
       refreshGoogleDriveStatus();
+      refreshLocalStorageStatus();
     }
   }, [activeTab]);
 
@@ -240,7 +257,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
         connectedEmail: credsChanged ? '' : (existing.connectedEmail || ''),
         connectedAt: credsChanged ? '' : (existing.connectedAt || '')
       };
-      await updateSetting('settings', 'googleDriveConfig', next);
+      await persistSettings({
+        storageBackend: storageBackendDraft,
+        googleDriveConfig: next
+      });
       setDriveDraft(next);
       setDriveDraftDirty(false);
       setMessage({ type: 'success', text: 'Google Drive settings saved.' });
@@ -295,6 +315,73 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       setMessage({ type: 'error', text: error?.message || 'Failed to disconnect Google Drive.' });
     } finally {
       setIsDriveBusy(false);
+    }
+  };
+
+  const saveLocalStorageConfig = async () => {
+    setIsDriveBusy(true);
+    try {
+      const next: LocalStorageConfig = {
+        enabled: !!localStorageDraft.enabled,
+        autoUploadExternalSubmissions: !!localStorageDraft.autoUploadExternalSubmissions,
+        storageIp: (localStorageDraft.storageIp || '').trim(),
+        apiPort: Number(localStorageDraft.apiPort) || 9000,
+        consolePort: Number(localStorageDraft.consolePort) || 9001,
+        accessKey: (localStorageDraft.accessKey || '').trim(),
+        secretKey: (localStorageDraft.secretKey || '').trim(),
+        bucketName: (localStorageDraft.bucketName || '').trim()
+      };
+      await persistSettings({
+        storageBackend: storageBackendDraft,
+        localStorageConfig: next
+      });
+      setLocalStorageDraft(next);
+      setMessage({ type: 'success', text: 'Local storage settings saved.' });
+      await refreshLocalStorageStatus();
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to save local storage settings.' });
+    } finally {
+      setIsDriveBusy(false);
+    }
+  };
+
+  const handleCreateBucket = async () => {
+    if (!newBucketName.trim()) {
+      setMessage({ type: 'error', text: 'Bucket name is required.' });
+      return;
+    }
+    setIsDriveBusy(true);
+    try {
+      const result = await dataService.createLocalStorageBucket(newBucketName.trim());
+      const next = { ...localStorageDraft, bucketName: result.bucketName };
+      setLocalStorageDraft(next);
+      setNewBucketName('');
+      await persistSettings({ localStorageConfig: next });
+      await refreshLocalStorageStatus();
+      setMessage({ type: 'success', text: `Bucket ${result.bucketName} created.` });
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to create bucket.' });
+    } finally {
+      setIsDriveBusy(false);
+    }
+  };
+
+  const persistSettings = async (settingsPatch: Partial<AppConfig['settings']>) => {
+    const mergedSettings = {
+      ...config.settings,
+      ...settingsPatch
+    };
+
+    onConfigUpdate({
+      ...config,
+      settings: mergedSettings
+    });
+
+    try {
+      await dataService.updateSettings(mergedSettings);
+    } catch (error) {
+      onConfigUpdate(config);
+      throw error;
     }
   };
 
@@ -1110,6 +1197,33 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
           {activeTab === 'integrations' && (
             <div className="space-y-8 animate-in fade-in">
               <div className="p-8 bg-white rounded-3xl border border-slate-200 shadow-sm space-y-6">
+                <div>
+                  <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest flex items-center gap-2">
+                    <i className="fa-solid fa-database text-slate-700"></i>
+                    Storage Backend
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1">Choose where externally submitted files are archived after order creation.</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <button
+                    onClick={() => setStorageBackendDraft('google-drive')}
+                    className={`p-5 rounded-2xl border-2 text-left transition-all ${storageBackendDraft === 'google-drive' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                  >
+                    <div className="text-xs font-black uppercase tracking-widest text-slate-700">Google Drive</div>
+                    <p className="text-xs text-slate-500 mt-2">OAuth-based upload to a Google Drive folder.</p>
+                  </button>
+                  <button
+                    onClick={() => setStorageBackendDraft('local-storage')}
+                    className={`p-5 rounded-2xl border-2 text-left transition-all ${storageBackendDraft === 'local-storage' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                  >
+                    <div className="text-xs font-black uppercase tracking-widest text-slate-700">Local Storage</div>
+                    <p className="text-xs text-slate-500 mt-2">S3-compatible bucket storage such as MinIO using the fixed API and console ports.</p>
+                  </button>
+                </div>
+              </div>
+
+              {storageBackendDraft === 'google-drive' && (
+              <div className="p-8 bg-white rounded-3xl border border-slate-200 shadow-sm space-y-6">
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest flex items-center gap-2">
@@ -1240,6 +1354,130 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   </ol>
                 </div>
               </div>
+              )}
+
+              {storageBackendDraft === 'local-storage' && (
+                <div className="p-8 bg-white rounded-3xl border border-slate-200 shadow-sm space-y-6">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest flex items-center gap-2">
+                        <i className="fa-solid fa-hard-drive text-emerald-600"></i>
+                        Local Storage Archive
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-1">Connect a MinIO or compatible local storage node for archived submission files.</p>
+                    </div>
+                    <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border ${localStorageStatus?.reachable ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                      {localStorageStatus?.reachable ? 'Reachable' : 'Not Connected'}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Storage IP</label>
+                      <input
+                        className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                        placeholder="e.g. 10.11.11.242"
+                        value={localStorageDraft.storageIp || ''}
+                        onChange={e => setLocalStorageDraft(prev => ({ ...prev, storageIp: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">API Port</label>
+                        <input className="w-full p-3 border rounded-xl bg-slate-50 font-bold text-sm text-slate-600" value={localStorageDraft.apiPort || 9000} readOnly />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Console Port</label>
+                        <input className="w-full p-3 border rounded-xl bg-slate-50 font-bold text-sm text-slate-600" value={localStorageDraft.consolePort || 9001} readOnly />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Username / Access Key</label>
+                      <input
+                        className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                        value={localStorageDraft.accessKey || ''}
+                        onChange={e => setLocalStorageDraft(prev => ({ ...prev, accessKey: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Password / Secret Key</label>
+                      <div className="relative">
+                        <input
+                          type={showLocalStorageSecret ? 'text' : 'password'}
+                          className="w-full p-3 border rounded-xl bg-white font-bold text-sm pr-10"
+                          value={localStorageDraft.secretKey || ''}
+                          onChange={e => setLocalStorageDraft(prev => ({ ...prev, secretKey: e.target.value }))}
+                        />
+                        <button type="button" onClick={() => setShowLocalStorageSecret(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-600">
+                          <i className={`fa-solid ${showLocalStorageSecret ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Bucket</label>
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+                        <select
+                          className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                          value={localStorageDraft.bucketName || ''}
+                          onChange={e => setLocalStorageDraft(prev => ({ ...prev, bucketName: e.target.value }))}
+                        >
+                          <option value="">Select existing bucket</option>
+                          {(localStorageStatus?.buckets || []).map(bucket => (
+                            <option key={bucket} value={bucket}>{bucket}</option>
+                          ))}
+                        </select>
+                        <button onClick={refreshLocalStorageStatus} disabled={isDriveBusy} className="px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-300 text-slate-600 hover:bg-slate-50">Refresh Buckets</button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Create New Bucket</label>
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+                        <input
+                          className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                          placeholder="Enter new bucket name"
+                          value={newBucketName}
+                          onChange={e => setNewBucketName(e.target.value)}
+                        />
+                        <button onClick={handleCreateBucket} disabled={isDriveBusy} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isDriveBusy ? 'bg-slate-400 cursor-wait' : 'bg-emerald-600 hover:bg-emerald-700'}`}>Create Bucket</button>
+                      </div>
+                      <p className="text-[10px] text-slate-400">Use an existing bucket if available, or create one here when the list is empty.</p>
+                    </div>
+
+                    <div className="space-y-3 md:col-span-2">
+                      <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                        <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Integration</span>
+                        <input type="checkbox" checked={!!localStorageDraft.enabled} onChange={e => setLocalStorageDraft(prev => ({ ...prev, enabled: e.target.checked }))} />
+                      </label>
+                      <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                        <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Auto Upload External Submissions</span>
+                        <input type="checkbox" checked={!!localStorageDraft.autoUploadExternalSubmissions} onChange={e => setLocalStorageDraft(prev => ({ ...prev, autoUploadExternalSubmissions: e.target.checked }))} />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      onClick={saveLocalStorageConfig}
+                      disabled={isDriveBusy}
+                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isDriveBusy ? 'bg-slate-400 cursor-wait' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                    >
+                      Save Local Storage Settings
+                    </button>
+                    <button
+                      onClick={refreshLocalStorageStatus}
+                      disabled={isDriveBusy}
+                      className="px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-300 text-slate-600 hover:bg-slate-50"
+                    >
+                      Refresh Status
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
