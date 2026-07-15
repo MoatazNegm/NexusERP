@@ -164,6 +164,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [orderDate, setOrderDate] = useState(today);
   const [paymentSlaDays, setPaymentSlaDays] = useState(config.settings.defaultPaymentSlaDays);
   const [appliesWithholdingTax, setAppliesWithholdingTax] = useState(false);
+  const [blanketOrder, setBlanketOrder] = useState(false);
   const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
   const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(30);
   const [targetDeliveryDate, setTargetDeliveryDate] = useState(getDatePlusDays(today, 30));
@@ -353,6 +354,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setOrderDate(match.orderDate);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
+    setBlanketOrder(match.blanketOrder || false);
     const loadedDeliveryDays = match.targetDeliveryDays || 30;
     setTargetDeliveryDays(loadedDeliveryDays);
     setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate, loadedDeliveryDays));
@@ -726,6 +728,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCustomerName(''); setCustomerReferenceNumber(''); setOrderDate(today);
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(false);
+    setBlanketOrder(false);
     setTargetDeliveryDays(30);
     setTargetDeliveryDate(getDatePlusDays(today, 30));
     setOrderTaxPercent(DEFAULT_TAX_PERCENT);
@@ -799,6 +802,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           orderDate,
           paymentSlaDays,
           appliesWithholdingTax,
+          blanketOrder,
           currency,
           conversionRate,
           targetDeliveryDays,
@@ -830,7 +834,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       };
 
       if (editingOrderId) {
-        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, currency, conversionRate, items: normalizedItems as any });
+        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, currency, conversionRate, items: normalizedItems as any });
         try {
           const driveResult = await tryDriveUpload(updatedOrder as any);
           if (driveResult.uploaded) {
@@ -872,6 +876,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           orderDate,
           paymentSlaDays,
           appliesWithholdingTax,
+          blanketOrder,
           currency,
           conversionRate,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
@@ -1221,6 +1226,21 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </select>
                     </div>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-3 cursor-pointer p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 hover:bg-white hover:border-teal-400 transition-all w-full">
+                    <input
+                      disabled={editStatus.isFrozen}
+                      type="checkbox"
+                      className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500"
+                      checked={blanketOrder}
+                      onChange={e => setBlanketOrder(e.target.checked)}
+                    />
+                    <div>
+                      <span className="text-sm font-bold text-slate-800">Blanket Order</span>
+                    </div>
+                  </label>
                 </div>
 
                 <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-4">

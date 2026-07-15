@@ -209,20 +209,32 @@ const App: React.FC = () => {
     // Multi-currency amendment: revenue is split by currency so the dashboard
     // shows L.E. + other currencies as-is (no conversion). Margin still uses
     // the order's native currency via per-order conversionRate.
+    // Blanket order amendment: separate blanket orders from regular orders
     const revenueByCurrency: Record<string, number> = {};
+    const blanketRevenueByCurrency: Record<string, number> = {};
     let totalCost = 0;
+    let blanketCost = 0;
     const open = orders.filter(o => ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status));
 
     open.forEach(o => {
       const orderCurrency = getOrderCurrency(o);
       const convRate = (Number.isFinite(Number(o.conversionRate)) && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
-      o.items.forEach(it => {
-        revenueByCurrency[orderCurrency] = (revenueByCurrency[orderCurrency] || 0) + (getItemEffectiveQty(it) * it.pricePerUnit);
-        it.components?.forEach(c => totalCost += ((c.quantity || 0) * (c.unitCost || 0)) * convRate);
-      });
+      
+      if (o.blanketOrder) {
+        o.items.forEach(it => {
+          blanketRevenueByCurrency[orderCurrency] = (blanketRevenueByCurrency[orderCurrency] || 0) + (getItemEffectiveQty(it) * it.pricePerUnit);
+          it.components?.forEach(c => blanketCost += ((c.quantity || 0) * (c.unitCost || 0)) * convRate);
+        });
+      } else {
+        o.items.forEach(it => {
+          revenueByCurrency[orderCurrency] = (revenueByCurrency[orderCurrency] || 0) + (getItemEffectiveQty(it) * it.pricePerUnit);
+          it.components?.forEach(c => totalCost += ((c.quantity || 0) * (c.unitCost || 0)) * convRate);
+        });
+      }
     });
 
     const totalRevenue = Object.values(revenueByCurrency).reduce((s, v) => s + v, 0);
+    const blanketTotalRevenue = Object.values(blanketRevenueByCurrency).reduce((s, v) => s + v, 0);
 
     const statusCounts = Object.keys(STATUS_CONFIG).reduce((acc, status) => {
       const ordersInStatus = orders.filter(o => o.status === status);
@@ -239,7 +251,11 @@ const App: React.FC = () => {
     return {
       totalRevenue,
       revenueByCurrency,
+      blanketRevenue: blanketTotalRevenue,
+      blanketRevenueByCurrency,
       totalCost,
+      blanketCost,
+      blanketMarginPct: blanketTotalRevenue > 0 ? ((blanketTotalRevenue - blanketCost) / blanketTotalRevenue) * 100 : 0,
       marginPct: totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : 0,
       statusCounts,
       negativeMarginOrders,
@@ -325,15 +341,23 @@ const App: React.FC = () => {
 
     addSectionTitle('Executive Snapshot');
     // Multi-currency amendment: per-currency revenue lines for the executive snapshot.
+    // Blanket order amendment: include blanket revenue in the snapshot.
     const currencyRows: string[][] = Object.entries(dashboardMetrics.revenueByCurrency)
       .sort(([a], [b]) => (a === DEFAULT_CURRENCY ? -1 : b === DEFAULT_CURRENCY ? 1 : a.localeCompare(b)))
       .map(([cur, val]) => [`Revenue (${cur})`, `${val.toLocaleString()} ${cur}`]);
     if (currencyRows.length === 0) currencyRows.push(['Revenue', '0.00 L.E.']);
+    
+    const blanketCurrencyRows: string[][] = Object.entries(dashboardMetrics.blanketRevenueByCurrency)
+      .sort(([a], [b]) => (a === DEFAULT_CURRENCY ? -1 : b === DEFAULT_CURRENCY ? 1 : a.localeCompare(b)))
+      .map(([cur, val]) => [`Blanket Revenue (${cur})`, `${val.toLocaleString()} ${cur}`]);
+    
     drawTable(
       ['Metric', 'Value'],
       [
         ...currencyRows,
+        ...blanketCurrencyRows,
         ['Portfolio Margin', `${dashboardMetrics.marginPct.toFixed(1)}%`],
+        ['Blanket Margin', `${dashboardMetrics.blanketMarginPct.toFixed(1)}%`],
         ['Active Records', `${openOrders}`],
         ['Risk Alerts', `${dashboardMetrics.riskCount}`]
       ],
@@ -390,7 +414,7 @@ const App: React.FC = () => {
       (order.items || []).forEach(item => {
         orderValue += (item.quantity || 0) * (item.pricePerUnit || 0);
         (item.components || []).forEach(comp => {
-          const supplierName = comp.supplierName || comp.supplierId || 'Unassigned Supplier';
+          const supplierName = comp.supplierId || 'Unassigned Supplier';
           const prevSupplier = supplierSummaryMap.get(supplierName) || { components: 0, spendByCurrency: {} as Record<string, number> };
           const prevSpend = prevSupplier.spendByCurrency[orderCurrency] || 0;
           prevSupplier.spendByCurrency[orderCurrency] = prevSpend + ((comp.quantity || 0) * (comp.unitCost || 0));
@@ -463,7 +487,7 @@ const App: React.FC = () => {
         return (
           <div className="space-y-8 animate-in fade-in duration-500">
             {/* High Level Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <DashboardCard id="revenue" title="Gross Portfolio" icon="fa-coins" onClose={() => { }}>
                 <div className="p-4 space-y-2">
                   {/* Multi-currency amendment: always show L.E. as the headline
@@ -475,6 +499,24 @@ const App: React.FC = () => {
                     <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Open Contract Value</div>
                   </div>
                   {Object.entries(dashboardMetrics.revenueByCurrency)
+                    .filter(([cur]) => cur !== DEFAULT_CURRENCY)
+                    .map(([cur, val]) => (
+                      <div key={cur} className="flex justify-between items-baseline pt-2 border-t border-slate-100">
+                        <span className="text-[10px] font-black text-slate-400 uppercase">{cur} Revenue</span>
+                        <span className="text-sm font-black text-slate-700">{val.toLocaleString()} {cur}</span>
+                      </div>
+                    ))}
+                </div>
+              </DashboardCard>
+              <DashboardCard id="blanket" title="Blanket Portfolio" icon="fa-layer-group" onClose={() => { }}>
+                <div className="p-4 space-y-2">
+                  <div>
+                    <div className="text-2xl font-black text-teal-600">
+                      {(dashboardMetrics.blanketRevenueByCurrency[DEFAULT_CURRENCY] || 0).toLocaleString()} {DEFAULT_CURRENCY}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Blanket Order Value</div>
+                  </div>
+                  {Object.entries(dashboardMetrics.blanketRevenueByCurrency)
                     .filter(([cur]) => cur !== DEFAULT_CURRENCY)
                     .map(([cur, val]) => (
                       <div key={cur} className="flex justify-between items-baseline pt-2 border-t border-slate-100">

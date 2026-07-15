@@ -292,6 +292,7 @@ export interface CustomerOrder {
    * Defaults to 1 (i.e. no conversion). Editable from the Finance view.
    */
   conversionRate?: number;
+  blanketOrder?: boolean;
 }
 
 export interface HelpLink {
