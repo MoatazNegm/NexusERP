@@ -238,6 +238,7 @@ export interface CustomerOrder {
   targetDeliveryDate?: string;
   appliesWithholdingTax?: boolean;
   whtCertificateFile?: string;
+  blanketOrder?: boolean;
 }
 
 export interface OpenAIConfig {
