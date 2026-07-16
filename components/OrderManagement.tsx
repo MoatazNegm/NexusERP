@@ -1186,7 +1186,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     </div>
                   </div>
 
-                  {/* Compact fields row: Payment SLA, Tax %, Currency */}
+                  {/* Compact fields row: Payment SLA, Tax %, Currency (unchanged sizes/positions) */}
                   <div className="flex flex-row gap-4 items-start">
                     <div className="flex-2 space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment SLA (Days)</label>
@@ -1226,21 +1226,23 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </select>
                     </div>
                   </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 cursor-pointer p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 hover:bg-white hover:border-teal-400 transition-all w-full">
-                    <input
-                      disabled={editStatus.isFrozen}
-                      type="checkbox"
-                      className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500"
-                      checked={blanketOrder}
-                      onChange={e => setBlanketOrder(e.target.checked)}
-                    />
-                    <div>
-                      <span className="text-sm font-bold text-slate-800">Blanket Order</span>
+                  {/* Blanket Order checkbox on its own row, at the far left (Payment SLA column slot) */}
+                  <div className="flex flex-row gap-4 items-start">
+                    <div className="flex-2">
+                      <label className="flex items-center gap-3 cursor-pointer p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 hover:bg-white hover:border-teal-400 transition-all w-full">
+                        <input
+                          disabled={editStatus.isFrozen}
+                          type="checkbox"
+                          className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500"
+                          checked={blanketOrder}
+                          onChange={e => setBlanketOrder(e.target.checked)}
+                        />
+                        <span className="text-sm font-bold text-slate-800">Blanket Order</span>
+                      </label>
                     </div>
-                  </label>
+                    <div className="flex-1"></div>
+                    <div className="flex-1"></div>
+                  </div>
                 </div>
 
                 <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-4">
