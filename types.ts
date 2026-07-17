@@ -99,6 +99,7 @@ export interface Customer {
   holdReason?: string;
   appliesWithholdingTax?: boolean;
   minimumMarginPct?: number;
+  walletBalance?: number;
   logs?: LogEntry[];
 }
 
