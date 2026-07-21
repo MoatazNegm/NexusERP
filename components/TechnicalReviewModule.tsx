@@ -1166,21 +1166,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 <div className="flex gap-2 relative">
                                   <input
                                     type="text"
-                                    placeholder={selectedItem.productionType === 'OUTSOURCING' ? 'Contract Number...' : 'Mfr. Part Number...'}
+                                    placeholder={selectedItem.productionType === 'OUTSOURCING' ? `${selectedOrder?.customerReferenceNumber}-${(selectedOrder?.items?.findIndex(i => i.id === selectedItem.id) || 0) + 1}` : 'Mfr. Part Number...'}
                                     className={`w-1/3 p-4 border-2 rounded-2xl text-sm font-mono outline-none transition-all placeholder:font-sans placeholder:text-slate-300 ${selectedItem.productionType === 'OUTSOURCING' ? 'border-violet-100 text-violet-800 focus:border-violet-500' : 'border-blue-50 text-blue-800 focus:border-blue-500'}`}
-                                    value={partNumSearch}
+                                    value={selectedItem.productionType === 'OUTSOURCING' ? (partNumSearch || `${selectedOrder?.customerReferenceNumber}-${(selectedOrder?.items?.findIndex(i => i.id === selectedItem.id) || 0) + 1}` || '') : partNumSearch}
                                     onChange={e => { setPartNumSearch(e.target.value); setShowCompSuggestions(true); }}
                                     onFocus={() => setShowCompSuggestions(true)}
                                   />
                                   <div className="absolute -bottom-4 left-1 text-[8px] font-bold text-slate-400 uppercase">Auto-generated ID if left blank</div>
                                   <div className="relative flex-1 group">
                                     <textarea
-                                      placeholder={selectedItem.productionType === 'OUTSOURCING' ? "Enter Service or Contract Description (Required)..." : "Enter component SKU or Name..."}
+                                      placeholder={selectedItem.productionType === 'OUTSOURCING' ? (selectedItem.description || "Enter Service or Contract Description...") : "Enter component SKU or Name..."}
                                       className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all resize-none min-h-[58px]"
                                       rows={1}
                                       value={compSearch}
-                                      onChange={e => { setCompSearch(e.target.value); if(selectedItem.productionType !== 'OUTSOURCING') setShowCompSuggestions(true); }}
-                                      onFocus={() => { if(selectedItem.productionType !== 'OUTSOURCING') setShowCompSuggestions(true); }}
+                                      onChange={e => { setCompSearch(e.target.value); setShowCompSuggestions(true); }}
+                                      onFocus={() => setShowCompSuggestions(true)}
                                     />
                                     <i className="fa-solid fa-search absolute left-4 top-5 text-slate-300"></i>
                                   </div>

@@ -99,6 +99,7 @@ export interface Customer {
   holdReason?: string;
   appliesWithholdingTax?: boolean;
   minimumMarginPct?: number;
+  walletBalance?: number;
   logs?: LogEntry[];
 }
 
@@ -292,6 +293,7 @@ export interface CustomerOrder {
    * Defaults to 1 (i.e. no conversion). Editable from the Finance view.
    */
   conversionRate?: number;
+  blanketOrder?: boolean;
 }
 
 export interface HelpLink {
