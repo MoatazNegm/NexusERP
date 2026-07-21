@@ -336,6 +336,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
         localStorageConfig: next
       });
       setLocalStorageDraft(next);
+      setDriveDraftDirty(false);
       setMessage({ type: 'success', text: 'Local storage settings saved.' });
       await refreshLocalStorageStatus();
     } catch (error: any) {
@@ -1206,14 +1207,22 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <button
-                    onClick={() => setStorageBackendDraft('google-drive')}
+                    type="button"
+                    onClick={() => {
+                      setDriveDraftDirty(true);
+                      setStorageBackendDraft('google-drive');
+                    }}
                     className={`p-5 rounded-2xl border-2 text-left transition-all ${storageBackendDraft === 'google-drive' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                   >
                     <div className="text-xs font-black uppercase tracking-widest text-slate-700">Google Drive</div>
                     <p className="text-xs text-slate-500 mt-2">OAuth-based upload to a Google Drive folder.</p>
                   </button>
                   <button
-                    onClick={() => setStorageBackendDraft('local-storage')}
+                    type="button"
+                    onClick={() => {
+                      setDriveDraftDirty(true);
+                      setStorageBackendDraft('local-storage');
+                    }}
                     className={`p-5 rounded-2xl border-2 text-left transition-all ${storageBackendDraft === 'local-storage' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                   >
                     <div className="text-xs font-black uppercase tracking-widest text-slate-700">Local Storage</div>
@@ -1378,7 +1387,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                         className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
                         placeholder="e.g. 10.11.11.242"
                         value={localStorageDraft.storageIp || ''}
-                        onChange={e => setLocalStorageDraft(prev => ({ ...prev, storageIp: e.target.value }))}
+                          onChange={e => {
+                            setDriveDraftDirty(true);
+                            setLocalStorageDraft(prev => ({ ...prev, storageIp: e.target.value }));
+                          }}
                       />
                     </div>
 
@@ -1398,7 +1410,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       <input
                         className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
                         value={localStorageDraft.accessKey || ''}
-                        onChange={e => setLocalStorageDraft(prev => ({ ...prev, accessKey: e.target.value }))}
+                        onChange={e => {
+                          setDriveDraftDirty(true);
+                          setLocalStorageDraft(prev => ({ ...prev, accessKey: e.target.value }));
+                        }}
                       />
                     </div>
 
@@ -1409,7 +1424,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                           type={showLocalStorageSecret ? 'text' : 'password'}
                           className="w-full p-3 border rounded-xl bg-white font-bold text-sm pr-10"
                           value={localStorageDraft.secretKey || ''}
-                          onChange={e => setLocalStorageDraft(prev => ({ ...prev, secretKey: e.target.value }))}
+                          onChange={e => {
+                            setDriveDraftDirty(true);
+                            setLocalStorageDraft(prev => ({ ...prev, secretKey: e.target.value }));
+                          }}
                         />
                         <button type="button" onClick={() => setShowLocalStorageSecret(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-600">
                           <i className={`fa-solid ${showLocalStorageSecret ? 'fa-eye-slash' : 'fa-eye'}`}></i>
@@ -1423,14 +1441,17 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                         <select
                           className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
                           value={localStorageDraft.bucketName || ''}
-                          onChange={e => setLocalStorageDraft(prev => ({ ...prev, bucketName: e.target.value }))}
+                          onChange={e => {
+                            setDriveDraftDirty(true);
+                            setLocalStorageDraft(prev => ({ ...prev, bucketName: e.target.value }));
+                          }}
                         >
                           <option value="">Select existing bucket</option>
                           {(localStorageStatus?.buckets || []).map(bucket => (
                             <option key={bucket} value={bucket}>{bucket}</option>
                           ))}
                         </select>
-                        <button onClick={refreshLocalStorageStatus} disabled={isDriveBusy} className="px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-300 text-slate-600 hover:bg-slate-50">Refresh Buckets</button>
+                        <button type="button" onClick={refreshLocalStorageStatus} disabled={isDriveBusy} className="px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-300 text-slate-600 hover:bg-slate-50">Refresh Buckets</button>
                       </div>
                     </div>
 
@@ -1441,9 +1462,12 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                           className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
                           placeholder="Enter new bucket name"
                           value={newBucketName}
-                          onChange={e => setNewBucketName(e.target.value)}
+                          onChange={e => {
+                            setDriveDraftDirty(true);
+                            setNewBucketName(e.target.value);
+                          }}
                         />
-                        <button onClick={handleCreateBucket} disabled={isDriveBusy} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isDriveBusy ? 'bg-slate-400 cursor-wait' : 'bg-emerald-600 hover:bg-emerald-700'}`}>Create Bucket</button>
+                        <button type="button" onClick={handleCreateBucket} disabled={isDriveBusy} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isDriveBusy ? 'bg-slate-400 cursor-wait' : 'bg-emerald-600 hover:bg-emerald-700'}`}>Create Bucket</button>
                       </div>
                       <p className="text-[10px] text-slate-400">Use an existing bucket if available, or create one here when the list is empty.</p>
                     </div>
@@ -1451,11 +1475,11 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <div className="space-y-3 md:col-span-2">
                       <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
                         <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Integration</span>
-                        <input type="checkbox" checked={!!localStorageDraft.enabled} onChange={e => setLocalStorageDraft(prev => ({ ...prev, enabled: e.target.checked }))} />
+                        <input type="checkbox" checked={!!localStorageDraft.enabled} onChange={e => { setDriveDraftDirty(true); setLocalStorageDraft(prev => ({ ...prev, enabled: e.target.checked })); }} />
                       </label>
                       <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
                         <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Auto Upload External Submissions</span>
-                        <input type="checkbox" checked={!!localStorageDraft.autoUploadExternalSubmissions} onChange={e => setLocalStorageDraft(prev => ({ ...prev, autoUploadExternalSubmissions: e.target.checked }))} />
+                        <input type="checkbox" checked={!!localStorageDraft.autoUploadExternalSubmissions} onChange={e => { setDriveDraftDirty(true); setLocalStorageDraft(prev => ({ ...prev, autoUploadExternalSubmissions: e.target.checked })); }} />
                       </label>
                     </div>
                   </div>
@@ -1469,6 +1493,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       Save Local Storage Settings
                     </button>
                     <button
+                      type="button"
                       onClick={refreshLocalStorageStatus}
                       disabled={isDriveBusy}
                       className="px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-300 text-slate-600 hover:bg-slate-50"

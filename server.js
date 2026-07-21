@@ -3756,73 +3756,92 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
             db.settings = [{}];
         }
         const settings = resolveSettings(db);
-        const storageBackend = settings.storageBackend || 'google-drive';
-
-        if (storageBackend === 'local-storage') {
-            const local = getLocalStorageConfig(settings);
-            if (!local.enabled) {
-                return res.status(400).json({ error: 'Local storage integration is disabled in System Core Control.' });
-            }
-            const orderPrefix = req.body.internalOrderNumber ? `${req.body.internalOrderNumber}_` : '';
-            const poPrefix = req.body.customerReferenceNumber ? `${req.body.customerReferenceNumber}_` : '';
-            const finalName = `${orderPrefix}${poPrefix}${req.file.originalname}`;
-
-            const uploaded = await uploadBufferToLocalStorage({
-                buffer: req.file.buffer,
-                mimeType: req.file.mimetype,
-                fileName: finalName,
-                bucketName: local.bucketName,
-                settings
-            });
-
-            return res.json({ success: true, ...uploaded });
-        }
-
-        const gd = settings.googleDriveConfig || {};
-        if (!gd.enabled) {
-            return res.status(400).json({ error: 'Google Drive integration is disabled in System Core Control.' });
-        }
-        if (!gd.refreshToken) {
-            return res.status(400).json({ error: 'Google Drive is not connected yet.' });
-        }
-
-        const targetFolderId = await resolveOrCreateDriveFolder({
-            req,
-            refreshToken: gd.refreshToken,
-            folderName: gd.folderName || '',
-            fallbackFolderId: gd.folderId || '',
-            settings
-        });
-
-        if (targetFolderId !== (gd.folderId || '')) {
-            settings.googleDriveConfig = {
-                ...gd,
-                folderId: targetFolderId
-            };
-            db.settings[0] = encryptSettings(settings);
-            writeDb(db);
+        const googleEnabled = !!settings?.googleDriveConfig?.enabled && !!settings?.googleDriveConfig?.autoUploadExternalSubmissions;
+        const localEnabled = !!settings?.localStorageConfig?.enabled && !!settings?.localStorageConfig?.autoUploadExternalSubmissions;
+        if (!googleEnabled && !localEnabled) {
+            return res.status(400).json({ error: 'No enabled storage integration is configured for automatic uploads.' });
         }
 
         const orderPrefix = req.body.internalOrderNumber ? `${req.body.internalOrderNumber}_` : '';
         const poPrefix = req.body.customerReferenceNumber ? `${req.body.customerReferenceNumber}_` : '';
         const finalName = `${orderPrefix}${poPrefix}${req.file.originalname}`;
+        const uploads = {};
+        const errors = [];
 
-        const uploaded = await uploadBufferToGoogleDrive({
-            req,
-            buffer: req.file.buffer,
-            mimeType: req.file.mimetype,
-            fileName: finalName,
-            folderId: targetFolderId || '',
-            refreshToken: gd.refreshToken,
-            settings
-        });
+        const gd = settings.googleDriveConfig || {};
+        if (googleEnabled) {
+            try {
+                if (!gd.refreshToken) {
+                    throw new Error('Google Drive is not connected yet.');
+                }
+
+                const targetFolderId = await resolveOrCreateDriveFolder({
+                    req,
+                    refreshToken: gd.refreshToken,
+                    folderName: gd.folderName || '',
+                    fallbackFolderId: gd.folderId || '',
+                    settings
+                });
+
+                if (targetFolderId !== (gd.folderId || '')) {
+                    settings.googleDriveConfig = {
+                        ...gd,
+                        folderId: targetFolderId
+                    };
+                    db.settings[0] = encryptSettings(settings);
+                    writeDb(db);
+                }
+
+                const uploaded = await uploadBufferToGoogleDrive({
+                    req,
+                    buffer: req.file.buffer,
+                    mimeType: req.file.mimetype,
+                    fileName: finalName,
+                    folderId: targetFolderId || '',
+                    refreshToken: gd.refreshToken,
+                    settings
+                });
+
+                uploads.googleDrive = {
+                    id: uploaded.id,
+                    name: uploaded.name,
+                    webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+                    webContentLink: uploaded.webContentLink || ''
+                };
+            } catch (error) {
+                errors.push({ target: 'google-drive', message: error.message || 'Google Drive upload failed' });
+            }
+        }
+
+        if (localEnabled) {
+            try {
+                const local = getLocalStorageConfig(settings);
+                uploads.localStorage = await uploadBufferToLocalStorage({
+                    buffer: req.file.buffer,
+                    mimeType: req.file.mimetype,
+                    fileName: finalName,
+                    bucketName: local.bucketName,
+                    settings
+                });
+            } catch (error) {
+                errors.push({ target: 'local-storage', message: error.message || 'Local storage upload failed' });
+            }
+        }
+
+        const uploadedTargets = Object.keys(uploads);
+        if (uploadedTargets.length === 0) {
+            return res.status(500).json({
+                error: errors.map(entry => `${entry.target}: ${entry.message}`).join(' | ') || 'Configured storage upload failed',
+                uploads,
+                errors
+            });
+        }
 
         return res.json({
             success: true,
-            id: uploaded.id,
-            name: uploaded.name,
-            webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
-            webContentLink: uploaded.webContentLink || ''
+            uploads,
+            uploadedTargets,
+            errors
         });
     } catch (err) {
         console.error('[Storage] Upload failed:', err);
