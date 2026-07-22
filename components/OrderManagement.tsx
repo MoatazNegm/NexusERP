@@ -164,6 +164,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [orderDate, setOrderDate] = useState(today);
   const [paymentSlaDays, setPaymentSlaDays] = useState(config.settings.defaultPaymentSlaDays);
   const [appliesWithholdingTax, setAppliesWithholdingTax] = useState(false);
+  const [blanketOrder, setBlanketOrder] = useState(false);
   const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
   const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(30);
   const [targetDeliveryDate, setTargetDeliveryDate] = useState(getDatePlusDays(today, 30));
@@ -353,6 +354,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setOrderDate(match.orderDate);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
+    setBlanketOrder(match.blanketOrder || false);
     const loadedDeliveryDays = match.targetDeliveryDays || 30;
     setTargetDeliveryDays(loadedDeliveryDays);
     setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate, loadedDeliveryDays));
@@ -726,6 +728,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCustomerName(''); setCustomerReferenceNumber(''); setOrderDate(today);
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(false);
+    setBlanketOrder(false);
     setTargetDeliveryDays(30);
     setTargetDeliveryDate(getDatePlusDays(today, 30));
     setOrderTaxPercent(DEFAULT_TAX_PERCENT);
@@ -800,6 +803,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           orderDate,
           paymentSlaDays,
           appliesWithholdingTax,
+          blanketOrder,
           currency,
           conversionRate,
           targetDeliveryDays,
@@ -836,7 +840,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       };
 
       if (editingOrderId) {
-        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, currency, conversionRate, items: normalizedItems as any });
+        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, currency, conversionRate, items: normalizedItems as any });
         try {
           const uploadResult = await tryStorageUpload(updatedOrder as any);
           if (uploadResult.googleDrive?.webViewLink) {
@@ -883,6 +887,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           orderDate,
           paymentSlaDays,
           appliesWithholdingTax,
+          blanketOrder,
           currency,
           conversionRate,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
@@ -1199,7 +1204,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     </div>
                   </div>
 
-                  {/* Compact fields row: Payment SLA, Tax %, Currency */}
+                  {/* Compact fields row: Payment SLA, Tax %, Currency (unchanged sizes/positions) */}
                   <div className="flex flex-row gap-4 items-start">
                     <div className="flex-2 space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment SLA (Days)</label>
@@ -1238,6 +1243,23 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         ))}
                       </select>
                     </div>
+                  </div>
+                  {/* Blanket Order checkbox on its own row, at the far left (Payment SLA column slot) */}
+                  <div className="flex flex-row gap-4 items-start">
+                    <div className="flex-2">
+                      <label className="flex items-center gap-3 cursor-pointer p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 hover:bg-white hover:border-teal-400 transition-all w-full">
+                        <input
+                          disabled={editStatus.isFrozen}
+                          type="checkbox"
+                          className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500"
+                          checked={blanketOrder}
+                          onChange={e => setBlanketOrder(e.target.checked)}
+                        />
+                        <span className="text-sm font-bold text-slate-800">Blanket Order</span>
+                      </label>
+                    </div>
+                    <div className="flex-1"></div>
+                    <div className="flex-1"></div>
                   </div>
                 </div>
 

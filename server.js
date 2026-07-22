@@ -123,12 +123,22 @@ const getItemEffectiveStatus = (item) => {
     return 'MIXED';
 };
 
-const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1) => {
+const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1, isBlanketOrder = false) => {
     let totalRevenue = 0;
     let totalCost = 0;
     let hasComponents = false;
     let hasActiveTechReview = false;
     let anyAccepted = false;
+
+    // BLANKET ORDER EXEMPTION: Blanket orders skip all margin/status auto-transitions.
+    // They are allowed to proceed through procurement and delivery without margin checks.
+    if (isBlanketOrder) {
+        // Blanket orders still allow tech review transition if items are accepted
+        if ((anyAccepted) && currentStatus === OrderStatus.LOGGED) {
+            return OrderStatus.TECHNICAL_REVIEW;
+        }
+        return currentStatus;
+    }
 
     (items || []).forEach(it => {
         totalRevenue += ((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0));
@@ -810,9 +820,9 @@ const reconcileOrdersMarginOnThresholdChange = (db, oldMinMargin, newMinMargin, 
         let nextStatus = oldStatus || OrderStatus.LOGGED;
 
         if (order.customerName !== 'Internal Stock') {
-            nextStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate);
+            nextStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate, order.blanketOrder);
         } else {
-            const calculatedStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate);
+            const calculatedStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate, order.blanketOrder);
             if (calculatedStatus === OrderStatus.NEGATIVE_MARGIN) {
                 const hasComponents = (order.items || []).some(i => i.components && i.components.length > 0);
                 if (hasComponents && oldStatus === OrderStatus.LOGGED) {
@@ -1079,13 +1089,13 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         // Skip margin check for Internal Stock orders (they always have 0 revenue)
         let nextStatus = order.status || OrderStatus.LOGGED;
         if (order.customerName !== 'Internal Stock') {
-            nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate);
+            nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate, order.blanketOrder);
         } else {
             // For Internal Stock, standard transitions apply (e.g. LOGGED -> TECH REVIEW if components exist)
             // We reuse evaluateMarginStatus logic BUT purely for workflow transitions, ignoring negative margin return
             // Actually, evaluateMarginStatus prioritizes margin check. Let's replicate strict workflow logic here or modify evaluateMarginStatus.
             // Simpler: Just allow negative margin if it's internal stock.
-            const calculatedStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate);
+            const calculatedStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate, order.blanketOrder);
             if (calculatedStatus === OrderStatus.NEGATIVE_MARGIN) {
                 // Fallback: If it blocked on margin, check if it should proceed to Tech Review
                 const hasComponents = (order.items || []).some(i => i.components && i.components.length > 0);
@@ -3124,6 +3134,72 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
             }
 
+            case 'settle-blanket-order': {
+                // Blanket order settlement logic:
+                // Compare the delivered order's total with the matching logged order(s)
+                // If the new order has a different price (lower/higher), settle the difference as wallet credit
+                if (!order.blanketOrder) throw new Error("Only blanket orders can be settled via this action");
+                if (!payload.settlingOrderId) throw new Error("settlingOrderId is required to settle a blanket order");
+                
+                const settlingOrderIndex = db.orders.findIndex(o => o.id === payload.settlingOrderId);
+                if (settlingOrderIndex === -1) throw new Error("Settling order not found");
+                const settlingOrder = db.orders[settlingOrderIndex];
+                
+                // Calculate the difference between the two orders per line item
+                let totalDifference = 0;
+                let settlementDetails = [];
+                
+                settlingOrder.items.forEach(settlingItem => {
+                    // Find a matching item by description from the original blanket order
+                    const originalItem = order.items.find(oi => 
+                        oi.description.trim().toLowerCase() === settlingItem.description.trim().toLowerCase()
+                    );
+                    
+                    if (originalItem) {
+                        const originalTotal = (originalItem.quantity || 1) * (originalItem.pricePerUnit || 0);
+                        const settlingTotal = (settlingItem.quantity || 1) * (settlingItem.pricePerUnit || 0);
+                        const diff = settlingTotal - originalTotal;
+                        totalDifference += diff;
+                        settlementDetails.push({
+                            description: settlingItem.description,
+                            originalPrice: originalItem.pricePerUnit,
+                            settlingPrice: settlingItem.pricePerUnit,
+                            qty: settlingItem.quantity || 1,
+                            diff
+                        });
+                    }
+                });
+                
+                // Apply wallet adjustment to customer
+                const customer = db.customers.find(c => c.name === order.customerName);
+                if (customer) {
+                    if (!customer.walletBalance) customer.walletBalance = 0;
+                    
+                    // If totalDifference < 0: customer paid less, they owe nothing more (order was cheaper)
+                    // If totalDifference > 0: customer paid more, credit their wallet
+                    // If totalDifference = 0: exactly matched, no adjustment needed
+                    if (totalDifference < 0) {
+                        // Order was cheaper - no credit needed, mark as settled
+                        order.logs.push(createAuditLog(`Blanket order settled: Settling order ${settlingOrder.internalOrderNumber} was ${Math.abs(totalDifference).toLocaleString()} ${order.currency} less than original. No wallet credit needed.`, order.status, user));
+                    } else if (totalDifference > 0) {
+                        // Customer overpaid - credit wallet
+                        customer.walletBalance = (customer.walletBalance || 0) + totalDifference;
+                        order.logs.push(createAuditLog(`Blanket order settled: ${totalDifference.toLocaleString()} ${order.currency} credited to customer wallet (new balance: ${customer.walletBalance.toLocaleString()} ${order.currency}). Settling order: ${settlingOrder.internalOrderNumber}`, order.status, user));
+                        settlingOrder.logs.push(createAuditLog(`Settlement completed: ${totalDifference.toLocaleString()} ${order.currency} wallet credit applied from blanket order ${order.internalOrderNumber}`, settlingOrder.status, user));
+                    } else {
+                        order.logs.push(createAuditLog(`Blanket order settled: Exact match with ${settlingOrder.internalOrderNumber}. No wallet adjustment needed.`, order.status, user));
+                    }
+                    
+                    // Mark both orders as settled
+                    order.status = OrderStatus.FULFILLED;
+                    settlingOrder.status = OrderStatus.FULFILLED;
+                    
+                    order.logs.push(createAuditLog(`Blanket order settlement finalized. Customer ${customer.name} wallet: ${customer.walletBalance.toLocaleString()} ${order.currency}`, order.status, user));
+                } else {
+                    throw new Error(`Customer ${order.customerName} not found for wallet credit`);
+                }
+                break;
+            }
             case 'void-action':
                 // Generic audit logging without status change
                 if (payload.message) {
