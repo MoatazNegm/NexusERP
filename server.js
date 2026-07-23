@@ -1518,7 +1518,7 @@ const runThresholdAudit = async () => {
 
 // --- APP SETUP ---
 const app = express();
-const PORT = process.env.PORT || 3005;
+const PORT = process.env.PORT || 5005;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));

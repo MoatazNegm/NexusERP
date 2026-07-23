@@ -147,7 +147,7 @@ Sensitive API keys and passwords are protected using AES-256-CBC encryption at r
 The frontend uses `VITE_BACKEND_URL` to determine the API base URL. It defaults to an empty string, which causes all requests to use relative paths (same origin).
 
 **Development:**
-- Vite dev server runs on port `3005` and proxies `/api` to `http://localhost:3006` (see `vite.config.ts`).
+- Vite dev server runs on port `5005` and proxies `/api` to `http://localhost:3006` (see `vite.config.ts`).
 - No need to set `VITE_BACKEND_URL` in local development if the backend runs on port `3006`.
 
 **Production (e.g. Render):**
@@ -216,13 +216,18 @@ When you say **"rebuild"**, this command performs the following sequence *only* 
    npm run build
    ```
 4. **Restart the Application:**
-   Start the Node.js Express server to serve the API and the newly compiled frontend:
+   Start the Node.js Express server to serve the API and the newly compiled frontend (runs on port 5005 by default):
    ```bash
    node server.js
    ```
+   *Note: Access the application locally at http://localhost:5005.*
+
+   > ⚠️ **IMPORTANT:** When restarting the app, ensure you only stop the specific process bound to port `5005` (e.g., using `Get-NetTCPConnection -LocalPort 5005` to find the PID). Never run wildcard process-killing commands like `Stop-Process -Name node` or `taskkill /IM node.exe /F` which would disrupt other running applications on different ports.
 
 ### Step 2: Committing and Pushing (Separate Action)
-When you say **"commit and push"**, this triggers pushing the code to remote version control. This step is executed *only when explicitly requested* and does **not** trigger a rebuild.
+When the user says **"commit and push"**, this triggers pushing the code to remote version control. This step is executed *only when explicitly requested* and does **not** trigger a rebuild.
+
+> ⚠️ **CRITICAL RULE FOR AI AGENTS:** Do NOT commit and push changes to remote version control unless the user asks you clearly and explicitly to do that.
 
 1. **Add and Commit Changes:**
    ```bash

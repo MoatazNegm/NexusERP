@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
     server: {
-      port: 3005,
+      port: 5005,
       host: '0.0.0.0',
       watch: {
         ignored: ['**/db.json', '**/db.json.local.bak']
@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
       }
     },
     preview: {
-      port: parseInt(process.env.PORT || '3005'),
+      port: parseInt(process.env.PORT || '5005'),
       host: '0.0.0.0',
       allowedHosts: true,
       proxy: {
