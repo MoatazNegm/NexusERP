@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import AdmZip from 'adm-zip';
 import { isMarginBreach } from './shared/margin.js';
+import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,6 +73,17 @@ const uploadGoogleDriveFile = multer({ storage: multer.memoryStorage() });
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const GOOGLE_OAUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+
+const DEFAULT_LOCAL_STORAGE_CONFIG = {
+    enabled: true,
+    autoUploadExternalSubmissions: true,
+    storageIp: '',
+    apiPort: 9000,
+    consolePort: 9001,
+    accessKey: '',
+    secretKey: '',
+    bucketName: ''
+};
 
 const OrderStatus = {
     LOGGED: 'LOGGED',
@@ -326,7 +338,8 @@ const SENSITIVE_PATHS = [
     ['openaiConfig', 'apiKey'],
     ['emailConfig', 'password'],
     ['googleDriveConfig', 'clientSecret'],
-    ['googleDriveConfig', 'refreshToken']
+    ['googleDriveConfig', 'refreshToken'],
+    ['localStorageConfig', 'secretKey']
 ];
 
 const transformSensitiveFields = (settings, fn) => {
@@ -355,6 +368,7 @@ const resolveSettings = (db) => {
         enableRollbackAlerts: true,
         rollbackAlertGroupIds: [],
         thresholdNotifications: {},
+        storageBackend: 'google-drive',
         googleDriveConfig: {
             enabled: true,
             autoUploadExternalSubmissions: true,
@@ -363,6 +377,9 @@ const resolveSettings = (db) => {
             redirectUri: '',
             folderName: '',
             folderId: ''
+        },
+        localStorageConfig: {
+            ...DEFAULT_LOCAL_STORAGE_CONFIG
         },
         emailConfig: {
             smtpServer: 'mail.quickstor.net',
@@ -403,6 +420,88 @@ const getGoogleOAuthConfig = (settings) => {
         clientId,
         clientSecret,
         configured: !!clientId && !!clientSecret
+    };
+};
+
+const getLocalStorageConfig = (settings) => {
+    const cfg = {
+        ...DEFAULT_LOCAL_STORAGE_CONFIG,
+        ...(settings?.localStorageConfig || {})
+    };
+    const storageIp = String(cfg.storageIp || '').trim();
+    const accessKey = String(cfg.accessKey || '').trim();
+    const secretKey = String(cfg.secretKey || '').trim();
+    const bucketName = String(cfg.bucketName || '').trim();
+    return {
+        ...cfg,
+        storageIp,
+        accessKey,
+        secretKey,
+        bucketName,
+        apiPort: Number(cfg.apiPort) || 9000,
+        consolePort: Number(cfg.consolePort) || 9001,
+        configured: !!storageIp && !!accessKey && !!secretKey
+    };
+};
+
+const getLocalStorageClient = (settings) => {
+    const cfg = getLocalStorageConfig(settings);
+    if (!cfg.configured) {
+        throw new Error('Local storage settings are incomplete. Fill in storage IP, username and password.');
+    }
+    const endpoint = `http://${cfg.storageIp}:${cfg.apiPort}`;
+    return {
+        cfg,
+        client: new S3Client({
+            region: 'us-east-1',
+            endpoint,
+            forcePathStyle: true,
+            credentials: {
+                accessKeyId: cfg.accessKey,
+                secretAccessKey: cfg.secretKey
+            }
+        })
+    };
+};
+
+const listLocalStorageBuckets = async (settings) => {
+    const { client } = getLocalStorageClient(settings);
+    const response = await client.send(new ListBucketsCommand({}));
+    return Array.isArray(response.Buckets)
+        ? response.Buckets.map(bucket => bucket.Name).filter(Boolean)
+        : [];
+};
+
+const createLocalStorageBucket = async (settings, bucketName) => {
+    const { client } = getLocalStorageClient(settings);
+    const safeName = String(bucketName || '').trim();
+    if (!safeName) {
+        throw new Error('Bucket name is required.');
+    }
+    await client.send(new CreateBucketCommand({ Bucket: safeName }));
+    return safeName;
+};
+
+const uploadBufferToLocalStorage = async ({ buffer, mimeType, fileName, bucketName, settings }) => {
+    const { client, cfg } = getLocalStorageClient(settings);
+    const targetBucket = String(bucketName || cfg.bucketName || '').trim();
+    if (!targetBucket) {
+        throw new Error('Select or create a bucket before uploading to local storage.');
+    }
+    const objectKey = sanitizeDriveFileName(fileName);
+    await client.send(new PutObjectCommand({
+        Bucket: targetBucket,
+        Key: objectKey,
+        Body: buffer,
+        ContentType: mimeType || 'application/octet-stream'
+    }));
+
+    const baseUrl = `http://${cfg.storageIp}:${cfg.apiPort}`;
+    return {
+        id: `${targetBucket}/${objectKey}`,
+        name: objectKey,
+        webViewLink: `${baseUrl}/${targetBucket}/${encodeURIComponent(objectKey)}`,
+        webContentLink: `${baseUrl}/${targetBucket}/${encodeURIComponent(objectKey)}`
     };
 };
 
@@ -3471,6 +3570,56 @@ app.get('/api/v1/integrations/google-drive/status', (req, res) => {
     }
 });
 
+app.get('/api/v1/integrations/local-storage/status', async (req, res) => {
+    try {
+        const db = readDb();
+        const settings = resolveSettings(db);
+        const local = getLocalStorageConfig(settings);
+        let buckets = [];
+        let reachable = false;
+
+        if (local.configured) {
+            buckets = await listLocalStorageBuckets(settings);
+            reachable = true;
+        }
+
+        res.json({
+            configured: local.configured,
+            reachable,
+            enabled: !!local.enabled,
+            autoUploadExternalSubmissions: local.autoUploadExternalSubmissions !== false,
+            storageIp: local.storageIp,
+            apiPort: local.apiPort,
+            consolePort: local.consolePort,
+            bucketName: local.bucketName,
+            buckets
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to fetch local storage status' });
+    }
+});
+
+app.post('/api/v1/integrations/local-storage/buckets', bodyParser.json(), async (req, res) => {
+    try {
+        const db = readDb();
+        if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+            db.settings = [{}];
+        }
+        const settings = resolveSettings(db);
+        const bucketName = await createLocalStorageBucket(settings, req.body?.bucketName);
+        const local = getLocalStorageConfig(settings);
+        settings.localStorageConfig = {
+            ...local,
+            bucketName
+        };
+        db.settings[0] = encryptSettings(settings);
+        writeDb(db);
+        return res.json({ success: true, bucketName });
+    } catch (err) {
+        return res.status(500).json({ error: err.message || 'Failed to create bucket' });
+    }
+});
+
 app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
     try {
         const db = readDb();
@@ -3669,6 +3818,110 @@ app.post('/api/v1/integrations/google-drive/upload', uploadGoogleDriveFile.singl
     } catch (err) {
         console.error('[GoogleDrive] Upload failed:', err);
         return res.status(500).json({ error: err.message || 'Google Drive upload failed' });
+    }
+});
+
+app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file was uploaded.' });
+        }
+
+        const db = readDb();
+        if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+            db.settings = [{}];
+        }
+        const settings = resolveSettings(db);
+        const googleEnabled = !!settings?.googleDriveConfig?.enabled && !!settings?.googleDriveConfig?.autoUploadExternalSubmissions;
+        const localEnabled = !!settings?.localStorageConfig?.enabled && !!settings?.localStorageConfig?.autoUploadExternalSubmissions;
+        if (!googleEnabled && !localEnabled) {
+            return res.status(400).json({ error: 'No enabled storage integration is configured for automatic uploads.' });
+        }
+
+        const orderPrefix = req.body.internalOrderNumber ? `${req.body.internalOrderNumber}_` : '';
+        const poPrefix = req.body.customerReferenceNumber ? `${req.body.customerReferenceNumber}_` : '';
+        const finalName = `${orderPrefix}${poPrefix}${req.file.originalname}`;
+        const uploads = {};
+        const errors = [];
+
+        const gd = settings.googleDriveConfig || {};
+        if (googleEnabled) {
+            try {
+                if (!gd.refreshToken) {
+                    throw new Error('Google Drive is not connected yet.');
+                }
+
+                const targetFolderId = await resolveOrCreateDriveFolder({
+                    req,
+                    refreshToken: gd.refreshToken,
+                    folderName: gd.folderName || '',
+                    fallbackFolderId: gd.folderId || '',
+                    settings
+                });
+
+                if (targetFolderId !== (gd.folderId || '')) {
+                    settings.googleDriveConfig = {
+                        ...gd,
+                        folderId: targetFolderId
+                    };
+                    db.settings[0] = encryptSettings(settings);
+                    writeDb(db);
+                }
+
+                const uploaded = await uploadBufferToGoogleDrive({
+                    req,
+                    buffer: req.file.buffer,
+                    mimeType: req.file.mimetype,
+                    fileName: finalName,
+                    folderId: targetFolderId || '',
+                    refreshToken: gd.refreshToken,
+                    settings
+                });
+
+                uploads.googleDrive = {
+                    id: uploaded.id,
+                    name: uploaded.name,
+                    webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+                    webContentLink: uploaded.webContentLink || ''
+                };
+            } catch (error) {
+                errors.push({ target: 'google-drive', message: error.message || 'Google Drive upload failed' });
+            }
+        }
+
+        if (localEnabled) {
+            try {
+                const local = getLocalStorageConfig(settings);
+                uploads.localStorage = await uploadBufferToLocalStorage({
+                    buffer: req.file.buffer,
+                    mimeType: req.file.mimetype,
+                    fileName: finalName,
+                    bucketName: local.bucketName,
+                    settings
+                });
+            } catch (error) {
+                errors.push({ target: 'local-storage', message: error.message || 'Local storage upload failed' });
+            }
+        }
+
+        const uploadedTargets = Object.keys(uploads);
+        if (uploadedTargets.length === 0) {
+            return res.status(500).json({
+                error: errors.map(entry => `${entry.target}: ${entry.message}`).join(' | ') || 'Configured storage upload failed',
+                uploads,
+                errors
+            });
+        }
+
+        return res.json({
+            success: true,
+            uploads,
+            uploadedTargets,
+            errors
+        });
+    } catch (err) {
+        console.error('[Storage] Upload failed:', err);
+        return res.status(500).json({ error: err.message || 'Configured storage upload failed' });
     }
 });
 

@@ -325,6 +325,19 @@ export interface GoogleDriveConfig {
   connectedAt?: string;
 }
 
+export type StorageBackend = 'google-drive' | 'local-storage';
+
+export interface LocalStorageConfig {
+  enabled: boolean;
+  autoUploadExternalSubmissions: boolean;
+  storageIp: string;
+  apiPort: number;
+  consolePort: number;
+  accessKey: string;
+  secretKey?: string;
+  bucketName: string;
+}
+
 export interface EmailConfig {
   smtpServer: string;
   smtpPort: number;
@@ -353,7 +366,9 @@ export interface AppConfig {
     aiProvider: AIProvider;
     openaiConfig: OpenAIConfig;
     geminiConfig: GeminiConfig;
+    storageBackend?: StorageBackend;
     googleDriveConfig: GoogleDriveConfig;
+    localStorageConfig?: LocalStorageConfig;
     emailConfig: EmailConfig;
     companyName: string;
     companyAddress: string;

@@ -776,8 +776,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     const normalizedItems = items.map(item => ({ ...item, quantity: normalizeQty(item.quantity) }));
 
     try {
-      const driveEnabled = !!config.settings.googleDriveConfig?.enabled;
-      const autoUpload = !!config.settings.googleDriveConfig?.autoUploadExternalSubmissions;
+      const googleAutoUploadEnabled = !!config.settings.googleDriveConfig?.enabled && !!config.settings.googleDriveConfig?.autoUploadExternalSubmissions;
+      const localAutoUploadEnabled = !!config.settings.localStorageConfig?.enabled && !!config.settings.localStorageConfig?.autoUploadExternalSubmissions;
+      const hasAnyAutoUploadTarget = googleAutoUploadEnabled || localAutoUploadEnabled;
       const submissionFile = externalSubmissionFile || fileInputRef.current?.files?.[0] || null;
       const snapshotToFile = () => {
         if (!externalSubmissionSnapshot) return null;
@@ -813,12 +814,17 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         return new File([JSON.stringify(summary, null, 2)], fileName, { type: 'application/json' });
       };
 
-      const tryDriveUpload = async (orderLike: { id?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) => {
-        if (!(driveEnabled && autoUpload)) {
-          return { attempted: false, uploaded: false, link: '', fileId: '', fileName: '' };
+      const summarizeUploadTargets = (targets: string[]) => {
+        if (targets.length === 0) return 'no storage backends';
+        return targets.map(target => target === 'localStorage' ? 'Local Storage' : 'Google Drive').join(' and ');
+      };
+
+      const tryStorageUpload = async (orderLike: { id?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) => {
+        if (!hasAnyAutoUploadTarget) {
+          return { attempted: false, uploadedTargets: [] as string[], errors: [] as Array<{ target: string; message: string }>, googleDrive: null as any };
         }
         const effectiveUploadFile = submissionFile || snapshotToFile() || fallbackOrderFile(orderLike);
-        const uploaded = await dataService.uploadExternalSubmissionToGoogleDrive(effectiveUploadFile, {
+        const uploaded = await dataService.uploadExternalSubmission(effectiveUploadFile, {
           orderId: orderLike.id,
           internalOrderNumber: orderLike.internalOrderNumber,
           customerReferenceNumber: orderLike.customerReferenceNumber,
@@ -826,33 +832,38 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         });
         return {
           attempted: true,
-          uploaded: true,
-          link: uploaded.webViewLink || '',
-          fileId: uploaded.id || '',
-          fileName: uploaded.name || ''
+          uploadedTargets: uploaded.uploadedTargets || [],
+          errors: uploaded.errors || [],
+          googleDrive: uploaded.uploads?.googleDrive || null,
+          localStorage: uploaded.uploads?.localStorage || null
         };
       };
 
       if (editingOrderId) {
         const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, currency, conversionRate, items: normalizedItems as any });
         try {
-          const driveResult = await tryDriveUpload(updatedOrder as any);
-          if (driveResult.uploaded) {
-            if (driveResult.link) {
+          const uploadResult = await tryStorageUpload(updatedOrder as any);
+          if (uploadResult.googleDrive?.webViewLink) {
               await dataService.updateOrder(updatedOrder.id, {
-                googleDriveLink: driveResult.link,
-                googleDriveFileId: driveResult.fileId,
-                googleDriveFileName: driveResult.fileName
+                googleDriveLink: uploadResult.googleDrive.webViewLink,
+                googleDriveFileId: uploadResult.googleDrive.id,
+                googleDriveFileName: uploadResult.googleDrive.name
               } as any);
-            }
-            setMessage({ type: 'success', text: 'Record updated. Source file archived to Google Drive.' });
-          } else if (driveEnabled && autoUpload) {
-            setMessage({ type: 'success', text: 'Record updated. Order snapshot archived to Google Drive.' });
+          }
+
+          if (uploadResult.uploadedTargets.length > 0) {
+            const successText = submissionFile || externalSubmissionSnapshot
+              ? `Record updated. Source file archived to ${summarizeUploadTargets(uploadResult.uploadedTargets)}.`
+              : `Record updated. Order snapshot archived to ${summarizeUploadTargets(uploadResult.uploadedTargets)}.`;
+            const errorText = uploadResult.errors.length > 0
+              ? ` Upload issues: ${uploadResult.errors.map((entry: { target: string; message: string }) => `${entry.target}: ${entry.message}`).join(' | ')}`
+              : '';
+            setMessage({ type: uploadResult.errors.length > 0 ? 'info' : 'success', text: `${successText}${errorText}` });
           } else {
             setMessage({ type: 'success', text: 'Record updated.' });
           }
         } catch (driveError: any) {
-          const errMsg = driveError?.message ? ` Google Drive upload failed: ${driveError.message}` : ' Google Drive upload failed.';
+          const errMsg = driveError?.message ? ` Upload failed: ${driveError.message}` : ' Upload failed.';
           setMessage({ type: 'error', text: `Record updated successfully.${errMsg}` });
           await fetchData();
           resetForm(false);
@@ -886,22 +897,29 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
         });
 
-        if (driveEnabled && autoUpload) {
+        if (hasAnyAutoUploadTarget) {
           try {
-            const driveResult = await tryDriveUpload(newOrder as any);
-            if (driveResult.link) {
+            const uploadResult = await tryStorageUpload(newOrder as any);
+            if (uploadResult.googleDrive?.webViewLink) {
               await dataService.updateOrder(newOrder.id, {
-                googleDriveLink: driveResult.link,
-                googleDriveFileId: driveResult.fileId,
-                googleDriveFileName: driveResult.fileName
+                googleDriveLink: uploadResult.googleDrive.webViewLink,
+                googleDriveFileId: uploadResult.googleDrive.id,
+                googleDriveFileName: uploadResult.googleDrive.name
               } as any);
             }
+
+            const successText = uploadResult.uploadedTargets.length > 0
+              ? `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}. Source file archived to ${summarizeUploadTargets(uploadResult.uploadedTargets)}.`
+              : `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}.`;
+            const errorText = uploadResult.errors.length > 0
+              ? ` Upload issues: ${uploadResult.errors.map((entry: { target: string; message: string }) => `${entry.target}: ${entry.message}`).join(' | ')}`
+              : '';
             setMessage({
-              type: 'success',
-              text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}. Source file archived to Google Drive.`
+              type: uploadResult.errors.length > 0 ? 'info' : 'success',
+              text: `${successText}${errorText}`
             });
           } catch (driveError: any) {
-            const errMsg = driveError?.message ? ` Google Drive upload failed: ${driveError.message}` : ' Google Drive upload failed.';
+            const errMsg = driveError?.message ? ` Upload failed: ${driveError.message}` : ' Upload failed.';
             setMessage({ type: 'error', text: `Order created successfully.${errMsg}` });
             await fetchData();
             resetForm();

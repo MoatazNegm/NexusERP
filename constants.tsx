@@ -23,6 +23,7 @@ export const INITIAL_CONFIG: AppConfig = {
     aiProvider: 'gemini',
     openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
     geminiConfig: { apiKey: '', modelName: 'gemini-1.5-flash' },
+    storageBackend: 'google-drive',
     googleDriveConfig: {
       enabled: true,
       autoUploadExternalSubmissions: true,
@@ -30,6 +31,16 @@ export const INITIAL_CONFIG: AppConfig = {
       clientSecret: '',
       redirectUri: '',
       folderName: ''
+    },
+    localStorageConfig: {
+      enabled: true,
+      autoUploadExternalSubmissions: true,
+      storageIp: '',
+      apiPort: 9000,
+      consolePort: 9001,
+      accessKey: '',
+      secretKey: '',
+      bucketName: ''
     },
     emailConfig: {
       smtpServer: 'mail.quickstor.net',
