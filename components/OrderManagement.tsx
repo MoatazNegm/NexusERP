@@ -1245,7 +1245,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </label>
                     </div>
                     <div className="flex-2 space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Blanket Contract ID (Settling Order)</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Contract ID</label>
                       <select
                         disabled={editStatus.isFrozen}
                         className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
