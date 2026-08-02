@@ -294,6 +294,18 @@ export interface CustomerOrder {
    */
   conversionRate?: number;
   blanketOrder?: boolean;
+  /**
+   * When a new order is created as a settling order against an existing blanket
+   * contract, this holds the blanket contract's order ID (or internal order number).
+   * The server auto-sets isSettlingOrder to true for any order carrying this field.
+   */
+  blanketContractId?: string;
+  /**
+   * Auto-set by the server when an order is submitted with a blanketContractId.
+   * Settling orders appear in Finance with a "Blanket Settling" badge and can be
+   * invoiced at any point in the lifecycle.
+   */
+  isSettlingOrder?: boolean;
 }
 
 export interface HelpLink {

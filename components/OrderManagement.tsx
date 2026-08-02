@@ -165,6 +165,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [paymentSlaDays, setPaymentSlaDays] = useState(config.settings.defaultPaymentSlaDays);
   const [appliesWithholdingTax, setAppliesWithholdingTax] = useState(false);
   const [blanketOrder, setBlanketOrder] = useState(false);
+  const [blanketContractId, setBlanketContractId] = useState('');
   const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
   const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(30);
   const [targetDeliveryDate, setTargetDeliveryDate] = useState(getDatePlusDays(today, 30));
@@ -355,6 +356,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
     setBlanketOrder(match.blanketOrder || false);
+    setBlanketContractId(match.blanketContractId || '');
     const loadedDeliveryDays = match.targetDeliveryDays || 30;
     setTargetDeliveryDays(loadedDeliveryDays);
     setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate, loadedDeliveryDays));
@@ -729,6 +731,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(false);
     setBlanketOrder(false);
+    setBlanketContractId('');
     setTargetDeliveryDays(30);
     setTargetDeliveryDate(getDatePlusDays(today, 30));
     setOrderTaxPercent(DEFAULT_TAX_PERCENT);
@@ -834,7 +837,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       };
 
       if (editingOrderId) {
-        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, currency, conversionRate, items: normalizedItems as any });
+        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, blanketContractId, currency, conversionRate, items: normalizedItems as any });
         try {
           const driveResult = await tryDriveUpload(updatedOrder as any);
           if (driveResult.uploaded) {
@@ -877,6 +880,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           paymentSlaDays,
           appliesWithholdingTax,
           blanketOrder,
+          blanketContractId,
           currency,
           conversionRate,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
@@ -1226,7 +1230,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </select>
                     </div>
                   </div>
-                  {/* Blanket Order checkbox on its own row, at the far left (Payment SLA column slot) */}
+                  {/* Blanket Order checkbox + Blanket Contract ID (settling orders) */}
                   <div className="flex flex-row gap-4 items-start">
                     <div className="flex-2">
                       <label className="flex items-center gap-3 cursor-pointer p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 hover:bg-white hover:border-teal-400 transition-all w-full">
@@ -1240,7 +1244,27 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         <span className="text-sm font-bold text-slate-800">Blanket Order</span>
                       </label>
                     </div>
-                    <div className="flex-1"></div>
+                    <div className="flex-2 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Blanket Contract ID (Settling Order)</label>
+                      <select
+                        disabled={editStatus.isFrozen}
+                        className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
+                        value={blanketContractId}
+                        onChange={e => setBlanketContractId(e.target.value)}
+                      >
+                        <option value="">— None (Regular Order) —</option>
+                        {existingOrders
+                          .filter(o => o.blanketOrder && ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status as OrderStatus))
+                          .map(o => (
+                            <option key={o.id} value={o.id}>{o.internalOrderNumber} — {o.customerName}</option>
+                          ))}
+                      </select>
+                      {blanketContractId && (
+                        <div className="text-[9px] font-black text-indigo-600 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse">
+                          <i className="fa-solid fa-link"></i> This order will be a settling order for contract {blanketContractId} — it will appear automatically in Finance Operations.
+                        </div>
+                      )}
+                    </div>
                     <div className="flex-1"></div>
                   </div>
                 </div>
