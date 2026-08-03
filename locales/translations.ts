@@ -28,6 +28,7 @@ export const translations: Record<string, any> = {
         orders: 'Orders', billing_details: 'Billing Details', history: 'Transaction History',
         blacklist_hold: 'Blacklist & Hold', tax_clearances: 'Tax Clearances',
         supplier_reporting: 'Supplier Reporting', ledger: 'Ledger',
+        contracts: 'Blanket Contracts', customer_wallets: 'Customer Wallets',
       },
       ledger: {
         title: 'General Ledger', addEntry: 'Add Entry', summary: 'Summary',
@@ -253,6 +254,7 @@ export const translations: Record<string, any> = {
         orders: 'الطلبات', billing_details: 'تفاصيل الفواتير', history: 'سجل المعاملات',
         entities: 'الكيانات', tax_clearances: 'التخليص الضريبي',
         supplier_reporting: 'تقارير الموردين', ledger: 'دفتر الأستاذ',
+        contracts: 'العقود الإطارية', customer_wallets: 'محافظ العملاء',
       },
       ledger: {
         title: 'دفتر الأستاذ العام', addEntry: 'إضافة قيد', summary: 'الملخص',

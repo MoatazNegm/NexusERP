@@ -494,6 +494,14 @@ class DataService {
     return this.dispatchAction(id, 'request-einvoice');
   }
 
+  async settleBlanketOrder(blanketOrderId: string, settlingOrderId: string) {
+    return this.dispatchAction(blanketOrderId, 'settle-blanket-order', { settlingOrderId });
+  }
+
+  async financialRequest(blanketOrderId: string, memo?: string, amount?: number, settlingOrderId?: string) {
+    return this.dispatchAction(blanketOrderId, 'financial-request', { memo, amount, settlingOrderId });
+  }
+
   async getReport(params: any) {
     let orders = await this.getOrders();
     if (params.startDate) orders = orders.filter((o: CustomerOrder) => o.orderDate >= params.startDate);
