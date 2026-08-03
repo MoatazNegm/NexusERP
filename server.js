@@ -21,7 +21,7 @@ if (!fs.existsSync(UPLOADS_BASE)) {
 }
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 3; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 4; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -699,6 +699,10 @@ const migrations = [
         // a single time on the next server boot.
         return settings;
     },
+    // v3 → v4: Initialize contracts array if missing
+    (settings) => {
+        return settings;
+    },
 ];
 
 const applySchemaMigrations = (db) => {
@@ -733,6 +737,9 @@ const applySchemaMigrations = (db) => {
                 }
             });
             if (touched > 0) console.log(`[System] v2→v3 migration: backfilled currency='L.E.' on ${touched} order(s).`);
+        }
+        if (version === 4) {
+            db.contracts = db.contracts || [];
         }
     }
 
@@ -2018,7 +2025,7 @@ app.post('/api/v1/customers/merge', (req, res) => {
     }
 });
 
-const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules', 'ledger'];
+const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules', 'ledger', 'contracts'];
 COLLECTIONS.forEach(col => {
     app.get(`/api/v1/${col}`, getCollection(col));
     app.get(`/api/v1/${col}/:id`, getItemFromCollection(col));

@@ -8,6 +8,7 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
+import { SortableTable, ColumnDef } from './SortableTable';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -507,6 +508,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<any[]>([]);
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [contractSearch, setContractSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [historySearch, setHistorySearch] = useState('');
@@ -646,18 +649,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const fetchData = async () => {
     try {
-      const [o, c, s, l, sp] = await Promise.all([
+      const [o, c, s, l, sp, con] = await Promise.all([
         dataService.getOrders(),
         dataService.getCustomers(),
         dataService.getSuppliers(),
         dataService.getLedgerEntries(),
-        dataService.getSupplierPayments()
+        dataService.getSupplierPayments(),
+        dataService.getContracts()
       ]);
       setOrders(o);
       setCustomers(c);
       setSuppliers(s);
       setLedgerEntries(l);
       setSupplierPayments(sp);
+      setContracts(con);
     } catch (e) {
       console.error("Finance sync error:", e);
     } finally {
@@ -992,6 +997,134 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     return () => clearTimeout(timer);
   }, [paymentInvoiceData]);
 
+  const contractColumns: ColumnDef<any>[] = [
+    {
+      key: 'id',
+      label: 'Contract ID',
+      sortable: true,
+      sortValue: (c) => c.id,
+      render: (c) => (
+        <div>
+          <span className="font-mono text-xs font-black text-teal-600 uppercase">{c.id}</span>
+          <div className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">{c.description}</div>
+        </div>
+      )
+    },
+    {
+      key: 'customerName',
+      label: 'Customer Name',
+      sortable: true,
+      sortValue: (c) => c.customerName,
+      render: (c) => <span className="font-bold text-slate-800 text-sm">{c.customerName}</span>
+    },
+    {
+      key: 'settlingOrders',
+      label: 'Settling Orders',
+      sortable: true,
+      sortValue: (c) => {
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        return linked.length;
+      },
+      render: (c) => {
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        return (
+          <div className="space-y-1">
+            {linked.length > 0 ? (
+              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[9px] font-black uppercase inline-flex items-center gap-1">
+                <i className="fa-solid fa-link"></i> {linked.length} Blanket Order{linked.length > 1 ? 's' : ''}
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-400 italic">No linked blanket orders</span>
+            )}
+            {linked.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {linked.map(bo => (
+                  <span key={bo.id} className="text-[9px] font-mono font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                    {bo.internalOrderNumber}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
+    },
+    {
+      key: 'receivedDate',
+      label: 'Contract Date',
+      sortable: true,
+      sortValue: (c) => c.receivedDate || c.createdAt || '',
+      render: (c) => (
+        <span className="text-xs font-bold text-slate-600">
+          {new Date(c.receivedDate || c.createdAt || new Date()).toLocaleDateString()}
+        </span>
+      )
+    },
+    {
+      key: 'actions',
+      label: 'Action',
+      sortable: false,
+      render: (c) => {
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id && ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status as OrderStatus));
+        if (linked.length === 0) {
+          return <span className="text-[10px] text-slate-400 italic">No active blanket orders to settle</span>;
+        }
+        return (
+          <div className="space-y-2">
+            {linked.map(bo => (
+              <div key={bo.id} className="flex items-center justify-between gap-3 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                <span className="font-mono text-[9px] font-black text-slate-600">{bo.internalOrderNumber}</span>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => { setFinReqModal({ contract: bo }); setContractMsg(null); }}
+                    className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
+                    title="Log a Financial Request for this blanket contract"
+                  >
+                    <i className="fa-solid fa-file-invoice-dollar"></i> Request
+                  </button>
+                  <button
+                    onClick={() => { setSettleModal({ contract: bo }); setContractMsg(null); setSettleOrderId(''); }}
+                    className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
+                    title="Settle this blanket contract against a settling order"
+                  >
+                    <i className="fa-solid fa-scale-balanced"></i> Settle
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+    }
+  ];
+
+  const sortedAndFilteredContracts = useMemo(() => {
+    let result = [...contracts].sort((a, b) => {
+      const da = new Date(a.receivedDate || a.createdAt || 0).getTime();
+      const db = new Date(b.receivedDate || b.createdAt || 0).getTime();
+      return da - db;
+    });
+
+    if (contractSearch.trim()) {
+      const q = contractSearch.toLowerCase().trim();
+      result = result.filter(c => {
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linkedMatch = linked.some(bo => bo.internalOrderNumber?.toLowerCase().includes(q));
+        const dateStr = new Date(c.receivedDate || c.createdAt || '').toLocaleDateString();
+        return (
+          c.id.toLowerCase().includes(q) ||
+          c.customerName.toLowerCase().includes(q) ||
+          (c.description || '').toLowerCase().includes(q) ||
+          (c.targetLineItems || '').toLowerCase().includes(q) ||
+          dateStr.includes(q) ||
+          linkedMatch
+        );
+      });
+    }
+
+    return result;
+  }, [contracts, contractSearch, orders]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
         {/* Hidden Full Invoice Template */}
@@ -1312,7 +1445,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       {/* Blanket Contracts Tab — SAP/Oracle-style framework agreements */}
       {activeTab === 'contracts' && (
         <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
-          <div className="px-8 pt-8 pb-4 flex items-center justify-between flex-wrap gap-4">
+          <div className="px-8 pt-8 pb-4 flex items-center justify-between flex-wrap gap-4 border-b border-slate-100">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center">
                 <i className="fa-solid fa-file-contract text-xl"></i>
@@ -1322,95 +1455,31 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Framework agreements — settling orders link to the contract ID</div>
               </div>
             </div>
+            {/* Search Input Box */}
+            <div className="relative w-full md:w-80">
+              <input
+                type="text"
+                className="w-full pl-10 pr-4 py-2 border-2 border-slate-100 rounded-xl bg-slate-50 text-xs font-bold outline-none focus:bg-white focus:border-teal-500 transition-all shadow-inner"
+                placeholder="Search contract ID, customer, etc..."
+                value={contractSearch}
+                onChange={e => setContractSearch(e.target.value)}
+              />
+              <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-400 text-xs"></i>
+            </div>
           </div>
           {contractMsg && (
-            <div className="mx-8 mb-4 p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3">
+            <div className="mx-8 mt-4 p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3">
               <i className="fa-solid fa-circle-exclamation"></i>{contractMsg}
             </div>
           )}
           <div className="overflow-x-auto">
-            <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-              <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
-                <tr>
-                  <th className="px-8 py-5 text-white">Contract ID</th>
-                  <th className="px-8 py-5 text-white">Customer</th>
-                  <th className="px-8 py-5 text-white">Contract Value</th>
-                  <th className="px-8 py-5 text-white">Logged</th>
-                  <th className="px-8 py-5 text-white">Settling Orders</th>
-                  <th className="px-8 py-5 text-white text-end">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {orders
-                  .filter(o => o.blanketOrder && ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status))
-                  .map(c => {
-                    const settling = blanketSettlingOrders[c.id] || blanketSettlingOrders[c.internalOrderNumber!] || [];
-                    let contractValue = 0;
-                    c.items.forEach(it => contractValue += (getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0));
-                    return (
-                      <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="px-8 py-6">
-                          <div className="font-mono text-[10px] font-black text-teal-600 uppercase">{c.internalOrderNumber}</div>
-                          {c.blanketOrder && <div className="text-[9px] font-black text-teal-500 uppercase mt-1">Blanket Contract</div>}
-                        </td>
-                        <td className="px-8 py-6">
-                          <div className="font-bold text-slate-800 text-sm">{c.customerName}</div>
-                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{c.orderDate ? new Date(c.orderDate).toLocaleDateString() : ''}</div>
-                        </td>
-                        <td className="px-8 py-6 text-sm font-black text-slate-700">
-                          {contractValue.toLocaleString()} {getOrderCurrency(c)}
-                        </td>
-                        <td className="px-8 py-6 text-[10px] font-bold text-slate-500 uppercase">
-                          {new Date(c.dataEntryTimestamp || c.orderDate).toLocaleDateString()}
-                        </td>
-                        <td className="px-8 py-6">
-                          {settling.length > 0 ? (
-                            <span className="px-2.5 py-1 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-lg text-[9px] font-black uppercase inline-flex items-center gap-1.5">
-                              <i className="fa-solid fa-link"></i>
-                              {settling.length} Settling Order{settling.length > 1 ? 's' : ''}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 italic">No settling orders linked</span>
-                          )}
-                          {settling.length > 0 && (
-                            <div className="mt-1.5 space-y-1">
-                              {settling.map(s => (
-                                <div key={s.id} className="text-[9px] font-mono font-black text-blue-600 uppercase">{s.internalOrderNumber}</div>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-8 py-6 text-end">
-                          <div className="flex justify-end gap-2">
-                            <button
-                              onClick={() => { setFinReqModal({ contract: c }); setContractMsg(null); }}
-                              className="px-4 py-2 bg-slate-900 text-white rounded-lg text-[9px] font-black uppercase hover:bg-black transition-all flex items-center gap-1.5"
-                              title="Log a Financial Request for this blanket contract"
-                            >
-                              <i className="fa-solid fa-file-invoice-dollar"></i> Financial Request
-                            </button>
-                            <button
-                              onClick={() => { setSettleModal({ contract: c }); setContractMsg(null); setSettleOrderId(''); }}
-                              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-teal-700 transition-all flex items-center gap-1.5"
-                              title="Settle this blanket contract against a settling order"
-                            >
-                              <i className="fa-solid fa-scale-balanced"></i> Settle
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                {orders.filter(o => o.blanketOrder && ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)).length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-8 py-16 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">
-                      <i className="fa-solid fa-file-contract text-4xl block mb-3 opacity-20"></i>
-                      No active blanket contracts found
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            <SortableTable
+              columns={contractColumns}
+              data={sortedAndFilteredContracts}
+              rowKey={(c) => c.id}
+              emptyMessage="No active blanket contracts found"
+              storageKey="finance-contracts-table"
+            />
           </div>
         </div>
       )}

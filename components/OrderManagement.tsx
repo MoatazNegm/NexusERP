@@ -10,6 +10,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
 import { AddCustomerModal } from './AddCustomerModal';
+import { SortableTable, ColumnDef } from './SortableTable';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -145,7 +146,7 @@ interface ItemWithTaxStatus extends Partial<CustomerOrderItem> {
   taxDetected?: boolean;
 }
 
-type ManagementTab = 'new' | 'logged';
+type ManagementTab = 'new' | 'logged' | 'blanket';
 const DEFAULT_TAX_PERCENT = 14;
 
 export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refreshKey, currentUser }) => {
@@ -157,6 +158,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   };
 
   const [activeTab, setActiveTab] = useState<ManagementTab>('new');
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [contractId, setContractId] = useState('');
+  const [blanketSubTab, setBlanketSubTab] = useState<'new_blanket' | 'new_contract' | 'logged_contracts'>('new_blanket');
+  const [contractFormId, setContractFormId] = useState('');
+  const [contractFormCustomerName, setContractFormCustomerName] = useState('');
+  const [contractFormDescription, setContractFormDescription] = useState('');
+  const [contractFormTargetItems, setContractFormTargetItems] = useState('');
+  const [contractFormReceivedDate, setContractFormReceivedDate] = useState(today);
+  const [contractSearch, setContractSearch] = useState('');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [existingOrders, setExistingOrders] = useState<CustomerOrder[]>([]);
   const [customerName, setCustomerName] = useState('');
@@ -192,9 +202,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   useEffect(() => { fetchData(); }, [refreshKey]);
 
   const fetchData = async () => {
-    const [c, o] = await Promise.all([dataService.getCustomers(), dataService.getOrders()]);
+    const [c, o, ct] = await Promise.all([
+      dataService.getCustomers(), 
+      dataService.getOrders(),
+      dataService.getContracts().catch(() => [])
+    ]);
     setCustomers(c);
     setExistingOrders(o);
+    setContracts(ct);
   };
 
   const loggedOrders = useMemo(() => {
@@ -357,6 +372,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
     setBlanketOrder(match.blanketOrder || false);
     setBlanketContractId(match.blanketContractId || '');
+    setContractId(match.contractId || '');
     const loadedDeliveryDays = match.targetDeliveryDays || 30;
     setTargetDeliveryDays(loadedDeliveryDays);
     setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate, loadedDeliveryDays));
@@ -368,7 +384,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setItems(match.items.map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
 
     setEditingOrderId(match.id);
-    setActiveTab('new');
+    if (match.blanketOrder) {
+      setActiveTab('blanket');
+      setBlanketSubTab('new_blanket');
+    } else {
+      setActiveTab('new');
+    }
     setIsNewCustomerCreated(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -732,6 +753,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setAppliesWithholdingTax(false);
     setBlanketOrder(false);
     setBlanketContractId('');
+    setContractId('');
     setTargetDeliveryDays(30);
     setTargetDeliveryDate(getDatePlusDays(today, 30));
     setOrderTaxPercent(DEFAULT_TAX_PERCENT);
@@ -843,7 +865,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       };
 
       if (editingOrderId) {
-        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, blanketContractId, currency, conversionRate, items: normalizedItems as any });
+        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, blanketContractId, contractId, currency, conversionRate, items: normalizedItems as any });
         try {
           const uploadResult = await tryStorageUpload(updatedOrder as any);
           if (uploadResult.googleDrive?.webViewLink) {
@@ -892,13 +914,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           appliesWithholdingTax,
           blanketOrder,
           blanketContractId,
+          contractId,
           currency,
           conversionRate,
           targetDeliveryDays: Number(targetDeliveryDays) || 0,
           targetDeliveryDate,
-
           items: normalizedItems as any
-
         });
 
         if (hasAnyAutoUploadTarget) {
@@ -964,6 +985,31 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     }
   };
 
+  const handleCreateContract = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const finalId = contractFormId.trim() || `CON-${Math.floor(100000 + Math.random() * 900000)}`;
+      await dataService.addContract({
+        id: finalId,
+        customerName: contractFormCustomerName.trim(),
+        description: contractFormDescription.trim(),
+        targetLineItems: contractFormTargetItems.trim(),
+        receivedDate: contractFormReceivedDate,
+        createdAt: new Date().toISOString()
+      });
+      setMessage({ type: 'success', text: `Contract "${finalId}" registered successfully.` });
+      setContractFormId('');
+      setContractFormCustomerName('');
+      setContractFormDescription('');
+      setContractFormTargetItems('');
+      setContractFormReceivedDate(today);
+      await fetchData();
+      setBlanketSubTab('new_blanket');
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Failed to create contract.' });
+    }
+  };
+
   const startStockOrder = () => {
     resetForm();
     setActiveTab('new');
@@ -980,14 +1026,155 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleDeleteContract = async (id: string) => {
+    if (!window.confirm(`Are you sure you want to delete contract template "${id}"?`)) return;
+    try {
+      await dataService.deleteContract(id);
+      setMessage({ type: 'success', text: `Contract template "${id}" deleted successfully.` });
+      await fetchData();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Failed to delete contract template.' });
+    }
+  };
+
+  const startContractOrder = (c: any) => {
+    resetForm();
+    setCustomerName(c.customerName);
+    setContractId(c.id);
+    setBlanketOrder(true);
+    setBlanketSubTab('new_blanket');
+    setMessage({ type: 'info', text: `Contract template "${c.id}" pre-selected. Ready to log blanket order.` });
+  };
+
+  const contractColumns: ColumnDef<any>[] = [
+    {
+      key: 'id',
+      label: 'Contract ID',
+      sortable: true,
+      sortValue: (c) => c.id,
+      render: (c) => (
+        <div>
+          <span className="font-mono text-xs font-black text-teal-600 uppercase">{c.id}</span>
+          <div className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">{c.description}</div>
+        </div>
+      )
+    },
+    {
+      key: 'customerName',
+      label: 'Customer Name',
+      sortable: true,
+      sortValue: (c) => c.customerName,
+      render: (c) => <span className="font-bold text-slate-800 text-sm">{c.customerName}</span>
+    },
+    {
+      key: 'settlingOrders',
+      label: 'Settling Orders',
+      sortable: true,
+      sortValue: (c) => {
+        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id);
+        return linked.length;
+      },
+      render: (c) => {
+        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id);
+        return (
+          <div className="space-y-1">
+            {linked.length > 0 ? (
+              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[9px] font-black uppercase inline-flex items-center gap-1">
+                <i className="fa-solid fa-link"></i> {linked.length} Blanket Order{linked.length > 1 ? 's' : ''}
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-400 italic">No linked blanket orders</span>
+            )}
+            {linked.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {linked.map(bo => (
+                  <span key={bo.id} className="text-[9px] font-mono font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                    {bo.internalOrderNumber}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
+    },
+    {
+      key: 'receivedDate',
+      label: 'Contract Date',
+      sortable: true,
+      sortValue: (c) => c.receivedDate || c.createdAt || '',
+      render: (c) => (
+        <span className="text-xs font-bold text-slate-600">
+          {new Date(c.receivedDate || c.createdAt || new Date()).toLocaleDateString()}
+        </span>
+      )
+    },
+    {
+      key: 'actions',
+      label: 'Action',
+      sortable: false,
+      render: (c) => (
+        <div className="flex gap-2">
+          <button
+            onClick={() => startContractOrder(c)}
+            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
+            title="Create a Blanket Order referencing this contract"
+          >
+            <i className="fa-solid fa-plus"></i> Log Blanket
+          </button>
+          <button
+            onClick={() => handleDeleteContract(c.id)}
+            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
+            title="Delete this contract template"
+          >
+            <i className="fa-solid fa-trash-can"></i> Delete
+          </button>
+        </div>
+      )
+    }
+  ];
+
+  const sortedAndFilteredContracts = useMemo(() => {
+    let result = [...contracts].sort((a, b) => {
+      const da = new Date(a.receivedDate || a.createdAt || 0).getTime();
+      const db = new Date(b.receivedDate || b.createdAt || 0).getTime();
+      return da - db;
+    });
+
+    if (contractSearch.trim()) {
+      const q = contractSearch.toLowerCase().trim();
+      result = result.filter(c => {
+        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linkedMatch = linked.some(bo => bo.internalOrderNumber?.toLowerCase().includes(q));
+        const dateStr = new Date(c.receivedDate || c.createdAt || '').toLocaleDateString();
+        return (
+          c.id.toLowerCase().includes(q) ||
+          c.customerName.toLowerCase().includes(q) ||
+          (c.description || '').toLowerCase().includes(q) ||
+          (c.targetLineItems || '').toLowerCase().includes(q) ||
+          dateStr.includes(q) ||
+          linkedMatch
+        );
+      });
+    }
+
+    return result;
+  }, [contracts, contractSearch, existingOrders]);
+
   return (
     <div className="max-w-[1200px] mx-auto pb-12 space-y-6">
       <div className="flex gap-1 p-1 bg-slate-200 rounded-xl w-fit shadow-inner overflow-x-auto">
         <button
-          onClick={() => setActiveTab('new')}
+          onClick={() => { setActiveTab('new'); resetForm(); }}
           className={`px-8 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'new' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
         >
-          <i className="fa-solid fa-plus"></i> New Acquisition
+          <i className="fa-solid fa-plus"></i> New Orders
+        </button>
+        <button
+          onClick={() => { setActiveTab('blanket'); resetForm(); setBlanketOrder(true); }}
+          className={`px-8 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'blanket' ? 'bg-white text-teal-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+        >
+          <i className="fa-solid fa-file-contract"></i> Blanket Orders
         </button>
         <button
           onClick={startStockOrder}
@@ -1011,7 +1198,30 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       </div>
 
-      {activeTab === 'new' ? (
+      {activeTab === 'blanket' && (
+        <div className="flex gap-2 p-1 bg-slate-100 rounded-xl w-fit shadow-inner">
+          <button
+            onClick={() => { setBlanketSubTab('new_blanket'); resetForm(); setBlanketOrder(true); }}
+            className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${blanketSubTab === 'new_blanket' ? 'bg-white text-teal-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            New Blanket Order
+          </button>
+          <button
+            onClick={() => setBlanketSubTab('new_contract')}
+            className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${blanketSubTab === 'new_contract' ? 'bg-white text-teal-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            New Contract
+          </button>
+          <button
+            onClick={() => setBlanketSubTab('logged_contracts')}
+            className={`px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${blanketSubTab === 'logged_contracts' ? 'bg-white text-teal-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            Logged Contracts
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'new' || (activeTab === 'blanket' && blanketSubTab === 'new_blanket') ? (
         <div className="animate-in fade-in duration-500">
           {editStatus.type !== 'new' && (
             <div className={`mb-6 p-4 rounded-2xl border-l-[8px] flex items-center justify-between shadow-lg ${editStatus.type === 'frozen' ? 'bg-rose-50 border-rose-600 text-rose-800' : 'bg-amber-50 border-amber-400 text-amber-800'
@@ -1248,43 +1458,31 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </select>
                     </div>
                   </div>
-                  {/* Blanket Order checkbox + Blanket Contract ID (settling orders) */}
-                  <div className="flex flex-row gap-4 items-start">
-                    <div className="flex-2">
-                      <label className="flex items-center gap-3 cursor-pointer p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 hover:bg-white hover:border-teal-400 transition-all w-full">
-                        <input
+                  {/* Blanket Contract ID select (rendered only inside blanket orders tab) */}
+                  {activeTab === 'blanket' && (
+                    <div className="flex flex-row gap-4 items-start">
+                      <div className="flex-2 space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Linked Contract Reference</label>
+                        <select
                           disabled={editStatus.isFrozen}
-                          type="checkbox"
-                          className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500"
-                          checked={blanketOrder}
-                          onChange={e => setBlanketOrder(e.target.checked)}
-                        />
-                        <span className="text-sm font-bold text-slate-800">Blanket Order</span>
-                      </label>
-                    </div>
-                    <div className="flex-2 space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Contract ID</label>
-                      <select
-                        disabled={editStatus.isFrozen}
-                        className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
-                        value={blanketContractId}
-                        onChange={e => setBlanketContractId(e.target.value)}
-                      >
-                        <option value="">— None (Regular Order) —</option>
-                        {existingOrders
-                          .filter(o => o.blanketOrder && ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status as OrderStatus))
-                          .map(o => (
-                            <option key={o.id} value={o.id}>{o.internalOrderNumber} — {o.customerName}</option>
+                          className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
+                          value={contractId}
+                          onChange={e => setContractId(e.target.value)}
+                        >
+                          <option value="">— None (No Contract Linked) —</option>
+                          {contracts.map(c => (
+                            <option key={c.id} value={c.id}>{c.id} — {c.customerName}</option>
                           ))}
-                      </select>
-                      {blanketContractId && (
-                        <div className="text-[9px] font-black text-indigo-600 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse">
-                          <i className="fa-solid fa-link"></i> This order will be a settling order for contract {blanketContractId} — it will appear automatically in Finance Operations.
-                        </div>
-                      )}
+                        </select>
+                        {contractId && (
+                          <div className="text-[9px] font-black text-teal-600 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse">
+                            <i className="fa-solid fa-link"></i> Linked to contract reference {contractId}.
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1"></div>
                     </div>
-                    <div className="flex-1"></div>
-                  </div>
+                  )}
                 </div>
 
                 <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-4">
@@ -1368,6 +1566,145 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      ) : (activeTab === 'blanket' && blanketSubTab === 'new_contract') ? (
+        <div className="animate-in fade-in duration-500">
+          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden">
+            <div className="p-6 bg-slate-50 border-b flex justify-between items-center">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-teal-600 flex items-center justify-center text-white shadow-lg">
+                  <i className="fa-solid fa-file-contract text-xl"></i>
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Contract Registry Terminal</h2>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Define new framework contract agreements</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-8">
+              {message && (
+                <div className={`mb-6 p-4 rounded-2xl border flex items-center gap-3 animate-in slide-in-from-top-4 ${message.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-rose-50 border-rose-100 text-rose-700'}`}>
+                  <i className={`fa-solid ${message.type === 'success' ? 'fa-circle-check' : 'fa-triangle-exclamation'}`}></i>
+                  <span className="text-xs font-bold uppercase">{message.text}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleCreateContract} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Contract ID (Optional)</label>
+                    <div className="text-[9px] text-slate-400 font-bold ml-1 uppercase">Leave blank to auto-generate a unique ID (e.g. CON-123456)</div>
+                    <input
+                      type="text"
+                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-teal-500 font-bold transition-all shadow-inner"
+                      placeholder="e.g. CON-2026-08"
+                      value={contractFormId}
+                      onChange={e => setContractFormId(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Customer Name</label>
+                    <div className="text-[9px] text-slate-400 font-bold ml-1 uppercase">Select target client from CRM</div>
+                    <select
+                      required
+                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-teal-500 font-bold transition-all shadow-inner"
+                      value={contractFormCustomerName}
+                      onChange={e => setContractFormCustomerName(e.target.value)}
+                    >
+                      <option value="">— Select Customer —</option>
+                      {customers.map(c => (
+                        <option key={c.id} value={c.name}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Received Date</label>
+                    <div className="text-[9px] text-slate-400 font-bold ml-1 uppercase">Date the contract was received</div>
+                    <input
+                      type="date"
+                      required
+                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-teal-500 font-bold transition-all shadow-inner"
+                      value={contractFormReceivedDate}
+                      onChange={e => setContractFormReceivedDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Contract Description</label>
+                  <textarea
+                    required
+                    rows={4}
+                    className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-teal-500 font-bold transition-all shadow-inner"
+                    placeholder="Enter detailed scope, terms, and agreements..."
+                    value={contractFormDescription}
+                    onChange={e => setContractFormDescription(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Contract Target Line Items</label>
+                  <textarea
+                    required
+                    rows={3}
+                    className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-teal-500 font-bold transition-all shadow-inner"
+                    placeholder="Describe target items, volumes, and quantities..."
+                    value={contractFormTargetItems}
+                    onChange={e => setContractFormTargetItems(e.target.value)}
+                  />
+                </div>
+
+                <div className="pt-4">
+                  <button
+                    type="submit"
+                    className="px-12 py-4 bg-teal-600 hover:bg-teal-700 text-white rounded-3xl font-black uppercase text-xs tracking-wider transition-all active:scale-95 shadow-xl shadow-teal-100"
+                  >
+                    Register Contract Template
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : (activeTab === 'blanket' && blanketSubTab === 'logged_contracts') ? (
+        <div className="animate-in fade-in duration-500">
+          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden min-h-[50vh]">
+            <div className="p-6 bg-slate-50 border-b flex justify-between items-center flex-wrap gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-teal-600 flex items-center justify-center text-white shadow-lg">
+                  <i className="fa-solid fa-file-contract text-xl"></i>
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Logged Contracts</h2>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">View framework contracts and linked blanket order references</p>
+                </div>
+              </div>
+              {/* Search Box */}
+              <div className="relative w-full md:w-80">
+                <input
+                  type="text"
+                  className="w-full pl-10 pr-4 py-2 border-2 border-slate-100 rounded-xl bg-slate-50 text-xs font-bold outline-none focus:bg-white focus:border-teal-500 transition-all shadow-inner"
+                  placeholder="Search contract ID, customer, etc..."
+                  value={contractSearch}
+                  onChange={e => setContractSearch(e.target.value)}
+                />
+                <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-400 text-xs"></i>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <SortableTable
+                columns={contractColumns}
+                data={sortedAndFilteredContracts}
+                rowKey={(c) => c.id}
+                emptyMessage="No logged contracts found"
+                storageKey="order-logged-contracts-table"
+              />
             </div>
           </div>
         </div>

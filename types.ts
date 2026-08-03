@@ -306,6 +306,16 @@ export interface CustomerOrder {
    * invoiced at any point in the lifecycle.
    */
   isSettlingOrder?: boolean;
+  contractId?: string;
+}
+
+export interface Contract {
+  id: string;
+  customerName: string;
+  description: string;
+  targetLineItems: string;
+  receivedDate?: string;
+  createdAt?: string;
 }
 
 export interface HelpLink {

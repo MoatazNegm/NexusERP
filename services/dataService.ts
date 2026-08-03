@@ -228,6 +228,12 @@ class DataService {
     return this.put<CustomerOrder>('orders', id, updates);
   }
 
+  async getContracts() { return this.get<any>('contracts'); }
+  async addContract(contract: any) { return this.post<any>('contracts', contract); }
+  async updateContract(id: string, updates: any) { return this.put<any>('contracts', id, updates); }
+  async deleteContract(id: string) { return this.delete('contracts', id); }
+
+
   async dispatchAction(orderId: string, action: string, payload?: any) {
     const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
     const response = await fetch(`${backendUrl}/api/v1/orders/${orderId}/dispatch-action`, {
