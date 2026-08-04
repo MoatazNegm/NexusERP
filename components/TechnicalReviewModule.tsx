@@ -257,6 +257,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [compDurationUnit, setCompDurationUnit] = useState<'Months' | 'Years'>('Months');
   const [compScope, setCompScope] = useState('');
   const [showCompSuggestions, setShowCompSuggestions] = useState(false);
+  const [selectedCatalogMatch, setSelectedCatalogMatch] = useState<
+    | { type: 'STOCK'; item: InventoryItem }
+    | { type: 'SUPPLIER'; supplier: Supplier; part: SupplierPart }
+    | null
+  >(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'asc' });
@@ -562,6 +567,17 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   };
 
 
+  const handleSelectCatalogSuggestion = (
+    description: string,
+    partNumber: string,
+    match: { type: 'STOCK'; item: InventoryItem } | { type: 'SUPPLIER'; supplier: Supplier; part: SupplierPart } | null
+  ) => {
+    setCompSearch(description);
+    setPartNumSearch(partNumber);
+    setSelectedCatalogMatch(match);
+    setShowCompSuggestions(false);
+  };
+
   const handleAddSupplierPart = async (supp: Supplier, part: SupplierPart) => {
     if (!selectedOrder || !selectedItem) return;
     const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
@@ -588,6 +604,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setCompDurationUnit('Months');
     setCompScope('');
     setShowCompSuggestions(false);
+    setSelectedCatalogMatch(null);
     fetchData();
   };
 
@@ -630,8 +647,20 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setCompDurationUnit('Months');
     setCompScope('');
     setShowCompSuggestions(false);
+    setSelectedCatalogMatch(null);
     fetchData();
   };
+
+  const handleCommitSearchSelection = async () => {
+    if (selectedCatalogMatch?.type === 'STOCK') {
+      await handleAddComponent(selectedCatalogMatch.item);
+    } else if (selectedCatalogMatch?.type === 'SUPPLIER') {
+      await handleAddSupplierPart(selectedCatalogMatch.supplier, selectedCatalogMatch.part);
+    } else {
+      await handleAddCustomProcurement();
+    }
+  };
+
   const handleToggleAcceptance = async (item: CustomerOrderItem) => {
     if (!selectedOrder) return;
     setIsProcessing(true);
@@ -1169,7 +1198,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     placeholder={selectedItem.productionType === 'OUTSOURCING' ? `${selectedOrder?.customerReferenceNumber}-${(selectedOrder?.items?.findIndex(i => i.id === selectedItem.id) || 0) + 1}` : 'Mfr. Part Number...'}
                                     className={`w-1/3 p-4 border-2 rounded-2xl text-sm font-mono outline-none transition-all placeholder:font-sans placeholder:text-slate-300 ${selectedItem.productionType === 'OUTSOURCING' ? 'border-violet-100 text-violet-800 focus:border-violet-500' : 'border-blue-50 text-blue-800 focus:border-blue-500'}`}
                                     value={selectedItem.productionType === 'OUTSOURCING' ? (partNumSearch || `${selectedOrder?.customerReferenceNumber}-${(selectedOrder?.items?.findIndex(i => i.id === selectedItem.id) || 0) + 1}` || '') : partNumSearch}
-                                    onChange={e => { setPartNumSearch(e.target.value); setShowCompSuggestions(true); }}
+                                    onChange={e => { setPartNumSearch(e.target.value); setSelectedCatalogMatch(null); setShowCompSuggestions(true); }}
                                     onFocus={() => setShowCompSuggestions(true)}
                                   />
                                   <div className="absolute -bottom-4 left-1 text-[8px] font-bold text-slate-400 uppercase">Auto-generated ID if left blank</div>
@@ -1179,20 +1208,20 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                       className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all resize-none min-h-[58px]"
                                       rows={1}
                                       value={compSearch}
-                                      onChange={e => { setCompSearch(e.target.value); setShowCompSuggestions(true); }}
+                                      onChange={e => { setCompSearch(e.target.value); setSelectedCatalogMatch(null); setShowCompSuggestions(true); }}
                                       onFocus={() => setShowCompSuggestions(true)}
                                     />
                                     <i className="fa-solid fa-search absolute left-4 top-5 text-slate-300"></i>
                                   </div>
 
                                   {showCompSuggestions && selectedItem.productionType !== 'OUTSOURCING' && (invResults.length > 0 || historyResults.length > 0 || supplierResults.length > 0 || (compSearch || partNumSearch)) && (
-                                    <div className="absolute top-14 left-0 right-0 mt-3 bg-white border border-slate-200 rounded-[2rem] shadow-2xl z-[110] overflow-hidden divide-y divide-slate-50 max-h-80 overflow-y-auto animate-in slide-in-from-top-2 duration-300">
+                                    <div className="absolute top-14 left-0 right-0 mt-3 bg-white border border-slate-200 rounded-[2rem] shadow-2xl z-[110] overflow-hidden divide-y divide-slate-50 max-h-80 overflow-y-auto animate-in slide-in-from-top-2 duration-300" onMouseDown={(e) => e.preventDefault()}>
                                       {invResults.map(i => {
                                         const available = i.quantityInStock - (i.quantityReserved || 0);
                                         const isLow = available > 0 && available <= compQty;
                                         const isOut = available <= 0;
                                         return (
-                                          <button key={i.id} onMouseDown={() => handleAddComponent(i)} className={`w-full text-left p-5 hover:bg-blue-50 flex justify-between items-center group transition-colors ${isOut ? 'opacity-50' : ''}`}>
+                                          <button key={i.id} type="button" onClick={() => handleSelectCatalogSuggestion(i.description, i.sku || '', { type: 'STOCK', item: i })} className={`w-full text-left p-5 hover:bg-blue-50 flex justify-between items-center group transition-colors ${isOut ? 'opacity-50' : ''}`}>
                                             <div>
                                               <div className="font-black text-slate-800 group-hover:text-blue-600 text-xs">{i.description}</div>
                                               <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4">
@@ -1220,11 +1249,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                         return (
                                           <button
                                             key={h.description + lastOrder?.orderNo}
-                                            onMouseDown={() => {
-                                              setCompSearch(h.description);
-                                              if (h.componentNumber) setPartNumSearch(h.componentNumber);
-                                              setShowCompSuggestions(false);
-                                            }}
+                                            type="button"
+                                            onClick={() => handleSelectCatalogSuggestion(h.description, h.componentNumber || partNumSearch, null)}
                                             className="w-full text-left p-5 hover:bg-slate-50 flex justify-between items-center group transition-colors border-l-4 border-slate-300"
                                           >
                                             <div>
@@ -1243,7 +1269,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                         );
                                       })}
                                       {supplierResults.map(({ supplier, part }) => (
-                                        <button key={part.id} onMouseDown={() => handleAddSupplierPart(supplier, part)} className="w-full text-left p-5 hover:bg-amber-50 flex justify-between items-center group transition-colors">
+                                        <button key={part.id} type="button" onClick={() => handleSelectCatalogSuggestion(part.description, part.partNumber || '', { type: 'SUPPLIER', supplier, part })} className="w-full text-left p-5 hover:bg-amber-50 flex justify-between items-center group transition-colors">
                                           <div>
                                             <div className="font-black text-slate-800 group-hover:text-amber-700 text-xs">{part.description}</div>
                                             <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4">
@@ -1254,7 +1280,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                           <div className="flex flex-col items-end gap-1">
                                             <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Procurement Market</span>
                                             <button
-                                              onMouseDown={(e) => { e.stopPropagation(); openHistory(part.description, part.partNumber); }}
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                openHistory(part.description, part.partNumber);
+                                              }}
                                               className="text-[9px] font-black text-blue-600 hover:underline"
                                             >
                                               View History
@@ -1263,7 +1293,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                         </button>
                                       ))}
                                       <button
-                                        onMouseDown={handleAddCustomProcurement}
+                                        type="button"
+                                        onClick={handleCommitSearchSelection}
                                         disabled={
                                           selectedItem.productionType === 'OUTSOURCING' 
                                             ? (!compSearch.trim() || !compDurationVal || !compScope.trim())
@@ -1272,8 +1303,10 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                         className="w-full text-left p-5 bg-slate-900 hover:bg-black text-white flex justify-between items-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                         <div>
-                                          <div className="font-black text-xs">Request custom component: "{compSearch || 'Custom Part'}"</div>
-                                          <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Initialize new sourcing workflow</div>
+                                          <div className="font-black text-xs">
+                                            {selectedCatalogMatch ? `Add to BoM: "${compSearch || 'Custom Part'}"` : `Request custom component: "${compSearch || 'Custom Part'}"`}
+                                          </div>
+                                          <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase">{selectedCatalogMatch ? 'Confirm selected catalog match' : 'Initialize new sourcing workflow'}</div>
                                         </div>
                                         <i className="fa-solid fa-plus-circle text-blue-400 text-xl"></i>
                                       </button>
