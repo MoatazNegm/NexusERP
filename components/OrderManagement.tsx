@@ -1470,12 +1470,23 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                           onChange={e => setContractId(e.target.value)}
                         >
                           <option value="">— None (No Contract Linked) —</option>
-                          {contracts.map(c => (
-                            <option key={c.id} value={c.id}>{c.id} — {c.customerName}</option>
-                          ))}
+                          {contracts
+                            .filter(c => c.customerName.trim().toLowerCase() === customerName.trim().toLowerCase())
+                            .map(c => (
+                              <option key={c.id} value={c.id}>{c.id} — {c.customerName}</option>
+                            ))}
                         </select>
+                        {customerName.trim() === '' ? (
+                          <div className="text-[9px] font-black text-amber-600 uppercase tracking-widest ml-1 flex items-center gap-1 mt-1">
+                            <i className="fa-solid fa-triangle-exclamation"></i> Please enter/select a customer name to filter available contracts.
+                          </div>
+                        ) : contracts.filter(c => c.customerName.trim().toLowerCase() === customerName.trim().toLowerCase()).length === 0 ? (
+                          <div className="text-[9px] font-black text-rose-500 uppercase tracking-widest ml-1 flex items-center gap-1 mt-1">
+                            <i className="fa-solid fa-circle-xmark"></i> No logged contracts found for customer "{customerName}".
+                          </div>
+                        ) : null}
                         {contractId && (
-                          <div className="text-[9px] font-black text-teal-600 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse">
+                          <div className="text-[9px] font-black text-teal-600 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse mt-1">
                             <i className="fa-solid fa-link"></i> Linked to contract reference {contractId}.
                           </div>
                         )}
