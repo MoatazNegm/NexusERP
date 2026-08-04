@@ -8,6 +8,7 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
+import { SortableTable, ColumnDef } from './SortableTable';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -45,7 +46,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger';
+type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   if (order.status === OrderStatus.DELIVERED) {
@@ -507,6 +508,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<any[]>([]);
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [contractSearch, setContractSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [historySearch, setHistorySearch] = useState('');
@@ -646,18 +649,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const fetchData = async () => {
     try {
-      const [o, c, s, l, sp] = await Promise.all([
+      const [o, c, s, l, sp, con] = await Promise.all([
         dataService.getOrders(),
         dataService.getCustomers(),
         dataService.getSuppliers(),
         dataService.getLedgerEntries(),
-        dataService.getSupplierPayments()
+        dataService.getSupplierPayments(),
+        dataService.getContracts()
       ]);
       setOrders(o);
       setCustomers(c);
       setSuppliers(s);
       setLedgerEntries(l);
       setSupplierPayments(sp);
+      setContracts(con);
     } catch (e) {
       console.error("Finance sync error:", e);
     } finally {
@@ -849,6 +854,64 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const closeModals = () => { setDecisionModal(null); setComment(''); setPaymentAmount(''); setDispatchReceiptInputs({}); setErrorMsg(null); };
 
+  // --- Blanket Contracts (Finance Operations) state & handlers ---
+  const [settleModal, setSettleModal] = useState<{ contract: CustomerOrder } | null>(null);
+  const [settleOrderId, setSettleOrderId] = useState('');
+  const [finReqModal, setFinReqModal] = useState<{ contract: CustomerOrder } | null>(null);
+  const [finReqMemo, setFinReqMemo] = useState('');
+  const [finReqAmount, setFinReqAmount] = useState('');
+  const [finReqTarget, setFinReqTarget] = useState('');
+  const [contractMsg, setContractMsg] = useState<string | null>(null);
+
+  const blanketSettlingOrders = useMemo(() => {
+    const map: Record<string, CustomerOrder[]> = {};
+    orders.forEach(o => {
+      if (o.isSettlingOrder && o.blanketContractId) {
+        const key = o.blanketContractId;
+        if (!map[key]) map[key] = [];
+        map[key].push(o);
+      }
+    });
+    return map;
+  }, [orders]);
+
+  const handleSettleBlanket = async () => {
+    if (!settleModal || !settleOrderId.trim()) { setContractMsg('Enter the settling order ID'); return; }
+    setContractMsg(null);
+    try {
+      const target = settleOrderId.trim();
+      // Accept either the internal order number or the raw record ID
+      const linked = orders.find(o => o.id === target || o.internalOrderNumber === target);
+      if (!linked) { setContractMsg('Settling order not found'); return; }
+      await dataService.settleBlanketOrder(settleModal.contract.id, linked.id);
+      setSettleModal(null);
+      setSettleOrderId('');
+      await fetchData();
+    } catch (e: any) {
+      setContractMsg(e.message || 'Settlement failed');
+    }
+  };
+
+  const handleFinancialRequest = async () => {
+    if (!finReqModal) return;
+    setContractMsg(null);
+    try {
+      const amount = finReqAmount ? parseFloat(finReqAmount) : undefined;
+      const targetId = finReqTarget
+        ? (orders.find(o => o.id === finReqTarget || o.internalOrderNumber === finReqTarget)?.id || finReqTarget)
+        : undefined;
+      await dataService.financialRequest(finReqModal.contract.id, finReqMemo, amount, targetId);
+      setFinReqModal(null);
+      setFinReqMemo('');
+      setFinReqAmount('');
+      setFinReqTarget('');
+      await fetchData();
+      alert('Financial Request logged successfully. It is now visible in Finance Operations.');
+    } catch (e: any) {
+      setContractMsg(e.message || 'Failed to log financial request');
+    }
+  };
+
   const handleInlineDispatchAuth = async (orderId: string, itemId: string) => {
     const qtyStr = dispatchReceiptInputs[itemId];
     const qty = parseFloat(qtyStr);
@@ -933,6 +996,134 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     }, 600);
     return () => clearTimeout(timer);
   }, [paymentInvoiceData]);
+
+  const contractColumns: ColumnDef<any>[] = [
+    {
+      key: 'id',
+      label: 'Contract ID',
+      sortable: true,
+      sortValue: (c) => c.id,
+      render: (c) => (
+        <div>
+          <span className="font-mono text-xs font-black text-teal-600 uppercase">{c.id}</span>
+          <div className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">{c.description}</div>
+        </div>
+      )
+    },
+    {
+      key: 'customerName',
+      label: 'Customer Name',
+      sortable: true,
+      sortValue: (c) => c.customerName,
+      render: (c) => <span className="font-bold text-slate-800 text-sm">{c.customerName}</span>
+    },
+    {
+      key: 'settlingOrders',
+      label: 'Settling Orders',
+      sortable: true,
+      sortValue: (c) => {
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        return linked.length;
+      },
+      render: (c) => {
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        return (
+          <div className="space-y-1">
+            {linked.length > 0 ? (
+              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[9px] font-black uppercase inline-flex items-center gap-1">
+                <i className="fa-solid fa-link"></i> {linked.length} Blanket Order{linked.length > 1 ? 's' : ''}
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-400 italic">No linked blanket orders</span>
+            )}
+            {linked.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {linked.map(bo => (
+                  <span key={bo.id} className="text-[9px] font-mono font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                    {bo.internalOrderNumber}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
+    },
+    {
+      key: 'receivedDate',
+      label: 'Contract Date',
+      sortable: true,
+      sortValue: (c) => c.receivedDate || c.createdAt || '',
+      render: (c) => (
+        <span className="text-xs font-bold text-slate-600">
+          {new Date(c.receivedDate || c.createdAt || new Date()).toLocaleDateString()}
+        </span>
+      )
+    },
+    {
+      key: 'actions',
+      label: 'Action',
+      sortable: false,
+      render: (c) => {
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id && ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status as OrderStatus));
+        if (linked.length === 0) {
+          return <span className="text-[10px] text-slate-400 italic">No active blanket orders to settle</span>;
+        }
+        return (
+          <div className="space-y-2">
+            {linked.map(bo => (
+              <div key={bo.id} className="flex items-center justify-between gap-3 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                <span className="font-mono text-[9px] font-black text-slate-600">{bo.internalOrderNumber}</span>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => { setFinReqModal({ contract: bo }); setContractMsg(null); }}
+                    className="px-2.5 py-1.5 bg-slate-900 hover:bg-black text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
+                    title="Log a Financial Request for this blanket contract"
+                  >
+                    <i className="fa-solid fa-file-invoice-dollar"></i> Request
+                  </button>
+                  <button
+                    onClick={() => { setSettleModal({ contract: bo }); setContractMsg(null); setSettleOrderId(''); }}
+                    className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
+                    title="Settle this blanket contract against a settling order"
+                  >
+                    <i className="fa-solid fa-scale-balanced"></i> Settle
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+    }
+  ];
+
+  const sortedAndFilteredContracts = useMemo(() => {
+    let result = [...contracts].sort((a, b) => {
+      const da = new Date(a.receivedDate || a.createdAt || 0).getTime();
+      const db = new Date(b.receivedDate || b.createdAt || 0).getTime();
+      return da - db;
+    });
+
+    if (contractSearch.trim()) {
+      const q = contractSearch.toLowerCase().trim();
+      result = result.filter(c => {
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linkedMatch = linked.some(bo => bo.internalOrderNumber?.toLowerCase().includes(q));
+        const dateStr = new Date(c.receivedDate || c.createdAt || '').toLocaleDateString();
+        return (
+          c.id.toLowerCase().includes(q) ||
+          c.customerName.toLowerCase().includes(q) ||
+          (c.description || '').toLowerCase().includes(q) ||
+          (c.targetLineItems || '').toLowerCase().includes(q) ||
+          dateStr.includes(q) ||
+          linkedMatch
+        );
+      });
+    }
+
+    return result;
+  }, [contracts, contractSearch, orders]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -1173,7 +1364,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <div className="flex flex-col md:flex-row items-start md:items-center gap-4 w-full xl:w-auto overflow-hidden">
           <LanguageToggle />
           <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-full shadow-inner overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
-          {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger'] as const).map(tab => (
+          {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'customer_wallets'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1249,6 +1440,108 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           ledgerAccounts={config.settings.ledgerAccounts || []}
           config={config}
         />
+      )}
+
+      {/* Blanket Contracts Tab — SAP/Oracle-style framework agreements */}
+      {activeTab === 'contracts' && (
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+          <div className="px-8 pt-8 pb-4 flex items-center justify-between flex-wrap gap-4 border-b border-slate-100">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center">
+                <i className="fa-solid fa-file-contract text-xl"></i>
+              </div>
+              <div>
+                <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Blanket Contracts</div>
+                <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Framework agreements — settling orders link to the contract ID</div>
+              </div>
+            </div>
+            {/* Search Input Box */}
+            <div className="relative w-full md:w-80">
+              <input
+                type="text"
+                className="w-full pl-10 pr-4 py-2 border-2 border-slate-100 rounded-xl bg-slate-50 text-xs font-bold outline-none focus:bg-white focus:border-teal-500 transition-all shadow-inner"
+                placeholder="Search contract ID, customer, etc..."
+                value={contractSearch}
+                onChange={e => setContractSearch(e.target.value)}
+              />
+              <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-400 text-xs"></i>
+            </div>
+          </div>
+          {contractMsg && (
+            <div className="mx-8 mt-4 p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3">
+              <i className="fa-solid fa-circle-exclamation"></i>{contractMsg}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <SortableTable
+              columns={contractColumns}
+              data={sortedAndFilteredContracts}
+              rowKey={(c) => c.id}
+              emptyMessage="No active blanket contracts found"
+              storageKey="finance-contracts-table"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Customer Wallets Tab — wallet balances moved from CRM to Finance Operations */}
+      {activeTab === 'customer_wallets' && (
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+          <div className="px-8 pt-8 pb-4 flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+              <i className="fa-solid fa-wallet text-xl"></i>
+            </div>
+            <div>
+              <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Customer Wallets</div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Wallet credit balances from blanket contract settlements</div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+              <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
+                <tr>
+                  <th className="px-8 py-5 text-white">Customer</th>
+                  <th className="px-8 py-5 text-white text-end">Wallet Balance</th>
+                  <th className="px-8 py-5 text-white">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {[...customers]
+                  .filter(c => (c.walletBalance || 0) !== 0)
+                  .map(c => {
+                    const balance = (c.walletBalance || 0);
+                    return (
+                      <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="px-8 py-6">
+                          <div className="font-bold text-slate-800 text-sm">{c.name}</div>
+                          <div className="text-[10px] text-slate-400 font-bold mt-0.5">{c.email || 'N/A'}</div>
+                        </td>
+                        <td className="px-8 py-6 text-end">
+                          <span className={`inline-flex items-center gap-2 text-sm font-black px-4 py-2 rounded-xl border ${balance > 0 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-500 bg-slate-50 border-slate-200'}`}>
+                            <i className={`fa-solid fa-wallet ${balance > 0 ? 'text-emerald-500' : 'text-slate-400'}`}></i>
+                            {balance.toLocaleString()} L.E.
+                          </span>
+                        </td>
+                        <td className="px-8 py-6">
+                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase border ${balance > 0 ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                            {balance > 0 ? 'Credit Available' : 'No Credit'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                {customers.filter(c => (c.walletBalance || 0) !== 0).length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-8 py-16 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">
+                      <i className="fa-solid fa-wallet text-4xl block mb-3 opacity-20"></i>
+                      No customer wallet balances found
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
 
@@ -1579,7 +1872,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
           )}
         </div>
-      ) : activeTab !== 'ledger' && activeTab !== 'history' ? (
+      ) : activeTab !== 'ledger' && activeTab !== 'history' && activeTab !== 'contracts' && activeTab !== 'customer_wallets' ? (
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
         <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
@@ -1766,9 +2059,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             ) : filteredOrders.map(o => {
               const pl = (o as any).pl;
               const isBreach = isMarginBreach(pl.costInOrderCurrency ?? pl.cost, pl.markupPct, config.settings.minimumMarginPct);
-              const showRow = activeTab === 'orders' ||
-                (activeTab === 'billing_details' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
-                (activeTab === 'orders' && o.status === OrderStatus.WAITING_GOVE);
+              const currentTab = activeTab as string;
+              const showRow = currentTab === 'orders' ||
+                (currentTab === 'billing_details' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
+                (currentTab === 'orders' && o.status === OrderStatus.WAITING_GOVE);
 
               if (!showRow) return null;
 
@@ -1795,6 +2089,14 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
                             )}
                           </div>
+                          {o.isSettlingOrder && (
+                            <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[8px] font-black uppercase">
+                              <i className="fa-solid fa-link"></i> Blanket Settling
+                            </div>
+                          )}
+                          {o.blanketContractId && (
+                            <div className="text-[9px] font-mono font-black text-indigo-500 uppercase mt-1">Contract: {o.blanketContractId}</div>
+                          )}
                           {o.invoiceNumber && <div className="text-[9px] font-black text-emerald-600 uppercase mt-1">Tax Invoice: {o.invoiceNumber}</div>}
                         </td>
                       );
@@ -1896,9 +2198,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             {o.status === OrderStatus.NEGATIVE_MARGIN && (
                               <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-rose-200">Force Auth</button>
                             )}
-                            {(o.status === OrderStatus.IN_PRODUCT_HUB || o.status === OrderStatus.ISSUE_INVOICE) && (
-                              <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">{t("finance.orders.generateInvoice") || "Generate Invoice"}</button>
-                            )}
+                            <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">{t("finance.orders.generateInvoice") || "Generate Invoice"}</button>
                             <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">{t("finance.orders.recordPayment") || "Record Payment"}</button>
                             <div className="flex gap-1">
                               {!o.einvoiceRequested && (
@@ -2565,6 +2865,108 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           </div>
         )
       }
+
+      {/* Settle Blanket Contract Modal */}
+      {settleModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[120] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg p-10 animate-in zoom-in-95 border border-slate-100">
+            <div className="flex items-center gap-6 mb-8">
+              <div className="w-16 h-16 rounded-3xl bg-teal-50 text-teal-600 flex items-center justify-center text-3xl shadow-inner">
+                <i className="fa-solid fa-scale-balanced"></i>
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Settle Blanket Contract</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract: {settleModal.contract.internalOrderNumber}</p>
+              </div>
+            </div>
+
+            {contractMsg && <div className="mb-6 p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3"><i className="fa-solid fa-circle-exclamation"></i>{contractMsg}</div>}
+
+            <div className="space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Settling Order ID / Internal Number</label>
+                <input
+                  type="text" autoFocus
+                  className="w-full p-4 border rounded-2xl bg-slate-50 font-black text-lg outline-none focus:ring-4 focus:ring-teal-50 focus:bg-white"
+                  placeholder="e.g. INT-2024-0001 or order record ID"
+                  value={settleOrderId} onChange={e => setSettleOrderId(e.target.value)}
+                />
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">The blanket contract will compare line items by description and credit the wallet with any price difference.</p>
+              </div>
+            </div>
+
+            <div className="mt-10 flex gap-3">
+              <button onClick={() => { setSettleModal(null); setContractMsg(null); }} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200">{t("common.cancel")}</button>
+              <button
+                onClick={handleSettleBlanket}
+                className="flex-[2] py-4 bg-teal-600 hover:bg-teal-700 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl flex items-center justify-center gap-2 transition-all"
+              >
+                <i className="fa-solid fa-check-double"></i>
+                Settle Contract
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Financial Request Modal for Blanket Contracts */}
+      {finReqModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[120] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg p-10 animate-in zoom-in-95 border border-slate-100">
+            <div className="flex items-center gap-6 mb-8">
+              <div className="w-16 h-16 rounded-3xl bg-slate-900 text-white flex items-center justify-center text-3xl shadow-inner">
+                <i className="fa-solid fa-file-invoice-dollar"></i>
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Financial Request</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract: {finReqModal.contract.internalOrderNumber}</p>
+              </div>
+            </div>
+
+            {contractMsg && <div className="mb-6 p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3"><i className="fa-solid fa-circle-exclamation"></i>{contractMsg}</div>}
+
+            <div className="space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Requested Amount (Optional)</label>
+                <input
+                  type="number" step="any"
+                  className="w-full p-4 border rounded-2xl bg-slate-50 font-black text-lg outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
+                  placeholder="0.00"
+                  value={finReqAmount} onChange={e => setFinReqAmount(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Link Settling Order (Optional)</label>
+                <input
+                  type="text"
+                  className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
+                  placeholder="Settling order ID or internal number"
+                  value={finReqTarget} onChange={e => setFinReqTarget(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Memo / Purpose</label>
+                <textarea
+                  className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white h-24"
+                  placeholder="Describe the financial request..."
+                  value={finReqMemo} onChange={e => setFinReqMemo(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="mt-10 flex gap-3">
+              <button onClick={() => { setFinReqModal(null); setContractMsg(null); }} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200">{t("common.cancel")}</button>
+              <button
+                onClick={handleFinancialRequest}
+                className="flex-[2] py-4 bg-slate-900 hover:bg-black text-white rounded-2xl font-black text-[10px] uppercase shadow-xl flex items-center justify-center gap-2 transition-all"
+              >
+                <i className="fa-solid fa-file-arrow-down"></i>
+                Log Financial Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 };

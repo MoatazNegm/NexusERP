@@ -583,7 +583,6 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Company & Location</th>
-                <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Wallet</th>
                 <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Terms</th>
                 <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Contacts</th>
                 <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Actions</th>
@@ -620,18 +619,6 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                       <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium">
                         <i className="fa-solid fa-phone opacity-60"></i> {cust.phone || 'N/A'}
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex flex-col gap-2 items-start">
-                      {(cust.walletBalance || 0) > 0 ? (
-                        <span className="text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                          <i className="fa-solid fa-wallet text-emerald-500"></i>
-                          {(cust.walletBalance || 0).toLocaleString()} L.E.
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400 italic">No credit</span>
-                      )}
                     </div>
                   </td>
                   <td className="px-6 py-4">

@@ -254,3 +254,17 @@ When the user says **"commit and push"**, this triggers pushing the code to remo
 - Help links are stored in `settings.helpLinks` and displayed in the Help Center
 - Video URLs are stored in `settings.helpVideos` and displayed as YouTube links
 - Schema migration v2 initializes `helpLinks` array if missing on db.json load
+
+### Blanket Orders & Contracts Management
+Exposes a tabbed workflow inside Order Management to create abstract contracts and reference them when logging Blanket Orders, which are then settled in Finance.
+- `types.ts` — Defines the `Contract` interface (lines 312-319) and adds optional `contractId?: string` to `CustomerOrder` (line 309).
+- `server.js` — Bumps `CURRENT_SCHEMA_VERSION` to `4` (line 24). Registers `'contracts'` in the generic CRUD `COLLECTIONS` registry (line 2021). Inserts the v3 → v4 migration block (lines 703, 735-737) to initialize `db.contracts = db.contracts || []` on launch.
+- `services/dataService.ts` — Exposes Contracts client CRUD endpoints (`getContracts`, `addContract`, `updateContract`, `deleteContract`) referencing the generic API (lines 228-235).
+- `components/OrderManagement.tsx` —
+  - Renames `'New Acquisition'` tab button to `'New Orders'` (line 1009).
+  - Hides/removes all Blanket Order check box toggles and contract references from the `'New Orders'` tab form.
+  - Adds `'Blanket Orders'` tab (line 1010-1033) which manages three sub-tabs:
+    - **New Blanket Order:** Implies/forces `blanketOrder` to `true` (checkbox is hidden), rendering only the `Linked Contract Reference` select dropdown (lines 1461-1488).
+    - **New Contract:** Form to log a new contract, selecting the customer name from CRM and including Received Date (defaulted to today).
+    - **Logged Contracts:** Renders a list of all logged contracts using `SortableTable` (lines 1708-1745) with draggable column re-ordering, search box, default oldest-to-newest sort on Contract Date, delete action, and "Log Blanket" shortcut pre-selecting the contract.
+- `components/FinanceModule.tsx` — Re-architected the `contracts` tab (lines 1445-1485) to render the contracts collection using `SortableTable`. Features include a general search input box, draggable column re-ordering, default oldest-to-newest sorting on Contract Date, no Contract Value column, and nesting Settle / Financial Request actions directly for each linked Blanket Order under the Action column.

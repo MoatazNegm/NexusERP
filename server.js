@@ -21,7 +21,7 @@ if (!fs.existsSync(UPLOADS_BASE)) {
 }
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 3; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 4; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -699,6 +699,10 @@ const migrations = [
         // a single time on the next server boot.
         return settings;
     },
+    // v3 → v4: Initialize contracts array if missing
+    (settings) => {
+        return settings;
+    },
 ];
 
 const applySchemaMigrations = (db) => {
@@ -733,6 +737,9 @@ const applySchemaMigrations = (db) => {
                 }
             });
             if (touched > 0) console.log(`[System] v2→v3 migration: backfilled currency='L.E.' on ${touched} order(s).`);
+        }
+        if (version === 4) {
+            db.contracts = db.contracts || [];
         }
     }
 
@@ -1793,6 +1800,26 @@ const addToCollection = (col) => (req, res) => {
     if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
 
     if (col === 'orders') {
+        // Blanket contract settling: any order submitted with a blanketContractId
+        // is automatically a settling order for that blanket contract. This links
+        // the settling order to the contract ID (same as the blanket order's id or
+        // internal order number) and makes it appear in Finance Operations.
+        if (newItem.blanketContractId) {
+            newItem.isSettlingOrder = true;
+            newItem.blanketContractId = String(newItem.blanketContractId).trim();
+            const blanketRef = newItem.blanketContractId;
+            const blanket = db.orders.find(o =>
+                o.id === blanketRef || o.internalOrderNumber === blanketRef
+            );
+            if (blanket && !blanket.blanketOrder) {
+                return res.status(400).json({ error: `Blanket contract "${blanketRef}" is not a blanket order.` });
+            }
+            if (!blanket) {
+                return res.status(400).json({ error: `Blanket contract "${blanketRef}" not found.` });
+            }
+            newItem.logs = newItem.logs || [];
+            newItem.logs.push(createAuditLog(`Settling order linked to blanket contract ${blanket.internalOrderNumber || blanketRef}. Finance will receive this order automatically.`, OrderStatus.LOGGED, user));
+        }
         newItem = processedOrderInternal(newItem, db, user, true, null);
         reconcileInventory(null, newItem, db);
     }
@@ -1998,7 +2025,7 @@ app.post('/api/v1/customers/merge', (req, res) => {
     }
 });
 
-const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules', 'ledger'];
+const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules', 'ledger', 'contracts'];
 COLLECTIONS.forEach(col => {
     app.get(`/api/v1/${col}`, getCollection(col));
     app.get(`/api/v1/${col}/:id`, getItemFromCollection(col));
@@ -3197,6 +3224,34 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.logs.push(createAuditLog(`Blanket order settlement finalized. Customer ${customer.name} wallet: ${customer.walletBalance.toLocaleString()} ${order.currency}`, order.status, user));
                 } else {
                     throw new Error(`Customer ${order.customerName} not found for wallet credit`);
+                }
+                break;
+            }
+            case 'financial-request': {
+                // Financial Request for a blanket contract: logs the request on the
+                // blanket order and (optionally) on the linked settling order so the
+                // finance team has a full audit trail. Does not change order status.
+                if (!order.blanketOrder) throw new Error("Only blanket contracts can issue a financial request via this action");
+                const memo = (payload && payload.memo) ? String(payload.memo).trim() : '';
+                const requestedAmount = (payload && payload.amount) ? Number(payload.amount) : null;
+                const financeReqRef = `FINREQ-${order.internalOrderNumber || order.id}-${Date.now().toString().slice(-6)}`;
+                const amountText = requestedAmount && Number.isFinite(requestedAmount)
+                    ? ` for ${requestedAmount.toLocaleString()} ${order.currency || 'L.E.'}`
+                    : '';
+                const auditMessage = `Financial Request logged: ${financeReqRef} for blanket contract ${order.internalOrderNumber}${amountText}${memo ? ` — ${memo}` : ''}. Request is now visible in Finance Operations.`;
+
+                if (!order.logs) order.logs = [];
+                order.logs.push(createAuditLog(auditMessage, order.status, user));
+
+                // Also annotate any linked settling orders so finance sees the request thread
+                if (payload && payload.settlingOrderId) {
+                    const linkedIdx = db.orders.findIndex(o => o.id === payload.settlingOrderId);
+                    if (linkedIdx !== -1) {
+                        const linked = db.orders[linkedIdx];
+                        if (!linked.logs) linked.logs = [];
+                        linked.logs.push(createAuditLog(`Financial Request ${financeReqRef} logged against blanket contract ${order.internalOrderNumber}${amountText}${memo ? ` — ${memo}` : ''}`, linked.status, user));
+                        db.orders[linkedIdx] = linked;
+                    }
                 }
                 break;
             }
