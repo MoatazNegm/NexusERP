@@ -1230,6 +1230,84 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     onChange={e => setCompSearch(e.target.value)}
                                   />
                                 </div>
+                                <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-violet-50/50 border border-violet-100 rounded-2xl">
+                                  <div>
+                                    <div className="text-[10px] font-black text-violet-900 uppercase tracking-wider flex items-center gap-2">
+                                      <i className="fa-solid fa-file-excel text-violet-600"></i> Outsourcing Cost Sheet
+                                    </div>
+                                    <div className="text-xs text-violet-600 font-medium mt-0.5">
+                                      {selectedItem.costSheetFileName ? (
+                                        <span className="font-bold text-slate-800">{selectedItem.costSheetFileName}</span>
+                                      ) : (
+                                        'No cost sheet file attached yet'
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {selectedItem.costSheetFile && (
+                                      <a
+                                        href={selectedItem.costSheetFile}
+                                        download={selectedItem.costSheetFileName || 'cost-sheet'}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center gap-2"
+                                      >
+                                        <i className="fa-solid fa-download"></i> View / Download
+                                      </a>
+                                    )}
+                                    <label className="px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm cursor-pointer flex items-center gap-2">
+                                      <i className="fa-solid fa-cloud-arrow-up"></i>
+                                      {selectedItem.costSheetFile ? 'Replace Cost Sheet' : 'Upload Cost Sheet'}
+                                      <input
+                                        type="file"
+                                        accept=".xlsx,.xls,.csv,.pdf,.doc,.docx"
+                                        className="hidden"
+                                        onChange={async (e) => {
+                                          const file = e.target.files?.[0];
+                                          if (!file || !selectedOrder || !selectedItem) return;
+                                          const reader = new FileReader();
+                                          reader.onload = async (evt) => {
+                                            const result = evt.target?.result as string;
+                                            try {
+                                              setIsProcessing(true);
+                                              const updated = await dataService.uploadCostSheet(selectedOrder.id, selectedItem.id, result, file.name);
+                                              setSelectedOrder(updated);
+                                              const updatedItem = updated.items.find(i => i.id === selectedItem.id);
+                                              if (updatedItem) setSelectedItem(updatedItem);
+                                            } catch (err: any) {
+                                              alert(err.message || 'Failed to upload cost sheet');
+                                            } finally {
+                                              setIsProcessing(false);
+                                            }
+                                          };
+                                          reader.readAsDataURL(file);
+                                        }}
+                                      />
+                                    </label>
+                                    {selectedItem.costSheetFile && (
+                                      <button
+                                        onClick={async () => {
+                                          if (!confirm("Are you sure you want to remove the uploaded cost sheet?")) return;
+                                          try {
+                                            setIsProcessing(true);
+                                            const updated = await dataService.uploadCostSheet(selectedOrder.id, selectedItem.id, null, null);
+                                            setSelectedOrder(updated);
+                                            const updatedItem = updated.items.find(i => i.id === selectedItem.id);
+                                            if (updatedItem) setSelectedItem(updatedItem);
+                                          } catch (err: any) {
+                                            alert(err.message || 'Failed to remove cost sheet');
+                                          } finally {
+                                            setIsProcessing(false);
+                                          }
+                                        }}
+                                        className="p-2.5 text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                                        title="Remove Cost Sheet"
+                                      >
+                                        <i className="fa-solid fa-trash-can"></i>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             ) : (
                               <div className="flex flex-col md:flex-row gap-4 w-full">
