@@ -1920,6 +1920,15 @@ const updateInCollection = (col) => (req, res) => {
 const deleteFromCollection = (col) => (req, res) => {
     const db = readDb();
     if (!db[col]) return res.status(404).json({ error: "Not found" });
+
+    if (col === 'contracts') {
+        const contractId = req.params.id;
+        const linkedBlanketOrders = (db.orders || []).filter(order => order.blanketOrder && order.contractId === contractId);
+        if (linkedBlanketOrders.length > 0) {
+            return res.status(400).json({ error: `Cannot delete contract "${contractId}" because it has ${linkedBlanketOrders.length} linked blanket order${linkedBlanketOrders.length > 1 ? 's' : ''}.` });
+        }
+    }
+
     db[col] = db[col].filter(it => it.id !== req.params.id);
     if (writeDb(db)) res.json({ message: "Deleted" });
     else res.status(500).json({ error: "Delete failed" });
