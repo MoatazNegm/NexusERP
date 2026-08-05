@@ -146,9 +146,8 @@ const AlterOrderCard: React.FC<{ order: CustomerOrder; savingId: string | null; 
                 <button
                   onClick={() => onSave(order.id, item.id, draftQtyNum, draft.reason)}
                   disabled={pending || !canSave}
-                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                    pending || !canSave ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg'
-                  }`}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${pending || !canSave ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg'
+                    }`}
                 >
                   {pending ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check mr-1"></i>}
                   Save
@@ -184,25 +183,25 @@ const getCompLimit = (status: CompStatus, settings: any) => {
  */
 const calculateContractEndDate = (startDate: string, duration: string): Date | null => {
   if (!startDate || !duration) return null;
-  
+
   try {
     const start = new Date(startDate);
     if (isNaN(start.getTime())) return null;
-    
+
     // Parse duration string (e.g., "12 Months" or "1 Years")
     const durationMatch = duration.match(/(\d+)\s*(Month|Year)s?/i);
     if (!durationMatch) return null;
-    
+
     const amount = parseInt(durationMatch[1], 10);
     const unit = durationMatch[2].toLowerCase();
-    
+
     const end = new Date(start);
     if (unit === 'month') {
       end.setMonth(end.getMonth() + amount);
     } else if (unit === 'year') {
       end.setFullYear(end.getFullYear() + amount);
     }
-    
+
     return end;
   } catch {
     return null;
@@ -257,6 +256,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [compDurationUnit, setCompDurationUnit] = useState<'Months' | 'Years'>('Months');
   const [compScope, setCompScope] = useState('');
   const [showCompSuggestions, setShowCompSuggestions] = useState(false);
+  const [selectedCatalogMatch, setSelectedCatalogMatch] = useState<
+    | { type: 'STOCK'; item: InventoryItem }
+    | { type: 'SUPPLIER'; supplier: Supplier; part: SupplierPart }
+    | null
+  >(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'asc' });
@@ -279,7 +283,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   }
   const [orderedComponents, setOrderedComponents] = useState<OrderedCompRecord[] | null>(null);
   const [componentResolutions, setComponentResolutions] = useState<Record<string, CompResolution>>({});
-  
+
   // Edit component state
   const [editingComp, setEditingComp] = useState<ManufacturingComponent | null>(null);
   const [editQty, setEditQty] = useState<number | string>(1);
@@ -591,6 +595,17 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   };
 
 
+  const handleSelectCatalogSuggestion = (
+    description: string,
+    partNumber: string,
+    match: { type: 'STOCK'; item: InventoryItem } | { type: 'SUPPLIER'; supplier: Supplier; part: SupplierPart } | null
+  ) => {
+    setCompSearch(description);
+    setPartNumSearch(partNumber);
+    setSelectedCatalogMatch(match);
+    setShowCompSuggestions(false);
+  };
+
   const handleAddSupplierPart = async (supp: Supplier, part: SupplierPart) => {
     if (!selectedOrder || !selectedItem) return;
     const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
@@ -617,6 +632,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setCompDurationUnit('Months');
     setCompScope('');
     setShowCompSuggestions(false);
+    setSelectedCatalogMatch(null);
     fetchData();
   };
 
@@ -653,8 +669,20 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setCompDurationUnit('Months');
     setCompScope('');
     setShowCompSuggestions(false);
+    setSelectedCatalogMatch(null);
     fetchData();
   };
+
+  const handleCommitSearchSelection = async () => {
+    if (selectedCatalogMatch?.type === 'STOCK') {
+      await handleAddComponent(selectedCatalogMatch.item);
+    } else if (selectedCatalogMatch?.type === 'SUPPLIER') {
+      await handleAddSupplierPart(selectedCatalogMatch.supplier, selectedCatalogMatch.part);
+    } else {
+      await handleAddCustomProcurement();
+    }
+  };
+
   const handleToggleAcceptance = async (item: CustomerOrderItem) => {
     if (!selectedOrder) return;
     setIsProcessing(true);
@@ -676,9 +704,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setEditComponentNumber(comp.componentNumber || '');
     setEditContractNumber(comp.contractNumber || generateContractNumber(selectedItem, comp));
     setEditContractStartDate(comp.contractStartDate || '');
-    
+
     if (selectedItem?.productionType === 'OUTSOURCING') {
-      const parts = comp.contractDuration ? comp.contractDuration.split(' ') : ['','Months'];
+      const parts = comp.contractDuration ? comp.contractDuration.split(' ') : ['', 'Months'];
       setEditDurationVal(parts[0]);
       setEditDurationUnit((parts[1] || 'Months') as 'Months' | 'Years');
       setEditScope(comp.scopeOfWork || '');
@@ -687,7 +715,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
   const handleUpdateComponent = async () => {
     if (!selectedOrder || !selectedItem || !editingComp) return;
-    
+
     setIsProcessing(true);
     try {
       const updates: any = {
@@ -695,7 +723,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
         description: editDesc,
         componentNumber: editComponentNumber
       };
-      
+
       if (selectedItem.productionType === 'OUTSOURCING') {
         const dVal = editDurationVal || 0;
         updates.contractDuration = `${dVal} ${editDurationUnit}`;
@@ -705,7 +733,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
           updates.contractStartDate = editContractStartDate;
         }
       }
-      
+
       const updatedOrder = await dataService.updateComponent(selectedOrder.id, selectedItem.id, editingComp.id, updates);
       setSelectedOrder(updatedOrder);
       const newItem = updatedOrder.items.find((i: any) => i.id === selectedItem.id);
@@ -882,17 +910,15 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                 <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
                   <button
                     onClick={() => setManufactureSubTab('blanket')}
-                    className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${
-                      manufactureSubTab === 'blanket' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-900'
-                    }`}
+                    className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${manufactureSubTab === 'blanket' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-900'
+                      }`}
                   >
                     <i className="fa-solid fa-scroll"></i> Blanket ({blanketOrdersCount})
                   </button>
                   <button
                     onClick={() => setManufactureSubTab('non_blanket')}
-                    className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${
-                      manufactureSubTab === 'non_blanket' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-900'
-                    }`}
+                    className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${manufactureSubTab === 'non_blanket' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-900'
+                      }`}
                   >
                     <i className="fa-solid fa-boxes-stacked"></i> Non Blanket ({nonBlanketOrdersCount})
                   </button>
@@ -1144,9 +1170,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Workflow Mode</h4>
                                 <div className="flex bg-slate-100 p-1 rounded-xl">
                                   <button
-                                    onClick={() => dataService.setProductionType(selectedOrder.id, selectedItem.id, 'TRADING').then(o => { 
-                                      setSelectedOrder(o); 
-                                      setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); 
+                                    onClick={() => dataService.setProductionType(selectedOrder.id, selectedItem.id, 'TRADING').then(o => {
+                                      setSelectedOrder(o);
+                                      setSelectedItem(o.items.find(it => it.id === selectedItem.id)!);
                                     })}
                                     className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${selectedItem.productionType === 'TRADING' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                                   >
@@ -1157,9 +1183,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                       if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length) {
                                         if (!confirm("Switching to Outsourcing will remove the automatically generated mirror component. Continue?")) return;
                                       }
-                                      dataService.setProductionType(selectedOrder.id, selectedItem.id, 'OUTSOURCING').then(o => { 
-                                        setSelectedOrder(o); 
-                                        setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); 
+                                      dataService.setProductionType(selectedOrder.id, selectedItem.id, 'OUTSOURCING').then(o => {
+                                        setSelectedOrder(o);
+                                        setSelectedItem(o.items.find(it => it.id === selectedItem.id)!);
                                       });
                                     }}
                                     className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${selectedItem.productionType === 'OUTSOURCING' ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
@@ -1171,9 +1197,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                       if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length) {
                                         if (!confirm("Switching to Manufacturing will remove the automatically generated mirror component. Continue?")) return;
                                       }
-                                      dataService.setProductionType(selectedOrder.id, selectedItem.id, 'MANUFACTURING').then(o => { 
-                                        setSelectedOrder(o); 
-                                        setSelectedItem(o.items.find(it => it.id === selectedItem.id)!); 
+                                      dataService.setProductionType(selectedOrder.id, selectedItem.id, 'MANUFACTURING').then(o => {
+                                        setSelectedOrder(o);
+                                        setSelectedItem(o.items.find(it => it.id === selectedItem.id)!);
                                       });
                                     }}
                                     className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${selectedItem.productionType === 'MANUFACTURING' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
@@ -1187,7 +1213,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               </div>
 
                             </div>
-                            
+
                             {(selectedItem.productionType === 'MANUFACTURING' || selectedItem.productionType === 'OUTSOURCING') && (
 
                               <div className="flex justify-between items-center border-b border-slate-100 pb-4">
@@ -1328,7 +1354,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                       placeholder="Mfr. Part Number..."
                                       className="w-1/3 p-4 border-2 border-blue-50 rounded-2xl text-sm font-mono outline-none transition-all placeholder:font-sans placeholder:text-slate-300 text-blue-800 focus:border-blue-500"
                                       value={partNumSearch}
-                                      onChange={e => { setPartNumSearch(e.target.value); setShowCompSuggestions(true); }}
+                                      onChange={e => { setPartNumSearch(e.target.value); setSelectedCatalogMatch(null); setShowCompSuggestions(true); }}
                                       onFocus={() => setShowCompSuggestions(true)}
                                     />
                                     <div className="relative flex-1 group">
@@ -1337,7 +1363,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                         className="w-full p-4 pl-12 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all resize-none min-h-[58px]"
                                         rows={1}
                                         value={compSearch}
-                                        onChange={e => { setCompSearch(e.target.value); setShowCompSuggestions(true); }}
+                                        onChange={e => { setCompSearch(e.target.value); setSelectedCatalogMatch(null); setShowCompSuggestions(true); }}
                                         onFocus={() => setShowCompSuggestions(true)}
                                       />
                                       <i className="fa-solid fa-search absolute left-4 top-5 text-slate-300"></i>
@@ -1441,79 +1467,79 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                             {selectedItem.productionType === 'OUTSOURCING' && (
                               <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-top-2 duration-300 w-full mt-4">
                                 <div className="flex flex-col md:flex-row gap-4">
-                                <div className="w-full md:w-32 space-y-1.5 px-1">
-                                  <div className="flex justify-between items-center ml-1">
-                                    <label className="text-[9px] font-black text-violet-400 uppercase">
-                                      Duration {!compDurationVal && <span className="text-rose-500">*</span>}
-                                    </label>
-                                    <div className="flex bg-violet-50 p-0.5 rounded-lg border border-violet-100 scale-90 origin-right shrink-0">
-                                      <button
-                                        onClick={() => {
-                                          if (compDurationUnit === 'Years' && compDurationVal) {
-                                            const v = parseFloat(compDurationVal.toString());
-                                            setCompDurationVal(Math.round(v * 12));
-                                          }
-                                          setCompDurationUnit('Months');
-                                        }}
-                                        className={`px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase transition-all ${compDurationUnit === 'Months' ? 'bg-white text-violet-600 shadow-sm border border-violet-100' : 'text-slate-400 hover:text-slate-600'}`}
-                                      >
-                                        Mo
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          if (compDurationUnit === 'Months' && compDurationVal) {
-                                            const v = parseInt(compDurationVal.toString());
-                                            setCompDurationVal(parseFloat((v / 12).toFixed(2)));
-                                          }
-                                          setCompDurationUnit('Years');
-                                        }}
-                                        className={`px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase transition-all ${compDurationUnit === 'Years' ? 'bg-white text-violet-600 shadow-sm border border-violet-100' : 'text-slate-400 hover:text-slate-600'}`}
-                                      >
-                                        Yr
-                                      </button>
+                                  <div className="w-full md:w-32 space-y-1.5 px-1">
+                                    <div className="flex justify-between items-center ml-1">
+                                      <label className="text-[9px] font-black text-violet-400 uppercase">
+                                        Duration {!compDurationVal && <span className="text-rose-500">*</span>}
+                                      </label>
+                                      <div className="flex bg-violet-50 p-0.5 rounded-lg border border-violet-100 scale-90 origin-right shrink-0">
+                                        <button
+                                          onClick={() => {
+                                            if (compDurationUnit === 'Years' && compDurationVal) {
+                                              const v = parseFloat(compDurationVal.toString());
+                                              setCompDurationVal(Math.round(v * 12));
+                                            }
+                                            setCompDurationUnit('Months');
+                                          }}
+                                          className={`px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase transition-all ${compDurationUnit === 'Months' ? 'bg-white text-violet-600 shadow-sm border border-violet-100' : 'text-slate-400 hover:text-slate-600'}`}
+                                        >
+                                          Mo
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            if (compDurationUnit === 'Months' && compDurationVal) {
+                                              const v = parseInt(compDurationVal.toString());
+                                              setCompDurationVal(parseFloat((v / 12).toFixed(2)));
+                                            }
+                                            setCompDurationUnit('Years');
+                                          }}
+                                          className={`px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase transition-all ${compDurationUnit === 'Years' ? 'bg-white text-violet-600 shadow-sm border border-violet-100' : 'text-slate-400 hover:text-slate-600'}`}
+                                        >
+                                          Yr
+                                        </button>
+                                      </div>
                                     </div>
+                                    <input
+                                      type="number"
+                                      placeholder="0"
+                                      step={compDurationUnit === 'Months' ? "1" : "0.01"}
+                                      className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-black outline-none focus:border-violet-500 transition-all bg-violet-50/20 text-center"
+                                      value={compDurationVal}
+                                      onChange={e => {
+                                        const raw = e.target.value;
+                                        if (compDurationUnit === 'Months') {
+                                          setCompDurationVal(parseInt(raw) || '');
+                                        } else {
+                                          setCompDurationVal(parseFloat(raw) || '');
+                                        }
+                                      }}
+                                    />
                                   </div>
-                                  <input
-                                    type="number"
-                                    placeholder="0"
-                                    step={compDurationUnit === 'Months' ? "1" : "0.01"}
-                                    className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-black outline-none focus:border-violet-500 transition-all bg-violet-50/20 text-center"
-                                    value={compDurationVal}
-                                    onChange={e => {
-                                      const raw = e.target.value;
-                                      if (compDurationUnit === 'Months') {
-                                        setCompDurationVal(parseInt(raw) || '');
-                                      } else {
-                                        setCompDurationVal(parseFloat(raw) || '');
-                                      }
-                                    }}
-                                  />
+                                  <div className="flex-1 space-y-1.5 px-1">
+                                    <label className="text-[9px] font-black text-violet-400 uppercase ml-1">
+                                      Scope of Work Summary {!compScope.trim() && <span className="text-rose-500">*</span>}
+                                    </label>
+                                    <textarea
+                                      placeholder="Detailed scope (Required)..."
+                                      className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-bold outline-none focus:border-violet-500 transition-all bg-violet-50/20 resize-none h-[58px]"
+                                      value={compScope}
+                                      onChange={e => setCompScope(e.target.value)}
+                                    />
+                                  </div>
                                 </div>
-                                <div className="flex-1 space-y-1.5 px-1">
-                                  <label className="text-[9px] font-black text-violet-400 uppercase ml-1">
-                                    Scope of Work Summary {!compScope.trim() && <span className="text-rose-500">*</span>}
-                                  </label>
-                                  <textarea
-                                    placeholder="Detailed scope (Required)..."
-                                    className="w-full p-4 border-2 border-violet-50 rounded-2xl text-sm font-bold outline-none focus:border-violet-500 transition-all bg-violet-50/20 resize-none h-[58px]"
-                                    value={compScope}
-                                    onChange={e => setCompScope(e.target.value)}
-                                  />
-                                </div>
-                              </div>
 
-                              <div className="px-1">
-                                <button
-                                  onClick={handleAddCustomProcurement}
-                                  disabled={!compSearch.trim() || !compDurationVal || !compScope.trim()}
-                                  className="w-full py-5 bg-violet-600 hover:bg-violet-700 text-white rounded-[2rem] font-black uppercase text-xs tracking-[0.2em] shadow-xl shadow-violet-100 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  <i className="fa-solid fa-plus-circle"></i>
-                                  Submit Outsourced Service to BoM
-                                </button>
+                                <div className="px-1">
+                                  <button
+                                    onClick={handleAddCustomProcurement}
+                                    disabled={!compSearch.trim() || !compDurationVal || !compScope.trim()}
+                                    className="w-full py-5 bg-violet-600 hover:bg-violet-700 text-white rounded-[2rem] font-black uppercase text-xs tracking-[0.2em] shadow-xl shadow-violet-100 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <i className="fa-solid fa-plus-circle"></i>
+                                    Submit Outsourced Service to BoM
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          )}
+                            )}
 
                             {selectedItem.productionType === 'TRADING' && (
                               <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
@@ -1888,7 +1914,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                   <div className="flex gap-4">
                     <div className="w-32 space-y-2">
                       <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Quantity</label>
-                      <input 
+                      <input
                         type="number"
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl text-sm font-black outline-none focus:border-blue-500 transition-all text-center"
                         value={editQty}
@@ -1897,7 +1923,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     </div>
                     <div className="flex-1 space-y-2">
                       <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Description</label>
-                      <input 
+                      <input
                         type="text"
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 transition-all"
                         value={editDesc}
@@ -1909,7 +1935,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                   {selectedItem?.productionType !== 'OUTSOURCING' && (
                     <div className="space-y-2 animate-in slide-in-from-top-4 duration-500">
                       <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Manufacturer ID / Part Number</label>
-                      <input 
+                      <input
                         type="text"
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl text-sm font-mono outline-none focus:border-blue-500 transition-all bg-slate-50/30"
                         value={editComponentNumber}
@@ -2004,7 +2030,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
                 <div className="p-8 bg-slate-50 border-t-2 border-slate-100 flex justify-end gap-4">
                   <button onClick={() => setEditingComp(null)} className="px-8 py-4 font-black uppercase text-[10px] tracking-widest text-slate-400 hover:text-slate-600 transition-colors">Cancel</button>
-                  <button 
+                  <button
                     onClick={handleUpdateComponent}
                     disabled={isProcessing}
                     className="px-12 py-4 bg-blue-600 text-white rounded-[1.5rem] font-black uppercase text-[10px] tracking-[0.2em] shadow-xl shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-2"
