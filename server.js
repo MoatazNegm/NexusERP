@@ -1920,6 +1920,15 @@ const updateInCollection = (col) => (req, res) => {
 const deleteFromCollection = (col) => (req, res) => {
     const db = readDb();
     if (!db[col]) return res.status(404).json({ error: "Not found" });
+
+    if (col === 'contracts') {
+        const contractId = req.params.id;
+        const linkedBlanketOrders = (db.orders || []).filter(order => order.blanketOrder && order.contractId === contractId);
+        if (linkedBlanketOrders.length > 0) {
+            return res.status(400).json({ error: `Cannot delete contract "${contractId}" because it has ${linkedBlanketOrders.length} linked blanket order${linkedBlanketOrders.length > 1 ? 's' : ''}.` });
+        }
+    }
+
     db[col] = db[col].filter(it => it.id !== req.params.id);
     if (writeDb(db)) res.json({ message: "Deleted" });
     else res.status(500).json({ error: "Delete failed" });
@@ -2296,6 +2305,16 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 }
 
+                break;
+            }
+
+            case 'upload-cost-sheet': {
+                const ucsItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (ucsItemIdx === -1) throw new Error("Item not found");
+                const ucsItem = order.items[ucsItemIdx];
+                ucsItem.costSheetFile = payload.costSheetFile || undefined;
+                ucsItem.costSheetFileName = payload.costSheetFileName || undefined;
+                order.logs.push(createAuditLog(`Item ${ucsItem.orderNumber || ucsItemIdx + 1}: ${payload.costSheetFile ? `Cost sheet uploaded (${payload.costSheetFileName})` : 'Cost sheet removed'}`, order.status, user));
                 break;
             }
 

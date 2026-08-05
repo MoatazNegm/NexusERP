@@ -257,6 +257,10 @@ class DataService {
     return this.dispatchAction(orderId, 'set-production-type', { itemId, type });
   }
 
+  async uploadCostSheet(orderId: string, itemId: string, costSheetFile: string | null, costSheetFileName: string | null) {
+    return this.dispatchAction(orderId, 'upload-cost-sheet', { itemId, costSheetFile, costSheetFileName });
+  }
+
   async addComponentToItem(orderId: string, itemId: string, comp: Omit<ManufacturingComponent, 'id' | 'statusUpdatedAt' | 'componentNumber'>) {
     return this.dispatchAction(orderId, 'add-component', { itemId, component: comp });
   }

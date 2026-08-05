@@ -1027,6 +1027,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   };
 
   const handleDeleteContract = async (id: string) => {
+    const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === id);
+    if (linked.length > 0) {
+      setMessage({ type: 'error', text: `Cannot delete contract "${id}" because it has ${linked.length} linked blanket order${linked.length > 1 ? 's' : ''}.` });
+      return;
+    }
+
     if (!window.confirm(`Are you sure you want to delete contract template "${id}"?`)) return;
     try {
       await dataService.deleteContract(id);
@@ -1113,24 +1119,29 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       key: 'actions',
       label: 'Action',
       sortable: false,
-      render: (c) => (
-        <div className="flex gap-2">
-          <button
-            onClick={() => startContractOrder(c)}
-            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
-            title="Create a Blanket Order referencing this contract"
-          >
-            <i className="fa-solid fa-plus"></i> Log Blanket
-          </button>
-          <button
-            onClick={() => handleDeleteContract(c.id)}
-            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
-            title="Delete this contract template"
-          >
-            <i className="fa-solid fa-trash-can"></i> Delete
-          </button>
-        </div>
-      )
+      render: (c) => {
+        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const deleteDisabled = linked.length > 0;
+        return (
+          <div className="flex gap-2">
+            <button
+              onClick={() => startContractOrder(c)}
+              className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all"
+              title="Create a Blanket Order referencing this contract"
+            >
+              <i className="fa-solid fa-plus"></i> Log Blanket
+            </button>
+            <button
+              onClick={() => handleDeleteContract(c.id)}
+              disabled={deleteDisabled}
+              className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 transition-all ${deleteDisabled ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100'}`}
+              title={deleteDisabled ? 'Cannot delete: this contract has linked blanket orders' : 'Delete this contract template'}
+            >
+              <i className="fa-solid fa-trash-can"></i> Delete
+            </button>
+          </div>
+        );
+      }
     }
   ];
 

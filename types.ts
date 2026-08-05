@@ -220,6 +220,8 @@ export interface CustomerOrderItem {
   deliveredQty?: number;
   alteredQty?: number;
   alterationComment?: string;
+  costSheetFile?: string;
+  costSheetFileName?: string;
 }
 
 export interface InventoryItem {
