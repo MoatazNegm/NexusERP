@@ -4,6 +4,7 @@ import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import * as XLSX from 'xlsx';
 import { PartHistory } from './PartHistory';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
@@ -47,6 +48,21 @@ const sanitizeFileName = (value: string) => {
     .replace(/-+/g, '-')
     .slice(0, 120)
     .replace(/^-+|-+$/g, '');
+};
+
+const parseCostSheetDataUrl = (dataUrl: string) => {
+  const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+  const workbook = XLSX.read(base64, { type: 'base64' });
+  const sheetName = workbook.SheetNames[0] || '';
+  const matrix = sheetName
+    ? (XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' }) as Array<Array<string | number | null>>)
+    : [];
+  return { workbook, sheetName, matrix };
+};
+
+const getCurrentCostSheetItem = (order: CustomerOrder | null, selectedItemId: string | null) => {
+  if (!order || !selectedItemId) return null;
+  return order.items.find(item => item.id === selectedItemId) || null;
 };
 
 /**
@@ -173,6 +189,100 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [rfpCompSelection, setRfpCompSelection] = useState<string[]>([]); // For multi-component RFP PDF
   const [rfpTemplateRef, rfpPrintData, setRfpPrintData] = [useRef<HTMLDivElement>(null), ...useState<{ order: CustomerOrder, comps: ManufacturingComponent[] } | null>(null)];
   const [isDownloadingRfp, setIsDownloadingRfp] = useState(false);
+  const [costSheetModalOrder, setCostSheetModalOrder] = useState<CustomerOrder | null>(null);
+  const [costSheetModalEntries, setCostSheetModalEntries] = useState<Array<{ itemId: string; orderNumber: string; description: string; costSheetText: string; costSheetFileName?: string }>>([]);
+  const [costSheetModalSelectedItemId, setCostSheetModalSelectedItemId] = useState<string | null>(null);
+  const [costSheetWorkbook, setCostSheetWorkbook] = useState<XLSX.WorkBook | null>(null);
+  const [costSheetSheetName, setCostSheetSheetName] = useState<string>('');
+  const [costSheetMatrix, setCostSheetMatrix] = useState<(string | number)[][]>([]);
+  const [costSheetFileChanged, setCostSheetFileChanged] = useState(false);
+  const [costSheetParseError, setCostSheetParseError] = useState<string | null>(null);
+  const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
+
+  const openCostSheetModal = async (order: CustomerOrder) => {
+    let freshOrder = order;
+    try {
+      freshOrder = await dataService.getOrderById(order.id);
+    } catch (err) {
+      console.warn('Cost sheet modal: failed to refresh order data', err);
+    }
+
+    const outsourcingItems = (freshOrder.items || []).filter(item => item.productionType === 'OUTSOURCING');
+    const entries = outsourcingItems.map(item => ({
+      itemId: item.id,
+      orderNumber: item.orderNumber,
+      description: item.description,
+      costSheetText: item.costSheetText || '',
+      costSheetFileName: item.costSheetFileName
+    }));
+
+    setCostSheetModalOrder(freshOrder);
+    setCostSheetModalEntries(entries);
+
+    const firstItemWithFile = outsourcingItems.find(item => item.costSheetFile);
+    const defaultItem = firstItemWithFile || outsourcingItems[0] || null;
+    setCostSheetModalSelectedItemId(defaultItem?.id || null);
+
+    if (defaultItem) {
+      loadCostSheetItem(defaultItem);
+    } else {
+      setCostSheetWorkbook(null);
+      setCostSheetSheetName('');
+      setCostSheetMatrix([]);
+      setCostSheetParseError(null);
+      setCostSheetFileChanged(false);
+    }
+  };
+
+  const loadCostSheetItem = (item: CustomerOrderItem) => {
+    setCostSheetModalSelectedItemId(item.id);
+    if (!item.costSheetFile) {
+      setCostSheetWorkbook(null);
+      setCostSheetSheetName('');
+      setCostSheetMatrix([]);
+      setCostSheetParseError(null);
+      setCostSheetFileChanged(false);
+      return;
+    }
+
+    try {
+      const { workbook, sheetName, matrix } = parseCostSheetDataUrl(item.costSheetFile);
+      setCostSheetWorkbook(workbook);
+      setCostSheetSheetName(sheetName);
+      setCostSheetMatrix((matrix as Array<Array<string | number | null>>).map(row => row.map(cell => (cell == null ? '' : cell))));
+      setCostSheetParseError(null);
+      setCostSheetFileChanged(false);
+    } catch (err) {
+      setCostSheetWorkbook(null);
+      setCostSheetSheetName('');
+      setCostSheetMatrix([]);
+      setCostSheetParseError('Unable to parse the attached Excel cost sheet.');
+      setCostSheetFileChanged(false);
+    }
+  };
+
+  const updateCostSheetCell = (rowIndex: number, colIndex: number, value: string) => {
+    setCostSheetMatrix(prev => {
+      const next = prev.map(r => [...r]);
+      while (next.length <= rowIndex) next.push([]);
+      while (next[rowIndex].length <= colIndex) next[rowIndex].push('');
+      next[rowIndex][colIndex] = value;
+      return next;
+    });
+    setCostSheetFileChanged(true);
+  };
+
+  const commitEditedCostSheet = async () => {
+    if (!costSheetModalOrder || !costSheetModalSelectedItemId || !costSheetWorkbook || !costSheetSheetName) return;
+    const item = costSheetModalOrder.items.find(i => i.id === costSheetModalSelectedItemId);
+    if (!item) return;
+    const updatedWorkbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.aoa_to_sheet(costSheetMatrix);
+    XLSX.utils.book_append_sheet(updatedWorkbook, worksheet, costSheetSheetName || 'Sheet1');
+    const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64' })}`;
+    await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx');
+  };
+
   const companyName = config.settings.companyName || 'Nexus ERP';
   const companyNameHasArabic = /[\u0600-\u06FF]/.test(companyName);
   const [awardSupplierId, setAwardSupplierId] = useState<string>('');
@@ -1072,13 +1182,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           onClick={() => setActiveTab('purchases')}
           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'purchases' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
         >
-          <i className="fa-solid fa-truck-field mr-2"></i> {t('procurement.tabs.sourcing') || 'Component Purchases'}
+          <i className="fa-solid fa-truck-field mr-2"></i> {t('procurement.tabs.sourcing') || 'Trade/Manufacture'}
         </button>
         <button
           onClick={() => setActiveTab('outsourcing')}
           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'outsourcing' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
         >
-          <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Outsourcing'}
+          <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Blanket Orders'}
         </button>
 <button
            onClick={() => setActiveTab('history')}
@@ -1635,6 +1745,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <i className="fa-solid fa-file-invoice"></i> {t('procurement.po.issuePOAll')}
                           </button>
                         )}
+                        {activeTab === 'outsourcing' && o.items.some(item => item.productionType === 'OUTSOURCING') && (
+                          <button
+                            onClick={() => {
+                              const outsourcingItems = o.items.filter(item => item.productionType === 'OUTSOURCING');
+                              const entries = outsourcingItems.map(item => ({
+                                itemId: item.id,
+                                orderNumber: item.orderNumber,
+                                description: item.description,
+                                costSheetText: item.costSheetText || '',
+                                costSheetFileName: item.costSheetFileName
+                              }));
+                              openCostSheetModal(o);
+                            }}
+                            className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase bg-violet-600 text-white hover:bg-violet-700 shadow-lg shadow-violet-100 transition-all flex items-center gap-2"
+                            title="Open editable cost sheet"
+                          >
+                            <i className="fa-solid fa-file-lines"></i> Cost Sheet
+                          </button>
+                        )}
                         {anyOrderProcurementNotReady && (
                           <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-600 uppercase bg-rose-50 px-3 py-1.5 rounded-lg">
                             <i className="fa-solid fa-circle-exclamation"></i>
@@ -1775,6 +1904,24 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 title="View Price History"
                               >
                                 <i className="fa-solid fa-clock-rotate-left"></i>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const entries = o.items
+                                    .filter(item => item.productionType === 'OUTSOURCING')
+                                    .map(item => ({
+                                      itemId: item.id,
+                                      orderNumber: item.orderNumber,
+                                      description: item.description,
+                                      costSheetText: item.costSheetText || '',
+                                      costSheetFileName: item.costSheetFileName
+                                    }));
+                                  openCostSheetModal(o);
+                                }}
+                                className="p-3 text-slate-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
+                                title="Open editable cost sheet for this order"
+                              >
+                                <i className="fa-solid fa-file-lines"></i>
                               </button>
                             </div>
 
@@ -2483,7 +2630,136 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
               </div>
             )
           }
-          
+
+          {costSheetModalOrder && (
+            <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-700 bg-slate-950 text-white">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Cost Sheet</div>
+                  <div className="text-xl font-black">Order {costSheetModalOrder.internalOrderNumber}</div>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  {costSheetWorkbook && (
+                    <div className="text-[11px] uppercase tracking-widest text-slate-300">Sheet: {costSheetSheetName || 'Sheet1'}</div>
+                  )}
+                  <button
+                    onClick={() => setCostSheetModalOrder(null)}
+                    className="px-4 py-2 rounded-2xl border border-slate-700 bg-slate-800 text-sm text-slate-200 hover:bg-slate-700 transition-all"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex h-full flex-col overflow-hidden">
+                <div className="flex flex-wrap gap-2 px-6 py-4 border-b border-slate-700 bg-slate-950 overflow-x-auto">
+                  {costSheetModalEntries.map(entry => (
+                    <button
+                      key={entry.itemId}
+                      onClick={() => {
+                        const item = costSheetModalOrder.items.find(i => i.id === entry.itemId);
+                        if (item) loadCostSheetItem(item);
+                      }}
+                      className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase transition-all ${costSheetModalSelectedItemId === entry.itemId ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700'}`}
+                    >
+                      {entry.orderNumber}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex-1 overflow-hidden p-6 bg-slate-900">
+                  <div className="flex flex-col gap-4 h-full overflow-hidden rounded-3xl bg-white shadow-xl">
+                    <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Selected Outsourcing Item</div>
+                        <div className="text-sm font-black text-slate-800 mt-1">
+                          {getCurrentCostSheetItem(costSheetModalOrder, costSheetModalSelectedItemId)?.description || 'No item selected'}
+                        </div>
+                      </div>
+                      {costSheetParseError && (
+                        <div className="rounded-3xl bg-rose-50 border border-rose-100 p-3 text-rose-700 text-sm font-bold">
+                          {costSheetParseError}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex-1 overflow-auto p-5">
+                      {costSheetWorkbook ? (
+                        <div className="min-w-full overflow-auto">
+                          <table className="min-w-full border-separate border-spacing-0">
+                            <thead>
+                              <tr className="bg-slate-100">
+                                <th className="sticky left-0 z-20 bg-slate-100 border-r border-slate-200 px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
+                                {Array.from({ length: Math.max(...costSheetMatrix.map(row => row.length), 0) }, (_, colIndex) => (
+                                  <th key={colIndex} className="border-b border-slate-200 px-3 py-2 text-left text-[11px] font-black text-slate-500">
+                                    {String.fromCharCode(65 + (colIndex % 26))}{colIndex >= 26 ? String.fromCharCode(65 + Math.floor(colIndex / 26) - 1) : ''}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {costSheetMatrix.map((row, rowIndex) => (
+                                <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-slate-50' : 'bg-white'}>
+                                  <td className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 text-right px-3 py-2 text-[11px] font-black text-slate-500">
+                                    {rowIndex + 1}
+                                  </td>
+                                  {Array.from({ length: Math.max(...costSheetMatrix.map(r => r.length), 0) }, (_, colIndex) => (
+                                    <td key={colIndex} className="border border-slate-200 p-0">
+                                      <input
+                                        value={row[colIndex] === undefined || row[colIndex] === null ? '' : String(row[colIndex])}
+                                        onChange={e => updateCostSheetCell(rowIndex, colIndex, e.target.value)}
+                                        className="w-full min-w-[120px] h-12 px-3 text-sm text-slate-800 bg-white outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-500 border-none"
+                                      />
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="h-full flex items-center justify-center rounded-3xl bg-slate-50 p-10 text-center text-slate-500">
+                          <div>
+                            <p className="font-black mb-2">No Excel cost sheet attached for this item.</p>
+                            <p className="text-sm">Upload an Excel cost sheet in Technical Review or choose another outsourcing item.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-4 border-t border-slate-200 px-5 py-4 bg-slate-50">
+                      <button
+                        onClick={() => setCostSheetModalOrder(null)}
+                        className="w-full md:w-auto px-6 py-4 text-[10px] font-black uppercase rounded-3xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        disabled={!costSheetWorkbook || !costSheetFileChanged || isCostSheetSaving}
+                        onClick={async () => {
+                          if (!costSheetModalOrder || !costSheetModalSelectedItemId || !costSheetWorkbook || !costSheetSheetName) return;
+                          setIsCostSheetSaving(true);
+                          try {
+                            await commitEditedCostSheet();
+                            await fetchData();
+                            setCostSheetModalOrder(null);
+                          } catch (error: any) {
+                            alert(error.message || 'Failed to save edited cost sheet');
+                          } finally {
+                            setIsCostSheetSaving(false);
+                          }
+                        }}
+                        className="w-full md:w-auto px-6 py-4 text-[10px] font-black uppercase rounded-3xl bg-violet-600 text-white hover:bg-violet-700 transition-all shadow-lg disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
+                      >
+                        {isCostSheetSaving ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : <i className="fa-solid fa-save mr-2"></i>}Save Sheet
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* --- Resource Replacement Modal --- */}
           {replacementModalInfo && (
             <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">

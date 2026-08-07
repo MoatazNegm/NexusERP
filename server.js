@@ -2318,6 +2318,15 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
             }
 
+            case 'update-cost-sheet-text': {
+                const ucsItemIdx = order.items.findIndex(i => i.id === payload.itemId);
+                if (ucsItemIdx === -1) throw new Error("Item not found");
+                const ucsItem = order.items[ucsItemIdx];
+                ucsItem.costSheetText = payload.costSheetText || undefined;
+                order.logs.push(createAuditLog(`Item ${ucsItem.orderNumber || ucsItemIdx + 1}: Cost sheet text ${payload.costSheetText ? 'updated' : 'cleared'}`, order.status, user));
+                break;
+            }
+
 
             case 'receive-component': {
                 const itemIdx = order.items.findIndex(i => i.id === payload.itemId);
