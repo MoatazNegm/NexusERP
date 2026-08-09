@@ -2949,6 +2949,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     </label>
                     <input
                       type="date"
+                      min={replacementModalToday}
                       value={replacementStartDateValue}
                       onChange={e => {
                         const newDate = e.target.value;
@@ -2959,7 +2960,9 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           const newResourceStart = new Date(newDate);
                           const now = new Date();
                           
-                          if (contractStart < now && newResourceStart < contractStart) {
+                          if (newResourceStart < new Date(replacementModalToday)) {
+                            setReplacementDateError('Please choose a date starting from today.');
+                          } else if (contractStart < now && newResourceStart < contractStart) {
                             setReplacementDateError('Resource start date cannot be earlier than the contract start date that already began.');
                           } else {
                             setReplacementDateError('');
@@ -2978,7 +2981,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{t('procurement.replacement.reasonForReplacement')}</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                      {replacementRequestMode === 'ADD_RESOURCE'
+                        ? 'Detailed Reason for Resources Addition'
+                        : replacementRequestMode === 'POSTPONE'
+                          ? 'Detailed Reason for Postpone'
+                          : t('procurement.replacement.reasonForReplacement')}
+                    </label>
                     <textarea
                       value={replacementReason}
                       onChange={e => setReplacementReason(e.target.value)}
@@ -3039,7 +3048,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           />
                         </div>
                       </div>
-                      <p className="text-[9px] text-slate-500 mt-1">Auto calculated as ((added resources × unit cost) ÷ (contract duration × remaining days in month)).</p>
+                      <p className="text-[9px] text-slate-500 mt-1">Payment is auto calculated as ((added resources × unit cost) ÷ (contract duration × remaining days in month)).</p>
                     </div>
                   )}
 
