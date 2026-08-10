@@ -2917,21 +2917,6 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
               </div>
 
               <div className="flex h-full flex-col overflow-hidden">
-                <div className="flex flex-wrap gap-2 px-6 py-4 border-b border-slate-700 bg-slate-950 overflow-x-auto">
-                  {costSheetModalEntries.map(entry => (
-                    <button
-                      key={entry.itemId}
-                      onClick={() => {
-                        const item = costSheetModalOrder.items.find(i => i.id === entry.itemId);
-                        if (item) loadCostSheetItem(item);
-                      }}
-                      className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase transition-all ${costSheetModalSelectedItemId === entry.itemId ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700'}`}
-                    >
-                      {entry.orderNumber}
-                    </button>
-                  ))}
-                </div>
-
                 <div className="flex-1 overflow-hidden p-6 bg-slate-900">
                   <div className="flex flex-col gap-4 h-full overflow-hidden rounded-3xl bg-white shadow-xl">
                     <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
