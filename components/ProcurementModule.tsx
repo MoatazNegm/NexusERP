@@ -88,15 +88,15 @@ const getCostSheetCellNumericValue = (cell: CostSheetCell | undefined): number =
   return isNaN(parsed) ? 0 : parsed;
 };
 
-const evaluateCostSheetFormula = (formula: string, cells: CostSheetCell[][]): string | number => {
+const evaluateCostSheetFormula = (formula: string, cells: CostSheetCell[][], rowOffset = 0, colOffset = 0): string | number => {
   if (!formula) return '';
   let expression = formula.startsWith('=') ? formula.slice(1) : formula;
 
   const rangeSum = expression.replace(/SUM\(\s*([A-Z]+)(\d+):([A-Z]+)(\d+)\s*\)/gi, (_match, col1, row1, col2, row2) => {
-    const startRow = parseInt(row1, 10) - 1;
-    const endRow = parseInt(row2, 10) - 1;
-    const startCol = columnIndexFromName(col1);
-    const endCol = columnIndexFromName(col2);
+    const startRow = parseInt(row1, 10) - 1 - rowOffset;
+    const endRow = parseInt(row2, 10) - 1 - rowOffset;
+    const startCol = columnIndexFromName(col1) - colOffset;
+    const endCol = columnIndexFromName(col2) - colOffset;
     let sum = 0;
     for (let r = Math.min(startRow, endRow); r <= Math.max(startRow, endRow); r += 1) {
       for (let c = Math.min(startCol, endCol); c <= Math.max(startCol, endCol); c += 1) {
@@ -107,8 +107,8 @@ const evaluateCostSheetFormula = (formula: string, cells: CostSheetCell[][]): st
   });
 
   expression = rangeSum.replace(/\b([A-Z]+)(\d+)\b/g, (_match, col, row) => {
-    const r = parseInt(row, 10) - 1;
-    const c = columnIndexFromName(col);
+    const r = parseInt(row, 10) - 1 - rowOffset;
+    const c = columnIndexFromName(col) - colOffset;
     return String(getCostSheetCellNumericValue(cells[r]?.[c]));
   });
 
@@ -130,9 +130,13 @@ const parseCostSheetDataUrl = (dataUrl: string) => {
   const sheetName = workbook.SheetNames[0] || '';
   const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
   const cells: CostSheetCell[][] = [];
+  let rowOffset = 0;
+  let colOffset = 0;
 
   if (sheet && sheet['!ref']) {
     const range = XLSX.utils.decode_range(sheet['!ref']);
+    rowOffset = range.s.r;
+    colOffset = range.s.c;
     for (let row = range.s.r; row <= range.e.r; row += 1) {
       const rowCells: CostSheetCell[] = [];
       for (let col = range.s.c; col <= range.e.c; col += 1) {
@@ -148,7 +152,7 @@ const parseCostSheetDataUrl = (dataUrl: string) => {
     }
   }
 
-  return { workbook, sheetName, cells };
+  return { workbook, sheetName, cells, rowOffset, colOffset };
 };
 
 const getCurrentCostSheetItem = (order: CustomerOrder | null, selectedItemId: string | null) => {
@@ -310,6 +314,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [costSheetWorkbook, setCostSheetWorkbook] = useState<XLSX.WorkBook | null>(null);
   const [costSheetSheetName, setCostSheetSheetName] = useState<string>('');
   const [costSheetCells, setCostSheetCells] = useState<CostSheetCell[][]>([]);
+  const [costSheetRowOffset, setCostSheetRowOffset] = useState<number>(0);
+  const [costSheetColOffset, setCostSheetColOffset] = useState<number>(0);
   const [costSheetFileChanged, setCostSheetFileChanged] = useState(false);
   const [costSheetParseError, setCostSheetParseError] = useState<string | null>(null);
   const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
@@ -355,16 +361,20 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       setCostSheetWorkbook(null);
       setCostSheetSheetName('');
       setCostSheetCells([]);
+      setCostSheetRowOffset(0);
+      setCostSheetColOffset(0);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
       return;
     }
 
     try {
-      const { workbook, sheetName, cells } = parseCostSheetDataUrl(item.costSheetFile);
+      const { workbook, sheetName, cells, rowOffset, colOffset } = parseCostSheetDataUrl(item.costSheetFile);
       setCostSheetWorkbook(workbook);
       setCostSheetSheetName(sheetName);
       setCostSheetCells(cells);
+      setCostSheetRowOffset(rowOffset);
+      setCostSheetColOffset(colOffset);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
     } catch (err) {
@@ -396,18 +406,20 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     const worksheet = updatedWorkbook.Sheets[costSheetSheetName] as XLSX.WorkSheet;
     if (!worksheet) return;
 
-    costSheetCells.forEach(row => {
-      row.forEach(cell => {
+    costSheetCells.forEach((row, rowIndex) => {
+      row.forEach((cell, colIndex) => {
         if (!cell.isEditable) return;
-        const worksheetCell = worksheet[cell.address] || { t: 's', v: '' };
+        const address = XLSX.utils.encode_cell({ r: rowIndex + costSheetRowOffset, c: colIndex + costSheetColOffset });
+        const worksheetCell = worksheet[address] || { t: 's', v: '' };
         worksheetCell.v = cell.value;
         worksheetCell.t = typeof cell.value === 'number' ? 'n' : 's';
-        worksheet[cell.address] = worksheetCell;
+        worksheet[address] = worksheetCell;
       });
     });
 
     const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64' })}`;
     await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx');
+    setCostSheetFileChanged(false);
   };
 
   const companyName = config.settings.companyName || 'Nexus ERP';
@@ -2895,22 +2907,28 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <thead>
                               <tr className="bg-slate-100">
                                 <th className="sticky left-0 z-20 bg-slate-100 border-r border-slate-200 px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
-                                {Array.from({ length: Math.max(...costSheetCells.map(row => row.length), 0) }, (_, colIndex) => (
-                                  <th key={colIndex} className="border-b border-slate-200 px-3 py-2 text-left text-[11px] font-black text-slate-500">
-                                    {String.fromCharCode(65 + (colIndex % 26))}{colIndex >= 26 ? String.fromCharCode(65 + Math.floor(colIndex / 26) - 1) : ''}
-                                  </th>
-                                ))}
+                                {Array.from({ length: Math.max(...costSheetCells.map(row => row.length), 0) }, (_, colIndex) => {
+                                  const columnNumber = colIndex + costSheetColOffset;
+                                  const name = columnNumber < 26
+                                    ? String.fromCharCode(65 + columnNumber)
+                                    : String.fromCharCode(65 + Math.floor(columnNumber / 26) - 1) + String.fromCharCode(65 + (columnNumber % 26));
+                                  return (
+                                    <th key={colIndex} className="border-b border-slate-200 px-3 py-2 text-left text-[11px] font-black text-slate-500">
+                                      {name}
+                                    </th>
+                                  );
+                                })}
                               </tr>
                             </thead>
                             <tbody>
                               {costSheetCells.map((row, rowIndex) => (
                                 <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-slate-50' : 'bg-white'}>
                                   <td className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 text-right px-3 py-2 text-[11px] font-black text-slate-500">
-                                    {rowIndex + 1}
+                                    {rowIndex + 1 + costSheetRowOffset}
                                   </td>
                                   {Array.from({ length: Math.max(...costSheetCells.map(r => r.length), 0) }, (_, colIndex) => {
                                     const cell = row[colIndex] || { address: '', value: '', formula: undefined, isEditable: false };
-                                    const displayValue = cell.formula ? evaluateCostSheetFormula(cell.formula, costSheetCells) : cell.value;
+                                    const displayValue = cell.formula ? evaluateCostSheetFormula(cell.formula, costSheetCells, costSheetRowOffset, costSheetColOffset) : cell.value;
                                     return (
                                       <td key={colIndex} className="border border-slate-200 p-0">
                                         <input
