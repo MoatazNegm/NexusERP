@@ -222,6 +222,7 @@ export interface CustomerOrderItem {
   alterationComment?: string;
   costSheetFile?: string;
   costSheetFileName?: string;
+  costSheetText?: string;
 }
 
 export interface InventoryItem {

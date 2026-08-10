@@ -881,7 +881,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
           onClick={() => setActiveTab('review')}
           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'review' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
         >
-          <i className="fa-solid fa-microscope mr-2"></i> Manufacture
+          <i className="fa-solid fa-microscope mr-2"></i> Trade/Manufacture
         </button>
         <button
           onClick={() => setActiveTab('history')}

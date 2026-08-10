@@ -219,6 +219,18 @@ class DataService {
   }
 
   async getOrders() { return this.get<CustomerOrder>('orders'); }
+  async getOrderById(id: string) {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+    const res = await fetch(`${backendUrl}/api/v1/orders/${id}`, {
+      headers: this.getHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to fetch order ${id}: ${res.statusText}`);
+    }
+    return res.json() as Promise<CustomerOrder>;
+  }
+
   async addOrder(order: Omit<CustomerOrder, 'id' | 'internalOrderNumber' | 'logs'>) {
     return this.post<CustomerOrder>('orders', order);
   }
@@ -259,6 +271,10 @@ class DataService {
 
   async uploadCostSheet(orderId: string, itemId: string, costSheetFile: string | null, costSheetFileName: string | null) {
     return this.dispatchAction(orderId, 'upload-cost-sheet', { itemId, costSheetFile, costSheetFileName });
+  }
+
+  async updateCostSheetText(orderId: string, itemId: string, costSheetText: string | null) {
+    return this.dispatchAction(orderId, 'update-cost-sheet-text', { itemId, costSheetText });
   }
 
   async addComponentToItem(orderId: string, itemId: string, comp: Omit<ManufacturingComponent, 'id' | 'statusUpdatedAt' | 'componentNumber'>) {

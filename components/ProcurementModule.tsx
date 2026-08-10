@@ -4,6 +4,7 @@ import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import * as XLSX from 'xlsx';
 import { PartHistory } from './PartHistory';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
@@ -49,6 +50,21 @@ const sanitizeFileName = (value: string) => {
     .replace(/^-+|-+$/g, '');
 };
 
+const parseCostSheetDataUrl = (dataUrl: string) => {
+  const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+  const workbook = XLSX.read(base64, { type: 'base64' });
+  const sheetName = workbook.SheetNames[0] || '';
+  const matrix = sheetName
+    ? (XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' }) as Array<Array<string | number | null>>)
+    : [];
+  return { workbook, sheetName, matrix };
+};
+
+const getCurrentCostSheetItem = (order: CustomerOrder | null, selectedItemId: string | null) => {
+  if (!order || !selectedItemId) return null;
+  return order.items.find(item => item.id === selectedItemId) || null;
+};
+
 /**
  * Binary PO-readiness gate (the "0/1" approach).
  * Returns true (1) if a component has reached or passed the Issue PO stage.
@@ -92,6 +108,30 @@ const calculateContractEndDate = (startDate: string, duration: string): Date | n
     return null;
   }
 };
+
+const parseDurationMonths = (duration: string): number => {
+  if (!duration) return 0;
+  const normalized = duration.trim();
+  const monthsMatch = normalized.match(/(\d+)\s*months?/i);
+  if (monthsMatch) return parseInt(monthsMatch[1], 10);
+  const yearsMatch = normalized.match(/(\d+)\s*years?/i);
+  if (yearsMatch) return parseInt(yearsMatch[1], 10) * 12;
+  const numeric = parseInt(normalized, 10);
+  return isNaN(numeric) ? 0 : numeric;
+};
+
+const getCompTotalCost = (comp: ManufacturingComponent): number => {
+  return (comp.quantity || 0) * (comp.unitCost || 0);
+};
+
+const getRemainingDaysInMonth = (dateString: string): number => {
+  const date = dateString ? new Date(dateString) : new Date();
+  if (isNaN(date.getTime())) return 1;
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  return Math.max(1, lastDay.getDate() - date.getDate() + 1);
+};
+
+type ReplacementRequestMode = 'REPLACE' | 'ADD_RESOURCE' | 'POSTPONE';
 
 interface ProcurementModuleProps {
   config: AppConfig;
@@ -173,6 +213,100 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [rfpCompSelection, setRfpCompSelection] = useState<string[]>([]); // For multi-component RFP PDF
   const [rfpTemplateRef, rfpPrintData, setRfpPrintData] = [useRef<HTMLDivElement>(null), ...useState<{ order: CustomerOrder, comps: ManufacturingComponent[] } | null>(null)];
   const [isDownloadingRfp, setIsDownloadingRfp] = useState(false);
+  const [costSheetModalOrder, setCostSheetModalOrder] = useState<CustomerOrder | null>(null);
+  const [costSheetModalEntries, setCostSheetModalEntries] = useState<Array<{ itemId: string; orderNumber: string; description: string; costSheetText: string; costSheetFileName?: string }>>([]);
+  const [costSheetModalSelectedItemId, setCostSheetModalSelectedItemId] = useState<string | null>(null);
+  const [costSheetWorkbook, setCostSheetWorkbook] = useState<XLSX.WorkBook | null>(null);
+  const [costSheetSheetName, setCostSheetSheetName] = useState<string>('');
+  const [costSheetMatrix, setCostSheetMatrix] = useState<(string | number)[][]>([]);
+  const [costSheetFileChanged, setCostSheetFileChanged] = useState(false);
+  const [costSheetParseError, setCostSheetParseError] = useState<string | null>(null);
+  const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
+
+  const openCostSheetModal = async (order: CustomerOrder) => {
+    let freshOrder = order;
+    try {
+      freshOrder = await dataService.getOrderById(order.id);
+    } catch (err) {
+      console.warn('Cost sheet modal: failed to refresh order data', err);
+    }
+
+    const outsourcingItems = (freshOrder.items || []).filter(item => item.productionType === 'OUTSOURCING');
+    const entries = outsourcingItems.map(item => ({
+      itemId: item.id,
+      orderNumber: item.orderNumber,
+      description: item.description,
+      costSheetText: item.costSheetText || '',
+      costSheetFileName: item.costSheetFileName
+    }));
+
+    setCostSheetModalOrder(freshOrder);
+    setCostSheetModalEntries(entries);
+
+    const firstItemWithFile = outsourcingItems.find(item => item.costSheetFile);
+    const defaultItem = firstItemWithFile || outsourcingItems[0] || null;
+    setCostSheetModalSelectedItemId(defaultItem?.id || null);
+
+    if (defaultItem) {
+      loadCostSheetItem(defaultItem);
+    } else {
+      setCostSheetWorkbook(null);
+      setCostSheetSheetName('');
+      setCostSheetMatrix([]);
+      setCostSheetParseError(null);
+      setCostSheetFileChanged(false);
+    }
+  };
+
+  const loadCostSheetItem = (item: CustomerOrderItem) => {
+    setCostSheetModalSelectedItemId(item.id);
+    if (!item.costSheetFile) {
+      setCostSheetWorkbook(null);
+      setCostSheetSheetName('');
+      setCostSheetMatrix([]);
+      setCostSheetParseError(null);
+      setCostSheetFileChanged(false);
+      return;
+    }
+
+    try {
+      const { workbook, sheetName, matrix } = parseCostSheetDataUrl(item.costSheetFile);
+      setCostSheetWorkbook(workbook);
+      setCostSheetSheetName(sheetName);
+      setCostSheetMatrix((matrix as Array<Array<string | number | null>>).map(row => row.map(cell => (cell == null ? '' : cell))));
+      setCostSheetParseError(null);
+      setCostSheetFileChanged(false);
+    } catch (err) {
+      setCostSheetWorkbook(null);
+      setCostSheetSheetName('');
+      setCostSheetMatrix([]);
+      setCostSheetParseError('Unable to parse the attached Excel cost sheet.');
+      setCostSheetFileChanged(false);
+    }
+  };
+
+  const updateCostSheetCell = (rowIndex: number, colIndex: number, value: string) => {
+    setCostSheetMatrix(prev => {
+      const next = prev.map(r => [...r]);
+      while (next.length <= rowIndex) next.push([]);
+      while (next[rowIndex].length <= colIndex) next[rowIndex].push('');
+      next[rowIndex][colIndex] = value;
+      return next;
+    });
+    setCostSheetFileChanged(true);
+  };
+
+  const commitEditedCostSheet = async () => {
+    if (!costSheetModalOrder || !costSheetModalSelectedItemId || !costSheetWorkbook || !costSheetSheetName) return;
+    const item = costSheetModalOrder.items.find(i => i.id === costSheetModalSelectedItemId);
+    if (!item) return;
+    const updatedWorkbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.aoa_to_sheet(costSheetMatrix);
+    XLSX.utils.book_append_sheet(updatedWorkbook, worksheet, costSheetSheetName || 'Sheet1');
+    const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64' })}`;
+    await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx');
+  };
+
   const companyName = config.settings.companyName || 'Nexus ERP';
   const companyNameHasArabic = /[\u0600-\u06FF]/.test(companyName);
   const [awardSupplierId, setAwardSupplierId] = useState<string>('');
@@ -186,13 +320,30 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   
   // Replacement Request Modal States
   const [replacementModalInfo, setReplacementModalInfo] = useState<{order: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent} | null>(null);
+  const [replacementRequestMode, setReplacementRequestMode] = useState<ReplacementRequestMode>('REPLACE');
   const [replacementReason, setReplacementReason] = useState<string>('');
   const [replacementStartDate, setReplacementStartDate] = useState<string>('');
+  const [replacementCommittedPayment, setReplacementCommittedPayment] = useState<string>('');
+  const [replacementNewMonthlyRate, setReplacementNewMonthlyRate] = useState<string>('');
+  const [replacementAddedResourceQty, setReplacementAddedResourceQty] = useState<string>('1');
+  const [replacementAddResourcePayment, setReplacementAddResourcePayment] = useState<string>('');
+  const [replacementPostponePayment, setReplacementPostponePayment] = useState<string>('');
   const [updateAllContractDates, setUpdateAllContractDates] = useState<boolean>(false);
   const [replacementDateError, setReplacementDateError] = useState<string>('');
+  const [replacementOptionError, setReplacementOptionError] = useState<string>('');
   const replacementTemplateRef = useRef<HTMLDivElement>(null);
   const [isReplacementPdfGenerating, setIsReplacementPdfGenerating] = useState<boolean>(false);
   
+  const replacementModalToday = new Date().toISOString().split('T')[0];
+  const replacementStartDateValue = replacementStartDate || replacementModalToday;
+  const replacementDurationMonths = replacementModalInfo ? parseDurationMonths(replacementModalInfo.comp.contractDuration || '') : 0;
+  const replacementTotalCost = replacementModalInfo ? getCompTotalCost(replacementModalInfo.comp) : 0;
+  const replacementDefaultMonthlyPayment = replacementDurationMonths > 0 ? replacementTotalCost / replacementDurationMonths : 0;
+  const replacementRemainingDaysInMonth = getRemainingDaysInMonth(replacementStartDateValue);
+  const replacementDefaultAddResourcePayment = replacementDurationMonths > 0
+    ? ((parseInt(replacementAddedResourceQty || '0', 10) || 0) * (replacementModalInfo?.comp.unitCost || 0)) / (replacementDurationMonths * replacementRemainingDaysInMonth)
+    : 0;
+
   // Revive Contract States
   const [reviveReason, setReviveReason] = useState<string>('');
   const [reviveDuration, setReviveDuration] = useState<string>('');
@@ -779,27 +930,61 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   };
 
   const handleReplacementSubmit = async () => {
-    if (!replacementModalInfo || !replacementReason.trim() || !replacementStartDate.trim()) return;
-    
-    // Validate resource start date against contract start date
+    if (!replacementModalInfo) return;
+    if (!replacementReason.trim()) {
+      setReplacementOptionError('Please provide a detailed reason for this request.');
+      return;
+    }
+    if (!replacementStartDate.trim()) {
+      setReplacementOptionError('Please select a valid date for this request.');
+      return;
+    }
+    if (replacementRequestMode === 'ADD_RESOURCE' && (parseInt(replacementAddedResourceQty || '0', 10) <= 0)) {
+      setReplacementOptionError('Please enter a quantity of added resources greater than zero.');
+      return;
+    }
+
     const currentContractStart = new Date(replacementModalInfo.comp.contractStartDate || new Date());
     const newResourceStart = new Date(replacementStartDate);
     const now = new Date();
     
     // Check if current contract start date is in the past
-    if (currentContractStart < now) {
-      // Contract already started - don't allow new resource start date to be older
-      if (newResourceStart < currentContractStart) {
-        setReplacementDateError('Resource start date cannot be earlier than the contract start date that already began.');
-        return;
-      }
-    } else {
-      // Contract is in the future - offer to update all contract start dates
-      if (newResourceStart < currentContractStart && !updateAllContractDates) {
-        // This is handled by checkbox, but we could add additional validation here
-      }
+    if (currentContractStart < now && newResourceStart < currentContractStart) {
+      setReplacementDateError('Resource start date cannot be earlier than the contract start date that already began.');
+      return;
     }
-    
+
+    const durationMonths = parseDurationMonths(replacementModalInfo.comp.contractDuration || '');
+    const committedPaymentValue = replacementRequestMode === 'REPLACE'
+      ? parseFloat(replacementCommittedPayment || replacementDefaultMonthlyPayment.toFixed(2))
+      : undefined;
+    const newMonthlyRateValue = replacementRequestMode === 'REPLACE'
+      ? parseFloat(replacementNewMonthlyRate || replacementDefaultMonthlyPayment.toFixed(2))
+      : undefined;
+    const addedResourceQtyValue = replacementRequestMode === 'ADD_RESOURCE'
+      ? parseInt(replacementAddedResourceQty || '0', 10)
+      : undefined;
+    const addResourcePaymentValue = replacementRequestMode === 'ADD_RESOURCE'
+      ? parseFloat(replacementAddResourcePayment || replacementDefaultAddResourcePayment.toFixed(2))
+      : undefined;
+    const postponePaymentValue = replacementRequestMode === 'POSTPONE'
+      ? parseFloat(replacementPostponePayment || replacementDefaultMonthlyPayment.toFixed(2))
+      : undefined;
+
+    if (replacementRequestMode === 'REPLACE' && (isNaN(committedPaymentValue!) || isNaN(newMonthlyRateValue!))) {
+      setReplacementOptionError('Please enter valid numeric values for committed payment and monthly rate.');
+      return;
+    }
+    if (replacementRequestMode === 'ADD_RESOURCE' && (isNaN(addResourcePaymentValue!) || addedResourceQtyValue! <= 0)) {
+      setReplacementOptionError('Please enter a valid quantity and payment amount for the added resource.');
+      return;
+    }
+    if (replacementRequestMode === 'POSTPONE' && isNaN(postponePaymentValue!)) {
+      setReplacementOptionError('Please enter a valid payment amount for the postpone request.');
+      return;
+    }
+
+    setReplacementOptionError('');
     setIsReplacementPdfGenerating(true);
     try {
       const { order, item, comp } = replacementModalInfo;
@@ -902,10 +1087,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       newHistory.push({
         id: Math.random().toString(36).substring(2, 9),
         requestDate: new Date().toISOString(),
+        requestType: replacementRequestMode,
         reason: replacementReason,
         originalStartDate: comp.originalStartDate || comp.contractStartDate || '',
         newStartDate: replacementStartDate,
-        remainingDuration: remainingDurationStr
+        remainingDuration: remainingDurationStr,
+        committedPayment: replacementRequestMode === 'REPLACE' ? committedPaymentValue : undefined,
+        newMonthlyRate: replacementRequestMode === 'REPLACE' ? newMonthlyRateValue : undefined,
+        addedResources: replacementRequestMode === 'ADD_RESOURCE' ? addedResourceQtyValue : undefined,
+        paymentAmount: replacementRequestMode === 'ADD_RESOURCE'
+          ? addResourcePaymentValue
+          : replacementRequestMode === 'POSTPONE'
+            ? postponePaymentValue
+            : undefined
       });
 
       // Update contract start dates if user chose to move all dates
@@ -957,8 +1151,14 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       setReplacementModalInfo(null);
       setReplacementReason('');
       setReplacementStartDate('');
+      setReplacementCommittedPayment('');
+      setReplacementNewMonthlyRate('');
+      setReplacementAddedResourceQty('1');
+      setReplacementAddResourcePayment('');
+      setReplacementPostponePayment('');
       setUpdateAllContractDates(false);
       setReplacementDateError('');
+      setReplacementOptionError('');
       console.log('Step 5: Fetching updated data...');
       await fetchData();
       console.log('Resource replacement request submitted successfully!');
@@ -1072,13 +1272,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           onClick={() => setActiveTab('purchases')}
           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'purchases' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
         >
-          <i className="fa-solid fa-truck-field mr-2"></i> {t('procurement.tabs.sourcing') || 'Component Purchases'}
+          <i className="fa-solid fa-truck-field mr-2"></i> {t('procurement.tabs.sourcing') || 'Trade/Manufacture'}
         </button>
         <button
           onClick={() => setActiveTab('outsourcing')}
           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'outsourcing' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
         >
-          <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Outsourcing'}
+          <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Blanket Orders'}
         </button>
 <button
            onClick={() => setActiveTab('history')}
@@ -1635,6 +1835,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <i className="fa-solid fa-file-invoice"></i> {t('procurement.po.issuePOAll')}
                           </button>
                         )}
+                        {activeTab === 'outsourcing' && o.items.some(item => item.productionType === 'OUTSOURCING') && (
+                          <button
+                            onClick={() => {
+                              const outsourcingItems = o.items.filter(item => item.productionType === 'OUTSOURCING');
+                              const entries = outsourcingItems.map(item => ({
+                                itemId: item.id,
+                                orderNumber: item.orderNumber,
+                                description: item.description,
+                                costSheetText: item.costSheetText || '',
+                                costSheetFileName: item.costSheetFileName
+                              }));
+                              openCostSheetModal(o);
+                            }}
+                            className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase bg-violet-600 text-white hover:bg-violet-700 shadow-lg shadow-violet-100 transition-all flex items-center gap-2"
+                            title="Open editable cost sheet"
+                          >
+                            <i className="fa-solid fa-file-lines"></i> Cost Sheet
+                          </button>
+                        )}
                         {anyOrderProcurementNotReady && (
                           <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-600 uppercase bg-rose-50 px-3 py-1.5 rounded-lg">
                             <i className="fa-solid fa-circle-exclamation"></i>
@@ -1775,6 +1994,24 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 title="View Price History"
                               >
                                 <i className="fa-solid fa-clock-rotate-left"></i>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const entries = o.items
+                                    .filter(item => item.productionType === 'OUTSOURCING')
+                                    .map(item => ({
+                                      itemId: item.id,
+                                      orderNumber: item.orderNumber,
+                                      description: item.description,
+                                      costSheetText: item.costSheetText || '',
+                                      costSheetFileName: item.costSheetFileName
+                                    }));
+                                  openCostSheetModal(o);
+                                }}
+                                className="p-3 text-slate-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
+                                title="Open editable cost sheet for this order"
+                              >
+                                <i className="fa-solid fa-file-lines"></i>
                               </button>
                             </div>
 
@@ -1941,7 +2178,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             {['WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '') && activeTab === 'outsourcing' && (
                               <div className="flex items-center gap-2 pt-2 border-t border-slate-100 w-full justify-end">
                                 <button
-                                  onClick={() => setReplacementModalInfo({ order: o, item: i, comp: c })}
+                                  onClick={() => {
+                                    setReplacementModalInfo({ order: o, item: i, comp: c });
+                                    setReplacementRequestMode('REPLACE');
+                                    setReplacementStartDate(new Date().toISOString().split('T')[0]);
+                                    setReplacementReason('');
+                                    setReplacementCommittedPayment('');
+                                    setReplacementNewMonthlyRate('');
+                                    setReplacementAddedResourceQty('1');
+                                    setReplacementAddResourcePayment('');
+                                    setReplacementPostponePayment('');
+                                    setReplacementDateError('');
+                                    setReplacementOptionError('');
+                                  }}
                                   className="px-3 py-1.5 bg-violet-100 border border-violet-100 text-violet-700 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-violet-200 hover:border-violet-200 transition-all flex items-center gap-1.5"
                                   title="Request Resource Replacement"
                                 >
@@ -2483,7 +2732,136 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
               </div>
             )
           }
-          
+
+          {costSheetModalOrder && (
+            <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-700 bg-slate-950 text-white">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Cost Sheet</div>
+                  <div className="text-xl font-black">Order {costSheetModalOrder.internalOrderNumber}</div>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  {costSheetWorkbook && (
+                    <div className="text-[11px] uppercase tracking-widest text-slate-300">Sheet: {costSheetSheetName || 'Sheet1'}</div>
+                  )}
+                  <button
+                    onClick={() => setCostSheetModalOrder(null)}
+                    className="px-4 py-2 rounded-2xl border border-slate-700 bg-slate-800 text-sm text-slate-200 hover:bg-slate-700 transition-all"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex h-full flex-col overflow-hidden">
+                <div className="flex flex-wrap gap-2 px-6 py-4 border-b border-slate-700 bg-slate-950 overflow-x-auto">
+                  {costSheetModalEntries.map(entry => (
+                    <button
+                      key={entry.itemId}
+                      onClick={() => {
+                        const item = costSheetModalOrder.items.find(i => i.id === entry.itemId);
+                        if (item) loadCostSheetItem(item);
+                      }}
+                      className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase transition-all ${costSheetModalSelectedItemId === entry.itemId ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700'}`}
+                    >
+                      {entry.orderNumber}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex-1 overflow-hidden p-6 bg-slate-900">
+                  <div className="flex flex-col gap-4 h-full overflow-hidden rounded-3xl bg-white shadow-xl">
+                    <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Selected Outsourcing Item</div>
+                        <div className="text-sm font-black text-slate-800 mt-1">
+                          {getCurrentCostSheetItem(costSheetModalOrder, costSheetModalSelectedItemId)?.description || 'No item selected'}
+                        </div>
+                      </div>
+                      {costSheetParseError && (
+                        <div className="rounded-3xl bg-rose-50 border border-rose-100 p-3 text-rose-700 text-sm font-bold">
+                          {costSheetParseError}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex-1 overflow-auto p-5">
+                      {costSheetWorkbook ? (
+                        <div className="min-w-full overflow-auto">
+                          <table className="min-w-full border-separate border-spacing-0">
+                            <thead>
+                              <tr className="bg-slate-100">
+                                <th className="sticky left-0 z-20 bg-slate-100 border-r border-slate-200 px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
+                                {Array.from({ length: Math.max(...costSheetMatrix.map(row => row.length), 0) }, (_, colIndex) => (
+                                  <th key={colIndex} className="border-b border-slate-200 px-3 py-2 text-left text-[11px] font-black text-slate-500">
+                                    {String.fromCharCode(65 + (colIndex % 26))}{colIndex >= 26 ? String.fromCharCode(65 + Math.floor(colIndex / 26) - 1) : ''}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {costSheetMatrix.map((row, rowIndex) => (
+                                <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-slate-50' : 'bg-white'}>
+                                  <td className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 text-right px-3 py-2 text-[11px] font-black text-slate-500">
+                                    {rowIndex + 1}
+                                  </td>
+                                  {Array.from({ length: Math.max(...costSheetMatrix.map(r => r.length), 0) }, (_, colIndex) => (
+                                    <td key={colIndex} className="border border-slate-200 p-0">
+                                      <input
+                                        value={row[colIndex] === undefined || row[colIndex] === null ? '' : String(row[colIndex])}
+                                        onChange={e => updateCostSheetCell(rowIndex, colIndex, e.target.value)}
+                                        className="w-full min-w-[120px] h-12 px-3 text-sm text-slate-800 bg-white outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-500 border-none"
+                                      />
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="h-full flex items-center justify-center rounded-3xl bg-slate-50 p-10 text-center text-slate-500">
+                          <div>
+                            <p className="font-black mb-2">No Excel cost sheet attached for this item.</p>
+                            <p className="text-sm">Upload an Excel cost sheet in Technical Review or choose another outsourcing item.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-4 border-t border-slate-200 px-5 py-4 bg-slate-50">
+                      <button
+                        onClick={() => setCostSheetModalOrder(null)}
+                        className="w-full md:w-auto px-6 py-4 text-[10px] font-black uppercase rounded-3xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        disabled={!costSheetWorkbook || !costSheetFileChanged || isCostSheetSaving}
+                        onClick={async () => {
+                          if (!costSheetModalOrder || !costSheetModalSelectedItemId || !costSheetWorkbook || !costSheetSheetName) return;
+                          setIsCostSheetSaving(true);
+                          try {
+                            await commitEditedCostSheet();
+                            await fetchData();
+                            setCostSheetModalOrder(null);
+                          } catch (error: any) {
+                            alert(error.message || 'Failed to save edited cost sheet');
+                          } finally {
+                            setIsCostSheetSaving(false);
+                          }
+                        }}
+                        className="w-full md:w-auto px-6 py-4 text-[10px] font-black uppercase rounded-3xl bg-violet-600 text-white hover:bg-violet-700 transition-all shadow-lg disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
+                      >
+                        {isCostSheetSaving ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : <i className="fa-solid fa-save mr-2"></i>}Save Sheet
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* --- Resource Replacement Modal --- */}
           {replacementModalInfo && (
             <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
@@ -2535,32 +2913,57 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                 </div>
 
                 <div className="space-y-6">
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{t('procurement.replacement.reasonForReplacement')}</label>
-                    <textarea
-                      value={replacementReason}
-                      onChange={e => setReplacementReason(e.target.value)}
-                      className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-medium text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all custom-scrollbar h-32"
-                      placeholder={t('procurement.replacement.reasonPlaceholder')}
-                    ></textarea>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { value: 'REPLACE', label: 'Replace Resource' },
+                      { value: 'ADD_RESOURCE', label: 'Add Resource' },
+                      { value: 'POSTPONE', label: 'Postpone Contract' }
+                    ].map(tab => (
+                      <button
+                        key={tab.value}
+                        type="button"
+                        onClick={() => {
+                          setReplacementRequestMode(tab.value as ReplacementRequestMode);
+                          setReplacementOptionError('');
+                        }}
+                        className={`px-4 py-3 rounded-3xl text-[10px] font-black uppercase tracking-wider transition-all ${replacementRequestMode === tab.value ? 'bg-violet-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
                   </div>
+
+                  {replacementOptionError && (
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-700 text-sm font-bold">
+                      {replacementOptionError}
+                    </div>
+                  )}
+
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{t('procurement.replacement.newResourceStartDate')}</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                      {replacementRequestMode === 'ADD_RESOURCE'
+                        ? 'New Resource Start Date'
+                        : replacementRequestMode === 'POSTPONE'
+                          ? 'Requested Postpone Date'
+                          : t('procurement.replacement.newResourceStartDate')}
+                    </label>
                     <input
                       type="date"
-                      value={replacementStartDate}
+                      min={replacementModalToday}
+                      value={replacementStartDateValue}
                       onChange={e => {
                         const newDate = e.target.value;
                         setReplacementStartDate(newDate);
                         
-                        // Validate immediately
                         if (newDate) {
-                          const contractStart = new Date(replacementModalInfo.comp.contractStartDate || new Date());
+                          const contractStart = new Date(replacementModalInfo?.comp.contractStartDate || new Date());
                           const newResourceStart = new Date(newDate);
                           const now = new Date();
                           
-                          if (contractStart < now && newResourceStart < contractStart) {
-                            setReplacementDateError('❌ Resource start date cannot be earlier than contract start date (2/3/2026)');
+                          if (newResourceStart < new Date(replacementModalToday)) {
+                            setReplacementDateError('Please choose a date starting from today.');
+                          } else if (contractStart < now && newResourceStart < contractStart) {
+                            setReplacementDateError('Resource start date cannot be earlier than the contract start date that already began.');
                           } else {
                             setReplacementDateError('');
                           }
@@ -2568,11 +2971,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           setReplacementDateError('');
                         }
                       }}
-                      className={`w-full border-2 rounded-2xl p-4 text-sm font-black text-slate-700 outline-none transition-all uppercase ${
-                        replacementDateError 
-                          ? 'bg-rose-50 border-rose-300 focus:border-rose-500' 
-                          : 'bg-slate-50 border-slate-100 focus:border-violet-500 focus:bg-violet-50/30'
-                      }`}
+                      className={`w-full border-2 rounded-2xl p-4 text-sm font-black text-slate-700 outline-none transition-all uppercase ${replacementDateError ? 'bg-rose-50 border-rose-300 focus:border-rose-500' : 'bg-slate-50 border-slate-100 focus:border-violet-500 focus:bg-violet-50/30'}`}
                     />
                     {replacementDateError && (
                       <p className="text-rose-600 text-[10px] font-bold mt-2 flex items-center gap-1">
@@ -2580,6 +2979,92 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       </p>
                     )}
                   </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                      {replacementRequestMode === 'ADD_RESOURCE'
+                        ? 'Detailed Reason for Resources Addition'
+                        : replacementRequestMode === 'POSTPONE'
+                          ? 'Detailed Reason for Postpone'
+                          : t('procurement.replacement.reasonForReplacement')}
+                    </label>
+                    <textarea
+                      value={replacementReason}
+                      onChange={e => setReplacementReason(e.target.value)}
+                      className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-medium text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all custom-scrollbar h-32"
+                      placeholder={t('procurement.replacement.reasonPlaceholder')}
+                    ></textarea>
+                  </div>
+
+                  {replacementRequestMode === 'REPLACE' && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Monthly Committed Payment</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={replacementCommittedPayment || replacementDefaultMonthlyPayment.toFixed(2)}
+                          onChange={e => setReplacementCommittedPayment(e.target.value)}
+                          className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-black text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all"
+                        />
+                        <p className="text-[9px] text-slate-500 mt-2">Auto calculated as total contract cost ÷ contract duration.</p>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">New Monthly Rate</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={replacementNewMonthlyRate || replacementDefaultMonthlyPayment.toFixed(2)}
+                          onChange={e => setReplacementNewMonthlyRate(e.target.value)}
+                          className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-black text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all"
+                        />
+                        <p className="text-[9px] text-slate-500 mt-2">Editable monthly rate based on the existing contract cost.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {replacementRequestMode === 'ADD_RESOURCE' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Quantity to Add</label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={replacementAddedResourceQty}
+                            onChange={e => setReplacementAddedResourceQty(e.target.value)}
+                            className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-black text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Payment</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={replacementAddResourcePayment || replacementDefaultAddResourcePayment.toFixed(2)}
+                            onChange={e => setReplacementAddResourcePayment(e.target.value)}
+                            className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-black text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-slate-500 mt-1">Payment is auto calculated as ((added resources × unit cost) ÷ (contract duration × remaining days in month)).</p>
+                    </div>
+                  )}
+
+                  {replacementRequestMode === 'POSTPONE' && (
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Payment</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={replacementPostponePayment || replacementDefaultMonthlyPayment.toFixed(2)}
+                        onChange={e => setReplacementPostponePayment(e.target.value)}
+                        className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-sm font-black text-slate-700 outline-none focus:border-violet-500 focus:bg-violet-50/30 transition-all"
+                      />
+                      <p className="text-[9px] text-slate-500 mt-2">Auto calculated as total contract cost ÷ contract duration.</p>
+                    </div>
+                  )}
 
                   {/* Option to update all contract dates if future contract */}
                   {replacementStartDate && !getContractStartStatus().isInPast && (
@@ -2592,7 +3077,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           className="w-5 h-5 accent-blue-600"
                         />
                         <span className="text-[11px] font-bold text-blue-900">
-                          Move all contract start dates in this order to {new Date(replacementStartDate).toLocaleDateString('en-US')}
+                          Move all contract start dates in this order to {new Date(replacementStartDateValue).toLocaleDateString('en-US')}
                         </span>
                       </label>
                       <p className="text-[9px] text-blue-700 mt-2 ml-8">
@@ -2764,9 +3249,43 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           </tr>
 
                           <tr>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>New Resource Start Date</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Request Type</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#0ea5e9' }}>{replacementRequestMode === 'REPLACE' ? 'Replace Resource' : replacementRequestMode === 'ADD_RESOURCE' ? 'Add Resource' : 'Postpone Contract'}</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Requested Effective Date</td>
                             <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#0ea5e9' }}>{replacementStartDate ? new Date(replacementStartDate).toLocaleDateString('en-GB') : '-'}</td>
                           </tr>
+                          {replacementRequestMode === 'REPLACE' && (
+                            <tr>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Committed Payment</td>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementCommittedPayment || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
+                            </tr>
+                          )}
+                          {replacementRequestMode === 'REPLACE' && (
+                            <tr>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>New Monthly Rate</td>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementNewMonthlyRate || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
+                            </tr>
+                          )}
+                          {replacementRequestMode === 'ADD_RESOURCE' && (
+                            <tr>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Added Quantity</td>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementAddedResourceQty || '0'}</td>
+                            </tr>
+                          )}
+                          {replacementRequestMode === 'ADD_RESOURCE' && (
+                            <tr>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Calculated Payment</td>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementAddResourcePayment || replacementDefaultAddResourcePayment.toFixed(2)} LE</td>
+                            </tr>
+                          )}
+                          {replacementRequestMode === 'POSTPONE' && (
+                            <tr>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Payment</td>
+                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementPostponePayment || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
+                            </tr>
+                          )}
                           {updateAllContractDates && (
                             <tr>
                               <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#dbeafe', color: '#0c4a6e' }}>All Contracts Updated</td>
