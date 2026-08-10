@@ -319,6 +319,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [costSheetFileChanged, setCostSheetFileChanged] = useState(false);
   const [costSheetParseError, setCostSheetParseError] = useState<string | null>(null);
   const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
+  const [costSheetFullscreen, setCostSheetFullscreen] = useState<boolean>(false);
 
   const openCostSheetModal = async (order: CustomerOrder) => {
     let freshOrder = order;
@@ -420,6 +421,28 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64' })}`;
     await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx');
     setCostSheetFileChanged(false);
+  };
+
+  const toggleCostSheetFullscreen = async () => {
+    if (!document.fullscreenElement) {
+      const modal = document.getElementById('cost-sheet-fullscreen-modal');
+      if (modal) {
+        try {
+          await modal.requestFullscreen();
+          setCostSheetFullscreen(true);
+        } catch (err) {
+          console.warn('Cost sheet fullscreen request failed', err);
+          setCostSheetFullscreen(false);
+        }
+      }
+    } else {
+      try {
+        await document.exitFullscreen();
+      } catch (err) {
+        console.warn('Exit fullscreen failed', err);
+      }
+      setCostSheetFullscreen(false);
+    }
   };
 
   const companyName = config.settings.companyName || 'Nexus ERP';
@@ -2849,7 +2872,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           }
 
           {costSheetModalOrder && (
-            <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex flex-col overflow-hidden">
+            <div id="cost-sheet-fullscreen-modal" className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex flex-col overflow-hidden">
               <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-700 bg-slate-950 text-white">
                 <div>
                   <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Cost Sheet</div>
@@ -2859,6 +2882,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   {costSheetWorkbook && (
                     <div className="text-[11px] uppercase tracking-widest text-slate-300">Sheet: {costSheetSheetName || 'Sheet1'}</div>
                   )}
+                  <button
+                    onClick={toggleCostSheetFullscreen}
+                    className="px-4 py-2 rounded-2xl border border-slate-700 bg-slate-800 text-sm text-slate-200 hover:bg-slate-700 transition-all"
+                  >
+                    {costSheetFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                  </button>
                   <button
                     onClick={() => setCostSheetModalOrder(null)}
                     className="px-4 py-2 rounded-2xl border border-slate-700 bg-slate-800 text-sm text-slate-200 hover:bg-slate-700 transition-all"
@@ -2900,20 +2929,20 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       )}
                     </div>
 
-                    <div className="flex-1 overflow-auto p-5">
+                    <div className="flex-1 overflow-auto">
                       {costSheetWorkbook ? (
-                        <div className="min-w-full overflow-auto">
+                        <div className="min-w-full p-5 bg-white">
                           <table className="min-w-full border-separate border-spacing-0">
                             <thead>
                               <tr className="bg-slate-100">
-                                <th className="sticky left-0 z-20 bg-slate-100 border-r border-slate-200 px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
+                                <th className="sticky top-0 left-0 z-50 bg-slate-100 border-r border-slate-200 px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
                                 {Array.from({ length: Math.max(...costSheetCells.map(row => row.length), 0) }, (_, colIndex) => {
                                   const columnNumber = colIndex + costSheetColOffset;
                                   const name = columnNumber < 26
                                     ? String.fromCharCode(65 + columnNumber)
                                     : String.fromCharCode(65 + Math.floor(columnNumber / 26) - 1) + String.fromCharCode(65 + (columnNumber % 26));
                                   return (
-                                    <th key={colIndex} className="border-b border-slate-200 px-3 py-2 text-left text-[11px] font-black text-slate-500">
+                                    <th key={colIndex} className="sticky top-0 z-40 border-b border-slate-200 bg-slate-100 px-3 py-2 text-left text-[11px] font-black text-slate-500">
                                       {name}
                                     </th>
                                   );
