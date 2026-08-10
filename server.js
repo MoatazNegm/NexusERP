@@ -2314,6 +2314,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const ucsItem = order.items[ucsItemIdx];
                 ucsItem.costSheetFile = payload.costSheetFile || undefined;
                 ucsItem.costSheetFileName = payload.costSheetFileName || undefined;
+                ucsItem.costSheetEditableCells = payload.costSheetEditableCells || undefined;
                 order.logs.push(createAuditLog(`Item ${ucsItem.orderNumber || ucsItemIdx + 1}: ${payload.costSheetFile ? `Cost sheet uploaded (${payload.costSheetFileName})` : 'Cost sheet removed'}`, order.status, user));
                 break;
             }

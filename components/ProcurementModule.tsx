@@ -124,7 +124,7 @@ const evaluateCostSheetFormula = (formula: string, cells: CostSheetCell[][], row
   }
 };
 
-const parseCostSheetDataUrl = (dataUrl: string) => {
+const parseCostSheetDataUrl = (dataUrl: string, persistedEditableCells?: string[]) => {
   const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
   const workbook = XLSX.read(base64, { type: 'base64', cellStyles: true, cellNF: true });
   const sheetName = workbook.SheetNames[0] || '';
@@ -132,6 +132,9 @@ const parseCostSheetDataUrl = (dataUrl: string) => {
   const cells: CostSheetCell[][] = [];
   let rowOffset = 0;
   let colOffset = 0;
+
+  // Normalize persisted editable cell addresses (e.g. "B2", "C5") to a Set for fast lookup
+  const editableSet = new Set((persistedEditableCells || []).map(addr => String(addr).toUpperCase()));
 
   if (sheet && sheet['!ref']) {
     const range = XLSX.utils.decode_range(sheet['!ref']);
@@ -145,7 +148,11 @@ const parseCostSheetDataUrl = (dataUrl: string) => {
         const value = cell?.v != null ? cell.v : '';
         const formula = cell?.f;
         const styleSource = cell?.s || cell?.style || cell;
-        const isEditable = isGreenFill(styleSource);
+        // Prefer persisted editable-cell metadata (survives xlsx style-lossy writes),
+        // fall back to green-fill detection for the original upload.
+        const isEditable = editableSet.size > 0
+          ? editableSet.has(address.toUpperCase())
+          : isGreenFill(styleSource);
         rowCells.push({ address, value, formula, isEditable });
       }
       cells.push(rowCells);
@@ -370,7 +377,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     }
 
     try {
-      const { workbook, sheetName, cells, rowOffset, colOffset } = parseCostSheetDataUrl(item.costSheetFile);
+      const { workbook, sheetName, cells, rowOffset, colOffset } = parseCostSheetDataUrl(item.costSheetFile, item.costSheetEditableCells);
       setCostSheetWorkbook(workbook);
       setCostSheetSheetName(sheetName);
       setCostSheetCells(cells);
@@ -418,8 +425,20 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       });
     });
 
-    const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64' })}`;
-    await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx');
+    // Collect the addresses of all editable cells so they can be persisted
+    // separately. The xlsx community edition (0.18.5) cannot write cell styles,
+    // so the green fill is lost on save — this metadata survives the round-trip.
+    const editableCellAddresses: string[] = [];
+    costSheetCells.forEach((row, rowIndex) => {
+      row.forEach((cell, colIndex) => {
+        if (!cell.isEditable) return;
+        const address = XLSX.utils.encode_cell({ r: rowIndex + costSheetRowOffset, c: colIndex + costSheetColOffset });
+        editableCellAddresses.push(address);
+      });
+    });
+
+    const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64', cellStyles: true })}`;
+    await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx', editableCellAddresses);
     setCostSheetFileChanged(false);
   };
 
@@ -2998,8 +3017,15 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           setIsCostSheetSaving(true);
                           try {
                             await commitEditedCostSheet();
+                            // Refresh the order data so the persisted editable-cell metadata is available
+                            const freshOrder = await dataService.getOrderById(costSheetModalOrder.id);
+                            setCostSheetModalOrder(freshOrder);
+                            // Reload the current item so editable cells are correctly applied
+                            const currentItem = freshOrder.items.find(i => i.id === costSheetModalSelectedItemId);
+                            if (currentItem) {
+                              loadCostSheetItem(currentItem);
+                            }
                             await fetchData();
-                            setCostSheetModalOrder(null);
                           } catch (error: any) {
                             alert(error.message || 'Failed to save edited cost sheet');
                           } finally {

@@ -223,6 +223,7 @@ export interface CustomerOrderItem {
   costSheetFile?: string;
   costSheetFileName?: string;
   costSheetText?: string;
+  costSheetEditableCells?: string[];
 }
 
 export interface InventoryItem {
