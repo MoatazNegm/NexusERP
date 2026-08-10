@@ -50,14 +50,105 @@ const sanitizeFileName = (value: string) => {
     .replace(/^-+|-+$/g, '');
 };
 
+interface CostSheetCell {
+  address: string;
+  value: string | number;
+  formula?: string;
+  isEditable: boolean;
+}
+
+const columnIndexFromName = (name: string): number => {
+  let index = 0;
+  for (let i = 0; i < name.length; i += 1) {
+    index = index * 26 + (name.charCodeAt(i) - 65 + 1);
+  }
+  return index - 1;
+};
+
+const isGreenFill = (style: any): boolean => {
+  if (!style) return false;
+  const fill = style.fill || style;
+  const color = fill.fgColor || fill.bgColor || fill.fg || fill.color || fill;
+  const rgb = String(color?.rgb || color?.theme || color?.indexed || '').toLowerCase();
+  const pattern = String(fill.patternType || fill.pattern || '').toLowerCase();
+  return (
+    rgb.includes('00ff00') ||
+    rgb.includes('c6efce') ||
+    rgb.includes('92d050') ||
+    rgb.includes('a9d08e') ||
+    rgb.includes('e2efda') ||
+    pattern.includes('solid')
+  );
+};
+
+const getCostSheetCellNumericValue = (cell: CostSheetCell | undefined): number => {
+  if (!cell) return 0;
+  if (typeof cell.value === 'number') return cell.value;
+  const parsed = parseFloat(cell.value as string);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
+const evaluateCostSheetFormula = (formula: string, cells: CostSheetCell[][]): string | number => {
+  if (!formula) return '';
+  let expression = formula.startsWith('=') ? formula.slice(1) : formula;
+
+  const rangeSum = expression.replace(/SUM\(\s*([A-Z]+)(\d+):([A-Z]+)(\d+)\s*\)/gi, (_match, col1, row1, col2, row2) => {
+    const startRow = parseInt(row1, 10) - 1;
+    const endRow = parseInt(row2, 10) - 1;
+    const startCol = columnIndexFromName(col1);
+    const endCol = columnIndexFromName(col2);
+    let sum = 0;
+    for (let r = Math.min(startRow, endRow); r <= Math.max(startRow, endRow); r += 1) {
+      for (let c = Math.min(startCol, endCol); c <= Math.max(startCol, endCol); c += 1) {
+        sum += getCostSheetCellNumericValue(cells[r]?.[c]);
+      }
+    }
+    return String(sum);
+  });
+
+  expression = rangeSum.replace(/\b([A-Z]+)(\d+)\b/g, (_match, col, row) => {
+    const r = parseInt(row, 10) - 1;
+    const c = columnIndexFromName(col);
+    return String(getCostSheetCellNumericValue(cells[r]?.[c]));
+  });
+
+  const safe = expression.replace(/[^0-9+\-*/()., ]/g, '');
+  try {
+    const result = Function(`"use strict"; return (${safe})`)();
+    if (typeof result === 'number' && !isNaN(result)) {
+      return Math.round(result);
+    }
+    return String(result);
+  } catch {
+    return expression;
+  }
+};
+
 const parseCostSheetDataUrl = (dataUrl: string) => {
   const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-  const workbook = XLSX.read(base64, { type: 'base64' });
+  const workbook = XLSX.read(base64, { type: 'base64', cellStyles: true, cellNF: true });
   const sheetName = workbook.SheetNames[0] || '';
-  const matrix = sheetName
-    ? (XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' }) as Array<Array<string | number | null>>)
-    : [];
-  return { workbook, sheetName, matrix };
+  const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
+  const cells: CostSheetCell[][] = [];
+
+  if (sheet && sheet['!ref']) {
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    for (let row = range.s.r; row <= range.e.r; row += 1) {
+      const rowCells: CostSheetCell[] = [];
+      for (let col = range.s.c; col <= range.e.c; col += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: col });
+        const cell = sheet[address];
+        const value = cell?.v != null ? cell.v : '';
+        const formula = cell?.f;
+        const styleSource = cell?.s || cell?.style || cell;
+        const isEditable = isGreenFill(styleSource);
+        rowCells.push({ address, value, formula, isEditable });
+      }
+      cells.push(rowCells);
+    }
+  }
+
+  return { workbook, sheetName, cells };
 };
 
 const getCurrentCostSheetItem = (order: CustomerOrder | null, selectedItemId: string | null) => {
@@ -218,7 +309,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [costSheetModalSelectedItemId, setCostSheetModalSelectedItemId] = useState<string | null>(null);
   const [costSheetWorkbook, setCostSheetWorkbook] = useState<XLSX.WorkBook | null>(null);
   const [costSheetSheetName, setCostSheetSheetName] = useState<string>('');
-  const [costSheetMatrix, setCostSheetMatrix] = useState<(string | number)[][]>([]);
+  const [costSheetCells, setCostSheetCells] = useState<CostSheetCell[][]>([]);
   const [costSheetFileChanged, setCostSheetFileChanged] = useState(false);
   const [costSheetParseError, setCostSheetParseError] = useState<string | null>(null);
   const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
@@ -252,7 +343,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     } else {
       setCostSheetWorkbook(null);
       setCostSheetSheetName('');
-      setCostSheetMatrix([]);
+      setCostSheetCells([]);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
     }
@@ -263,34 +354,34 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (!item.costSheetFile) {
       setCostSheetWorkbook(null);
       setCostSheetSheetName('');
-      setCostSheetMatrix([]);
+      setCostSheetCells([]);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
       return;
     }
 
     try {
-      const { workbook, sheetName, matrix } = parseCostSheetDataUrl(item.costSheetFile);
+      const { workbook, sheetName, cells } = parseCostSheetDataUrl(item.costSheetFile);
       setCostSheetWorkbook(workbook);
       setCostSheetSheetName(sheetName);
-      setCostSheetMatrix((matrix as Array<Array<string | number | null>>).map(row => row.map(cell => (cell == null ? '' : cell))));
+      setCostSheetCells(cells);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
     } catch (err) {
       setCostSheetWorkbook(null);
       setCostSheetSheetName('');
-      setCostSheetMatrix([]);
+      setCostSheetCells([]);
       setCostSheetParseError('Unable to parse the attached Excel cost sheet.');
       setCostSheetFileChanged(false);
     }
   };
 
   const updateCostSheetCell = (rowIndex: number, colIndex: number, value: string) => {
-    setCostSheetMatrix(prev => {
-      const next = prev.map(r => [...r]);
-      while (next.length <= rowIndex) next.push([]);
-      while (next[rowIndex].length <= colIndex) next[rowIndex].push('');
-      next[rowIndex][colIndex] = value;
+    setCostSheetCells(prev => {
+      const next = prev.map(r => r.map(c => ({ ...c })));
+      if (next[rowIndex] && next[rowIndex][colIndex] && next[rowIndex][colIndex].isEditable) {
+        next[rowIndex][colIndex].value = value;
+      }
       return next;
     });
     setCostSheetFileChanged(true);
@@ -300,9 +391,21 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (!costSheetModalOrder || !costSheetModalSelectedItemId || !costSheetWorkbook || !costSheetSheetName) return;
     const item = costSheetModalOrder.items.find(i => i.id === costSheetModalSelectedItemId);
     if (!item) return;
-    const updatedWorkbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.aoa_to_sheet(costSheetMatrix);
-    XLSX.utils.book_append_sheet(updatedWorkbook, worksheet, costSheetSheetName || 'Sheet1');
+
+    const updatedWorkbook = JSON.parse(JSON.stringify(costSheetWorkbook)) as XLSX.WorkBook;
+    const worksheet = updatedWorkbook.Sheets[costSheetSheetName] as XLSX.WorkSheet;
+    if (!worksheet) return;
+
+    costSheetCells.forEach(row => {
+      row.forEach(cell => {
+        if (!cell.isEditable) return;
+        const worksheetCell = worksheet[cell.address] || { t: 's', v: '' };
+        worksheetCell.v = cell.value;
+        worksheetCell.t = typeof cell.value === 'number' ? 'n' : 's';
+        worksheet[cell.address] = worksheetCell;
+      });
+    });
+
     const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64' })}`;
     await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx');
   };
@@ -2792,7 +2895,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <thead>
                               <tr className="bg-slate-100">
                                 <th className="sticky left-0 z-20 bg-slate-100 border-r border-slate-200 px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
-                                {Array.from({ length: Math.max(...costSheetMatrix.map(row => row.length), 0) }, (_, colIndex) => (
+                                {Array.from({ length: Math.max(...costSheetCells.map(row => row.length), 0) }, (_, colIndex) => (
                                   <th key={colIndex} className="border-b border-slate-200 px-3 py-2 text-left text-[11px] font-black text-slate-500">
                                     {String.fromCharCode(65 + (colIndex % 26))}{colIndex >= 26 ? String.fromCharCode(65 + Math.floor(colIndex / 26) - 1) : ''}
                                   </th>
@@ -2800,20 +2903,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               </tr>
                             </thead>
                             <tbody>
-                              {costSheetMatrix.map((row, rowIndex) => (
+                              {costSheetCells.map((row, rowIndex) => (
                                 <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-slate-50' : 'bg-white'}>
                                   <td className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 text-right px-3 py-2 text-[11px] font-black text-slate-500">
                                     {rowIndex + 1}
                                   </td>
-                                  {Array.from({ length: Math.max(...costSheetMatrix.map(r => r.length), 0) }, (_, colIndex) => (
-                                    <td key={colIndex} className="border border-slate-200 p-0">
-                                      <input
-                                        value={row[colIndex] === undefined || row[colIndex] === null ? '' : String(row[colIndex])}
-                                        onChange={e => updateCostSheetCell(rowIndex, colIndex, e.target.value)}
-                                        className="w-full min-w-[120px] h-12 px-3 text-sm text-slate-800 bg-white outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-500 border-none"
-                                      />
-                                    </td>
-                                  ))}
+                                  {Array.from({ length: Math.max(...costSheetCells.map(r => r.length), 0) }, (_, colIndex) => {
+                                    const cell = row[colIndex] || { address: '', value: '', formula: undefined, isEditable: false };
+                                    const displayValue = cell.formula ? evaluateCostSheetFormula(cell.formula, costSheetCells) : cell.value;
+                                    return (
+                                      <td key={colIndex} className="border border-slate-200 p-0">
+                                        <input
+                                          readOnly={!cell.isEditable}
+                                          value={displayValue === undefined || displayValue === null ? '' : String(displayValue)}
+                                          onChange={e => updateCostSheetCell(rowIndex, colIndex, e.target.value)}
+                                          className={`w-full min-w-[120px] h-12 px-3 text-sm outline-none focus:ring-2 focus:border-sky-500 border-none ${cell.isEditable ? 'text-slate-800 bg-emerald-50' : 'text-slate-500 bg-slate-100 cursor-not-allowed'}`}
+                                        />
+                                      </td>
+                                    );
+                                  })}
                                 </tr>
                               ))}
                             </tbody>
