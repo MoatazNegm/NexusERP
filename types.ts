@@ -224,6 +224,7 @@ export interface CustomerOrderItem {
   costSheetFileName?: string;
   costSheetText?: string;
   costSheetEditableCells?: string[];
+  costSheetCellColors?: Record<string, string>;
 }
 
 export interface InventoryItem {
