@@ -269,8 +269,8 @@ class DataService {
     return this.dispatchAction(orderId, 'set-production-type', { itemId, type });
   }
 
-  async uploadCostSheet(orderId: string, itemId: string, costSheetFile: string | null, costSheetFileName: string | null) {
-    return this.dispatchAction(orderId, 'upload-cost-sheet', { itemId, costSheetFile, costSheetFileName });
+  async uploadCostSheet(orderId: string, itemId: string, costSheetFile: string | null, costSheetFileName: string | null, costSheetEditableCells?: string[], costSheetCellColors?: Record<string, string>) {
+    return this.dispatchAction(orderId, 'upload-cost-sheet', { itemId, costSheetFile, costSheetFileName, costSheetEditableCells, costSheetCellColors });
   }
 
   async updateCostSheetText(orderId: string, itemId: string, costSheetText: string | null) {

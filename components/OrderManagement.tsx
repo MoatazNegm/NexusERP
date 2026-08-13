@@ -175,6 +175,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [paymentSlaDays, setPaymentSlaDays] = useState(config.settings.defaultPaymentSlaDays);
   const [appliesWithholdingTax, setAppliesWithholdingTax] = useState(false);
   const [blanketOrder, setBlanketOrder] = useState(false);
+  const [projectName, setProjectName] = useState('');
   const [blanketContractId, setBlanketContractId] = useState('');
   const [deliveryInputMode, setDeliveryInputMode] = useState<'days' | 'date'>('days');
   const [targetDeliveryDays, setTargetDeliveryDays] = useState<number | ''>(30);
@@ -371,6 +372,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
     setBlanketOrder(match.blanketOrder || false);
+    setProjectName(match.projectName || '');
     setBlanketContractId(match.blanketContractId || '');
     setContractId(match.contractId || '');
     const loadedDeliveryDays = match.targetDeliveryDays || 30;
@@ -752,6 +754,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setPaymentSlaDays(config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(false);
     setBlanketOrder(false);
+    setProjectName('');
     setBlanketContractId('');
     setContractId('');
     setTargetDeliveryDays(30);
@@ -865,7 +868,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       };
 
       if (editingOrderId) {
-        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, blanketContractId, contractId, currency, conversionRate, items: normalizedItems as any });
+        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, projectName, blanketContractId, contractId, currency, conversionRate, items: normalizedItems as any });
         try {
           const uploadResult = await tryStorageUpload(updatedOrder as any);
           if (uploadResult.googleDrive?.webViewLink) {
@@ -913,6 +916,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           paymentSlaDays,
           appliesWithholdingTax,
           blanketOrder,
+          projectName,
           blanketContractId,
           contractId,
           currency,
@@ -1472,6 +1476,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   {/* Blanket Contract ID select (rendered only inside blanket orders tab) */}
                   {activeTab === 'blanket' && (
                     <div className="flex flex-row gap-4 items-start">
+                      <div className="flex-2 space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Project Name</label>
+                        <input
+                          disabled={editStatus.isFrozen}
+                          className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
+                          placeholder="e.g. Project Alpha"
+                          value={projectName}
+                          onChange={e => setProjectName(e.target.value)}
+                        />
+                      </div>
                       <div className="flex-2 space-y-1.5">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Linked Contract Reference</label>
                         <select

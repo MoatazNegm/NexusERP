@@ -25,7 +25,7 @@ const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
       const ratio = (img.naturalHeight / img.naturalWidth) || 0.5;
       canvas.width = targetWidth;
       canvas.height = targetWidth * ratio;
-      
+
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.fillStyle = '#ffffff'; // Ensure white background for transparency conversion
@@ -50,14 +50,209 @@ const sanitizeFileName = (value: string) => {
     .replace(/^-+|-+$/g, '');
 };
 
-const parseCostSheetDataUrl = (dataUrl: string) => {
+interface CostSheetCell {
+  address: string;
+  value: string | number;
+  formula?: string;
+  isEditable: boolean;
+  /** Background fill color extracted from Excel, as a #rrggbb hex string or undefined */
+  bgColor?: string;
+  /** Foreground (font) color extracted from Excel, as a #rrggbb hex string or undefined */
+  fontColor?: string;
+  /** Font bold flag from Excel */
+  fontBold?: boolean;
+}
+
+const columnIndexFromName = (name: string): number => {
+  let index = 0;
+  for (let i = 0; i < name.length; i += 1) {
+    index = index * 26 + (name.charCodeAt(i) - 65 + 1);
+  }
+  return index - 1;
+};
+
+const isGreenFill = (style: any): boolean => {
+  if (!style) return false;
+  const fill = style.fill || style;
+  const color = fill.fgColor || fill.bgColor || fill.fg || fill.color || fill;
+  const rgb = String(color?.rgb || color?.theme || color?.indexed || '').toLowerCase();
+  const pattern = String(fill.patternType || fill.pattern || '').toLowerCase();
+  return (
+    rgb.includes('00ff00') ||
+    rgb.includes('c6efce') ||
+    rgb.includes('92d050') ||
+    rgb.includes('a9d08e') ||
+    rgb.includes('e2efda') ||
+    pattern.includes('solid')
+  );
+};
+
+const THEME_PALETTE: Record<number, string> = {
+  0: '#FFFFFF',
+  1: '#000000',
+  2: '#E7E6E6',
+  3: '#44546A',
+  4: '#5B9BD5',
+  5: '#ED7D31',
+  6: '#A5A5A5',
+  7: '#FFC000',
+  8: '#4472C4',
+  9: '#70AD47'
+};
+
+const INDEXED_COLORS: Record<number, string> = {
+  8: '#000000', 9: '#FFFFFF', 10: '#FF0000', 11: '#00FF00', 12: '#0000FF', 13: '#FFFF00', 14: '#FF00FF', 15: '#00FFFF',
+  16: '#800000', 17: '#008000', 18: '#000080', 19: '#808000', 20: '#800080', 21: '#008080', 22: '#C0C0C0', 23: '#808080',
+  24: '#9999FF', 25: '#993366', 26: '#FFFFCC', 27: '#CCFFFF', 28: '#660066', 29: '#FF8080', 30: '#0066CC', 31: '#CCCCFF',
+  40: '#00CCFF', 41: '#CCFFFF', 42: '#CCFFCC', 43: '#FFFF99', 44: '#99CCFF', 45: '#FF9980', 46: '#CC99FF', 47: '#FFCC99',
+  48: '#3366FF', 49: '#33CCCC', 50: '#99CC00', 51: '#FFCC00', 52: '#FF9900', 53: '#FF6600', 54: '#666699', 55: '#969696'
+};
+
+const applyTint = (hex: string, tint?: number): string => {
+  if (!tint || tint === 0) return hex;
+  let r = parseInt(hex.slice(1, 3), 16);
+  let g = parseInt(hex.slice(3, 5), 16);
+  let b = parseInt(hex.slice(5, 7), 16);
+  if (tint > 0) {
+    r = Math.round(r + (255 - r) * tint);
+    g = Math.round(g + (255 - g) * tint);
+    b = Math.round(b + (255 - b) * tint);
+  } else {
+    r = Math.round(r * (1 + tint));
+    g = Math.round(g * (1 + tint));
+    b = Math.round(b * (1 + tint));
+  }
+  const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0').toUpperCase();
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+};
+
+/**
+ * Extract a #rrggbb hex color string from an xlsx cell style color object.
+ * Supports direct ARGB/RGB strings, Excel Theme palette + Tints, and Indexed colors.
+ */
+const extractHexColor = (colorObj: any): string | undefined => {
+  if (!colorObj) return undefined;
+  const raw = String(colorObj.rgb || colorObj.RGB || '').toUpperCase();
+  if (raw.length === 8) {
+    if (raw.slice(0, 2) === '00') return undefined;
+    return '#' + raw.slice(2);
+  }
+  if (raw.length === 6) return '#' + raw;
+  if (colorObj.theme !== undefined && THEME_PALETTE[colorObj.theme]) {
+    return applyTint(THEME_PALETTE[colorObj.theme], colorObj.tint);
+  }
+  if (colorObj.indexed !== undefined && INDEXED_COLORS[colorObj.indexed]) {
+    return INDEXED_COLORS[colorObj.indexed];
+  }
+  return undefined;
+};
+
+/**
+ * Extract the background fill color from an xlsx cell style object.
+ */
+const getCellBgColor = (style: any): string | undefined => {
+  if (!style) return undefined;
+  const fill = (style.fill != null) ? style.fill : style;
+  const patternType = String(fill?.patternType || '').toLowerCase();
+  if (patternType === 'none') return undefined;
+  if (!fill?.fgColor && !fill?.bgColor) return undefined;
+  const fromFg = extractHexColor(fill?.fgColor);
+  if (fromFg) return fromFg;
+  return extractHexColor(fill?.bgColor);
+};
+
+/**
+ * Extract the font color from an xlsx cell style object.
+ */
+const getCellFontColor = (style: any): string | undefined => {
+  if (!style?.font?.color) return undefined;
+  return extractHexColor(style.font.color);
+};
+
+const getCostSheetCellNumericValue = (cell: CostSheetCell | undefined): number => {
+  if (!cell) return 0;
+  if (typeof cell.value === 'number') return cell.value;
+  const parsed = parseFloat(cell.value as string);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
+const evaluateCostSheetFormula = (formula: string, cells: CostSheetCell[][], rowOffset = 0, colOffset = 0): string | number => {
+  if (!formula) return '';
+  let expression = formula.startsWith('=') ? formula.slice(1) : formula;
+
+  const rangeSum = expression.replace(/SUM\(\s*([A-Z]+)(\d+):([A-Z]+)(\d+)\s*\)/gi, (_match, col1, row1, col2, row2) => {
+    const startRow = parseInt(row1, 10) - 1 - rowOffset;
+    const endRow = parseInt(row2, 10) - 1 - rowOffset;
+    const startCol = columnIndexFromName(col1) - colOffset;
+    const endCol = columnIndexFromName(col2) - colOffset;
+    let sum = 0;
+    for (let r = Math.min(startRow, endRow); r <= Math.max(startRow, endRow); r += 1) {
+      for (let c = Math.min(startCol, endCol); c <= Math.max(startCol, endCol); c += 1) {
+        sum += getCostSheetCellNumericValue(cells[r]?.[c]);
+      }
+    }
+    return String(sum);
+  });
+
+  expression = rangeSum.replace(/\b([A-Z]+)(\d+)\b/g, (_match, col, row) => {
+    const r = parseInt(row, 10) - 1 - rowOffset;
+    const c = columnIndexFromName(col) - colOffset;
+    return String(getCostSheetCellNumericValue(cells[r]?.[c]));
+  });
+
+  const safe = expression.replace(/[^0-9+\-*/()., ]/g, '');
+  try {
+    const result = Function(`"use strict"; return (${safe})`)();
+    if (typeof result === 'number' && !isNaN(result)) {
+      // Round to 2 decimal places to preserve cost-sheet precision
+      return Math.round(result * 100) / 100;
+    }
+    return String(result);
+  } catch {
+    return expression;
+  }
+};
+
+const parseCostSheetDataUrl = (dataUrl: string, persistedEditableCells?: string[], persistedCellColors?: Record<string, string>) => {
   const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-  const workbook = XLSX.read(base64, { type: 'base64' });
+  const workbook = XLSX.read(base64, { type: 'base64', cellStyles: true, cellNF: true });
   const sheetName = workbook.SheetNames[0] || '';
-  const matrix = sheetName
-    ? (XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' }) as Array<Array<string | number | null>>)
-    : [];
-  return { workbook, sheetName, matrix };
+  const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
+  const cells: CostSheetCell[][] = [];
+  let rowOffset = 0;
+  let colOffset = 0;
+
+  // Normalize persisted editable cell addresses (e.g. "B2", "C5") to a Set for fast lookup
+  const editableSet = new Set((persistedEditableCells || []).map(addr => String(addr).toUpperCase()));
+
+  if (sheet && sheet['!ref']) {
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    rowOffset = range.s.r;
+    colOffset = range.s.c;
+    for (let row = range.s.r; row <= range.e.r; row += 1) {
+      const rowCells: CostSheetCell[] = [];
+      for (let col = range.s.c; col <= range.e.c; col += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: col });
+        const cell = sheet[address];
+        const value = cell?.v != null ? cell.v : '';
+        const formula = cell?.f;
+        const styleSource = cell?.s || cell?.style || cell;
+        // Prefer persisted editable-cell metadata (survives xlsx style-lossy writes),
+        // fall back to green-fill detection for the original upload.
+        const isEditable = editableSet.size > 0
+          ? editableSet.has(address.toUpperCase())
+          : isGreenFill(styleSource);
+        const extractedBg = getCellBgColor(styleSource);
+        const bgColor = extractedBg || (persistedCellColors ? persistedCellColors[address.toUpperCase()] : undefined);
+        const fontColor = getCellFontColor(styleSource);
+        const fontBold = styleSource?.font?.bold === true;
+        rowCells.push({ address, value, formula, isEditable, bgColor, fontColor, fontBold });
+      }
+      cells.push(rowCells);
+    }
+  }
+
+  return { workbook, sheetName, cells, rowOffset, colOffset };
 };
 
 const getCurrentCostSheetItem = (order: CustomerOrder | null, selectedItemId: string | null) => {
@@ -84,25 +279,25 @@ const hasReachedPoReadiness = (status: string | undefined): boolean => {
  */
 const calculateContractEndDate = (startDate: string, duration: string): Date | null => {
   if (!startDate || !duration) return null;
-  
+
   try {
     const start = new Date(startDate);
     if (isNaN(start.getTime())) return null;
-    
+
     // Parse duration string (e.g., "12 Months" or "1 Years")
     const durationMatch = duration.match(/(\d+)\s*(Month|Year)s?/i);
     if (!durationMatch) return null;
-    
+
     const amount = parseInt(durationMatch[1], 10);
     const unit = durationMatch[2].toLowerCase();
-    
+
     const end = new Date(start);
     if (unit === 'month') {
       end.setMonth(end.getMonth() + amount);
     } else if (unit === 'year') {
       end.setFullYear(end.getFullYear() + amount);
     }
-    
+
     return end;
   } catch {
     return null;
@@ -218,10 +413,31 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [costSheetModalSelectedItemId, setCostSheetModalSelectedItemId] = useState<string | null>(null);
   const [costSheetWorkbook, setCostSheetWorkbook] = useState<XLSX.WorkBook | null>(null);
   const [costSheetSheetName, setCostSheetSheetName] = useState<string>('');
-  const [costSheetMatrix, setCostSheetMatrix] = useState<(string | number)[][]>([]);
+  const [costSheetCells, setCostSheetCells] = useState<CostSheetCell[][]>([]);
+  const [costSheetRowOffset, setCostSheetRowOffset] = useState<number>(0);
+  const [costSheetColOffset, setCostSheetColOffset] = useState<number>(0);
   const [costSheetFileChanged, setCostSheetFileChanged] = useState(false);
   const [costSheetParseError, setCostSheetParseError] = useState<string | null>(null);
   const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
+  const [isCostSheetUploading, setIsCostSheetUploading] = useState(false);
+  const costSheetFileInputRef = useRef<HTMLInputElement>(null);
+  const [costSheetFullscreen, setCostSheetFullscreen] = useState<boolean>(false);
+  // Frozen header measurement for the cost-sheet grid (rows 2-4 + column A stay fixed).
+  const costSheetTheadRef = useRef<HTMLTableSectionElement>(null);
+  const costSheetStubRef = useRef<HTMLTableCellElement>(null);
+  const costSheetRowRef = useRef<HTMLTableRowElement>(null);
+  const [costSheetFrozenTop, setCostSheetFrozenTop] = useState(0);
+  const [costSheetFrozenLeft, setCostSheetFrozenLeft] = useState(0);
+  const [costSheetRowHeight, setCostSheetRowHeight] = useState(0);
+
+  useEffect(() => {
+    if (!costSheetWorkbook) return;
+    requestAnimationFrame(() => {
+      if (costSheetTheadRef.current) setCostSheetFrozenTop(costSheetTheadRef.current.offsetHeight);
+      if (costSheetStubRef.current) setCostSheetFrozenLeft(costSheetStubRef.current.offsetWidth);
+      if (costSheetRowRef.current) setCostSheetRowHeight(costSheetRowRef.current.offsetHeight);
+    });
+  }, [costSheetWorkbook, costSheetSheetName]);
 
   const openCostSheetModal = async (order: CustomerOrder) => {
     let freshOrder = order;
@@ -252,7 +468,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     } else {
       setCostSheetWorkbook(null);
       setCostSheetSheetName('');
-      setCostSheetMatrix([]);
+      setCostSheetCells([]);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
     }
@@ -263,34 +479,38 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (!item.costSheetFile) {
       setCostSheetWorkbook(null);
       setCostSheetSheetName('');
-      setCostSheetMatrix([]);
+      setCostSheetCells([]);
+      setCostSheetRowOffset(0);
+      setCostSheetColOffset(0);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
       return;
     }
 
     try {
-      const { workbook, sheetName, matrix } = parseCostSheetDataUrl(item.costSheetFile);
+      const { workbook, sheetName, cells, rowOffset, colOffset } = parseCostSheetDataUrl(item.costSheetFile, item.costSheetEditableCells, item.costSheetCellColors);
       setCostSheetWorkbook(workbook);
       setCostSheetSheetName(sheetName);
-      setCostSheetMatrix((matrix as Array<Array<string | number | null>>).map(row => row.map(cell => (cell == null ? '' : cell))));
+      setCostSheetCells(cells);
+      setCostSheetRowOffset(rowOffset);
+      setCostSheetColOffset(colOffset);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
     } catch (err) {
       setCostSheetWorkbook(null);
       setCostSheetSheetName('');
-      setCostSheetMatrix([]);
+      setCostSheetCells([]);
       setCostSheetParseError('Unable to parse the attached Excel cost sheet.');
       setCostSheetFileChanged(false);
     }
   };
 
   const updateCostSheetCell = (rowIndex: number, colIndex: number, value: string) => {
-    setCostSheetMatrix(prev => {
-      const next = prev.map(r => [...r]);
-      while (next.length <= rowIndex) next.push([]);
-      while (next[rowIndex].length <= colIndex) next[rowIndex].push('');
-      next[rowIndex][colIndex] = value;
+    setCostSheetCells(prev => {
+      const next = prev.map(r => r.map(c => ({ ...c })));
+      if (next[rowIndex] && next[rowIndex][colIndex] && next[rowIndex][colIndex].isEditable && !next[rowIndex][colIndex].formula) {
+        next[rowIndex][colIndex].value = value;
+      }
       return next;
     });
     setCostSheetFileChanged(true);
@@ -300,11 +520,87 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (!costSheetModalOrder || !costSheetModalSelectedItemId || !costSheetWorkbook || !costSheetSheetName) return;
     const item = costSheetModalOrder.items.find(i => i.id === costSheetModalSelectedItemId);
     if (!item) return;
-    const updatedWorkbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.aoa_to_sheet(costSheetMatrix);
-    XLSX.utils.book_append_sheet(updatedWorkbook, worksheet, costSheetSheetName || 'Sheet1');
-    const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64' })}`;
-    await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx');
+
+    const updatedWorkbook = JSON.parse(JSON.stringify(costSheetWorkbook)) as XLSX.WorkBook;
+    const worksheet = updatedWorkbook.Sheets[costSheetSheetName] as XLSX.WorkSheet;
+    if (!worksheet) return;
+
+    costSheetCells.forEach((row, rowIndex) => {
+      row.forEach((cell, colIndex) => {
+        if (!cell.isEditable || cell.formula) return;
+        const address = XLSX.utils.encode_cell({ r: rowIndex + costSheetRowOffset, c: colIndex + costSheetColOffset });
+        const worksheetCell = worksheet[address] || { t: 's', v: '' };
+        worksheetCell.v = cell.value;
+        worksheetCell.t = typeof cell.value === 'number' ? 'n' : 's';
+        worksheet[address] = worksheetCell;
+      });
+    });
+
+    // Collect the addresses of all editable cells so they can be persisted
+    // separately. The xlsx community edition (0.18.5) cannot write cell styles,
+    // so the green fill is lost on save — this metadata survives the round-trip.
+    const editableCellAddresses: string[] = [];
+    const cellColorsMap: Record<string, string> = {};
+    costSheetCells.forEach((row, rowIndex) => {
+      row.forEach((cell, colIndex) => {
+        const address = XLSX.utils.encode_cell({ r: rowIndex + costSheetRowOffset, c: colIndex + costSheetColOffset });
+        if (cell.isEditable && !cell.formula) {
+          editableCellAddresses.push(address);
+        }
+        if (cell.bgColor) {
+          cellColorsMap[address.toUpperCase()] = cell.bgColor;
+        }
+      });
+    });
+
+    const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64', cellStyles: true })}`;
+    await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx', editableCellAddresses, cellColorsMap);
+    setCostSheetFileChanged(false);
+  };
+
+  const handleCostSheetFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !costSheetModalOrder || !costSheetModalSelectedItemId) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const result = evt.target?.result as string;
+      try {
+        setIsCostSheetUploading(true);
+        const updated = await dataService.uploadCostSheet(costSheetModalOrder.id, costSheetModalSelectedItemId, result, file.name);
+        setCostSheetModalOrder(updated);
+        const updatedItem = updated.items.find(i => i.id === costSheetModalSelectedItemId);
+        if (updatedItem) loadCostSheetItem(updatedItem);
+        await fetchData();
+      } catch (err: any) {
+        alert(err.message || 'Failed to upload cost sheet');
+      } finally {
+        setIsCostSheetUploading(false);
+        if (costSheetFileInputRef.current) costSheetFileInputRef.current.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const toggleCostSheetFullscreen = async () => {
+    if (!document.fullscreenElement) {
+      const modal = document.getElementById('cost-sheet-fullscreen-modal');
+      if (modal) {
+        try {
+          await modal.requestFullscreen();
+          setCostSheetFullscreen(true);
+        } catch (err) {
+          console.warn('Cost sheet fullscreen request failed', err);
+          setCostSheetFullscreen(false);
+        }
+      }
+    } else {
+      try {
+        await document.exitFullscreen();
+      } catch (err) {
+        console.warn('Exit fullscreen failed', err);
+      }
+      setCostSheetFullscreen(false);
+    }
   };
 
   const companyName = config.settings.companyName || 'Nexus ERP';
@@ -317,9 +613,9 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [contractStartDate, setContractStartDate] = useState<string>('');
   const [allowPastContractStart, setAllowPastContractStart] = useState<boolean>(false);
   const [resetReason, setResetReason] = useState<string>('');
-  
+
   // Replacement Request Modal States
-  const [replacementModalInfo, setReplacementModalInfo] = useState<{order: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent} | null>(null);
+  const [replacementModalInfo, setReplacementModalInfo] = useState<{ order: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent } | null>(null);
   const [replacementRequestMode, setReplacementRequestMode] = useState<ReplacementRequestMode>('REPLACE');
   const [replacementReason, setReplacementReason] = useState<string>('');
   const [replacementStartDate, setReplacementStartDate] = useState<string>('');
@@ -333,7 +629,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [replacementOptionError, setReplacementOptionError] = useState<string>('');
   const replacementTemplateRef = useRef<HTMLDivElement>(null);
   const [isReplacementPdfGenerating, setIsReplacementPdfGenerating] = useState<boolean>(false);
-  
+
   const replacementModalToday = new Date().toISOString().split('T')[0];
   const replacementStartDateValue = replacementStartDate || replacementModalToday;
   const replacementDurationMonths = replacementModalInfo ? parseDurationMonths(replacementModalInfo.comp.contractDuration || '') : 0;
@@ -349,7 +645,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [reviveDuration, setReviveDuration] = useState<string>('');
   const [reviveMode, setReviveMode] = useState<'EXTENSION' | 'END_DATE'>('EXTENSION');
   const [reviveEndDate, setReviveEndDate] = useState<string>('');
-  
+
   const deriveOutsourcingContractInfo = (components: { item: CustomerOrderItem; comp: ManufacturingComponent }[]) => {
     const outsourcingComp = components.find(({ item, comp }) => item.productionType === 'OUTSOURCING' && (comp.contractNumber || comp.componentNumber || comp.contractStartDate));
     return {
@@ -393,8 +689,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     const [o, s] = await Promise.all([dataService.getOrders(), dataService.getSuppliers()]);
     setAllOrders(o);
     const eligibleOrders = o.filter(order => [
-      OrderStatus.WAITING_SUPPLIERS, 
-      OrderStatus.NEGATIVE_MARGIN, 
+      OrderStatus.WAITING_SUPPLIERS,
+      OrderStatus.NEGATIVE_MARGIN,
       OrderStatus.TECHNICAL_REVIEW,
       OrderStatus.WAITING_FACTORY,
       OrderStatus.MANUFACTURING
@@ -417,7 +713,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         });
       });
     });
-    
+
     return Array.from(map.values()).sort((a, b) => {
       let aVal: any = '';
       let bVal: any = '';
@@ -456,7 +752,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         });
       });
     });
-    
+
     return Array.from(map.values()).sort((a, b) => {
       let aVal: any = '';
       let bVal: any = '';
@@ -509,7 +805,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       // Fetch fresh data to ensure contractStartDate and other fields are up-to-date
       const freshOrders = await dataService.getOrders();
       const freshOrder = freshOrders.find(o => o.id === order.id);
-      
+
       if (!freshOrder) {
         alert("Order not found. Please refresh and try again.");
         return;
@@ -575,7 +871,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           if (element.nodeType !== 1) return; // Skip non-element nodes
 
           const computedStyles = window.getComputedStyle(element);
-          
+
           // List of CSS properties to copy (camelCase for bracket-notation access)
           const stylesToCopy = [
             'display', 'position', 'width', 'height', 'minWidth', 'minHeight',
@@ -616,7 +912,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
           // Remove classes to prevent stylesheet lookups
           element.removeAttribute('class');
-          
+
           // Process children
           for (let i = 0; i < element.children.length; i++) {
             convertToInlineStyles(element.children[i] as HTMLElement);
@@ -775,10 +1071,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         if (selectedCompIds.length === 0) throw new Error("At least one component must be selected");
 
         // Check if any selected components are from outsourced items
-        const anyOutsourced = multiComps.some(({ item: mi, comp: mc }) => 
+        const anyOutsourced = multiComps.some(({ item: mi, comp: mc }) =>
           selectedCompIds.includes(mc.id!) && mi.productionType === 'OUTSOURCING'
         );
-        
+
         if (anyOutsourced && !contractStartDate.trim()) {
           throw new Error("Contract Start Date is required for outsourcing items");
         }
@@ -797,11 +1093,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           components: componentsToDispatch,
           poNumber: poNumberInput
         };
-        
+
         if (contractStartDate && contractStartDate.trim()) {
           payload.contractStartDate = contractStartDate.trim();
         }
-        
+
         if (contractNumber && contractNumber.trim()) {
           payload.contractNumber = contractNumber.trim();
         }
@@ -834,10 +1130,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         await dataService.updateComponent(order.id, item.id, comp.id!, updates);
       } else if (type === 'REVIVE_CONTRACT') {
         if (!reviveReason.trim()) throw new Error("Reason is mandatory");
-        
+
         let finalDuration = '';
         const originalDurationNum = parseInt(comp.contractDuration || '0') || 0;
-        
+
         if (reviveMode === 'EXTENSION') {
           const extensionNum = parseInt(reviveDuration) || 0;
           if (extensionNum <= 0) throw new Error("Extension months must be greater than zero");
@@ -847,7 +1143,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           const start = new Date(comp.contractStartDate || '');
           const end = new Date(reviveEndDate);
           if (end <= start) throw new Error("New end date must be after original start date");
-          
+
           const diffMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
           if (diffMonths <= originalDurationNum) throw new Error("New end date must result in a longer duration than the original");
           finalDuration = diffMonths + " Months";
@@ -947,7 +1243,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     const currentContractStart = new Date(replacementModalInfo.comp.contractStartDate || new Date());
     const newResourceStart = new Date(replacementStartDate);
     const now = new Date();
-    
+
     // Check if current contract start date is in the past
     if (currentContractStart < now && newResourceStart < currentContractStart) {
       setReplacementDateError('Resource start date cannot be earlier than the contract start date that already began.');
@@ -988,12 +1284,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     setIsReplacementPdfGenerating(true);
     try {
       const { order, item, comp } = replacementModalInfo;
-      
+
       // Step 1: Generate PDF snapshot using the safe clone & scrub technique
       console.log('Step 1: Generating PDF...');
       const h2c = (await import('html2canvas')).default;
       if (!replacementTemplateRef.current) throw new Error("Template not ready");
-      
+
       const printTarget = replacementTemplateRef.current;
       const clonedElement = printTarget.cloneNode(true) as HTMLElement;
       clonedElement.style.position = 'fixed';
@@ -1036,7 +1332,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           } catch (e) { /* skip */ }
         }
         element.removeAttribute('class');
-        
+
         for (let i = 0; i < element.children.length; i++) {
           if (originalElement.children[i]) {
             convertToInlineStyles(element.children[i] as HTMLElement, originalElement.children[i] as HTMLElement);
@@ -1056,7 +1352,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         backgroundColor: '#ffffff',
         allowTaint: true
       });
-      
+
       document.body.removeChild(clonedElement);
 
       const imgData = canvas.toDataURL('image/png');
@@ -1078,9 +1374,9 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       let parsedDur = parseFloat(durationStr);
       let remainingDurationStr = durationStr;
       if (!isNaN(parsedDur)) {
-         remainingDurationStr = `${Math.max(0, parsedDur - diffMonths)} months remaining`;
+        remainingDurationStr = `${Math.max(0, parsedDur - diffMonths)} months remaining`;
       } else {
-         remainingDurationStr = `Elapsed approx ${Math.max(0, diffMonths)} months`;
+        remainingDurationStr = `Elapsed approx ${Math.max(0, diffMonths)} months`;
       }
 
       const newHistory = [...(comp.replacementHistory || [])];
@@ -1117,21 +1413,21 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
       // Step 3: Update component with replacement history
       console.log('Step 3: Updating component with order:', order.id, 'item:', item.id, 'comp:', comp.id);
-      
+
       let finalContractStartDate = comp.contractStartDate || '';
       if (updateAllContractDates && currentContractStart > now) {
         finalContractStartDate = replacementStartDate;
       }
-      
+
       console.log('Update payload:', { originalStartDate: comp.originalStartDate || comp.contractStartDate || '', contractStartDate: finalContractStartDate, replacementHistory: newHistory });
-      
+
       await dataService.updateComponent(order.id, item.id, comp.id!, {
         originalStartDate: comp.originalStartDate || comp.contractStartDate || '',
         contractStartDate: finalContractStartDate,
         replacementHistory: newHistory
       });
       console.log('Component updated successfully');
-      
+
       // If we need to update other components' contract start dates
       if (updateAllContractDates && currentContractStart > now) {
         console.log('Step 4: Updating all other components contract dates...');
@@ -1141,7 +1437,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
               if (c.id && c.contractStartDate !== replacementStartDate) {
                 await dataService.updateComponent(order.id, itm.id, c.id, {
                   contractStartDate: replacementStartDate
-                }).catch(() => {});
+                }).catch(() => { });
               }
             }
           }
@@ -1162,7 +1458,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       console.log('Step 5: Fetching updated data...');
       await fetchData();
       console.log('Resource replacement request submitted successfully!');
-    } catch(e) {
+    } catch (e) {
       console.error('Resource replacement error:', e);
       const errorMsg = (e as any)?.response?.data?.message || (e as any)?.message || 'Unknown error occurred';
       alert(`Failed to submit resource replacement request: ${errorMsg}`);
@@ -1266,27 +1562,27 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     <div className="space-y-6">
       {/* Tab Bar */}
       <div className="flex items-center gap-3">
-      <LanguageToggle />
-      <div className="flex gap-1 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 w-fit">
-        <button
-          onClick={() => setActiveTab('purchases')}
-          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'purchases' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
-        >
-          <i className="fa-solid fa-truck-field mr-2"></i> {t('procurement.tabs.sourcing') || 'Trade/Manufacture'}
-        </button>
-        <button
-          onClick={() => setActiveTab('outsourcing')}
-          className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'outsourcing' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
-        >
-          <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Blanket Orders'}
-        </button>
-<button
-           onClick={() => setActiveTab('history')}
-           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'history' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
-         >
-           <i className="fa-solid fa-clock-rotate-left mr-2"></i> {t('procurement.tabs.history') || 'History'}
-         </button>
-      </div>
+        <LanguageToggle />
+        <div className="flex gap-1 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 w-fit">
+          <button
+            onClick={() => setActiveTab('purchases')}
+            className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'purchases' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+          >
+            <i className="fa-solid fa-truck-field mr-2"></i> {t('procurement.tabs.sourcing') || 'Trade/Manufacture'}
+          </button>
+          <button
+            onClick={() => setActiveTab('outsourcing')}
+            className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'outsourcing' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+          >
+            <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Blanket Orders'}
+          </button>
+          <button
+            onClick={() => setActiveTab('history')}
+            className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'history' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
+          >
+            <i className="fa-solid fa-clock-rotate-left mr-2"></i> {t('procurement.tabs.history') || 'History'}
+          </button>
+        </div>
       </div>
 
       {activeTab === 'history' ? (
@@ -1301,11 +1597,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                 {/* Determine if this is an outsourcing RFP */}
                 {(() => {
                   const compsToRender = rfpPrintData ? rfpPrintData.comps : activeAction!.order.items.flatMap(ci => (ci.components || [])).filter(comp => rfpCompSelection.includes(comp.id || ''));
-                  const relatedItems = rfpPrintData 
+                  const relatedItems = rfpPrintData
                     ? rfpPrintData.comps.map(c => activeAction?.order.items.find(i => i.components?.some(comp => comp.id === c.id)) || null).filter(Boolean) as CustomerOrderItem[]
                     : activeAction!.order.items.filter(i => i.components?.some(c => rfpCompSelection.includes(c.id || '')));
                   const isOutsourcing = relatedItems.some(item => item?.productionType === 'OUTSOURCING');
-                  
+
                   return (
                     <>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '48px' }}>
@@ -1336,7 +1632,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       </div>
 
                       <div className="p-6 rounded-2xl border-2 mb-10 text-sm font-bold leading-relaxed" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#334155' }}>
-                        {isOutsourcing 
+                        {isOutsourcing
                           ? <p>{t("procurement.rfp.pleaseProvideServiceOffer") || "Please provide your best commercial offer and estimated timeline for the services listed below."} Ensure your quotation clearly states service rates, duration, and total amounts, excluding taxes. If applicable, please attach service scope documentation or qualifications.</p>
                           : <p>{t("procurement.rfp.pleaseProvideOffer") || "Please provide your best commercial offer and lead time for the components listed below."} Ensure your quotation clearly states unit prices and total amounts, excluding taxes. If applicable, please attach technical data sheets or compliance certificates.</p>
                         }
@@ -1395,57 +1691,57 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <div className="col-span-2 p-3">{t("common.quantity") || "Quantity"}</div>
                           </div>
 
-                           {rfpPrintData ? (
-                             rfpPrintData.comps.map((comp, idx) => {
-                               // For trading/manufacturing components, always use componentNumber as the manufacturer part number
-                               // componentNumber is auto-generated in technical review and stored in database
-                               const manufacturerPartNum = comp.componentNumber || comp.supplierPartNumber || 'TBD';
-                               return (
-                                 <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
-                                   <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
-                                   <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
-                                     <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
-                                     <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
-                                     {comp.componentNumber && !comp.contractNumber && (
-                                       <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
-                                     )}
-                                   </div>
-                                   <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
-                                     {comp.contractNumber || manufacturerPartNum}
-                                   </div>
-                                   <div className="col-span-2 p-4 font-black">
-                                     {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
-                                   </div>
-                                 </div>
-                               );
-                             })
-                           ) : (
-                             activeAction!.order.items.flatMap(ci => (ci.components || []))
-                               .filter(comp => rfpCompSelection.includes(comp.id || ''))
-                               .map((comp, idx) => {
-                                 // For trading/manufacturing components, always use componentNumber as the manufacturer part number
-                                 // componentNumber is auto-generated in technical review and stored in database
-                                 const manufacturerPartNum = comp.componentNumber || comp.supplierPartNumber || 'TBD';
-                                 return (
-                                   <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
-                                     <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
-                                     <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
-                                       <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
-                                       <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
-                                       {comp.componentNumber && !comp.contractNumber && (
-                                         <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
-                                       )}
-                                     </div>
-                                     <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
-                                       {comp.contractNumber || manufacturerPartNum}
-                                     </div>
-                                     <div className="col-span-2 p-4 font-black">
-                                       {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
-                                     </div>
-                                   </div>
-                                 );
-                               })
-                           )}
+                          {rfpPrintData ? (
+                            rfpPrintData.comps.map((comp, idx) => {
+                              // For trading/manufacturing components, always use componentNumber as the manufacturer part number
+                              // componentNumber is auto-generated in technical review and stored in database
+                              const manufacturerPartNum = comp.componentNumber || comp.supplierPartNumber || 'TBD';
+                              return (
+                                <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
+                                  <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
+                                  <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
+                                    <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
+                                    <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
+                                    {comp.componentNumber && !comp.contractNumber && (
+                                      <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
+                                    )}
+                                  </div>
+                                  <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
+                                    {comp.contractNumber || manufacturerPartNum}
+                                  </div>
+                                  <div className="col-span-2 p-4 font-black">
+                                    {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            activeAction!.order.items.flatMap(ci => (ci.components || []))
+                              .filter(comp => rfpCompSelection.includes(comp.id || ''))
+                              .map((comp, idx) => {
+                                // For trading/manufacturing components, always use componentNumber as the manufacturer part number
+                                // componentNumber is auto-generated in technical review and stored in database
+                                const manufacturerPartNum = comp.componentNumber || comp.supplierPartNumber || 'TBD';
+                                return (
+                                  <div key={comp.id} className="grid grid-cols-12 border-b text-center text-sm last:border-b-0" style={{ borderColor: '#e2e8f0' }}>
+                                    <div className="col-span-1 p-4 border-r-2 font-mono font-bold" style={{ borderColor: '#0f172a', color: '#94a3b8' }}>{idx + 1}</div>
+                                    <div className="col-span-6 p-4 border-r-2 text-left" style={{ borderColor: '#0f172a' }}>
+                                      <div className="font-black text-xs leading-relaxed"><span className="font-bold">Component:</span> {comp.description}</div>
+                                      <div className="font-black text-xs leading-relaxed mt-2"><span className="font-bold">Description:</span> {comp.scopeOfWork || comp.description}</div>
+                                      {comp.componentNumber && !comp.contractNumber && (
+                                        <div className="text-[9px] font-bold mt-2 uppercase tracking-widest" style={{ color: '#64748b' }}>(Internal P#: {comp.componentNumber})</div>
+                                      )}
+                                    </div>
+                                    <div className="col-span-3 p-4 border-r-2 font-mono font-bold text-xs" style={{ borderColor: '#0f172a', color: '#1e40af' }}>
+                                      {comp.contractNumber || manufacturerPartNum}
+                                    </div>
+                                    <div className="col-span-2 p-4 font-black">
+                                      {comp.quantity} <span className="text-[9px] font-bold uppercase tracking-widest ml-1" style={{ color: '#94a3b8' }}>{comp.unit}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                          )}
                         </div>
                       )}
 
@@ -1465,7 +1761,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
             {/* PO PDF Template */}
             {poPrintData && (
               <div ref={poTemplateRef} className="po-print-template p-10" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
-                
+
                 {/* Header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '30px', paddingBottom: '20px', borderBottom: '3px solid #0f172a' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
@@ -1527,7 +1823,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         <div style={{ fontSize: '10px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>{t('procurement.replacement.contractStartDate')}</div>
                         <div style={{ fontSize: '10px', fontWeight: 600, color: '#0f172a' }}>
                           {(() => {
-                            const dateComp = poPrintData.items.find(({ item, comp }) => 
+                            const dateComp = poPrintData.items.find(({ item, comp }) =>
                               (item.productionType === 'OUTSOURCING' || (comp as any).contractStartDate) && comp.contractStartDate
                             );
                             return dateComp ? new Date(dateComp.comp.contractStartDate!).toLocaleDateString('en-US') : 'N/A';
@@ -1716,11 +2012,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
               <div>
                 <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-4">
                   {activeTab === 'outsourcing' ? t('procurement.outsourcingTitle') : t('procurement.title')}
-                  
+
                 </h2>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
-                  {activeTab === 'outsourcing' 
-                    ? `${t('procurement.subtitle.operationalServices')} • ${outsourcingGroups.length} ${t('procurement.subtitle.ordersPending')}` 
+                  {activeTab === 'outsourcing'
+                    ? `${t('procurement.subtitle.operationalServices')} • ${outsourcingGroups.length} ${t('procurement.subtitle.ordersPending')}`
                     : `${t('procurement.subtitle.supplyChain')} • ${purchaseGroups.length} ${t('procurement.subtitle.ordersPending')}`}
                 </p>
               </div>
@@ -1784,11 +2080,16 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             {itemsInFactoryCount > 0 && (
                               <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
                                 <i className="fa-solid fa-bolt mr-1"></i>
-{itemsInFactoryCount}/{totalItems} {t('procurement.component.factoryReady')}
+                                {itemsInFactoryCount}/{totalItems} {t('procurement.component.factoryReady')}
                               </span>
                             )}
                           </div>
                           <div className="font-black text-slate-800">{o.customerName}</div>
+                          {o.projectName && (
+                            <div className="text-[9px] font-black text-violet-600 uppercase flex items-center gap-1">
+                              <i className="fa-solid fa-diagram-project"></i> {o.projectName}
+                            </div>
+                          )}
                           <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} {t('procurement.component.components')}</div>
                         </div>
                       </div>
@@ -1883,12 +2184,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         const dynamicStatus = (() => {
                           if (activeTab !== 'outsourcing' || !c.contractStartDate || !c.contractDuration) return c.status || '';
                           const today = new Date();
-                          today.setHours(0,0,0,0);
+                          today.setHours(0, 0, 0, 0);
                           const start = new Date(c.contractStartDate);
-                          start.setHours(0,0,0,0);
+                          start.setHours(0, 0, 0, 0);
                           const end = calculateContractEndDate(c.contractStartDate, c.contractDuration);
                           if (!end) return c.status || '';
-                          end.setHours(0,0,0,0);
+                          end.setHours(0, 0, 0, 0);
 
                           if (today < start) return 'WAITING_CONTRACT_START';
                           if (today >= start && today <= end) return 'RUNNING';
@@ -1897,312 +2198,313 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                         return (
                           <div key={c.id} className="flex flex-col justify-between p-5 hover:bg-blue-50/30 transition-all group gap-3">
-                          <div className="flex gap-4 items-center w-full">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'bg-emerald-50 text-emerald-600' :
-                              dynamicStatus === 'WAITING_CONTRACT_START' ? 'bg-purple-50 text-purple-600' :
-                              dynamicStatus === 'AWARDED' ? 'bg-amber-50 text-amber-600' : 
-                              dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-50 text-rose-600' : 'bg-white text-blue-500 shadow-sm'
-                              }`}>
-                              <i className={`fa-solid ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'fa-truck-fast' : dynamicStatus === 'WAITING_CONTRACT_START' ? 'fa-calendar-check' : dynamicStatus === 'AWARDED' ? 'fa-file-signature' : dynamicStatus === 'GRACE_PERIOD' ? 'fa-hourglass-end' : 'fa-diagram-project'}`}></i>
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
-                                {c.supplierPartNumber && <span className="text-[10px] font-black text-amber-600 font-mono tracking-widest uppercase border border-amber-200 bg-amber-50 px-1 rounded">MFR P/N: {c.supplierPartNumber}</span>}
-                                <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'bg-emerald-600 text-white' :
-                                  dynamicStatus === 'WAITING_CONTRACT_START' ? 'bg-purple-600 text-white' :
-                                  dynamicStatus === 'AWARDED' ? 'bg-amber-600 text-white' : 
-                                  dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
-                                  }`}>{dynamicStatus.replace(/_/g, ' ')}</span>
-                                {c.rfpId && ['RFP_SENT', 'AWARDED'].includes(c.status || '') && (
-                                  <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
-                                    BATCH: {c.rfpId.substring(0, 6)}
-                                  </span>
-                                )}
+                            <div className="flex gap-4 items-center w-full">
+                              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'bg-emerald-50 text-emerald-600' :
+                                dynamicStatus === 'WAITING_CONTRACT_START' ? 'bg-purple-50 text-purple-600' :
+                                  dynamicStatus === 'AWARDED' ? 'bg-amber-50 text-amber-600' :
+                                    dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-50 text-rose-600' : 'bg-white text-blue-500 shadow-sm'
+                                }`}>
+                                <i className={`fa-solid ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'fa-truck-fast' : dynamicStatus === 'WAITING_CONTRACT_START' ? 'fa-calendar-check' : dynamicStatus === 'AWARDED' ? 'fa-file-signature' : dynamicStatus === 'GRACE_PERIOD' ? 'fa-hourglass-end' : 'fa-diagram-project'}`}></i>
                               </div>
-                              <div className="font-black text-slate-800 text-base tracking-tight">
-                                {c.description}
-                                {c.contractStartDate && (
-                                  <span className="ml-3 text-[9px] font-black text-purple-600 uppercase tracking-wide">
-                                    <i className="fa-solid fa-calendar-check mr-1"></i>{t('procurement.component.start')}: {new Date(c.contractStartDate).toLocaleDateString()}
-                                    {c.contractStartDate && c.contractDuration && (() => {
-                                      const endDate = calculateContractEndDate(c.contractStartDate, c.contractDuration);
-                                      return endDate ? (
-                                        <span className="text-emerald-600 ml-2">
-                                          • {t('procurement.component.end')}: {endDate.toLocaleDateString()} ✓
-                                        </span>
-                                      ) : null;
-                                    })()}
-                                    {c.contractDuration && (
-                                      <span className="text-blue-600 ml-2">
-                                        • {t('procurement.rfp.duration')}: {c.contractDuration}
-                                      </span>
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex flex-wrap gap-x-2 gap-y-1">
-                                <span>{t('procurement.component.item')}: {i.orderNumber}</span>
-                                <span>•</span>
-                                <span>{t('procurement.component.orderedQty')}: {c.quantity} {c.unit}</span>
-                                <span>•</span>
-                                <span>{t('procurement.component.cost')}: {(c.unitCost || 0).toLocaleString()} L.E.</span>
-                                {c.receivedQty !== undefined && c.receivedQty > 0 && (
-                                  <>
-                                    <span className="text-emerald-600 font-black">• {t('procurement.component.received')}: {c.receivedQty}</span>
-                                    <span className="text-amber-600 font-black">• {t('procurement.component.left')}: {Math.max(0, (c.quantity || 0) - c.receivedQty)}</span>
-                                  </>
-                                )}
-                                {c.supplierId && (
-                                  <span className="text-blue-600">
-                                    • {t('procurement.component.supplier')}: {suppliers.find(s => s.id === c.supplierId)?.name || t('procurement.component.unknown')}
-                                  </span>
-                                )}
-                              </div>
-                              <CompThreshold component={c} config={config} />
-                            </div>
-                          </div>
-                          {isContractExpired ? (
-                            <div className="flex flex-col items-end gap-2 mt-4 pt-4 border-t border-slate-100 w-full">
-                              <div className="text-[10px] font-black text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200 uppercase tracking-widest">
-                                <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>{t('procurement.component.contractExpired')}
-                              </div>
-                              <button
-                                onClick={() => setActiveAction({ type: 'REVIVE_CONTRACT', order: o, item: i, comp: c })}
-                                className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase shadow-lg hover:bg-emerald-700 transition-all flex items-center gap-2 mt-2"
-                              >
-                                <i className="fa-solid fa-heart-pulse"></i> {t('procurement.actions.reviveContract')}
-                              </button>
-                            </div>
-                          ) : (
-                            <>
-                              <div className="flex items-center gap-2 flex-wrap">
-                            <div className="flex items-center">
-                              {c.status === 'RFP_SENT' && (
-                                <button
-                                  onClick={() => setActiveAction({ type: 'RESET', order: o, item: i, comp: c })}
-                                  className="p-3 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
-                                  title="Resend RFP / Reset Component Sourcing"
-                                >
-                                  <i className="fa-solid fa-rotate-left"></i>
-                                </button>
-                              )}
-
-                              <button
-                                onClick={() => openHistory(c)}
-                                className="p-3 text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
-                                title="View Price History"
-                              >
-                                <i className="fa-solid fa-clock-rotate-left"></i>
-                              </button>
-                              <button
-                                onClick={() => {
-                                  const entries = o.items
-                                    .filter(item => item.productionType === 'OUTSOURCING')
-                                    .map(item => ({
-                                      itemId: item.id,
-                                      orderNumber: item.orderNumber,
-                                      description: item.description,
-                                      costSheetText: item.costSheetText || '',
-                                      costSheetFileName: item.costSheetFileName
-                                    }));
-                                  openCostSheetModal(o);
-                                }}
-                                className="p-3 text-slate-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
-                                title="Open editable cost sheet for this order"
-                              >
-                                <i className="fa-solid fa-file-lines"></i>
-                              </button>
-                            </div>
-
-                            {c.status === 'PENDING_OFFER' && (
-                              <button onClick={() => {
-                                setActiveAction({ type: 'RFP', order: o, item: i, comp: c });
-                                setRfpSelection(c.rfpSupplierIds || []);
-                                // Auto-select other components with the same rfpId if it exists
-                                const sameRfpIds = c.rfpId ? comps.filter(x => x.comp.rfpId === c.rfpId).map(x => x.comp.id!) : [c.id!];
-                                setRfpCompSelection(sameRfpIds);
-                              }}
-                                className="px-4 py-2 bg-slate-900 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-black transition-all"
-                              >{t('procurement.rfp.sendRfp')}</button>
-                            )}
-                            {c.status === 'RFP_SENT' && (
-                              <div className="flex items-center gap-3">
-                                <button
-                                  onClick={() => handleDownloadExistingRfp(o, c, comps)}
-                                  className="px-3 py-1.5 bg-white border border-slate-900 text-slate-900 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-slate-50 transition-all flex items-center gap-1.5"
-                                >
-                                  <i className="fa-solid fa-file-pdf"></i> {t('procurement.rfp.downloadRfp')}
-                                </button>
-                                <button onClick={() => {
-                                  const sameRfp = comps.filter(x => x.comp.status === 'RFP_SENT' && c.rfpId && x.comp.rfpId === c.rfpId);
-                                  const displayComps = sameRfp.length > 0 ? sameRfp : [comps.find(x => x.comp.id === c.id)!];
-                                  setMultiComps(displayComps);
-                                  setSelectedCompIds([c.id!]); // Default to only current one selected
-                                  setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
-                                  setAwardCosts({ [c.id!]: (c.unitCost || 0).toString() });
-                                  setAwardTaxPercent((c.taxPercent || 14).toString());
-                                }}
-                                  className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-700 transition-all"
-                                >{t('procurement.rfp.awardTender')}</button>
-                              </div>
-                            )}
-                            {c.status === 'AWARDED' && (
-                              <div className="flex flex-col items-end gap-1.5">
-                                <div className="flex items-center gap-2">
-                                  {!allOrderProcurementAwarded && (
-                                    <span className="text-[8px] font-black text-slate-400 uppercase mr-2">{t('procurement.actions.allMustBeAwarded')}</span>
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
+                                  {c.supplierPartNumber && <span className="text-[10px] font-black text-amber-600 font-mono tracking-widest uppercase border border-amber-200 bg-amber-50 px-1 rounded">MFR P/N: {c.supplierPartNumber}</span>}
+                                  <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'bg-emerald-600 text-white' :
+                                    dynamicStatus === 'WAITING_CONTRACT_START' ? 'bg-purple-600 text-white' :
+                                      dynamicStatus === 'AWARDED' ? 'bg-amber-600 text-white' :
+                                        dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
+                                    }`}>{dynamicStatus.replace(/_/g, ' ')}</span>
+                                  {c.rfpId && ['RFP_SENT', 'AWARDED'].includes(c.status || '') && (
+                                    <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
+                                      BATCH: {c.rfpId.substring(0, 6)}
+                                    </span>
                                   )}
-
-                                  {allOrderProcurementAwarded && (
-                                    <button
-                                      disabled={o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded}
-                                      onClick={async () => {
-                                        const po = await dataService.getUniquePoNumber();
-                                        setPoNumberInput(po);
-                                        const sameAwardGroup = comps.filter(x =>
-                                          x.comp.status === 'AWARDED' &&
-                                          x.comp.supplierId === c.supplierId &&
-                                          (c.awardId ? x.comp.awardId === c.awardId : true)
-                                        );
-                                        setMultiComps(sameAwardGroup);
-                                        setSelectedCompIds([c.id!]); // Default to only current
-                                        const contractInfo = deriveOutsourcingContractInfo(sameAwardGroup);
-                                        setContractNumber(contractInfo.contractNumber);
-                                        setContractStartDate(contractInfo.contractStartDate);
-                                        setActiveAction({ type: 'PO', order: o, item: i, comp: c });
-                                      }}
-                                      className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase shadow-sm transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-                                    >
-                                      Issue PO
-                                    </button>
-                                  )}
-                                  
-                                  <button
-                                    onClick={() => {
-                                      setActiveAction({ type: 'REVERT_TO_PENDING', order: o, item: i, comp: c });
-                                    }}
-                                    disabled={isActionLoading != null}
-                                    className="px-3 py-2 rounded-lg text-[9px] font-black uppercase shadow-sm transition-all bg-orange-500 text-white hover:bg-orange-600 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
-                                    title="Reset this award and return to PENDING_OFFER status"
-                                  >
-                                    Reset Award
-                                  </button>
                                 </div>
-                                {o.status === OrderStatus.NEGATIVE_MARGIN && (
-                                  <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-500 uppercase animate-pulse">
-                                    <i className="fa-solid fa-triangle-exclamation"></i>
-                                    {t('procurement.actions.financialBreach')}
+                                <div className="font-black text-slate-800 text-base tracking-tight">
+                                  {c.description}
+                                  {c.contractStartDate && (
+                                    <span className="ml-3 text-[9px] font-black text-purple-600 uppercase tracking-wide">
+                                      <i className="fa-solid fa-calendar-check mr-1"></i>{t('procurement.component.start')}: {new Date(c.contractStartDate).toLocaleDateString()}
+                                      {c.contractStartDate && c.contractDuration && (() => {
+                                        const endDate = calculateContractEndDate(c.contractStartDate, c.contractDuration);
+                                        return endDate ? (
+                                          <span className="text-emerald-600 ml-2">
+                                            • {t('procurement.component.end')}: {endDate.toLocaleDateString()} ✓
+                                          </span>
+                                        ) : null;
+                                      })()}
+                                      {c.contractDuration && (
+                                        <span className="text-blue-600 ml-2">
+                                          • {t('procurement.rfp.duration')}: {c.contractDuration}
+                                        </span>
+                                      )}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex flex-wrap gap-x-2 gap-y-1">
+                                  <span>{t('procurement.component.item')}: {i.orderNumber}</span>
+                                  <span>•</span>
+                                  <span>{t('procurement.component.orderedQty')}: {c.quantity} {c.unit}</span>
+                                  <span>•</span>
+                                  <span>{t('procurement.component.cost')}: {(c.unitCost || 0).toLocaleString()} L.E.</span>
+                                  {c.receivedQty !== undefined && c.receivedQty > 0 && (
+                                    <>
+                                      <span className="text-emerald-600 font-black">• {t('procurement.component.received')}: {c.receivedQty}</span>
+                                      <span className="text-amber-600 font-black">• {t('procurement.component.left')}: {Math.max(0, (c.quantity || 0) - c.receivedQty)}</span>
+                                    </>
+                                  )}
+                                  {c.supplierId && (
+                                    <span className="text-blue-600">
+                                      • {t('procurement.component.supplier')}: {suppliers.find(s => s.id === c.supplierId)?.name || t('procurement.component.unknown')}
+                                    </span>
+                                  )}
+                                </div>
+                                <CompThreshold component={c} config={config} />
+                              </div>
+                            </div>
+                            {isContractExpired ? (
+                              <div className="flex flex-col items-end gap-2 mt-4 pt-4 border-t border-slate-100 w-full">
+                                <div className="text-[10px] font-black text-rose-600 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200 uppercase tracking-widest">
+                                  <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>{t('procurement.component.contractExpired')}
+                                </div>
+                                <button
+                                  onClick={() => setActiveAction({ type: 'REVIVE_CONTRACT', order: o, item: i, comp: c })}
+                                  className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase shadow-lg hover:bg-emerald-700 transition-all flex items-center gap-2 mt-2"
+                                >
+                                  <i className="fa-solid fa-heart-pulse"></i> {t('procurement.actions.reviveContract')}
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <div className="flex items-center">
+                                    {c.status === 'RFP_SENT' && (
+                                      <button
+                                        onClick={() => setActiveAction({ type: 'RESET', order: o, item: i, comp: c })}
+                                        className="p-3 text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
+                                        title="Resend RFP / Reset Component Sourcing"
+                                      >
+                                        <i className="fa-solid fa-rotate-left"></i>
+                                      </button>
+                                    )}
+
+                                    <button
+                                      onClick={() => openHistory(c)}
+                                      className="p-3 text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
+                                      title="View Price History"
+                                    >
+                                      <i className="fa-solid fa-clock-rotate-left"></i>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const entries = o.items
+                                          .filter(item => item.productionType === 'OUTSOURCING')
+                                          .map(item => ({
+                                            itemId: item.id,
+                                            orderNumber: item.orderNumber,
+                                            description: item.description,
+                                            costSheetText: item.costSheetText || '',
+                                            costSheetFileName: item.costSheetFileName
+                                          }));
+                                        openCostSheetModal(o);
+                                      }}
+                                      className="p-3 text-slate-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
+                                      title="Open editable cost sheet for this order"
+                                    >
+                                      <i className="fa-solid fa-file-lines"></i>
+                                    </button>
                                   </div>
-                                )}
-                              </div>
-                            )}
-                            {c.status === 'ORDERED' && (
-                              <div className="flex items-center gap-3">
-                                <button
-                                  onClick={() => handleDownloadPO(o, c)}
-                                  className="px-3 py-1.5 bg-white border border-blue-600 text-blue-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-1.5"
-                                >
-                                  <i className="fa-solid fa-file-pdf"></i> {t('procurement.po.downloadPO')}
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    // Find all components sharing this PO number and sendPoId
-                                    const samePoBatch = comps.filter(x =>
-                                      x.comp.poNumber === c.poNumber &&
-                                      x.comp.status === 'ORDERED' &&
-                                      (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
-                                    );
-                                    setMultiComps(samePoBatch);
-                                    setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
-                                    setResetReason('');
-                                    setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
-                                  }}
-                                  disabled={isActionLoading != null}
-                                  className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-rose-700 transition-all flex items-center gap-1.5"
-                                >
-                                  <i className="fa-solid fa-ban"></i> {t('procurement.actions.cancelOrder')}
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setActiveAction({ type: 'REVERT_PO', order: o, item: i, comp: c });
-                                  }}
-                                  disabled={isActionLoading != null}
-                                  className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-600 transition-all flex items-center gap-1.5"
-                                  title="Revert this PO back to AWARDED status"
-                                >
-                                  <i className="fa-solid fa-rotate-left"></i> {t('procurement.actions.revertToAward')}
-                                </button>
-                                <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
-                                  <i className="fa-solid fa-truck-fast mr-1"></i>{t('procurement.component.inTransit')}
-                                </span>
-                              </div>
-                            )}
-                            {c.status === 'WAITING_CONTRACT_START' && (
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  onClick={() => handleDownloadPO(o, c)}
-                                  className="px-3 py-1.5 bg-white border border-purple-600 text-purple-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-purple-50 transition-all flex items-center gap-1.5"
-                                >
-                                  <i className="fa-solid fa-file-pdf"></i> Download PO
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    const samePoBatch = comps.filter(x =>
-                                      x.comp.poNumber === c.poNumber &&
-                                      x.comp.status === 'WAITING_CONTRACT_START' &&
-                                      (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
-                                    );
-                                    setMultiComps(samePoBatch);
-                                    setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
-                                    setResetReason('');
-                                    setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
-                                  }}
-                                  disabled={isActionLoading != null}
-                                  className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-rose-700 transition-all flex items-center gap-1.5"
-                                >
-                                  <i className="fa-solid fa-ban"></i> Cancel Order
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setActiveAction({ type: 'REVERT_PO', order: o, item: i, comp: c });
-                                  }}
-                                  disabled={isActionLoading != null}
-                                  className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-600 transition-all flex items-center gap-1.5"
-                                  title="Revert this PO back to AWARDED status"
-                                >
-                                  <i className="fa-solid fa-rotate-left"></i> Revert to Award
-                                </button>
-                              </div>
-                            )}
-                            {['WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '') && activeTab === 'outsourcing' && (
-                              <div className="flex items-center gap-2 pt-2 border-t border-slate-100 w-full justify-end">
-                                <button
-                                  onClick={() => {
-                                    setReplacementModalInfo({ order: o, item: i, comp: c });
-                                    setReplacementRequestMode('REPLACE');
-                                    setReplacementStartDate(new Date().toISOString().split('T')[0]);
-                                    setReplacementReason('');
-                                    setReplacementCommittedPayment('');
-                                    setReplacementNewMonthlyRate('');
-                                    setReplacementAddedResourceQty('1');
-                                    setReplacementAddResourcePayment('');
-                                    setReplacementPostponePayment('');
-                                    setReplacementDateError('');
-                                    setReplacementOptionError('');
-                                  }}
-                                  className="px-3 py-1.5 bg-violet-100 border border-violet-100 text-violet-700 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-violet-200 hover:border-violet-200 transition-all flex items-center gap-1.5"
-                                  title="Request Resource Replacement"
-                                >
-                                  <i className="fa-solid fa-users-arrows"></i> {t('procurement.actions.resourceReplacement')}
-                                </button>
-                              </div>
+
+                                  {c.status === 'PENDING_OFFER' && (
+                                    <button onClick={() => {
+                                      setActiveAction({ type: 'RFP', order: o, item: i, comp: c });
+                                      setRfpSelection(c.rfpSupplierIds || []);
+                                      // Auto-select other components with the same rfpId if it exists
+                                      const sameRfpIds = c.rfpId ? comps.filter(x => x.comp.rfpId === c.rfpId).map(x => x.comp.id!) : [c.id!];
+                                      setRfpCompSelection(sameRfpIds);
+                                    }}
+                                      className="px-4 py-2 bg-slate-900 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-black transition-all"
+                                    >{t('procurement.rfp.sendRfp')}</button>
+                                  )}
+                                  {c.status === 'RFP_SENT' && (
+                                    <div className="flex items-center gap-3">
+                                      <button
+                                        onClick={() => handleDownloadExistingRfp(o, c, comps)}
+                                        className="px-3 py-1.5 bg-white border border-slate-900 text-slate-900 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-slate-50 transition-all flex items-center gap-1.5"
+                                      >
+                                        <i className="fa-solid fa-file-pdf"></i> {t('procurement.rfp.downloadRfp')}
+                                      </button>
+                                      <button onClick={() => {
+                                        const sameRfp = comps.filter(x => x.comp.status === 'RFP_SENT' && c.rfpId && x.comp.rfpId === c.rfpId);
+                                        const displayComps = sameRfp.length > 0 ? sameRfp : [comps.find(x => x.comp.id === c.id)!];
+                                        setMultiComps(displayComps);
+                                        setSelectedCompIds([c.id!]); // Default to only current one selected
+                                        setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
+                                        setAwardCosts({ [c.id!]: (c.unitCost || 0).toString() });
+                                        setAwardTaxPercent((c.taxPercent || 14).toString());
+                                      }}
+                                        className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-700 transition-all"
+                                      >{t('procurement.rfp.awardTender')}</button>
+                                    </div>
+                                  )}
+                                  {c.status === 'AWARDED' && (
+                                    <div className="flex flex-col items-end gap-1.5">
+                                      <div className="flex items-center gap-2">
+                                        {!allOrderProcurementAwarded && (
+                                          <span className="text-[8px] font-black text-slate-400 uppercase mr-2">{t('procurement.actions.allMustBeAwarded')}</span>
+                                        )}
+
+                                        {allOrderProcurementAwarded && (
+                                          <button
+                                            disabled={o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded}
+                                            onClick={async () => {
+                                              const po = await dataService.getUniquePoNumber();
+                                              setPoNumberInput(po);
+                                              const sameAwardGroup = comps.filter(x =>
+                                                x.comp.status === 'AWARDED' &&
+                                                x.comp.supplierId === c.supplierId &&
+                                                (c.awardId ? x.comp.awardId === c.awardId : true)
+                                              );
+                                              setMultiComps(sameAwardGroup);
+                                              setSelectedCompIds([c.id!]); // Default to only current
+                                              const contractInfo = deriveOutsourcingContractInfo(sameAwardGroup);
+                                              setContractNumber(contractInfo.contractNumber);
+                                              setContractStartDate(contractInfo.contractStartDate);
+                                              setActiveAction({ type: 'PO', order: o, item: i, comp: c });
+                                            }}
+                                            className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase shadow-sm transition-all ${o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded ? 'bg-slate-200 text-slate-400 cursor-not-allowed grayscale' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                          >
+                                            Issue PO
+                                          </button>
+                                        )}
+
+                                        <button
+                                          onClick={() => {
+                                            setActiveAction({ type: 'REVERT_TO_PENDING', order: o, item: i, comp: c });
+                                          }}
+                                          disabled={isActionLoading != null}
+                                          className="px-3 py-2 rounded-lg text-[9px] font-black uppercase shadow-sm transition-all bg-orange-500 text-white hover:bg-orange-600 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                          title="Reset this award and return to PENDING_OFFER status"
+                                        >
+                                          Reset Award
+                                        </button>
+                                      </div>
+                                      {o.status === OrderStatus.NEGATIVE_MARGIN && (
+                                        <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-500 uppercase animate-pulse">
+                                          <i className="fa-solid fa-triangle-exclamation"></i>
+                                          {t('procurement.actions.financialBreach')}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {c.status === 'ORDERED' && (
+                                    <div className="flex items-center gap-3">
+                                      <button
+                                        onClick={() => handleDownloadPO(o, c)}
+                                        className="px-3 py-1.5 bg-white border border-blue-600 text-blue-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-1.5"
+                                      >
+                                        <i className="fa-solid fa-file-pdf"></i> {t('procurement.po.downloadPO')}
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          // Find all components sharing this PO number and sendPoId
+                                          const samePoBatch = comps.filter(x =>
+                                            x.comp.poNumber === c.poNumber &&
+                                            x.comp.status === 'ORDERED' &&
+                                            (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
+                                          );
+                                          setMultiComps(samePoBatch);
+                                          setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
+                                          setResetReason('');
+                                          setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
+                                        }}
+                                        disabled={isActionLoading != null}
+                                        className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-rose-700 transition-all flex items-center gap-1.5"
+                                      >
+                                        <i className="fa-solid fa-ban"></i> {t('procurement.actions.cancelOrder')}
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setActiveAction({ type: 'REVERT_PO', order: o, item: i, comp: c });
+                                        }}
+                                        disabled={isActionLoading != null}
+                                        className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-600 transition-all flex items-center gap-1.5"
+                                        title="Revert this PO back to AWARDED status"
+                                      >
+                                        <i className="fa-solid fa-rotate-left"></i> {t('procurement.actions.revertToAward')}
+                                      </button>
+                                      <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
+                                        <i className="fa-solid fa-truck-fast mr-1"></i>{t('procurement.component.inTransit')}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {c.status === 'WAITING_CONTRACT_START' && (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <button
+                                        onClick={() => handleDownloadPO(o, c)}
+                                        className="px-3 py-1.5 bg-white border border-purple-600 text-purple-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-purple-50 transition-all flex items-center gap-1.5"
+                                      >
+                                        <i className="fa-solid fa-file-pdf"></i> Download PO
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          const samePoBatch = comps.filter(x =>
+                                            x.comp.poNumber === c.poNumber &&
+                                            x.comp.status === 'WAITING_CONTRACT_START' &&
+                                            (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
+                                          );
+                                          setMultiComps(samePoBatch);
+                                          setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
+                                          setResetReason('');
+                                          setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
+                                        }}
+                                        disabled={isActionLoading != null}
+                                        className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-rose-700 transition-all flex items-center gap-1.5"
+                                      >
+                                        <i className="fa-solid fa-ban"></i> Cancel Order
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setActiveAction({ type: 'REVERT_PO', order: o, item: i, comp: c });
+                                        }}
+                                        disabled={isActionLoading != null}
+                                        className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-600 transition-all flex items-center gap-1.5"
+                                        title="Revert this PO back to AWARDED status"
+                                      >
+                                        <i className="fa-solid fa-rotate-left"></i> Revert to Award
+                                      </button>
+                                    </div>
+                                  )}
+                                  {['WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '') && activeTab === 'outsourcing' && (
+                                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100 w-full justify-end">
+                                      <button
+                                        onClick={() => {
+                                          setReplacementModalInfo({ order: o, item: i, comp: c });
+                                          setReplacementRequestMode('REPLACE');
+                                          setReplacementStartDate(new Date().toISOString().split('T')[0]);
+                                          setReplacementReason('');
+                                          setReplacementCommittedPayment('');
+                                          setReplacementNewMonthlyRate('');
+                                          setReplacementAddedResourceQty('1');
+                                          setReplacementAddResourcePayment('');
+                                          setReplacementPostponePayment('');
+                                          setReplacementDateError('');
+                                          setReplacementOptionError('');
+                                        }}
+                                        className="px-3 py-1.5 bg-violet-100 border border-violet-100 text-violet-700 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-violet-200 hover:border-violet-200 transition-all flex items-center gap-1.5"
+                                        title="Request Resource Replacement"
+                                      >
+                                        <i className="fa-solid fa-users-arrows"></i> {t('procurement.actions.resourceReplacement')}
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </>
                             )}
                           </div>
-                            </>
-                          )}
-                        </div>
-                      )})}
+                        )
+                      })}
                     </div>
                   </div>
                 );
@@ -2269,27 +2571,27 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 cc.source === 'PROCUREMENT' &&
                                 (['PENDING_OFFER', 'RFP_SENT'].includes(cc.status || ''))
                               )).map(comp => (
-                              <label key={comp.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-slate-50 border-slate-100 hover:border-slate-300'}`}>
-                                <input
-                                  type="checkbox"
-                                  className="hidden"
-                                  checked={rfpCompSelection.includes(comp.id || '')}
-                                  onChange={(e) => {
-                                    if (e.target.checked) setRfpCompSelection(prev => [...prev, comp.id || '']);
-                                    else setRfpCompSelection(prev => prev.filter(id => id !== comp.id));
-                                  }}
-                                />
-                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-white border-white text-blue-600' : 'bg-white border-slate-200'}`}>
-                                  {rfpCompSelection.includes(comp.id || '') && <i className="fa-solid fa-check text-[10px]"></i>}
-                                </div>
-                                <div className="flex-1">
-                                  <div className={`text-xs font-black ${rfpCompSelection.includes(comp.id || '') ? 'text-white' : 'text-slate-800'}`}>{comp.description}</div>
-                                  <div className={`text-[9px] font-bold uppercase tracking-widest ${rfpCompSelection.includes(comp.id || '') ? 'text-blue-100' : 'text-slate-400'}`}>
-                                    Qty: {comp.quantity} {comp.unit} | {comp.status?.replace('_', ' ')}
+                                <label key={comp.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-blue-600 text-white border-blue-700 shadow-md' : 'bg-slate-50 border-slate-100 hover:border-slate-300'}`}>
+                                  <input
+                                    type="checkbox"
+                                    className="hidden"
+                                    checked={rfpCompSelection.includes(comp.id || '')}
+                                    onChange={(e) => {
+                                      if (e.target.checked) setRfpCompSelection(prev => [...prev, comp.id || '']);
+                                      else setRfpCompSelection(prev => prev.filter(id => id !== comp.id));
+                                    }}
+                                  />
+                                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${rfpCompSelection.includes(comp.id || '') ? 'bg-white border-white text-blue-600' : 'bg-white border-slate-200'}`}>
+                                    {rfpCompSelection.includes(comp.id || '') && <i className="fa-solid fa-check text-[10px]"></i>}
                                   </div>
-                                </div>
-                              </label>
-                            ))}
+                                  <div className="flex-1">
+                                    <div className={`text-xs font-black ${rfpCompSelection.includes(comp.id || '') ? 'text-white' : 'text-slate-800'}`}>{comp.description}</div>
+                                    <div className={`text-[9px] font-bold uppercase tracking-widest ${rfpCompSelection.includes(comp.id || '') ? 'text-blue-100' : 'text-slate-400'}`}>
+                                      Qty: {comp.quantity} {comp.unit} | {comp.status?.replace('_', ' ')}
+                                    </div>
+                                  </div>
+                                </label>
+                              ))}
                           </div>
                         </div>
 
@@ -2618,7 +2920,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           <div className="text-right">
                             <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">{t('procurement.revive.oldEndDate')}</div>
                             <div className="text-lg font-black text-emerald-600">
-                              {activeAction.comp?.contractStartDate && activeAction.comp?.contractDuration 
+                              {activeAction.comp?.contractStartDate && activeAction.comp?.contractDuration
                                 ? calculateContractEndDate(activeAction.comp.contractStartDate, activeAction.comp.contractDuration)?.toLocaleDateString()
                                 : 'Unknown'}
                             </div>
@@ -2648,13 +2950,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                           <div className="space-y-4 pt-4 border-t border-slate-100">
                             <div className="flex bg-slate-100 p-1 rounded-2xl mb-4">
-                              <button 
+                              <button
                                 onClick={() => setReviveMode('EXTENSION')}
                                 className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${reviveMode === 'EXTENSION' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                               >
                                 <i className="fa-solid fa-plus-circle"></i> {t('procurement.revive.addExtension')}
                               </button>
-                              <button 
+                              <button
                                 onClick={() => setReviveMode('END_DATE')}
                                 className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${reviveMode === 'END_DATE' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                               >
@@ -2734,7 +3036,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           }
 
           {costSheetModalOrder && (
-            <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex flex-col overflow-hidden">
+            <div id="cost-sheet-fullscreen-modal" className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex flex-col overflow-hidden">
               <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-700 bg-slate-950 text-white">
                 <div>
                   <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Cost Sheet</div>
@@ -2745,6 +3047,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     <div className="text-[11px] uppercase tracking-widest text-slate-300">Sheet: {costSheetSheetName || 'Sheet1'}</div>
                   )}
                   <button
+                    onClick={toggleCostSheetFullscreen}
+                    className="px-4 py-2 rounded-2xl border border-slate-700 bg-slate-800 text-sm text-slate-200 hover:bg-slate-700 transition-all"
+                  >
+                    {costSheetFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                  </button>
+                  <button
                     onClick={() => setCostSheetModalOrder(null)}
                     className="px-4 py-2 rounded-2xl border border-slate-700 bg-slate-800 text-sm text-slate-200 hover:bg-slate-700 transition-all"
                   >
@@ -2754,21 +3062,6 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
               </div>
 
               <div className="flex h-full flex-col overflow-hidden">
-                <div className="flex flex-wrap gap-2 px-6 py-4 border-b border-slate-700 bg-slate-950 overflow-x-auto">
-                  {costSheetModalEntries.map(entry => (
-                    <button
-                      key={entry.itemId}
-                      onClick={() => {
-                        const item = costSheetModalOrder.items.find(i => i.id === entry.itemId);
-                        if (item) loadCostSheetItem(item);
-                      }}
-                      className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase transition-all ${costSheetModalSelectedItemId === entry.itemId ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700'}`}
-                    >
-                      {entry.orderNumber}
-                    </button>
-                  ))}
-                </div>
-
                 <div className="flex-1 overflow-hidden p-6 bg-slate-900">
                   <div className="flex flex-col gap-4 h-full overflow-hidden rounded-3xl bg-white shadow-xl">
                     <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
@@ -2785,37 +3078,91 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       )}
                     </div>
 
-                    <div className="flex-1 overflow-auto p-5">
+                    <div className="flex-1 overflow-auto">
                       {costSheetWorkbook ? (
-                        <div className="min-w-full overflow-auto">
+                        <div className="min-w-full p-5 bg-white">
                           <table className="min-w-full border-separate border-spacing-0">
-                            <thead>
+                            <thead ref={costSheetTheadRef}>
                               <tr className="bg-slate-100">
-                                <th className="sticky left-0 z-20 bg-slate-100 border-r border-slate-200 px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
-                                {Array.from({ length: Math.max(...costSheetMatrix.map(row => row.length), 0) }, (_, colIndex) => (
-                                  <th key={colIndex} className="border-b border-slate-200 px-3 py-2 text-left text-[11px] font-black text-slate-500">
-                                    {String.fromCharCode(65 + (colIndex % 26))}{colIndex >= 26 ? String.fromCharCode(65 + Math.floor(colIndex / 26) - 1) : ''}
-                                  </th>
-                                ))}
+                                <th ref={costSheetStubRef} className="sticky top-0 left-0 z-50 bg-slate-100 border-r-2 border-black px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
+                                {Array.from({ length: Math.max(...costSheetCells.map(row => row.length), 0) }, (_, colIndex) => {
+                                  const columnNumber = colIndex + costSheetColOffset;
+                                  const name = columnNumber < 26
+                                    ? String.fromCharCode(65 + columnNumber)
+                                    : String.fromCharCode(65 + Math.floor(columnNumber / 26) - 1) + String.fromCharCode(65 + (columnNumber % 26));
+                                  return (
+                                    <th
+                                      key={colIndex}
+                                      className="sticky top-0 z-40 border-b-2 border-black bg-slate-100 px-3 py-2 text-left text-[11px] font-black text-slate-500"
+                                      style={colIndex + costSheetColOffset === 0
+                                        ? { position: 'sticky', left: costSheetFrozenLeft, zIndex: 50 }
+                                        : undefined}
+                                    >
+                                      {name}
+                                    </th>
+                                  );
+                                })}
                               </tr>
                             </thead>
                             <tbody>
-                              {costSheetMatrix.map((row, rowIndex) => (
-                                <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-slate-50' : 'bg-white'}>
-                                  <td className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 text-right px-3 py-2 text-[11px] font-black text-slate-500">
-                                    {rowIndex + 1}
+                              {costSheetCells.map((row, rowIndex) => {
+                                const frozenRowNumber = rowIndex + 1 + costSheetRowOffset;
+                                const isFrozenRow = [2, 3, 4].includes(frozenRowNumber);
+                                const frozenStickyTop = isFrozenRow ? costSheetFrozenTop + (frozenRowNumber - 2) * costSheetRowHeight : 0;
+                                return (
+                                <tr key={rowIndex} ref={rowIndex === 0 ? costSheetRowRef : undefined}>
+                                  <td
+                                    className="sticky left-0 z-10 bg-slate-100 border-r-2 border-black text-right px-3 py-2 text-[11px] font-black text-slate-500"
+                                    style={isFrozenRow
+                                      ? { position: 'sticky', top: frozenStickyTop, zIndex: 30 }
+                                      : undefined}
+                                  >
+                                    {rowIndex + 1 + costSheetRowOffset}
                                   </td>
-                                  {Array.from({ length: Math.max(...costSheetMatrix.map(r => r.length), 0) }, (_, colIndex) => (
-                                    <td key={colIndex} className="border border-slate-200 p-0">
-                                      <input
-                                        value={row[colIndex] === undefined || row[colIndex] === null ? '' : String(row[colIndex])}
-                                        onChange={e => updateCostSheetCell(rowIndex, colIndex, e.target.value)}
-                                        className="w-full min-w-[120px] h-12 px-3 text-sm text-slate-800 bg-white outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-500 border-none"
-                                      />
-                                    </td>
-                                  ))}
+                                  {Array.from({ length: Math.max(...costSheetCells.map(r => r.length), 0) }, (_, colIndex) => {
+                                    const cell = row[colIndex] || { address: '', value: '', formula: undefined, isEditable: false };
+                                    const displayValue = cell.formula ? evaluateCostSheetFormula(cell.formula, costSheetCells, costSheetRowOffset, costSheetColOffset) : cell.value;
+                                    const cellBg = cell.bgColor
+                                      ? cell.bgColor
+                                      : cell.isEditable
+                                        ? '#d1fae5' /* emerald-100 – editable default */
+                                        : undefined;
+                                    // Calculated cells (driven by a formula) are never editable,
+                                    // regardless of their fill color.
+                                    const isEditableEffective = cell.isEditable && !cell.formula;
+                                    // Freeze header rows 2-4 (top) and column A (left) like identifiers.
+                                    const frozenCol = colIndex + costSheetColOffset === 0;
+                                    const cellStickyStyle: React.CSSProperties = {};
+                                    if (isFrozenRow || frozenCol) {
+                                      cellStickyStyle.position = 'sticky';
+                                      cellStickyStyle.backgroundColor = cellBg || '#ffffff';
+                                      cellStickyStyle.zIndex = isFrozenRow && frozenCol ? 30 : 20;
+                                      if (isFrozenRow) cellStickyStyle.top = costSheetFrozenTop + (frozenRowNumber - 2) * costSheetRowHeight;
+                                      if (frozenCol) cellStickyStyle.left = costSheetFrozenLeft;
+                                    }
+                                    return (
+                                      <td
+                                        key={colIndex}
+                                        className="border-2 border-black p-0"
+                                        style={{ backgroundColor: cellBg || 'transparent', ...cellStickyStyle }}
+                                      >
+                                        <input
+                                          readOnly={!isEditableEffective}
+                                          value={displayValue === undefined || displayValue === null ? '' : String(displayValue)}
+                                          onChange={e => { if (isEditableEffective) updateCostSheetCell(rowIndex, colIndex, e.target.value); }}
+                                          className={`w-full min-w-[120px] h-12 px-3 text-sm outline-none focus:ring-2 focus:border-sky-500 border-none ${isEditableEffective ? '' : 'cursor-not-allowed'}`}
+                                          style={{
+                                            backgroundColor: cellBg || 'transparent',
+                                            color: cell.fontColor || '#1e293b',
+                                            fontWeight: cell.fontBold ? 700 : undefined,
+                                          }}
+                                        />
+                                      </td>
+                                    );
+                                  })}
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -2823,7 +3170,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         <div className="h-full flex items-center justify-center rounded-3xl bg-slate-50 p-10 text-center text-slate-500">
                           <div>
                             <p className="font-black mb-2">No Excel cost sheet attached for this item.</p>
-                            <p className="text-sm">Upload an Excel cost sheet in Technical Review or choose another outsourcing item.</p>
+                            <p className="text-sm">Click "Upload Cost Sheet" below to attach one, or upload it in Technical Review.</p>
                           </div>
                         </div>
                       )}
@@ -2836,15 +3183,42 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       >
                         Cancel
                       </button>
-                      <button
-                        disabled={!costSheetWorkbook || !costSheetFileChanged || isCostSheetSaving}
-                        onClick={async () => {
+                      <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
+                        {costSheetModalSelectedItemId && (
+                          <>
+                            <label
+                              className={`w-full md:w-auto px-6 py-4 text-[10px] font-black uppercase rounded-3xl text-white transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer ${isCostSheetUploading ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-sky-600 hover:bg-sky-700 shadow-sky-100'}`}
+                              title={getCurrentCostSheetItem(costSheetModalOrder, costSheetModalSelectedItemId)?.costSheetFile ? 'Replace the attached cost sheet with the selected file' : 'Upload a new cost sheet for this item'}
+                            >
+                              <i className={`fa-solid ${isCostSheetUploading ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'}`}></i>
+                              {getCurrentCostSheetItem(costSheetModalOrder, costSheetModalSelectedItemId)?.costSheetFile ? 'Replace Cost Sheet' : 'Upload Cost Sheet'}
+                              <input
+                                ref={costSheetFileInputRef}
+                                type="file"
+                                accept=".xlsx,.xls,.csv,.pdf,.doc,.docx"
+                                className="hidden"
+                                disabled={isCostSheetUploading}
+                                onChange={handleCostSheetFileUpload}
+                              />
+                            </label>
+                          </>
+                        )}
+                        <button
+                          disabled={!costSheetWorkbook || !costSheetFileChanged || isCostSheetSaving}
+                          onClick={async () => {
                           if (!costSheetModalOrder || !costSheetModalSelectedItemId || !costSheetWorkbook || !costSheetSheetName) return;
                           setIsCostSheetSaving(true);
                           try {
                             await commitEditedCostSheet();
+                            // Refresh the order data so the persisted editable-cell metadata is available
+                            const freshOrder = await dataService.getOrderById(costSheetModalOrder.id);
+                            setCostSheetModalOrder(freshOrder);
+                            // Reload the current item so editable cells are correctly applied
+                            const currentItem = freshOrder.items.find(i => i.id === costSheetModalSelectedItemId);
+                            if (currentItem) {
+                              loadCostSheetItem(currentItem);
+                            }
                             await fetchData();
-                            setCostSheetModalOrder(null);
                           } catch (error: any) {
                             alert(error.message || 'Failed to save edited cost sheet');
                           } finally {
@@ -2855,6 +3229,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       >
                         {isCostSheetSaving ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : <i className="fa-solid fa-save mr-2"></i>}Save Sheet
                       </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2899,12 +3274,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     <div>
                       <label className="text-[9px] font-bold text-slate-400 uppercase">Contract Start Date</label>
                       <p className="text-sm font-black text-slate-800 mt-1">
-                        {replacementModalInfo.comp.contractStartDate 
+                        {replacementModalInfo.comp.contractStartDate
                           ? new Date(replacementModalInfo.comp.contractStartDate).toLocaleDateString('en-US')
                           : 'Not Set'}
                       </p>
                       <p className={`text-[10px] font-bold mt-1 ${getContractStartStatus().isInPast ? 'text-rose-600' : 'text-emerald-600'}`}>
-                        {getContractStartStatus().isInPast 
+                        {getContractStartStatus().isInPast
                           ? '✓ ' + t('procurement.replacement.contractAlreadyStarted')
                           : `Starts in ${getContractStartStatus().daysUntilStart} days`}
                       </p>
@@ -2954,12 +3329,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       onChange={e => {
                         const newDate = e.target.value;
                         setReplacementStartDate(newDate);
-                        
+
                         if (newDate) {
                           const contractStart = new Date(replacementModalInfo?.comp.contractStartDate || new Date());
                           const newResourceStart = new Date(newDate);
                           const now = new Date();
-                          
+
                           if (newResourceStart < new Date(replacementModalToday)) {
                             setReplacementDateError('Please choose a date starting from today.');
                           } else if (contractStart < now && newResourceStart < contractStart) {
@@ -3203,7 +3578,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           {config.settings.companyName || 'Nexus ERP'}
                         </h1>
                       )}
-                      
+
                       <div style={{ marginTop: '10px', fontSize: '10px', color: '#64748b' }}>
                         {rasterizedLogo && (
                           <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1e293b', marginBottom: '4px' }}>
@@ -3228,72 +3603,72 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   </div>
 
                   <div style={{ marginBottom: '30px' }}>
-                     <h3 style={{ fontSize: '14px', fontWeight: 900, color: '#334155', marginBottom: '10px', textTransform: 'uppercase' }}>Replacement Details</h3>
-                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                       <tbody>
-                          <tr>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', width: '30%', backgroundColor: '#f8fafc' }}>{t("procurement.rfp.contractId") || "Contract ID"}</td>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#2563eb' }}>{replacementModalInfo.comp.contractNumber || replacementModalInfo.comp.componentNumber || '-'}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Description</td>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1' }}>{replacementModalInfo.comp.description}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Contract Duration</td>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1' }}>{replacementModalInfo.comp.contractDuration || 'N/A'}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Contract Start Date</td>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate && new Date(replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate!) < new Date() ? '#dc2626' : '#059669' }}>{replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate ? new Date(replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate!).toLocaleDateString('en-GB') : 'N/A'}</td>
-                          </tr>
+                    <h3 style={{ fontSize: '14px', fontWeight: 900, color: '#334155', marginBottom: '10px', textTransform: 'uppercase' }}>Replacement Details</h3>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <tbody>
+                        <tr>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', width: '30%', backgroundColor: '#f8fafc' }}>{t("procurement.rfp.contractId") || "Contract ID"}</td>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#2563eb' }}>{replacementModalInfo.comp.contractNumber || replacementModalInfo.comp.componentNumber || '-'}</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Description</td>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1' }}>{replacementModalInfo.comp.description}</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Contract Duration</td>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1' }}>{replacementModalInfo.comp.contractDuration || 'N/A'}</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Contract Start Date</td>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate && new Date(replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate!) < new Date() ? '#dc2626' : '#059669' }}>{replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate ? new Date(replacementModalInfo.comp.originalStartDate || replacementModalInfo.comp.contractStartDate!).toLocaleDateString('en-GB') : 'N/A'}</td>
+                        </tr>
 
+                        <tr>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Request Type</td>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#0ea5e9' }}>{replacementRequestMode === 'REPLACE' ? 'Replace Resource' : replacementRequestMode === 'ADD_RESOURCE' ? 'Add Resource' : 'Postpone Contract'}</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Requested Effective Date</td>
+                          <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#0ea5e9' }}>{replacementStartDate ? new Date(replacementStartDate).toLocaleDateString('en-GB') : '-'}</td>
+                        </tr>
+                        {replacementRequestMode === 'REPLACE' && (
                           <tr>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Request Type</td>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#0ea5e9' }}>{replacementRequestMode === 'REPLACE' ? 'Replace Resource' : replacementRequestMode === 'ADD_RESOURCE' ? 'Add Resource' : 'Postpone Contract'}</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Committed Payment</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementCommittedPayment || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
                           </tr>
+                        )}
+                        {replacementRequestMode === 'REPLACE' && (
                           <tr>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Requested Effective Date</td>
-                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', color: '#0ea5e9' }}>{replacementStartDate ? new Date(replacementStartDate).toLocaleDateString('en-GB') : '-'}</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>New Monthly Rate</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementNewMonthlyRate || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
                           </tr>
-                          {replacementRequestMode === 'REPLACE' && (
-                            <tr>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Committed Payment</td>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementCommittedPayment || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
-                            </tr>
-                          )}
-                          {replacementRequestMode === 'REPLACE' && (
-                            <tr>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>New Monthly Rate</td>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementNewMonthlyRate || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
-                            </tr>
-                          )}
-                          {replacementRequestMode === 'ADD_RESOURCE' && (
-                            <tr>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Added Quantity</td>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementAddedResourceQty || '0'}</td>
-                            </tr>
-                          )}
-                          {replacementRequestMode === 'ADD_RESOURCE' && (
-                            <tr>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Calculated Payment</td>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementAddResourcePayment || replacementDefaultAddResourcePayment.toFixed(2)} LE</td>
-                            </tr>
-                          )}
-                          {replacementRequestMode === 'POSTPONE' && (
-                            <tr>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Payment</td>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementPostponePayment || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
-                            </tr>
-                          )}
-                          {updateAllContractDates && (
-                            <tr>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#dbeafe', color: '#0c4a6e' }}>All Contracts Updated</td>
-                              <td style={{ padding: '8px', border: '1px solid #cbd5e1', backgroundColor: '#dbeafe', color: '#0c4a6e', fontWeight: 'bold' }}>Yes - All contract dates moved to {replacementStartDate ? new Date(replacementStartDate).toLocaleDateString('en-GB') : '-'}</td>
-                            </tr>
-                          )}
-                       </tbody>
-                     </table>
+                        )}
+                        {replacementRequestMode === 'ADD_RESOURCE' && (
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Added Quantity</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementAddedResourceQty || '0'}</td>
+                          </tr>
+                        )}
+                        {replacementRequestMode === 'ADD_RESOURCE' && (
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Calculated Payment</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementAddResourcePayment || replacementDefaultAddResourcePayment.toFixed(2)} LE</td>
+                          </tr>
+                        )}
+                        {replacementRequestMode === 'POSTPONE' && (
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#f8fafc' }}>Payment</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>{replacementPostponePayment || replacementDefaultMonthlyPayment.toFixed(2)} LE</td>
+                          </tr>
+                        )}
+                        {updateAllContractDates && (
+                          <tr>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: '#dbeafe', color: '#0c4a6e' }}>All Contracts Updated</td>
+                            <td style={{ padding: '8px', border: '1px solid #cbd5e1', backgroundColor: '#dbeafe', color: '#0c4a6e', fontWeight: 'bold' }}>Yes - All contract dates moved to {replacementStartDate ? new Date(replacementStartDate).toLocaleDateString('en-GB') : '-'}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
 
                   <div style={{ marginBottom: '30px' }}>
