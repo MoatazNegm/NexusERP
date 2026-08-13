@@ -419,7 +419,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [costSheetFileChanged, setCostSheetFileChanged] = useState(false);
   const [costSheetParseError, setCostSheetParseError] = useState<string | null>(null);
   const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
+  const [isCostSheetUploading, setIsCostSheetUploading] = useState(false);
+  const costSheetFileInputRef = useRef<HTMLInputElement>(null);
   const [costSheetFullscreen, setCostSheetFullscreen] = useState<boolean>(false);
+  // Frozen header measurement for the cost-sheet grid (rows 2-4 + column A stay fixed).
+  const costSheetTheadRef = useRef<HTMLTableSectionElement>(null);
+  const costSheetStubRef = useRef<HTMLTableCellElement>(null);
+  const costSheetRowRef = useRef<HTMLTableRowElement>(null);
+  const [costSheetFrozenTop, setCostSheetFrozenTop] = useState(0);
+  const [costSheetFrozenLeft, setCostSheetFrozenLeft] = useState(0);
+  const [costSheetRowHeight, setCostSheetRowHeight] = useState(0);
+
+  useEffect(() => {
+    if (!costSheetWorkbook) return;
+    requestAnimationFrame(() => {
+      if (costSheetTheadRef.current) setCostSheetFrozenTop(costSheetTheadRef.current.offsetHeight);
+      if (costSheetStubRef.current) setCostSheetFrozenLeft(costSheetStubRef.current.offsetWidth);
+      if (costSheetRowRef.current) setCostSheetRowHeight(costSheetRowRef.current.offsetHeight);
+    });
+  }, [costSheetWorkbook, costSheetSheetName]);
 
   const openCostSheetModal = async (order: CustomerOrder) => {
     let freshOrder = order;
@@ -538,6 +556,29 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64', cellStyles: true })}`;
     await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx', editableCellAddresses, cellColorsMap);
     setCostSheetFileChanged(false);
+  };
+
+  const handleCostSheetFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !costSheetModalOrder || !costSheetModalSelectedItemId) return;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const result = evt.target?.result as string;
+      try {
+        setIsCostSheetUploading(true);
+        const updated = await dataService.uploadCostSheet(costSheetModalOrder.id, costSheetModalSelectedItemId, result, file.name);
+        setCostSheetModalOrder(updated);
+        const updatedItem = updated.items.find(i => i.id === costSheetModalSelectedItemId);
+        if (updatedItem) loadCostSheetItem(updatedItem);
+        await fetchData();
+      } catch (err: any) {
+        alert(err.message || 'Failed to upload cost sheet');
+      } finally {
+        setIsCostSheetUploading(false);
+        if (costSheetFileInputRef.current) costSheetFileInputRef.current.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const toggleCostSheetFullscreen = async () => {
@@ -3041,16 +3082,22 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       {costSheetWorkbook ? (
                         <div className="min-w-full p-5 bg-white">
                           <table className="min-w-full border-separate border-spacing-0">
-                            <thead>
+                            <thead ref={costSheetTheadRef}>
                               <tr className="bg-slate-100">
-                                <th className="sticky top-0 left-0 z-50 bg-slate-100 border-r border-slate-200 px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
+                                <th ref={costSheetStubRef} className="sticky top-0 left-0 z-50 bg-slate-100 border-r-2 border-black px-3 py-2 text-right text-[11px] font-black text-slate-500">#</th>
                                 {Array.from({ length: Math.max(...costSheetCells.map(row => row.length), 0) }, (_, colIndex) => {
                                   const columnNumber = colIndex + costSheetColOffset;
                                   const name = columnNumber < 26
                                     ? String.fromCharCode(65 + columnNumber)
                                     : String.fromCharCode(65 + Math.floor(columnNumber / 26) - 1) + String.fromCharCode(65 + (columnNumber % 26));
                                   return (
-                                    <th key={colIndex} className="sticky top-0 z-40 border-b border-slate-200 bg-slate-100 px-3 py-2 text-left text-[11px] font-black text-slate-500">
+                                    <th
+                                      key={colIndex}
+                                      className="sticky top-0 z-40 border-b-2 border-black bg-slate-100 px-3 py-2 text-left text-[11px] font-black text-slate-500"
+                                      style={colIndex + costSheetColOffset === 0
+                                        ? { position: 'sticky', left: costSheetFrozenLeft, zIndex: 50 }
+                                        : undefined}
+                                    >
                                       {name}
                                     </th>
                                   );
@@ -3058,9 +3105,18 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               </tr>
                             </thead>
                             <tbody>
-                              {costSheetCells.map((row, rowIndex) => (
-                                <tr key={rowIndex}>
-                                  <td className="sticky left-0 z-10 bg-slate-100 border-r border-slate-200 text-right px-3 py-2 text-[11px] font-black text-slate-500">
+                              {costSheetCells.map((row, rowIndex) => {
+                                const frozenRowNumber = rowIndex + 1 + costSheetRowOffset;
+                                const isFrozenRow = [2, 3, 4].includes(frozenRowNumber);
+                                const frozenStickyTop = isFrozenRow ? costSheetFrozenTop + (frozenRowNumber - 2) * costSheetRowHeight : 0;
+                                return (
+                                <tr key={rowIndex} ref={rowIndex === 0 ? costSheetRowRef : undefined}>
+                                  <td
+                                    className="sticky left-0 z-10 bg-slate-100 border-r-2 border-black text-right px-3 py-2 text-[11px] font-black text-slate-500"
+                                    style={isFrozenRow
+                                      ? { position: 'sticky', top: frozenStickyTop, zIndex: 30 }
+                                      : undefined}
+                                  >
                                     {rowIndex + 1 + costSheetRowOffset}
                                   </td>
                                   {Array.from({ length: Math.max(...costSheetCells.map(r => r.length), 0) }, (_, colIndex) => {
@@ -3071,11 +3127,21 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       : cell.isEditable
                                         ? '#d1fae5' /* emerald-100 – editable default */
                                         : undefined;
+                                    // Freeze header rows 2-4 (top) and column A (left) like identifiers.
+                                    const frozenCol = colIndex + costSheetColOffset === 0;
+                                    const cellStickyStyle: React.CSSProperties = {};
+                                    if (isFrozenRow || frozenCol) {
+                                      cellStickyStyle.position = 'sticky';
+                                      cellStickyStyle.backgroundColor = cellBg || '#ffffff';
+                                      cellStickyStyle.zIndex = isFrozenRow && frozenCol ? 30 : 20;
+                                      if (isFrozenRow) cellStickyStyle.top = costSheetFrozenTop + (frozenRowNumber - 2) * costSheetRowHeight;
+                                      if (frozenCol) cellStickyStyle.left = costSheetFrozenLeft;
+                                    }
                                     return (
                                       <td
                                         key={colIndex}
-                                        className="border border-slate-200 p-0"
-                                        style={{ backgroundColor: cellBg || 'transparent' }}
+                                        className="border-2 border-black p-0"
+                                        style={{ backgroundColor: cellBg || 'transparent', ...cellStickyStyle }}
                                       >
                                         <input
                                           readOnly={!cell.isEditable}
@@ -3092,7 +3158,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                     );
                                   })}
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -3100,7 +3167,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         <div className="h-full flex items-center justify-center rounded-3xl bg-slate-50 p-10 text-center text-slate-500">
                           <div>
                             <p className="font-black mb-2">No Excel cost sheet attached for this item.</p>
-                            <p className="text-sm">Upload an Excel cost sheet in Technical Review or choose another outsourcing item.</p>
+                            <p className="text-sm">Click "Upload Cost Sheet" below to attach one, or upload it in Technical Review.</p>
                           </div>
                         </div>
                       )}
@@ -3113,9 +3180,29 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       >
                         Cancel
                       </button>
-                      <button
-                        disabled={!costSheetWorkbook || !costSheetFileChanged || isCostSheetSaving}
-                        onClick={async () => {
+                      <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
+                        {costSheetModalSelectedItemId && (
+                          <>
+                            <label
+                              className={`w-full md:w-auto px-6 py-4 text-[10px] font-black uppercase rounded-3xl text-white transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer ${isCostSheetUploading ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-sky-600 hover:bg-sky-700 shadow-sky-100'}`}
+                              title={getCurrentCostSheetItem(costSheetModalOrder, costSheetModalSelectedItemId)?.costSheetFile ? 'Replace the attached cost sheet with the selected file' : 'Upload a new cost sheet for this item'}
+                            >
+                              <i className={`fa-solid ${isCostSheetUploading ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'}`}></i>
+                              {getCurrentCostSheetItem(costSheetModalOrder, costSheetModalSelectedItemId)?.costSheetFile ? 'Replace Cost Sheet' : 'Upload Cost Sheet'}
+                              <input
+                                ref={costSheetFileInputRef}
+                                type="file"
+                                accept=".xlsx,.xls,.csv,.pdf,.doc,.docx"
+                                className="hidden"
+                                disabled={isCostSheetUploading}
+                                onChange={handleCostSheetFileUpload}
+                              />
+                            </label>
+                          </>
+                        )}
+                        <button
+                          disabled={!costSheetWorkbook || !costSheetFileChanged || isCostSheetSaving}
+                          onClick={async () => {
                           if (!costSheetModalOrder || !costSheetModalSelectedItemId || !costSheetWorkbook || !costSheetSheetName) return;
                           setIsCostSheetSaving(true);
                           try {
@@ -3139,6 +3226,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       >
                         {isCostSheetSaving ? <i className="fa-solid fa-spinner fa-spin mr-2"></i> : <i className="fa-solid fa-save mr-2"></i>}Save Sheet
                       </button>
+                      </div>
                     </div>
                   </div>
                 </div>
