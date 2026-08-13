@@ -508,7 +508,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const updateCostSheetCell = (rowIndex: number, colIndex: number, value: string) => {
     setCostSheetCells(prev => {
       const next = prev.map(r => r.map(c => ({ ...c })));
-      if (next[rowIndex] && next[rowIndex][colIndex] && next[rowIndex][colIndex].isEditable) {
+      if (next[rowIndex] && next[rowIndex][colIndex] && next[rowIndex][colIndex].isEditable && !next[rowIndex][colIndex].formula) {
         next[rowIndex][colIndex].value = value;
       }
       return next;
@@ -527,7 +527,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
     costSheetCells.forEach((row, rowIndex) => {
       row.forEach((cell, colIndex) => {
-        if (!cell.isEditable) return;
+        if (!cell.isEditable || cell.formula) return;
         const address = XLSX.utils.encode_cell({ r: rowIndex + costSheetRowOffset, c: colIndex + costSheetColOffset });
         const worksheetCell = worksheet[address] || { t: 's', v: '' };
         worksheetCell.v = cell.value;
@@ -544,7 +544,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     costSheetCells.forEach((row, rowIndex) => {
       row.forEach((cell, colIndex) => {
         const address = XLSX.utils.encode_cell({ r: rowIndex + costSheetRowOffset, c: colIndex + costSheetColOffset });
-        if (cell.isEditable) {
+        if (cell.isEditable && !cell.formula) {
           editableCellAddresses.push(address);
         }
         if (cell.bgColor) {
@@ -3127,6 +3127,9 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       : cell.isEditable
                                         ? '#d1fae5' /* emerald-100 – editable default */
                                         : undefined;
+                                    // Calculated cells (driven by a formula) are never editable,
+                                    // regardless of their fill color.
+                                    const isEditableEffective = cell.isEditable && !cell.formula;
                                     // Freeze header rows 2-4 (top) and column A (left) like identifiers.
                                     const frozenCol = colIndex + costSheetColOffset === 0;
                                     const cellStickyStyle: React.CSSProperties = {};
@@ -3144,10 +3147,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                         style={{ backgroundColor: cellBg || 'transparent', ...cellStickyStyle }}
                                       >
                                         <input
-                                          readOnly={!cell.isEditable}
+                                          readOnly={!isEditableEffective}
                                           value={displayValue === undefined || displayValue === null ? '' : String(displayValue)}
-                                          onChange={e => updateCostSheetCell(rowIndex, colIndex, e.target.value)}
-                                          className={`w-full min-w-[120px] h-12 px-3 text-sm outline-none focus:ring-2 focus:border-sky-500 border-none ${cell.isEditable ? '' : 'cursor-not-allowed'}`}
+                                          onChange={e => { if (isEditableEffective) updateCostSheetCell(rowIndex, colIndex, e.target.value); }}
+                                          className={`w-full min-w-[120px] h-12 px-3 text-sm outline-none focus:ring-2 focus:border-sky-500 border-none ${isEditableEffective ? '' : 'cursor-not-allowed'}`}
                                           style={{
                                             backgroundColor: cellBg || 'transparent',
                                             color: cell.fontColor || '#1e293b',
