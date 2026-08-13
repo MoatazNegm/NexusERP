@@ -1912,9 +1912,19 @@ const addToCollection = (col) => (req, res) => {
 
 const updateInCollection = (col) => (req, res) => {
     const db = getDb(req);
-    if (!db[col]) return res.status(404).json({ error: "Not found" });
-    const index = db[col].findIndex(it => it.id === req.params.id);
-    if (index === -1) return res.status(404).json({ error: "Item not found" });
+    if (!db[col]) db[col] = [];
+    let index = db[col].findIndex(it => it.id === req.params.id);
+    if (index === -1) {
+        if (col === 'settings' || col === 'modules') {
+            const user = req.headers['x-user'] || 'System';
+            let newItem = { id: req.params.id, ...req.body };
+            if (col === 'settings') newItem = encryptSettings(newItem);
+            db[col].push(newItem);
+            if (writeDb(db, getDbPath(req))) return res.json(newItem);
+            else return res.status(500).json({ error: "Write failed" });
+        }
+        return res.status(404).json({ error: "Item not found" });
+    }
 
     const user = req.headers['x-user'] || 'System';
     const oldItem = db[col][index];

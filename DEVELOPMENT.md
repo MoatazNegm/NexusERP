@@ -127,6 +127,126 @@ This configuration decouples application code updates from your database and fil
 ### `db.stub.json` Template
 The `db.stub.json` file should only contain the empty structure for a fresh database. Do not add production data, users, or custom settings to it.
 
+## Per-User & Shared Team Sandboxes (v3.5.1)
+
+Each user can log into one of three environments:
+
+1. **🏢 Live ERP (Production)** — the canonical `db.json`; no header, no isolation.
+2. **🧪 My Own Sandbox** — a per-user `db.sandbox.<username>.json` that is clean & empty on first login (no live credentials copied), seeded with four departmental `userGroups` and the creator's own `users` row.
+3. **👥 Shared Team Sandbox** — a sandbox created by another user who invited you via User Management inside their sandbox.
+
+The feature is **header-driven, not URL-driven**: every authenticated request carries the `x-user` header (always) and optionally `x-sandbox-owner` (when in a sandbox). The server resolves tenancy in a single middleware and every downstream handler is unaware of which DB it is reading.
+
+### Architecture Diagram
+
+```mermaid
+graph TD
+    Login[Login Screen<br/>Environment Dropdown] -->|POST /api/v1/login| LoginRoute
+    LoginRoute -->|env=live| Live[db.json]
+    LoginRoute -->|env=self| Self[db.sandbox.&lt;me&gt;.json]
+    LoginRoute -->|env=&lt;owner&gt;| Shared[db.sandbox.&lt;owner&gt;.json]
+    Browser[Browser] -->|x-user + x-sandbox-owner| Middleware
+    Middleware -->|resolve| GetDb[getDb req]
+    GetDb --> SelfDB[Read sandbox DB]
+    GetDb --> LiveDB[Read live DB]
+```
+
+### How the Multi-Tenant Middleware Works
+
+`server.js` registers one middleware (after `cors()` / `bodyParser.json`, before any `/api/v1/*` route) that:
+
+1. Reads `x-user` and (optionally) `x-sandbox-owner` from the request headers.
+2. Sanitizes the sandbox owner with `sanitizeUsername()` (NFC normalize → lower → strip non-`[a-z0-9_]` → collapse runs of `_` → trim → 32-char cap → fallback `'user'`).
+3. Looks up the user in `db.sandbox.<owner>.json`'s `users` array.
+4. If the user is present → sets `req.sandboxDbPath`, `req.sandboxOwner`, `req.roles`. Live-only requests pass through with `req.sandboxDbPath = null` and **zero extra disk I/O**.
+5. If the user is **not** in the sandbox → returns `403 ACCESS_REVOKED` and stops the request chain (revocation enforcement).
+
+Once the middleware has run, every handler can call:
+
+| Helper | Purpose |
+|---|---|
+| `getDbPath(req)` | Returns `req.sandboxDbPath ?? DB_PATH`. The single argument to every `readDb()` / `writeDb()` call. |
+| `isSandbox(req)` | `Boolean(req.sandboxDbPath)`. Used in guards (`/api/v1/wipe`, `/api/v1/sandbox/reset`) and in `sendEmail` to short-circuit with `{ simulated: true }`. |
+| `getDb(req)` | `readDb(getDbPath(req))`. The 27-call-site replacement for `readDb()`. |
+
+### File Layout
+
+| Path | Lives in | Notes |
+|---|---|---|
+| `db.json` | repo root | Live production DB. Always in `.gitignore`. |
+| `db.sandbox.<sanitized>.json` | repo root | One per user. In `.gitignore` (added in v3.5.1). |
+| `db.sandbox.<sanitized>.json.local.bak` | repo root | One-write safety copy, same convention as live. |
+| `uploads/` | repo root | Live uploads (PODs, e-invoices, WHT). |
+| `uploads/sandbox/<sanitized>/{pod,einvoices,wht_certificates}/` | repo root | Sandbox uploads. Created on first write. The `resolveUploadDir(req, subDir)` helper (server.js) picks the right root based on `req.sandboxOwner`. |
+
+> **Single source of truth warning:** the four default `userGroups` in `db.stub.json`, in the personal-sandbox bootstrap at `server.js:3703-3708`, and in the spec doc are currently duplicated. A future refactor should centralize them.
+
+### Login Flow
+
+`POST /api/v1/login` (server.js:3627) has four branches, in this order:
+
+1. **Factory backdoor** — only valid for the first 5 minutes after `SERVER_START_TIME`, only into Live, password checked against `FACTORY_PASS`.
+2. **Live** — verify against `db.json` users.
+3. **Self** — verify against `db.json` (user must exist in Live); if `db.sandbox.<me>.json` is missing, bootstrap it from `db.stub.json` + 4 default `userGroups` + the live user entry; return `{ sandbox: true, sandboxOwner: <sanitized>, sandboxLabel: "My Own Sandbox (<name>)" }`.
+4. **Shared** — verify against `db.sandbox.<owner>.json` users; return the matching user with `sandboxOwner = <owner>`.
+
+The login response is stored in `localStorage` under `nexus_user`. Every subsequent request sends `x-sandbox-owner` if the saved user has `sandbox: true` (wired in `services/dataService.ts:46-62`).
+
+### Frontend UX
+
+- **Login screen** (`components/Login.tsx`): the username field triggers a 300 ms debounced call to `/api/v1/auth/environments` (TTL-cached server-side for 30 s; 60 s eviction sweeper on a `Map`). The dropdown shows 🏢 Live, 🧪 My Own Sandbox, 👥 any shared team sandboxes the user has access to. Selecting one POSTs to `/api/v1/login` with `environment: <id>`.
+- **Persistent banner** (`App.tsx:807-835`): when `currentUser.sandbox` is true, a top banner shows the environment label, the active user, and two actions:
+  - **Reset Data** → opens a modal that requires the user to type `"RESET"` (uppercase) before posting to `/api/v1/sandbox/reset`.
+  - **Exit Sandbox** → clears `localStorage` and returns to the login screen.
+- **Footer version** (`components/Login.tsx:158`): bumped to `v3.5.0-Sandbox` in this release.
+
+### Safety Guards
+
+| Guard | Where | Behavior |
+|---|---|---|
+| `/api/v1/wipe` | `server.js:2124` | Returns `400 Direct wipe is disabled in sandbox mode. Use /api/v1/sandbox/reset.` when `isSandbox(req)`. |
+| `/api/v1/sandbox/reset` | `server.js:2132` | Returns `400 Must be in sandbox mode.` if called from Live. On success: clears the six business arrays (orders, customers, inventory, notifications, contracts, supplierPayments) in the user's sandbox DB, preserves `users` and `userGroups`, deletes and recreates `uploads/sandbox/<owner>/`. |
+| `sendEmail(..., req)` | `server.js:1307` | Short-circuits with `{ success: true, simulated: true }` when `isSandbox(req)`. Three call sites (threshold audit, new-order notification, PO rollback) all pass `req` already — only the function definition needed to accept it. |
+
+### Startup Migration Sweep
+
+`migrateAllSandboxesOnStartup()` runs synchronously **before `app.listen()`** and:
+
+1. Reads `__dirname` for any `db.sandbox.*.json` (excluding `.local.bak`).
+2. For each, checks `settings[0].dbSchemaVersion` against `CURRENT_SCHEMA_VERSION`.
+3. If behind, runs the migration chain via `applySchemaMigrations(db, targetPath)`.
+4. Logs `migrated / skipped / errored` counts.
+
+On-read migration in `readDb()` is still a backstop, so a sandbox DB that gets created after boot is also fine.
+
+### Discovery Cache
+
+`/api/v1/auth/environments` returns the list of environments a user can log into. The response is cached in a `Map` keyed by username, with a 30 s TTL. A `setInterval(..., 60000).unref()` sweeper evicts expired entries so the `Map` stays bounded.
+
+The endpoint also requires `x-user` and `?username=` to match (case-insensitive) before returning the personal + shared lists. Without a match, only the Live environment is returned — preventing unauthenticated enumeration.
+
+### Configuration
+
+- **No new environment variables.** The feature uses the existing `DB_PATH` (for live) and derives sandbox paths via `path.join(__dirname, 'db.sandbox.' + sanitizeUsername(owner) + '.json')`.
+- **`vite.config.ts`** `server.watch.ignored` was extended to `**/db.sandbox.*.json` and `**/db.sandbox.*.json.local.bak` so HMR does not restart on every sandbox write during development.
+
+### Where to Read the Spec
+
+The full architecture spec (with mermaid diagrams, code samples, and the implementation status amendment) lives at:
+
+```
+C:\Users\moata\.local\share\kilo\plans\1786643099095-user-sandbox-plan.md
+```
+
+The current implementation is documented as **Amendment v3.5.1** at the top of that file. Anyone touching the sandbox code should re-read the amendment first.
+
+### Open Concerns (from Amendment v3.5.1)
+
+- **`/uploads` static-serve guard + HMAC signed file URLs** — deferred together; only matter if a static-serve path is ever added. Right now no `app.use('/uploads', express.static(...))` exists.
+- **`db.stub.json` userGroups triplication** — duplicated in `db.stub.json`, `server.js:3703-3708`, and the spec doc. Centralize when convenient.
+
+
+
 ### Sensitive Data Encryption (LLM Tokens, SMTP Password)
 Sensitive API keys and passwords are protected using AES-256-CBC encryption at rest in `db.json`. The encryption key is derived from the factory server passphrase (`FACTORY_PASS`) and should **never** be changed once the system is in production, as it would render existing encrypted values unreadable.
 

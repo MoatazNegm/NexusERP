@@ -99,7 +99,7 @@ class DataService {
   }
   private async get<T>(endpoint: string): Promise<T[]> {
     const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}`, {
-      headers: { 'x-user': this.getCurrentUser() }
+      headers: this.getAuthHeaders()
     });
     if (!res.ok) throw new Error(`Failed to fetch ${endpoint}: ${res.statusText}`);
     return await res.json();
@@ -134,7 +134,7 @@ class DataService {
   private async delete(endpoint: string, id: string): Promise<void> {
     const res = await fetch(`${BACKEND_URL}/api/v1/${endpoint}/${id}`, { 
       method: 'DELETE',
-      headers: { 'x-user': this.getCurrentUser() }
+      headers: this.getAuthHeaders()
     });
     if (!res.ok) throw new Error(`Failed to delete ${endpoint}/${id}: ${res.statusText}`);
   }
@@ -214,7 +214,7 @@ class DataService {
 
   async getSupplierLedger(supplierId: string) {
     const res = await fetch(`${BACKEND_URL}/api/v1/supplier-ledger/${supplierId}`, {
-      headers: { 'x-user': this.getCurrentUser() }
+      headers: this.getAuthHeaders()
     });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Ledger fetch failed'); }
     return res.json();
@@ -379,7 +379,7 @@ class DataService {
 
     const response = await fetch(`${BACKEND_URL}/api/upload-pod`, {
       method: 'POST',
-      headers: { 'x-user': this.getCurrentUser() },
+      headers: this.getAuthHeaders(),
       body: formData
     });
 
@@ -399,7 +399,7 @@ class DataService {
 
     const response = await fetch(`${BACKEND_URL}/api/upload-einvoice`, {
       method: 'POST',
-      headers: { 'x-user': this.getCurrentUser() },
+      headers: this.getAuthHeaders(),
       body: formData
     });
 
@@ -411,7 +411,7 @@ class DataService {
 
   async getGoogleDriveStatus() {
     const response = await fetch(`${BACKEND_URL}/api/v1/integrations/google-drive/status`, {
-      headers: { 'x-user': this.getCurrentUser(), 'x-app-origin': this.getAppOrigin() }
+      headers: { ...this.getAuthHeaders(), 'x-app-origin': this.getAppOrigin() }
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
@@ -422,7 +422,7 @@ class DataService {
 
   async getLocalStorageStatus() {
     const response = await fetch(`${BACKEND_URL}/api/v1/integrations/local-storage/status`, {
-      headers: { 'x-user': this.getCurrentUser() }
+      headers: this.getAuthHeaders()
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
@@ -446,7 +446,7 @@ class DataService {
 
   async getGoogleDriveAuthUrl() {
     const response = await fetch(`${BACKEND_URL}/api/v1/integrations/google-drive/auth-url`, {
-      headers: { 'x-user': this.getCurrentUser(), 'x-app-origin': this.getAppOrigin() }
+      headers: { ...this.getAuthHeaders(), 'x-app-origin': this.getAppOrigin() }
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
@@ -477,7 +477,7 @@ class DataService {
 
     const response = await fetch(`${BACKEND_URL}/api/v1/integrations/storage/upload`, {
       method: 'POST',
-      headers: { 'x-user': this.getCurrentUser() },
+      headers: this.getAuthHeaders(),
       body: formData
     });
 
@@ -497,7 +497,7 @@ class DataService {
     if (description) params.append('description', description);
     if (partNumber) params.append('partNumber', partNumber);
     const response = await fetch(`${BACKEND_URL}/api/v1/procurement/history?${params.toString()}`, {
-      headers: { 'x-user': this.getCurrentUser() }
+      headers: this.getAuthHeaders()
     });
     if (!response.ok) throw new Error("Failed to fetch component history");
     return await response.json();
@@ -756,18 +756,18 @@ class DataService {
   async updateSettings(settings: any) {
     const existing = await this.get<any>('settings');
     if (existing.length > 0) {
-      return this.put('settings', existing[0].id, settings);
+      return this.put('settings', existing[0].id || 'system_settings', settings);
     } else {
-      return this.post('settings', settings);
+      return this.post('settings', { id: 'system_settings', ...settings });
     }
   }
 
   async updateModules(modules: any) {
     const existing = await this.get<any>('modules');
     if (existing.length > 0) {
-      return this.put('modules', existing[0].id, modules);
+      return this.put('modules', existing[0].id || 'system_modules', modules);
     } else {
-      return this.post('modules', modules);
+      return this.post('modules', { id: 'system_modules', ...modules });
     }
   }
 
@@ -777,7 +777,7 @@ class DataService {
   async exportSecureBackup(config: AppConfig, passcode: string): Promise<Blob> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/v1/backup`, {
-        headers: { 'x-user': this.getCurrentUser() }
+        headers: this.getAuthHeaders()
       });
       if (!response.ok) throw new Error("Failed to fetch backup from server");
 
@@ -838,7 +838,7 @@ class DataService {
 
   async exportFullSystemBackup(passcode: string): Promise<Blob> {
     const response = await fetch(`${BACKEND_URL}/api/v1/full-backup?password=${encodeURIComponent(passcode)}`, {
-      headers: { 'x-user': this.getCurrentUser() }
+      headers: this.getAuthHeaders()
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
@@ -850,7 +850,7 @@ class DataService {
 
   async exportUsersGroupsBackup(passcode: string): Promise<Blob> {
     const response = await fetch(`${BACKEND_URL}/api/v1/backup-users-groups?password=${encodeURIComponent(passcode)}`, {
-      headers: { 'x-user': this.getCurrentUser() }
+      headers: this.getAuthHeaders()
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
@@ -865,7 +865,7 @@ class DataService {
     formData.append('password', passcode);
     const response = await fetch(`${BACKEND_URL}/api/v1/restore-users-groups`, {
       method: 'POST',
-      headers: { 'x-user': this.getCurrentUser() },
+      headers: this.getAuthHeaders(),
       body: formData
     });
     if (!response.ok) {
@@ -880,7 +880,7 @@ class DataService {
     formData.append('password', passcode);
     const response = await fetch(`${BACKEND_URL}/api/v1/full-restore`, {
       method: 'POST',
-      headers: { 'x-user': this.getCurrentUser() },
+      headers: this.getAuthHeaders(),
       body: formData
     });
     if (!response.ok) {
