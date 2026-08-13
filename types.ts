@@ -35,13 +35,20 @@ export enum OrderStatus {
   FULFILLED = 'FULFILLED'
 }
 
-export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice' | 'planning' | 'suppliers' | 'shipment';
+export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice' | 'planning' | 'suppliers' | 'shipment' | 'sales' | 'warehouse' | 'logistics';
 
 export interface UserGroup {
   id: string;
   name: string;
   description: string;
   roles: UserRole[];
+  permissions?: {
+    canViewFinancials?: boolean;
+    canApproveTechReview?: boolean;
+    canReleaseHub?: boolean;
+    canManageUsers?: boolean;
+    [key: string]: boolean | undefined;
+  };
 }
 
 export interface User {
@@ -53,6 +60,16 @@ export interface User {
   groupIds?: string[];
   avatar?: string;
   logs?: LogEntry[];
+  sandbox?: boolean;
+  sandboxOwner?: string;
+  sandboxLabel?: string;
+}
+
+export interface AuthEnvironment {
+  id: string;
+  label: string;
+  type: 'live' | 'personal' | 'shared';
+  owner?: string;
 }
 
 export type AIProvider = 'gemini' | 'openai';

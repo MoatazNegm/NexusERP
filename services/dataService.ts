@@ -16,7 +16,8 @@ import {
   EmailConfig,
   CompStatus,
   SupplierPayment,
-  LedgerEntry
+  LedgerEntry,
+  AuthEnvironment
 } from '../types';
 import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
 
@@ -42,10 +43,28 @@ class DataService {
     }
   }
 
-  private getHeaders() {
+  private getAuthHeaders(): Record<string, string> {
+    const username = this.getCurrentUser();
+    const headers: Record<string, string> = { 'x-user': username };
+    
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('nexus_user');
+      if (saved) {
+        try {
+          const user = JSON.parse(saved);
+          if (user.sandbox && user.sandboxOwner) {
+            headers['x-sandbox-owner'] = user.sandboxOwner;
+          }
+        } catch {}
+      }
+    }
+    return headers;
+  }
+
+  private getHeaders(): Record<string, string> {
     return {
       'Content-Type': 'application/json',
-      'x-user': this.getCurrentUser()
+      ...this.getAuthHeaders()
     };
   }
 
@@ -560,23 +579,49 @@ class DataService {
 
 
 
-  async verifyLogin(username: string, pass: string) {
+  async getAvailableEnvironments(username: string): Promise<AuthEnvironment[]> {
+    if (!username.trim()) {
+      return [{ id: 'live', label: 'Live ERP (Production)', type: 'live' }];
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/environments?username=${encodeURIComponent(username.trim())}`, {
+        headers: { 'x-user': username.trim() }
+      });
+      if (!res.ok) return [{ id: 'live', label: 'Live ERP (Production)', type: 'live' }];
+      const data = await res.json();
+      return data.environments || [{ id: 'live', label: 'Live ERP (Production)', type: 'live' }];
+    } catch {
+      return [{ id: 'live', label: 'Live ERP (Production)', type: 'live' }];
+    }
+  }
+
+  async verifyLogin(username: string, pass: string, environment: string = 'live'): Promise<User | null> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/v1/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password: pass })
+        body: JSON.stringify({ username, password: pass, environment })
       });
 
       if (!response.ok) {
-        return null;
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Invalid identity or passcode');
       }
 
       return await response.json() as User;
     } catch (error) {
       console.error("Login verification error:", error);
-      return null;
+      throw error;
     }
+  }
+
+  async resetSandbox(): Promise<boolean> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/sandbox/reset`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+    if (!res.ok) throw new Error("Failed to reset sandbox");
+    return true;
   }
 
   async init() {

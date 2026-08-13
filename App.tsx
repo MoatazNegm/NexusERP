@@ -53,8 +53,26 @@ const App: React.FC = () => {
   const [passError, setPassError] = useState('');
   const [passSuccess, setPassSuccess] = useState(false);
   const [connectionError, setConnectionError] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
 
   const effectivelyCollapsed = isSidebarCollapsed && !isSidebarHovered;
+
+  const handleConfirmReset = async () => {
+    try {
+      await dataService.resetSandbox();
+      setShowResetModal(false);
+      setResetConfirmText('');
+      setRefreshKey(prev => prev + 1);
+    } catch (err) {
+      console.error("Failed to reset sandbox:", err);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('nexus_user');
+    setCurrentUser(null);
+  };
 
   useEffect(() => {
     if (currentUser) {
@@ -786,6 +804,37 @@ const App: React.FC = () => {
         )}
       </aside>
        <main className={`flex-1 transition-all duration-300 min-w-0 ${effectivelyCollapsed ? 'ml-20' : 'ml-72'}`}>
+         {currentUser?.sandbox && (
+           <div className="bg-amber-500/10 border-b border-amber-500/30 px-6 py-2 flex items-center justify-between text-amber-400 text-xs font-semibold">
+             <div className="flex items-center gap-2">
+               <span className="flex h-2 w-2 relative">
+                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                 <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+               </span>
+               <span className="font-black uppercase tracking-wider">
+                 {currentUser.sandboxOwner === currentUser.username ? 'Personal Sandbox' : 'Shared Team Sandbox'}
+               </span>
+               <span className="text-amber-200/70">
+                 | Environment: <strong>{currentUser.sandboxLabel || currentUser.sandboxOwner}</strong>
+                 | User: <strong>{currentUser.name} ({currentUser.username})</strong>
+               </span>
+             </div>
+             <div className="flex items-center gap-3">
+               <button 
+                 onClick={() => setShowResetModal(true)}
+                 className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded border border-amber-500/40 text-[11px] font-bold transition-colors"
+               >
+                 <i className="fa-solid fa-rotate-left mr-1"></i> Reset Data
+               </button>
+               <button 
+                 onClick={handleLogout}
+                 className="text-amber-300 hover:text-white underline text-[11px]"
+               >
+                 Exit Sandbox
+               </button>
+             </div>
+           </div>
+         )}
          <div className="p-8 max-w-[1600px] mx-auto min-h-screen">
            {renderContent()}
            <VersionFooter />
@@ -847,6 +896,36 @@ const App: React.FC = () => {
                   Commit Rotation
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showResetModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-8 shadow-2xl relative overflow-hidden">
+            <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight mb-2">Reset Sandbox Data</h3>
+            <p className="text-sm font-bold text-slate-500 mb-6">Type "RESET" to confirm purging all test data in this sandbox. This action cannot be undone.</p>
+            <input
+              type="text"
+              className="w-full p-4 border-2 border-slate-50 rounded-2xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-500 transition-all mb-4 uppercase"
+              value={resetConfirmText}
+              onChange={e => setResetConfirmText(e.target.value.toUpperCase())}
+              placeholder="RESET"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowResetModal(false)}
+                className="flex-1 py-3 bg-slate-100 text-slate-500 font-black text-[10px] uppercase rounded-xl hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={resetConfirmText !== 'RESET'}
+                onClick={handleConfirmReset}
+                className="flex-1 py-3 bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-rose-700 disabled:opacity-50 transition-colors"
+              >
+                Confirm Reset
+              </button>
             </div>
           </div>
         </div>

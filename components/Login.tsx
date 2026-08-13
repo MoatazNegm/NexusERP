@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { User, AppConfig } from '../types';
+import React, { useState, useEffect } from 'react';
+import { User, AppConfig, AuthEnvironment } from '../types';
 import { dataService } from '../services/dataService';
 
 interface LoginProps {
@@ -14,13 +14,35 @@ export const Login: React.FC<LoginProps> = ({ onLogin, config }) => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  const [environment, setEnvironment] = useState('live');
+  const [environments, setEnvironments] = useState<AuthEnvironment[]>([
+    { id: 'live', label: 'Live ERP (Production)', type: 'live' }
+  ]);
+  const [isLoadingEnvs, setIsLoadingEnvs] = useState(false);
+
+  // Discover environments when username is typed (debounced 300ms)
+  useEffect(() => {
+    if (!username.trim()) {
+      setEnvironments([{ id: 'live', label: 'Live ERP (Production)', type: 'live' }]);
+      setEnvironment('live');
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsLoadingEnvs(true);
+      const envs = await dataService.getAvailableEnvironments(username);
+      setEnvironments(envs);
+      setIsLoadingEnvs(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [username]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
     try {
-      const user = await dataService.verifyLogin(username, password);
+      const user = await dataService.verifyLogin(username, password, environment);
       if (user) {
         onLogin(user);
       } else {
@@ -81,6 +103,25 @@ export const Login: React.FC<LoginProps> = ({ onLogin, config }) => {
             </div>
 
             <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1 flex items-center justify-between">
+                <span>Target Environment</span>
+                {isLoadingEnvs && <i className="fa-solid fa-circle-notch fa-spin text-blue-500 text-xs"></i>}
+              </label>
+              <select
+                value={environment}
+                onChange={e => setEnvironment(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-2xl py-4 px-4 text-slate-900 font-bold text-xs outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all shadow-sm"
+              >
+                {environments.map(env => (
+                  <option key={env.id} value={env.id}>
+                    {env.type === 'live' ? '🏢 ' : env.type === 'personal' ? '🧪 ' : '👥 '}
+                    {env.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Access Passcode</label>
               <div className="relative group">
                 <i className="fa-solid fa-lock absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors z-10"></i>
@@ -114,7 +155,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, config }) => {
 
           <div className="mt-10 pt-8 border-t border-slate-800 text-center">
             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Authorized Access Only</p>
-            <p className="text-[9px] text-slate-600 mt-2">v2.5.0 Secure Build — © 2024 {config.settings.companyName || 'Nexus Operations'}</p>
+            <p className="text-[9px] text-slate-600 mt-2">v3.5.0-Sandbox — © 2024 {config.settings.companyName || 'Nexus Operations'}</p>
             <div className="flex items-center justify-center gap-0 mt-4 opacity-50">
               <span className="text-[7px] text-blue-500 uppercase font-black tracking-[0.3em] whitespace-nowrap">A product licensed by</span>
               <img src="/assets/quickstor-logo.png" alt="Quickstor" className="h-[40px] w-auto brightness-200 contrast-125 scale-[1.2] origin-left" />

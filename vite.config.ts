@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
       port: 5005,
       host: '0.0.0.0',
       watch: {
-        ignored: ['**/db.json', '**/db.json.local.bak']
+        ignored: ['**/db.json', '**/db.json.local.bak', '**/db.sandbox.*.json', '**/db.sandbox.*.json.local.bak']
       },
       proxy: {
         '/api': {

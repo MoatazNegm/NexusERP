@@ -39,6 +39,8 @@ db.json
 db_test.json
 temp_settings.json
 db.json.local.bak
+db.sandbox.*.json
+db.sandbox.*.json.local.bak
 
 # Test Scripts
 test_*.js

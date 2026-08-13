@@ -6,9 +6,32 @@ import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+
+import os from 'os';
+import AdmZip from 'adm-zip';
+
+// Path sanitization with safe fallback
+const sanitizeUsername = (username) => {
+  if (!username || typeof username !== 'string') return 'user';
+  const cleaned = username
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 32);
+  return cleaned || 'user';
+};
+
+const getSandboxDbPath = (owner) => path.join(__dirname, `db.sandbox.${sanitizeUsername(owner)}.json`);
+const getSandboxUploadsPath = (owner) => path.join(UPLOADS_BASE, 'sandbox', sanitizeUsername(owner));
+const getDbPath = (req) => req.sandboxDbPath || DB_PATH;
+const isSandbox = (req) => Boolean(req.sandboxDbPath);
+// TTL cache for /api/v1/auth/environments discovery responses (per username)
+const discoveryCache = new Map(); // username -> { data, expiresAt }
+
 import crypto from 'crypto';
 import multer from 'multer';
-import AdmZip from 'adm-zip';
 import { isMarginBreach } from './shared/margin.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
@@ -30,11 +53,19 @@ const getItemEffectiveQty = (item) => {
 };
 
 // --- MULTER CONFIG ---
+// Each storage is request-scoped: in sandbox mode (req.sandboxOwner set by
+// the multi-tenant middleware above), files land under
+// uploads/sandbox/<owner>/<subdir>/ instead of uploads/<subdir>/.
+const resolveUploadDir = (req, subDir) => {
+    const base = req.sandboxOwner ? getSandboxUploadsPath(req.sandboxOwner) : UPLOADS_BASE;
+    const dir = path.join(base, subDir);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+};
+
 const podStorage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const dir = path.join(UPLOADS_BASE, 'pod');
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
+        cb(null, resolveUploadDir(req, 'pod'));
     },
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -45,9 +76,7 @@ const uploadPod = multer({ storage: podStorage });
 
 const einvoiceStorage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const dir = path.join(UPLOADS_BASE, 'einvoices');
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
+        cb(null, resolveUploadDir(req, 'einvoices'));
     },
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -58,9 +87,7 @@ const uploadEInvoice = multer({ storage: einvoiceStorage });
 
 const whtStorage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const dir = path.join(UPLOADS_BASE, 'wht_certificates');
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
+        cb(null, resolveUploadDir(req, 'wht_certificates'));
     },
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -252,54 +279,58 @@ const isOrderFullyDelivered = (order) => {
 };
 
 // --- DATABASE HANDLERS ---
-const readDb = () => {
-    try {
-        const BAK_PATH = DB_PATH + '.local.bak';
+const readDb = (customPath = null) => {
+  const targetPath = customPath || DB_PATH;
+  const isLive = targetPath === DB_PATH;
+  const bakPath = targetPath + '.local.bak';
 
-        if (!fs.existsSync(DB_PATH)) {
-            // Priority 1: Check if we have a local safety backup (prevents data loss on env reset/git pull)
-            if (fs.existsSync(BAK_PATH)) {
-                fs.copyFileSync(BAK_PATH, DB_PATH);
-                console.log(`[System] CRITICAL: db.json was missing! Restored from local backup (.local.bak) to prevent data loss.`);
-            } 
-            // Priority 2: Fallback to the production stub if no backup exists
-            else {
-                const stubPath = path.join(__dirname, 'db.stub.json');
-                if (fs.existsSync(stubPath)) {
-                    fs.copyFileSync(stubPath, DB_PATH);
-                    console.log("[System] Initialized db.json from db.stub.json (no local backup found)");
-                } else {
-                    return {};
-                }
-            }
-        } else {
-            // Create/Refresh the local backup on every successful server start for future safety
-            try {
-                fs.copyFileSync(DB_PATH, BAK_PATH);
-            } catch (e) {
-                console.error("Failed to refresh local db backup", e);
-            }
-        }
-        const data = fs.readFileSync(DB_PATH, 'utf8');
-        const db = JSON.parse(data);
-        applySchemaMigrations(db);
-        return db;
-    } catch (err) {
-        console.error("Error reading DB:", err);
-        return {};
+  if (!fs.existsSync(targetPath)) {
+    if (isLive) {
+      if (fs.existsSync(bakPath)) {
+        fs.copyFileSync(bakPath, targetPath);
+      } else {
+        const stubPath = path.join(__dirname, 'db.stub.json');
+        if (fs.existsSync(stubPath)) fs.copyFileSync(stubPath, targetPath);
+        else return {};
+      }
+    } else {
+      return {};
     }
+  }
+
+  try {
+    const raw = fs.readFileSync(targetPath, 'utf8');
+    const db = JSON.parse(raw);
+    if (db.settings?.[0]?.dbSchemaVersion < CURRENT_SCHEMA_VERSION) {
+      applySchemaMigrations(db, targetPath);
+    }
+    return db;
+  } catch (err) {
+    console.error(`[DB] Read error on ${targetPath}:`, err);
+    if (fs.existsSync(bakPath)) {
+      try { return JSON.parse(fs.readFileSync(bakPath, 'utf8')); } catch {}
+    }
+    return {};
+  }
 };
 
-const writeDb = (data) => {
-    try {
-        fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-        return true;
-    } catch (err) {
-        console.error("Error writing DB:", err);
-        return false;
-    }
+const writeDb = (data, customPath = null) => {
+  const targetPath = customPath || DB_PATH;
+  const bakPath = targetPath + '.local.bak';
+  try {
+    // Atomic write
+    const tmpPath = targetPath + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tmpPath, targetPath);
+    try { fs.copyFileSync(targetPath, bakPath); } catch {}
+    return true;
+  } catch (err) {
+    console.error(`[DB] Write error on ${targetPath}:`, err);
+    return false;
+  }
 };
 
+const getDb = (req) => readDb(getDbPath(req));
 // --- HELPERS ---
 const hashPassword = (pass) => crypto.createHash('sha256').update(pass).digest('hex');
 
@@ -705,7 +736,7 @@ const migrations = [
     },
 ];
 
-const applySchemaMigrations = (db) => {
+const applySchemaMigrations = (db, targetPath = DB_PATH) => {
     if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) return;
     let settings = db.settings[0];
     let version = settings.dbSchemaVersion || 0;
@@ -745,7 +776,7 @@ const applySchemaMigrations = (db) => {
 
     settings.dbSchemaVersion = CURRENT_SCHEMA_VERSION;
     db.settings[0] = encryptSettings(settings);
-    writeDb(db);
+    writeDb(db, targetPath);
     console.log(`[System] Migrated db schema from v${settings.dbSchemaVersion - (CURRENT_SCHEMA_VERSION - version)} to v${CURRENT_SCHEMA_VERSION}`);
 };
 
@@ -804,7 +835,7 @@ const repairNegativeMarginOrders = (db) => {
             changed = true;
         }
     });
-    if (changed) writeDb(db);
+    if (changed) writeDb(db, targetPath);
 };
 
 const reconcileOrdersMarginOnThresholdChange = (db, oldMinMargin, newMinMargin, user) => {
@@ -1273,7 +1304,12 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
     return order;
 };
 
-const sendEmail = async (to, subject, body, config) => {
+const sendEmail = async (to, subject, body, config, req = null) => {
+    // In sandbox mode, simulate email dispatch so real employees are never spammed.
+    if (req && isSandbox(req)) {
+        console.log(`[Sandbox Email Simulated] To: ${JSON.stringify(to)} | Subject: ${subject}`);
+        return { success: true, simulated: true };
+    }
     if (!config || !config.smtpServer) {
         console.warn("[Email] Configuration missing.");
         return { success: false, error: "SMTP configuration missing" };
@@ -1365,6 +1401,11 @@ const THRESHOLD_LABELS = {
 
 const runThresholdAudit = async () => {
     console.debug(`[Audit] Routine check started at ${new Date().toISOString()}`);
+    // Threshold audits intentionally run against the live DB only — sandbox DBs
+    // are isolated training environments and must never trigger alerts to real
+    // personnel. See plan §2 ("Background threshold audits remain strictly on the
+    // Live DB"). The on-read migration guard in readDb() still upgrades the live
+    // DB's schema if it is behind CURRENT_SCHEMA_VERSION.
     const db = readDb();
     const orders = db.orders || [];
     const notifications = db.notifications || [];
@@ -1396,7 +1437,7 @@ const runThresholdAudit = async () => {
 
             const fullBody = body + contextBlock;
 
-            const result = await sendEmail(recipientEmails, subject, fullBody, settings.emailConfig);
+            const result = await sendEmail(recipientEmails, subject, fullBody, settings.emailConfig, req);
             if (result.success) {
                 notifications.push({ id: `nt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, journalKey, orderId: order.id, type: alertType, sentAt: new Date().toISOString(), recipients: recipientEmails });
                 recipients.forEach(r => {
@@ -1462,7 +1503,7 @@ const runThresholdAudit = async () => {
 
                     const body = `A new order ${order.internalOrderNumber} has been logged.` + contextBlock;
 
-                    const result = await sendEmail(emails, `[NEXUS] New Order: ${order.internalOrderNumber}`, body, settings.emailConfig);
+                    const result = await sendEmail(emails, `[NEXUS] New Order: ${order.internalOrderNumber}`, body, settings.emailConfig, req);
                     if (result.success) {
                         notifications.push({ id: `nt_n_${Date.now()}`, journalKey: jk, orderId: order.id, type: 'new_order', sentAt: new Date().toISOString(), recipients: emails });
                         recipients.forEach(r => { order.logs.push({ timestamp: new Date().toISOString(), message: `[SYSTEM] New Order Notification Sent to ${r.name} (${r.email}) via group: ${r.groupName}`, status: order.status, user: 'System' }); });
@@ -1618,8 +1659,8 @@ const runThresholdAudit = async () => {
 
     if (dbChanged) {
         db.notifications = notifications;
-        writeDb(db);
-    }
+        writeDb(db, targetPath);
+}
 };
 
 // --- APP SETUP ---
@@ -1628,6 +1669,42 @@ const PORT = process.env.PORT || 5005;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
+
+// --- MULTI-TENANT SANDBOX MIDDLEWARE (must run before any /api/v1/* route) ---
+// Resolves x-sandbox-owner into req.sandboxDbPath / req.sandboxOwner / req.roles.
+// Live mode (no header) is a zero-disk-IO pass-through; roles are evaluated
+// downstream by each handler that needs them.
+app.use((req, res, next) => {
+    const username = req.headers['x-user'];
+    const sandboxOwner = req.headers['x-sandbox-owner'];
+
+    req.user = username || null;
+    req.roles = [];
+    req.sandboxDbPath = null;
+    req.sandboxOwner = null;
+
+    if (sandboxOwner && username) {
+        const sanitizedOwner = sanitizeUsername(sandboxOwner);
+        const sandboxPath = getSandboxDbPath(sanitizedOwner);
+
+        if (fs.existsSync(sandboxPath)) {
+            const sandboxDb = readDb(sandboxPath);
+            const userEntry = (sandboxDb.users || []).find(
+                u => u.username.toLowerCase() === username.toLowerCase()
+            );
+
+            if (userEntry) {
+                req.sandboxDbPath = sandboxPath;
+                req.sandboxOwner = sanitizedOwner;
+                req.roles = userEntry.roles || [];
+            } else {
+                return res.status(403).json({ error: 'ACCESS_REVOKED', message: 'Access to this sandbox has been revoked.' });
+            }
+        }
+    }
+    next();
+});
+
 // Crash Logger for debugging frontend blank screens
 app.get('/api/log-crash', (req, res) => {
     console.log('\n\nðŸš¨ FRONTEND CRASH ðŸš¨\n', req.query.err, '\n\n');
@@ -1641,7 +1718,6 @@ app.use(express.static(path.join(__dirname, 'dist'), {
         }
     }
 }));
-app.use('/uploads', express.static(UPLOADS_BASE));
 
 // --- HEALTH CHECK HELPER ---
 const calculateOrderHealth = (order, settings) => {
@@ -1699,7 +1775,7 @@ const calculateOrderHealth = (order, settings) => {
 
 // --- GENERIC CRUD ---
 const getCollection = (col) => (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     if (col === 'users') return res.json((db[col] || []).map(({ password, ...u }) => u));
 
     if (col === 'orders') {
@@ -1716,7 +1792,7 @@ const getCollection = (col) => (req, res) => {
 };
 
 const getItemFromCollection = (col) => (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     const item = (db[col] || []).find(it => it.id === req.params.id);
     if (!item) return res.status(404).json({ error: "Item not found" });
     if (col === 'users') {
@@ -1753,7 +1829,7 @@ const validateOrderItems = (items) => {
 };
 
 const addToCollection = (col) => (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     if (!db[col]) db[col] = [];
 
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
@@ -1830,12 +1906,12 @@ const addToCollection = (col) => (req, res) => {
     }
 
     db[col].push(newItem);
-    if (writeDb(db)) res.status(201).json(col === 'users' ? (({ password, ...u }) => u)(newItem) : newItem);
+    if (writeDb(db, getDbPath(req))) res.status(201).json(col === 'users' ? (({ password, ...u }) => u)(newItem) : newItem);
     else res.status(500).json({ error: "Write failed" });
 };
 
 const updateInCollection = (col) => (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     if (!db[col]) return res.status(404).json({ error: "Not found" });
     const index = db[col].findIndex(it => it.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Item not found" });
@@ -1913,12 +1989,12 @@ const updateInCollection = (col) => (req, res) => {
     }
 
     db[col][index] = updated;
-    if (writeDb(db)) res.json(col === 'users' ? (({ password, ...u }) => u)(updated) : updated);
+    if (writeDb(db, getDbPath(req))) res.json(col === 'users' ? (({ password, ...u }) => u)(updated) : updated);
     else res.status(500).json({ error: "Update failed" });
 };
 
 const deleteFromCollection = (col) => (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     if (!db[col]) return res.status(404).json({ error: "Not found" });
 
     if (col === 'contracts') {
@@ -1930,7 +2006,7 @@ const deleteFromCollection = (col) => (req, res) => {
     }
 
     db[col] = db[col].filter(it => it.id !== req.params.id);
-    if (writeDb(db)) res.json({ message: "Deleted" });
+    if (writeDb(db, getDbPath(req))) res.json({ message: "Deleted" });
     else res.status(500).json({ error: "Delete failed" });
 };
 
@@ -1939,7 +2015,7 @@ app.get('/api/v1/procurement/history', (req, res) => {
     const { description, partNumber } = req.query;
     if (!description && !partNumber) return res.status(400).json({ error: "Search criteria required" });
 
-    const db = readDb();
+    const db = getDb(req);
     const history = [];
 
     (db.orders || []).forEach(order => {
@@ -1983,7 +2059,7 @@ app.post('/api/v1/customers/merge', (req, res) => {
             return res.status(400).json({ error: "Missing merge parameters" });
         }
 
-        const db = readDb();
+        const db = getDb(req);
         const primary = db.customers.find(c => c.id === primaryId);
         if (!primary) return res.status(404).json({ error: "Primary customer not found" });
 
@@ -2018,7 +2094,7 @@ app.post('/api/v1/customers/merge', (req, res) => {
         if (!primary.logs) primary.logs = [];
         primary.logs.push(createAuditLog(`Merged ${deletedIds.length} duplicate records. Migrated ${ordersMigrated} orders.`, undefined, user));
 
-        if (writeDb(db)) {
+        if (writeDb(db, getDbPath(req))) {
             console.log(`[Merge] Success. Deleted ${deletedIds.length} records, migrated ${ordersMigrated} orders.`);
             res.json({
                 message: `Successfully merged ${deletedIds.length} customers and migrated ${ordersMigrated} orders.`,
@@ -2044,19 +2120,35 @@ COLLECTIONS.forEach(col => {
 });
 
 
+
 app.post('/api/v1/wipe', (req, res) => {
-    const db = readDb();
-    const BUSINESS_COLLECTIONS = ['orders', 'inventory', 'procurement', 'notifications'];
-    BUSINESS_COLLECTIONS.forEach(col => {
-        db[col] = [];
-    });
-    if (writeDb(db)) res.json({ message: "Wipe successful" });
-    else res.status(500).json({ error: "Wipe failed" });
+  if (isSandbox(req)) return res.status(400).json({ error: "Direct wipe is disabled in sandbox mode. Use /api/v1/sandbox/reset." });
+  const db = getDb(req);
+  db.orders = []; db.customers = []; db.inventory = []; db.notifications = []; db.contracts = []; db.supplierPayments = [];
+  if (writeDb(db, getDbPath(req))) res.json({ message: "Live wipe successful" });
+  else res.status(500).json({ error: "Wipe failed" });
 });
+
+app.post('/api/v1/sandbox/reset', (req, res) => {
+  if (!isSandbox(req)) return res.status(400).json({ error: "Must be in sandbox mode." });
+  const currentDb = getDb(req);
+  const resetDb = {
+    settings: currentDb.settings || [], modules: currentDb.modules || [], userGroups: currentDb.userGroups || [], users: currentDb.users || [],
+    orders: [], customers: [], inventory: [], notifications: [], contracts: [], supplierPayments: []
+  };
+  writeDb(resetDb, getDbPath(req));
+  const uploadsDir = getSandboxUploadsPath(req.sandboxOwner);
+  if (fs.existsSync(uploadsDir)) {
+    fs.rmSync(uploadsDir, { recursive: true, force: true });
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+  res.json({ success: true, message: "Sandbox reset successfully." });
+});
+
 
 app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
     const { action, payload } = req.body;
-    const db = readDb();
+    const db = getDb(req);
     const index = db.orders.findIndex(it => it.id === req.params.id);
     if (index === -1) return res.status(404).json({ error: "Order not found" });
 
@@ -2238,7 +2330,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     db.notifications = db.notifications.filter(n => n.orderId !== order.id);
                 }
 
-                if (writeDb(db)) return res.json({ message: "Order permanently deleted" });
+                if (writeDb(db, getDbPath(req))) return res.json({ message: "Order permanently deleted" });
                 else throw new Error("Database write failed");
 
             case 'reject-order':
@@ -3303,7 +3395,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         reconcileInventory(oldOrder, order, db);
 
         db.orders[index] = order;
-        if (writeDb(db)) {
+        if (writeDb(db, getDbPath(req))) {
             res.json(order);
         } else {
             res.status(500).json({ error: "Failed to save data" });
@@ -3314,7 +3406,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 });
 
 app.get('/api/v1/backup', (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     // Settings remain encrypted in the backup file for security.
     // The restore endpoint handles both encrypted and plaintext settings.
     res.json(db);
@@ -3330,7 +3422,7 @@ app.get('/api/v1/full-backup', (req, res) => {
         const zip = new AdmZip();
 
         // Add filtered database (exclude users and groups - they are backed up separately via Export Identities)
-        const db = readDb();
+        const db = getDb(req);
         delete db.users;
         delete db.userGroups;
         const filteredDbStr = JSON.stringify(db, null, 2);
@@ -3381,9 +3473,9 @@ app.post('/api/v1/restore', (req, res) => {
     }
 
     // Migrate schema after restore so old backups work on new code versions
-    applySchemaMigrations(data);
+    applySchemaMigrations(data, getDbPath(req));
 
-    if (writeDb(data)) {
+    if (writeDb(data, getDbPath(req))) {
         console.log(`[System] Database restored manually at ${new Date().toISOString()}`);
         res.json({ message: "Restored" });
     } else {
@@ -3393,60 +3485,28 @@ app.post('/api/v1/restore', (req, res) => {
 
 const restoreUpload = multer({ storage: multer.memoryStorage() });
 app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
-
-        const password = req.body.password;
-        if (!password) {
-            return res.status(400).json({ error: "Password is required to restore secure archive." });
-        }
-
-        const fileBuffer = req.file.buffer;
-
-        // Minimum size: 16 (salt) + 12 (iv) + 16 (authTag) = 44 bytes
-        if (fileBuffer.length < 44) {
-            return res.status(400).json({ error: "Invalid archive format." });
-        }
-
-        const salt = fileBuffer.subarray(0, 16);
-        const iv = fileBuffer.subarray(16, 28);
-        const authTag = fileBuffer.subarray(28, 44);
-        const encrypted = fileBuffer.subarray(44);
-
-        const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
-        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-        decipher.setAuthTag(authTag);
-
-        let rawBuffer;
-        try {
-            rawBuffer = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-        } catch (decryptErr) {
-            console.error("Decryption failed:", decryptErr);
-            return res.status(401).json({ error: "Decryption failed. Incorrect password or corrupted archive." });
-        }
-
-        const zip = new AdmZip(rawBuffer);
-        const entries = zip.getEntries();
-
-        // Basic verification
-        const hasDb = entries.some(e => e.entryName === 'db.json');
-        if (!hasDb) return res.status(400).json({ error: "Invalid archive: db.json missing" });
-
-        // Unpack everything to root
-        zip.extractAllTo(__dirname, true);
-
-        // Migrate schema after restore so old backups work on new code versions
-        const restoredDb = readDb();
-        applySchemaMigrations(restoredDb);
-
-        console.log(`[System] Full system restore completed at ${new Date().toISOString()}`);
-        res.json({ message: "Full system restored successfully" });
-    } catch (err) {
-        console.error("Full restore failed:", err);
-        res.status(500).json({ error: "Full restore failed: " + err.message });
+  const tempDir = path.join(os.tmpdir(), `nexus-restore-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+  fs.mkdirSync(tempDir, { recursive: true });
+  try {
+    const zip = new AdmZip(req.file.buffer);
+    zip.extractAllTo(tempDir, true);
+    const extractedDb = path.join(tempDir, 'db.json');
+    if (fs.existsSync(extractedDb)) {
+      const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
+      applySchemaMigrations(db, getDbPath(req));
+      writeDb(db, getDbPath(req));
     }
+    const extractedUploads = path.join(tempDir, 'uploads');
+    if (fs.existsSync(extractedUploads)) {
+      const targetUploads = isSandbox(req) ? getSandboxUploadsPath(req.sandboxOwner) : UPLOADS_BASE;
+      if (!fs.existsSync(targetUploads)) fs.mkdirSync(targetUploads, { recursive: true });
+      fs.cpSync(extractedUploads, targetUploads, { recursive: true });
+    }
+    res.json({ message: "Full system restore successful", isSandbox: isSandbox(req) });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
-
 
 app.get('/api/v1/backup-users-groups', (req, res) => {
     try {
@@ -3455,7 +3515,7 @@ app.get('/api/v1/backup-users-groups', (req, res) => {
             return res.status(400).json({ error: "Password is required for secure users/groups export." });
         }
 
-        const db = readDb();
+        const db = getDb(req);
         const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
             ? db.settings[0]
             : (db.settings || {});
@@ -3524,7 +3584,7 @@ app.post('/api/v1/restore-users-groups', restoreUpload.single('archive'), (req, 
             return res.status(400).json({ error: "Invalid archive: missing users or userGroups arrays" });
         }
 
-        const db = readDb();
+        const db = getDb(req);
         db.users = data.users;
         db.userGroups = data.userGroups;
 
@@ -3540,7 +3600,7 @@ app.post('/api/v1/restore-users-groups', restoreUpload.single('archive'), (req, 
             db.settings[0] = encryptSettings(settings);
         }
 
-        if (writeDb(db)) {
+        if (writeDb(db, getDbPath(req))) {
             console.log(`[System] Users, groups, and help content restored at ${new Date().toISOString()}`);
             res.json({ message: "Users, groups, and help content restored successfully" });
         } else {
@@ -3553,28 +3613,130 @@ app.post('/api/v1/restore-users-groups', restoreUpload.single('archive'), (req, 
 });
 
 app.post('/api/v1/relay/dispatch', async (req, res) => {
-    const { Host, Port, Username, Password, To, From, Subject, Body } = req.body;
-    const result = await sendEmail(To, Subject, Body, { smtpServer: Host, smtpPort: Port, username: Username, password: Password, senderName: 'Nexus Relay', senderEmail: From || Username, useSsl: Port === 465 });
-    if (result.success) res.json({ message: "Sent" });
-    else res.status(500).json({ error: result.error });
+  const { Host, Port, Username, Password, To, From, Subject, Body } = req.body;
+  const result = await sendEmail(To, Subject, Body, {
+    smtpServer: Host, smtpPort: Port, username: Username, password: Password,
+    senderName: 'Nexus Relay', senderEmail: From || Username, useSsl: Port === 465
+  }, req);
+  if (result.success) res.json({ message: "Sent" });
+  else res.status(500).json({ error: result.error });
+});
+
+app.get('/api/v1/auth/environments', (req, res) => {
+  const queryUser = String(req.query.username || '').trim().toLowerCase();
+  const headerUser = String(req.headers['x-user'] || '').trim().toLowerCase();
+  
+  const username = (headerUser && headerUser === queryUser) ? queryUser : '';
+  if (!username) {
+    return res.json({ environments: [{ id: 'live', label: 'Live ERP (Production)', type: 'live' }] });
+  }
+
+  const cached = discoveryCache.get(username);
+  if (cached && Date.now() < cached.expiresAt) {
+    return res.json(cached.data);
+  }
+
+  const liveDb = readDb(DB_PATH);
+  const liveUser = (liveDb.users || []).find(u => u.username.toLowerCase() === username);
+
+  if (!liveUser) {
+    return res.json({ environments: [{ id: 'live', label: 'Live ERP (Production)', type: 'live' }] });
+  }
+
+  const sanitized = sanitizeUsername(username);
+  const environments = [
+    { id: 'live', label: 'Live ERP (Production)', type: 'live' },
+    { id: sanitized, label: `My Own Sandbox (${liveUser.name || username})`, type: 'personal' }
+  ];
+
+  try {
+    const files = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json')).slice(0, 50);
+    for (const file of files) {
+      const owner = file.replace('db.sandbox.', '').replace('.json', '');
+      if (owner === sanitized) continue;
+
+      try {
+        const db = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+        const hasAccess = (db.users || []).some(u => u.username.toLowerCase() === username);
+        if (hasAccess) {
+          const ownerUser = (db.users || []).find(u => u.username.toLowerCase() === owner);
+          environments.push({
+            id: owner,
+            label: `${ownerUser?.name || owner}'s Team Sandbox`,
+            type: 'shared',
+            owner: owner
+          });
+        }
+      } catch {}
+    }
+  } catch {}
+
+  const responseData = { environments };
+  discoveryCache.set(username, { data: responseData, expiresAt: Date.now() + 30000 });
+  res.json(responseData);
 });
 
 app.post('/api/v1/login', (req, res) => {
-    const { username, password } = req.body;
-    const db = readDb();
-    const user = (db.users || []).find(u => u.username === username);
-    const isFactory = username === 'factory' && (Date.now() - SERVER_START_TIME) < 300000 && password === FACTORY_PASS;
+  const { username, password, environment } = req.body;
+  const targetEnv = environment || 'live';
+  const liveDb = readDb(DB_PATH);
 
-    if (isFactory) return res.json(user || { id: 'factory', username: 'factory', name: 'Factory Admin', roles: ['admin'], email: 'factory@nexus.local' });
-    if (user && user.password === hashPassword(password)) {
-        const { password: _, ...safe } = user;
-        return res.json(safe);
+  const isFactory = username === 'factory' && (Date.now() - SERVER_START_TIME) < 300000 && password === FACTORY_PASS;
+  if (isFactory) {
+    if (targetEnv !== 'live') return res.status(403).json({ error: "Factory emergency bypass is only permitted on Live ERP." });
+    const factoryUser = (liveDb.users || []).find(u => u.username === 'factory') || { id: 'factory', username: 'factory', name: 'Factory Admin', roles: ['admin'], email: 'factory@nexus.local' };
+    const { password: _, ...safe } = factoryUser;
+    return res.json(safe);
+  }
+
+  if (targetEnv === 'live') {
+    const user = (liveDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
+    if (!user || user.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password" });
+    const { password: _, ...safe } = user;
+    return res.json(safe);
+  }
+
+  if (targetEnv === 'self' || targetEnv.toLowerCase() === (username || '').toLowerCase()) {
+    const liveUser = (liveDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
+    if (!liveUser || liveUser.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password" });
+
+    const sandboxPath = getSandboxDbPath(username);
+    if (!fs.existsSync(sandboxPath)) {
+      const stubPath = path.join(__dirname, 'db.stub.json');
+      const stubDb = fs.existsSync(stubPath) ? JSON.parse(fs.readFileSync(stubPath, 'utf8')) : {};
+      stubDb.settings = []; stubDb.modules = []; stubDb.orders = []; stubDb.customers = []; stubDb.inventory = []; stubDb.notifications = []; stubDb.contracts = []; stubDb.supplierPayments = [];
+      stubDb.userGroups = [
+        { id: 'ug_sales', name: 'Sales Department', roles: ['sales'], permissions: { canViewFinancials: false, canApproveTechReview: false, canReleaseHub: false, canManageUsers: false } },
+        { id: 'ug_proc', name: 'Procurement Team', roles: ['procurement'], permissions: { canViewFinancials: true, canApproveTechReview: false, canReleaseHub: false, canManageUsers: false } },
+        { id: 'ug_wh', name: 'Warehouse & Logistics', roles: ['warehouse', 'logistics'], permissions: { canViewFinancials: false, canApproveTechReview: false, canReleaseHub: true, canManageUsers: false } },
+        { id: 'ug_mgmt', name: 'Executive Management', roles: ['admin'], permissions: { canViewFinancials: true, canApproveTechReview: true, canReleaseHub: true, canManageUsers: true } }
+      ];
+      stubDb.users = [{ ...liveUser, roles: liveUser.roles || [] }];
+      writeDb(stubDb, sandboxPath);
     }
-    res.status(401).json({ error: "Auth failed" });
+    const sandboxDb = readDb(sandboxPath);
+    const sandboxUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase()) || liveUser;
+    const { password: _, ...safe } = sandboxUser;
+    return res.json({ ...safe, sandbox: true, sandboxOwner: sanitizeUsername(username), sandboxLabel: `My Own Sandbox (${username})` });
+  }
+
+  const ownerSanitized = sanitizeUsername(targetEnv);
+  const sandboxPath = getSandboxDbPath(ownerSanitized);
+  if (!fs.existsSync(sandboxPath)) return res.status(404).json({ error: "Team sandbox environment not found." });
+
+  const sandboxDb = readDb(sandboxPath);
+  const sandboxUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
+  if (!sandboxUser) return res.status(403).json({ error: "You do not have access to this team sandbox." });
+  if (sandboxUser.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password for this sandbox." });
+
+  const ownerUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === ownerSanitized);
+  const { password: _, ...safe } = sandboxUser;
+  return res.json({ ...safe, sandbox: true, sandboxOwner: ownerSanitized, sandboxLabel: `${ownerUser?.name || ownerSanitized}'s Team Sandbox` });
 });
 
+
 app.post('/api/v1/init-defaults', (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     if (Object.keys(db).length === 0 || req.body.force) {
         const dd = req.body.defaults || {};
         if (dd.users) dd.users = dd.users.map(u => u.password ? { ...u, password: hashPassword(u.password) } : u);
@@ -3584,7 +3746,7 @@ app.post('/api/v1/init-defaults', (req, res) => {
 });
 
 app.post('/api/v1/seed-users', (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     if (db.users && db.users.length > 0) {
         return res.status(400).json({ message: "UsersAlreadyExist" });
     }
@@ -3592,7 +3754,7 @@ app.post('/api/v1/seed-users', (req, res) => {
     if (dd.users) dd.users = dd.users.map(u => u.password ? { ...u, password: hashPassword(u.password) } : u);
     db.users = dd.users || [];
     db.userGroups = dd.userGroups || [];
-    if (writeDb(db)) {
+    if (writeDb(db, getDbPath(req))) {
         console.log(`[System] Seeded users and groups at ${new Date().toISOString()}`);
         res.json({ message: "Seeded" });
     } else {
@@ -3633,7 +3795,7 @@ app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) 
 
 app.get('/api/v1/integrations/google-drive/status', (req, res) => {
     try {
-        const db = readDb();
+        const db = getDb(req);
         const settings = resolveSettings(db);
         const oauth = getGoogleOAuthConfig(settings);
         const gd = settings.googleDriveConfig || {};
@@ -3657,7 +3819,7 @@ app.get('/api/v1/integrations/google-drive/status', (req, res) => {
 
 app.get('/api/v1/integrations/local-storage/status', async (req, res) => {
     try {
-        const db = readDb();
+        const db = getDb(req);
         const settings = resolveSettings(db);
         const local = getLocalStorageConfig(settings);
         let buckets = [];
@@ -3686,7 +3848,7 @@ app.get('/api/v1/integrations/local-storage/status', async (req, res) => {
 
 app.post('/api/v1/integrations/local-storage/buckets', bodyParser.json(), async (req, res) => {
     try {
-        const db = readDb();
+        const db = getDb(req);
         if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
             db.settings = [{}];
         }
@@ -3698,7 +3860,7 @@ app.post('/api/v1/integrations/local-storage/buckets', bodyParser.json(), async 
             bucketName
         };
         db.settings[0] = encryptSettings(settings);
-        writeDb(db);
+        writeDb(db, getDbPath(req));
         return res.json({ success: true, bucketName });
     } catch (err) {
         return res.status(500).json({ error: err.message || 'Failed to create bucket' });
@@ -3707,7 +3869,7 @@ app.post('/api/v1/integrations/local-storage/buckets', bodyParser.json(), async 
 
 app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
     try {
-        const db = readDb();
+        const db = getDb(req);
         const settings = resolveSettings(db);
         const oauthFromSettings = getGoogleOAuthConfig(settings);
         if (!oauthFromSettings.configured) {
@@ -3739,7 +3901,7 @@ app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
 
 app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
     try {
-        const db = readDb();
+        const db = getDb(req);
         const settings = resolveSettings(db);
         const oauth = getGoogleOAuthConfig(settings);
         if (!oauth.configured) {
@@ -3811,7 +3973,7 @@ app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
         };
 
         db.settings[0] = encryptSettings(settings);
-        writeDb(db);
+        writeDb(db, getDbPath(req));
 
         return res.send('<html><body style="font-family: Arial, sans-serif; padding: 24px;"><h3>Google Drive connected.</h3><p>You can close this window and return to Nexus ERP.</p><script>setTimeout(function(){window.close();},1200);</script></body></html>');
     } catch (err) {
@@ -3822,7 +3984,7 @@ app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
 
 app.post('/api/v1/integrations/google-drive/disconnect', (req, res) => {
     try {
-        const db = readDb();
+        const db = getDb(req);
         if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
             db.settings = [{}];
         }
@@ -3835,7 +3997,7 @@ app.post('/api/v1/integrations/google-drive/disconnect', (req, res) => {
             connectedAt: ''
         };
         db.settings[0] = encryptSettings(settings);
-        writeDb(db);
+        writeDb(db, getDbPath(req));
         return res.json({ success: true });
     } catch (err) {
         return res.status(500).json({ error: err.message || 'Failed to disconnect Google Drive' });
@@ -3848,7 +4010,7 @@ app.post('/api/v1/integrations/google-drive/upload', uploadGoogleDriveFile.singl
             return res.status(400).json({ error: 'No file was uploaded.' });
         }
 
-        const db = readDb();
+        const db = getDb(req);
         const settings = resolveSettings(db);
         const gd = settings.googleDriveConfig || {};
 
@@ -3876,8 +4038,8 @@ app.post('/api/v1/integrations/google-drive/upload', uploadGoogleDriveFile.singl
                 db.settings = [{}];
             }
             db.settings[0] = encryptSettings(settings);
-            writeDb(db);
-        }
+            writeDb(db, targetPath);
+}
 
         const orderPrefix = req.body.internalOrderNumber ? `${req.body.internalOrderNumber}_` : '';
         const poPrefix = req.body.customerReferenceNumber ? `${req.body.customerReferenceNumber}_` : '';
@@ -3912,7 +4074,7 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
             return res.status(400).json({ error: 'No file was uploaded.' });
         }
 
-        const db = readDb();
+        const db = getDb(req);
         if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
             db.settings = [{}];
         }
@@ -3950,8 +4112,8 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
                         folderId: targetFolderId
                     };
                     db.settings[0] = encryptSettings(settings);
-                    writeDb(db);
-                }
+                    writeDb(db, targetPath);
+}
 
                 const uploaded = await uploadBufferToGoogleDrive({
                     req,
@@ -4014,14 +4176,14 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
 
 // GET all supplier payments
 app.get('/api/v1/supplierPayments', (req, res) => {
-    const db = readDb();
+    const db = getDb(req);
     res.json(db.supplierPayments || []);
 });
 
 // POST record a supplier payment with FIFO allocation
 app.post('/api/v1/supplierPayments', (req, res) => {
     try {
-        const db = readDb();
+        const db = getDb(req);
         const user = req.headers['x-user'] || 'System';
         const { supplierId, amount, memo, date } = req.body;
         if (!supplierId || !amount || amount <= 0) {
@@ -4098,7 +4260,7 @@ app.post('/api/v1/supplierPayments', (req, res) => {
 
         if (!db.supplierPayments) db.supplierPayments = [];
         db.supplierPayments.push(paymentRecord);
-        writeDb(db);
+        writeDb(db, getDbPath(req));
 
         res.json(paymentRecord);
     } catch (err) {
@@ -4109,7 +4271,7 @@ app.post('/api/v1/supplierPayments', (req, res) => {
 // GET supplier ledger (balance, delivered, pending, payments)
 app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
     try {
-        const db = readDb();
+        const db = getDb(req);
         const { supplierId: rawId } = req.params;
         const isAll = rawId === 'all';
         const selectedIds = isAll ? [] : rawId.split(',');
@@ -4249,6 +4411,54 @@ app.get('{*path}', (req, res) => {
 
 const startupDb = readDb();
 repairNegativeMarginOrders(startupDb);
+
+// Sweep every db.sandbox.*.json in the project root, run applySchemaMigrations on
+// any whose schema version is older than CURRENT_SCHEMA_VERSION, and write the
+// result back. Runs synchronously before app.listen() so no request can hit a
+// half-migrated sandbox DB. On-demand migration in readDb() is still a backstop.
+const migrateAllSandboxesOnStartup = () => {
+    let sandboxFiles = [];
+    try {
+        sandboxFiles = fs.readdirSync(__dirname).filter(
+            f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak')
+        );
+    } catch (err) {
+        console.error('[Migration] Failed to scan sandbox directory:', err.message);
+        return;
+    }
+
+    let migrated = 0;
+    let skipped = 0;
+    let errored = 0;
+    for (const file of sandboxFiles) {
+        const targetPath = path.join(__dirname, file);
+        try {
+            const raw = fs.readFileSync(targetPath, 'utf8');
+            const db = JSON.parse(raw);
+            const currentVersion = db.settings?.[0]?.dbSchemaVersion || 0;
+            if (currentVersion >= CURRENT_SCHEMA_VERSION) {
+                skipped++;
+                continue;
+            }
+            applySchemaMigrations(db, targetPath);
+            migrated++;
+        } catch (err) {
+            errored++;
+            console.error(`[Migration] Failed to migrate ${file}:`, err.message);
+        }
+    }
+    console.log(`[Migration] Sandbox startup sweep: ${migrated} migrated, ${skipped} already current, ${errored} errored (of ${sandboxFiles.length} total).`);
+};
+migrateAllSandboxesOnStartup();
+
+// Periodic eviction of expired discoveryCache entries (TTL is 30s inside the route;
+// we sweep every 60s to keep the Map bounded regardless of how many users log in).
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of discoveryCache) {
+        if (!entry || now >= entry.expiresAt) discoveryCache.delete(key);
+    }
+}, 60000).unref();
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Backend] Running on http://localhost:${PORT}`);
