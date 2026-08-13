@@ -300,6 +300,12 @@ export interface CustomerOrder {
   conversionRate?: number;
   blanketOrder?: boolean;
   /**
+   * Project name associated with a blanket order. Used to identify which
+   * project a blanket contract belongs to across Order Management, Procurement,
+   * and Technical Review modules.
+   */
+  projectName?: string;
+  /**
    * When a new order is created as a settling order against an existing blanket
    * contract, this holds the blanket contract's order ID (or internal order number).
    * The server auto-sets isSettlingOrder to true for any order carrying this field.

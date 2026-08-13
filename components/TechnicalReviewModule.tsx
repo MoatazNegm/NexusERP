@@ -953,6 +953,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                   <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('customer')}>
                     Customer Entity <SortIcon column="customer" />
                   </th>
+                  <th className="px-8 py-5">
+                    Project Name
+                  </th>
                   <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('lineCount')}>
                     Line Count <SortIcon column="lineCount" />
                   </th>
@@ -994,6 +997,16 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                             </div>
                           ) : null;
                         })()}
+                      </td>
+                      <td className="px-8 py-6">
+                        {o.projectName ? (
+                          <div className="text-xs font-black text-violet-600 flex items-center gap-1.5">
+                            <i className="fa-solid fa-diagram-project text-[10px]"></i>
+                            {o.projectName}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-300 italic">—</span>
+                        )}
                       </td>
                       <td className="px-8 py-6">
                         <div className="text-xs font-black text-slate-600">{o.items.length} Positions</div>

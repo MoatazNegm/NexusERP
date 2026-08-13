@@ -2044,6 +2044,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             )}
                           </div>
                           <div className="font-black text-slate-800">{o.customerName}</div>
+                          {o.projectName && (
+                            <div className="text-[9px] font-black text-violet-600 uppercase flex items-center gap-1">
+                              <i className="fa-solid fa-diagram-project"></i> {o.projectName}
+                            </div>
+                          )}
                           <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} {t('procurement.component.components')}</div>
                         </div>
                       </div>
