@@ -55,7 +55,9 @@ postman/                  # Postman workspace globals and shared resources
 Each business domain lives in a single large component file (e.g. FinanceModule.tsx). Modules are self-contained: they fetch their own data, manage local state, and render their own UI trees. Shared primitives (SortableTable, DashboardCard, ModuleGate) are extracted only when reused across >1 module.
 
 ### 2. Data Service Abstraction
-All server communication routes through services/dataService.ts. Backend actions are dispatched as { orderId, action, payload } to a generic dispatchAction() endpoint. Never call fetch() directly from a component.
+All server communication routes through `services/dataService.ts`. Every outgoing request uses the private `getAuthHeaders()` helper, which centralizes the `x-user` header and automatically forwards `x-sandbox-owner` when the active user is in a sandbox. Backend actions are dispatched as `{ orderId, action, payload }` to a generic `dispatchAction()` endpoint for mutations, and as generic CRUD calls (`get`/`post`/`put`/`delete`) against `/api/v1/<collection>` for entities. Never call `fetch()` directly from a component.
+
+- **Server-side collection safety:** `addToCollection` in `server.js` initializes `db[col] = []` before pushing, so missing collections are created on the fly. `updateInCollection` treats `settings` and `modules` as upserts: if the target ID does not exist, it creates the record (encrypting settings via `encryptSettings`) instead of returning 404. All other collections still return 404 on missing IDs.
 
 ### 3. Quantity Alteration Convention
 When a line item's quantity can be lowered post-creation, use alteredQty + alterationComment on the item. The helper getItemEffectiveQty(item) must be used everywhere revenue, fulfillment, or BoM scaling is calculated. Original quantity is never mutated.

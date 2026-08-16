@@ -1503,7 +1503,7 @@ const runThresholdAudit = async () => {
 
                     const body = `A new order ${order.internalOrderNumber} has been logged.` + contextBlock;
 
-                    const result = await sendEmail(emails, `[NEXUS] New Order: ${order.internalOrderNumber}`, body, settings.emailConfig, req);
+                    const result = await sendEmail(emails, `[NEXUS] New Order: ${order.internalOrderNumber}`, body, settings.emailConfig);
                     if (result.success) {
                         notifications.push({ id: `nt_n_${Date.now()}`, journalKey: jk, orderId: order.id, type: 'new_order', sentAt: new Date().toISOString(), recipients: emails });
                         recipients.forEach(r => { order.logs.push({ timestamp: new Date().toISOString(), message: `[SYSTEM] New Order Notification Sent to ${r.name} (${r.email}) via group: ${r.groupName}`, status: order.status, user: 'System' }); });
@@ -1659,7 +1659,7 @@ const runThresholdAudit = async () => {
 
     if (dbChanged) {
         db.notifications = notifications;
-        writeDb(db, targetPath);
+        writeDb(db, DB_PATH);
 }
 };
 
