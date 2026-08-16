@@ -3498,12 +3498,43 @@ app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => 
   const tempDir = path.join(os.tmpdir(), `nexus-restore-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
   fs.mkdirSync(tempDir, { recursive: true });
   try {
-    const zip = new AdmZip(req.file.buffer);
+    if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
+
+    const password = req.body.password;
+    if (!password) {
+      return res.status(400).json({ error: "Password is required to restore secure archive." });
+    }
+
+    const fileBuffer = req.file.buffer;
+
+    if (fileBuffer.length < 44) {
+      return res.status(400).json({ error: "Invalid archive format." });
+    }
+
+    const salt = fileBuffer.subarray(0, 16);
+    const iv = fileBuffer.subarray(16, 28);
+    const authTag = fileBuffer.subarray(28, 44);
+    const encrypted = fileBuffer.subarray(44);
+
+    const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+
+    let rawBuffer;
+    try {
+      rawBuffer = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    } catch (decryptErr) {
+      console.error("Decryption failed:", decryptErr);
+      return res.status(401).json({ error: "Decryption failed. Incorrect password or corrupted archive." });
+    }
+
+    const zip = new AdmZip(rawBuffer);
     zip.extractAllTo(tempDir, true);
     const extractedDb = path.join(tempDir, 'db.json');
     if (fs.existsSync(extractedDb)) {
       const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
       applySchemaMigrations(db, getDbPath(req));
+      if (!db.contracts) db.contracts = [];
       writeDb(db, getDbPath(req));
     }
     const extractedUploads = path.join(tempDir, 'uploads');
