@@ -840,7 +840,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
             }`}
           >
             <i className="fa-solid fa-box-archive"></i>
-            <span>Deleted Suppliers</span>
+            <span>Deleted Parts</span>
             <span className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-black ${mainTab === 'deleted' ? 'bg-amber-700 text-white' : 'bg-amber-100 text-amber-800'}`}>
               {(deletedSupplier?.priceList || []).length}
             </span>
@@ -857,7 +857,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
             </div>
             <div className="space-y-1">
               <div className="font-black uppercase tracking-wider text-xs text-amber-950 flex items-center gap-2">
-                <span>Deleted Suppliers & Archived Parts Vault (Permanent & Immutable)</span>
+                <span>Deleted Parts Vault (Permanent & Immutable)</span>
                 <span className="px-2 py-0.5 rounded bg-amber-200/60 text-amber-900 text-[10px] font-black uppercase">Admin Only</span>
               </div>
               <div className="text-xs text-amber-800 font-medium leading-relaxed">
@@ -933,7 +933,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
                     <td colSpan={6} className="px-6 py-16 text-center text-slate-400">
                       <div className="flex flex-col items-center gap-2">
                         <i className="fa-solid fa-box-open text-2xl text-slate-300"></i>
-                        <span className="font-bold text-xs">No archived parts in the Deleted Suppliers vault.</span>
+                        <span className="font-bold text-xs">No archived parts in the Deleted Parts vault.</span>
                         <span className="text-[11px] text-slate-400">When a part is deleted from an active supplier, it will appear here permanently.</span>
                       </div>
                     </td>
