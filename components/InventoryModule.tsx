@@ -185,7 +185,15 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    await dataService.addInventoryItem(newItem);
+    const trimmedSku = newItem.sku.trim();
+    if (trimmedSku) {
+      const isDuplicate = items.some(i => (i.sku || '').trim().toLowerCase() === trimmedSku.toLowerCase());
+      if (isDuplicate) {
+        alert(`Inventory SKU "${trimmedSku}" already exists in inventory.`);
+        return;
+      }
+    }
+    await dataService.addInventoryItem({ ...newItem, sku: trimmedSku, description: newItem.description.trim() });
     await loadData();
     setIsAdding(false);
     setNewItem({ sku: '', description: '', quantityInStock: 0, unit: 'pcs', lastCost: 0, category: 'Mechanical' });

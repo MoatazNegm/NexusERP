@@ -390,3 +390,58 @@ Exposes a tabbed workflow inside Order Management to create abstract contracts a
     - **New Contract:** Form to log a new contract, selecting the customer name from CRM and including Received Date (defaulted to today).
     - **Logged Contracts:** Renders a list of all logged contracts using `SortableTable` (lines 1708-1745) with draggable column re-ordering, search box, default oldest-to-newest sort on Contract Date, delete action, and "Log Blanket" shortcut pre-selecting the contract.
 - `components/FinanceModule.tsx` — Re-architected the `contracts` tab (lines 1445-1485) to render the contracts collection using `SortableTable`. Features include a general search input box, draggable column re-ordering, default oldest-to-newest sorting on Contract Date, no Contract Value column, and nesting Settle / Financial Request actions directly for each linked Blanket Order under the Action column.
+
+---
+
+## Part Number & Sourcing Rules
+
+### 1. Mandatory Part Number / SKU Uniqueness Rule
+Every component Part Number / SKU must be **strictly unique** within its catalog domain:
+- **Supplier Price Lists:** `partNumber` must be unique per supplier (enforced in `dataService.addPartToSupplier`, `dataService.updatePartInSupplier`, `SupplierModule.tsx` manual form, and inline editing).
+- **Inventory Items:** `sku` must be unique across all inventory records (enforced in `InventoryModule.tsx`).
+- **Validation:** All comparisons are normalized (whitespace-trimmed and case-insensitive). Attempting to add or edit a duplicate Part Number throws a validation error and blocks saving.
+
+### 2. Sourcing Catalog Auto-Complete Relevance Ranking Engine
+The auto-complete dropdown in **Technical Review** (`TechnicalReviewModule.tsx`) and **Studying** (`StudyingModule.tsx`) utilizes `calculateCatalogMatchScore` (`utils.ts`) to prioritize suggestions:
+- **Score 1000:** Exact Part Number / SKU match (e.g. searching `65674204` places that exact part at Rank #1).
+- **Score 800:** Part Number prefix match.
+- **Score 600:** Item Description prefix match.
+- **Score 400:** Part Number substring match.
+- **Score 200:** Item Description substring match.
+- **Score 100:** Vendor / Supplier name match.
+- **Dual-Field Matching:** If search terms are entered into both the Part Number and Component Description fields, dual matches receive a `+500` bonus. Permissive scoring prevents a term in one field from rejecting valid matches in the other.
+
+### 3. Role-Gated Supplier Part Editing (Administrators Only)
+- In `SupplierModule.tsx`, inline part editing (<i className="fa-solid fa-pen-to-square"></i>) is strictly restricted to users with the `admin` role (`isAdmin = userRoles.includes('admin')`).
+- Non-administrators cannot see or trigger the edit button.
+- Updates are saved via `dataService.updatePartInSupplier` and update the supplier record and audit trail in `db.json`.
+
+### 4. Dedicated 'Active Suppliers' & 'Deleted Suppliers' Navigation Tabs
+- In `SupplierModule.tsx`, the interface is organized into two primary top-level tabs:
+  - **Active Suppliers:** Shows active commercial vendors and controls price list management, registration, and logs.
+  - **Deleted Suppliers (Admin Only):** Displays the immutable archive vault with full search, counters, and locked part items.
+
+### 5. Part Deletion, 'Deleted Suppliers' Vault, and Strict Immutability
+- **Automatic Migration on Deletion:** When any part is deleted from a supplier's price list, it is removed from that supplier and automatically moved into a dedicated archive vault supplier named `'Deleted Suppliers'` (`isDeletedSupplier: true`). Metadata is preserved on the part (`originalSupplierId`, `originalSupplierName`, `deletedAt`).
+- **Hidden from Non-Administrators:** The `'Deleted Suppliers'` supplier is completely hidden from non-admin users in `SupplierModule.tsx`, and is filtered out of sourcing catalogs (`TechnicalReviewModule.tsx`, `StudyingModule.tsx`), and procurement selection (`ProcurementModule.tsx`).
+- **Strict Immutability Rule:** Parts inside `'Deleted Suppliers'` are permanently locked. They cannot be modified, edited, or deleted by **anyone, including administrators**. All edit/delete UI actions and backend endpoints enforce this rejection.
+
+### 6. Real-Parts Only Autocomplete & Dedicated Part Order History
+- **Autocomplete Scope:** Autocomplete dropdowns in Sourcing Catalogs (`TechnicalReviewModule.tsx` and `StudyingModule.tsx`) strictly search **real, active catalog items** (`INVENTORY` stock and active `SUPPLIERS` price lists). Past customer order components are excluded from autocomplete suggestions to prevent phantom or duplicate suggestions.
+- **Part Order & Customer History:** Users can view the historical customer order usage of any real part by clicking the <i className="fa-solid fa-clock-rotate-left"></i> icon in the **Commercial Price List**, **Deleted Suppliers Vault**, or **Technical Review Sourcing Catalogs**. The modal displays all past customer orders where the part was used, including the internal order number, customer name, PO reference, date, logged description, quantity, unit cost, and order/component status.
+
+---
+
+## Server & Runtime Architecture Updates
+
+### 1. Login Environment Discovery & Sandbox Selection
+- The `/api/v1/auth/environments` discovery endpoint evaluates `req.query.username || req.headers['x-user']`.
+- If no username has been entered yet, it immediately provides both **Live ERP (Production)** and **Personal Sandbox (Isolated Testing)** so the sandbox option is always available on the login screen.
+- When a username is typed, it debounces (250ms) to resolve `My Own Sandbox (<User Name>)` and any shared team sandboxes.
+
+### 2. Dedicated Single-Port Operation
+- The backend server (`server.js`) listens **exclusively on port `5005`** (`http://localhost:5005` or `process.env.PORT`).
+- Ports `3005` and `4005` are completely freed for external services.
+
+### 3. Resilient Database Persistence
+- `writeDb` in `server.js` employs atomic write via `.tmp` file renaming with an automatic direct-write fallback to handle temporary Windows / OneDrive filesystem locks (`EPERM`).

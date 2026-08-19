@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, Supplier, SupplierPart, User, AppConfig } from '../types';
-import { getItemEffectiveQty } from '../utils';
+import { getItemEffectiveQty, calculateCatalogMatchScore } from '../utils';
 
 interface StudyingModuleProps {
   currentUser: User;
@@ -43,34 +43,56 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
     return allOrders.filter(o => (o.customerName || '').toLowerCase().includes(q) || (o.internalOrderNumber || '').toLowerCase().includes(q));
   }, [searchQuery, allOrders]);
 
-  const invResults = useMemo(() => {
-    const descQuery = invSearch.toLowerCase();
-    const partQuery = partNumSearch.toLowerCase();
+  type RankedStudyingSuggestion =
+    | { type: 'INVENTORY'; score: number; inventory: InventoryItem }
+    | { type: 'SUPPLIER'; score: number; supplier: Supplier; part: SupplierPart };
+
+  const rankedSuggestions = useMemo<RankedStudyingSuggestion[]>(() => {
+    const descQuery = invSearch.toLowerCase().trim();
+    const partQuery = partNumSearch.toLowerCase().trim();
     if (!descQuery && !partQuery) return [];
-    return inventory.filter(i => {
-      const descMatch = descQuery ? (i.description || '').toLowerCase().includes(descQuery) : true;
-      const partMatch = partQuery ? (i.sku || '').toLowerCase().includes(partQuery) : true;
-      return descMatch && partMatch;
+
+    const list: RankedStudyingSuggestion[] = [];
+
+    inventory.forEach(i => {
+      const scorePart = partQuery ? calculateCatalogMatchScore(i.sku, i.description, '', partQuery) : 0;
+      const scoreDesc = descQuery ? calculateCatalogMatchScore(i.sku, i.description, '', descQuery) : 0;
+      if (scorePart === 0 && scoreDesc === 0) return;
+      const totalScore = (scorePart > 0 && scoreDesc > 0)
+        ? (scorePart + scoreDesc + 500)
+        : Math.max(scorePart, scoreDesc) + 15;
+      list.push({ type: 'INVENTORY', score: totalScore, inventory: i });
     });
-  }, [invSearch, partNumSearch, inventory]);
 
-  const supplierResults = useMemo(() => {
-    const descQuery = invSearch.toLowerCase();
-    const partQuery = partNumSearch.toLowerCase();
-    if (!descQuery && !partQuery) return [];
-
-    const results: { supplier: Supplier, part: SupplierPart }[] = [];
-    suppliers.forEach(supp => {
-      supp.priceList.forEach(part => {
-        const descMatch = descQuery ? (part.description || '').toLowerCase().includes(descQuery) : true;
-        const partMatch = partQuery ? (part.partNumber || '').toLowerCase().includes(partQuery) : true;
-        if (descMatch && partMatch) {
-          results.push({ supplier: supp, part });
-        }
+    suppliers
+      .filter(supp => !supp.isDeletedSupplier && supp.name.trim().toLowerCase() !== 'deleted suppliers' && supp.name.trim().toLowerCase() !== 'deleted suppleirs')
+      .forEach(supp => {
+      (supp.priceList || []).forEach(part => {
+        const scorePart = partQuery ? calculateCatalogMatchScore(part.partNumber, part.description, supp.name, partQuery) : 0;
+        const scoreDesc = descQuery ? calculateCatalogMatchScore(part.partNumber, part.description, supp.name, descQuery) : 0;
+        if (scorePart === 0 && scoreDesc === 0) return;
+        const totalScore = (scorePart > 0 && scoreDesc > 0)
+          ? (scorePart + scoreDesc + 500)
+          : Math.max(scorePart, scoreDesc);
+        list.push({ type: 'SUPPLIER', score: totalScore, supplier: supp, part });
       });
     });
-    return results;
-  }, [invSearch, partNumSearch, suppliers]);
+
+    list.sort((a, b) => b.score - a.score);
+    return list;
+  }, [invSearch, partNumSearch, inventory, suppliers]);
+
+  const invResults = useMemo(() => {
+    return rankedSuggestions
+      .filter((r): r is Extract<RankedStudyingSuggestion, { type: 'INVENTORY' }> => r.type === 'INVENTORY')
+      .map(r => r.inventory);
+  }, [rankedSuggestions]);
+
+  const supplierResults = useMemo(() => {
+    return rankedSuggestions
+      .filter((r): r is Extract<RankedStudyingSuggestion, { type: 'SUPPLIER' }> => r.type === 'SUPPLIER')
+      .map(r => ({ supplier: r.supplier, part: r.part }));
+  }, [rankedSuggestions]);
 
   const handleAddComponent = async (inv: InventoryItem) => {
     if (!selectedOrder || !selectedItem) return;
@@ -274,53 +296,61 @@ export const StudyingModule: React.FC<StudyingModuleProps> = ({ currentUser, con
                         onChange={(e) => setInvSearch(e.target.value)}
                       />
 
-                      {showInvSuggestions && (invResults.length > 0 || supplierResults.length > 0) && (
+                      {showInvSuggestions && (rankedSuggestions.length > 0) && (
                         <div className="absolute top-full left-16 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl z-20 overflow-hidden divide-y animate-in slide-in-from-top-1 max-h-[300px] overflow-y-auto">
-                          {invResults.map(i => {
-                            const netAvailable = i.quantityInStock - (i.quantityReserved || 0);
-                            return (
-                              <button
-                                key={i.id}
-                                type="button"
-                                onMouseDown={() => handleAddComponent(i)}
-                                className="w-full text-left p-4 hover:bg-blue-50 flex justify-between items-center group transition-colors"
-                              >
-                                <div>
-                                  <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700">
-                                    <i className="fa-solid fa-box-open mr-2 opacity-50"></i>{i.description}
+                          {rankedSuggestions.map((suggestion, idx) => {
+                            if (suggestion.type === 'INVENTORY') {
+                              const i = suggestion.inventory;
+                              const netAvailable = i.quantityInStock - (i.quantityReserved || 0);
+                              return (
+                                <button
+                                  key={`inv-${i.id}`}
+                                  type="button"
+                                  onMouseDown={() => handleAddComponent(i)}
+                                  className="w-full text-left p-4 hover:bg-blue-50 flex justify-between items-center group transition-colors"
+                                >
+                                  <div>
+                                    <div className="text-xs font-bold text-slate-800 group-hover:text-blue-700">
+                                      <i className="fa-solid fa-box-open mr-2 opacity-50"></i>{i.description}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 flex gap-2 items-center">
+                                      <span className="font-mono bg-slate-100 px-1 rounded text-blue-800 font-bold">{i.sku}</span>
+                                      <span className={`${netAvailable <= 0 ? 'text-red-500 font-bold' : ''}`}>Available: {netAvailable} {i.unit}</span>
+                                      <span className="text-slate-300">|</span>
+                                      <span>Stock: {i.quantityInStock}</span>
+                                      <span className="text-green-600 font-bold">Cost: {i.lastCost} L.E.</span>
+                                    </div>
                                   </div>
-                                  <div className="text-[10px] text-slate-400 flex gap-2 items-center">
-                                    <span className="font-mono bg-slate-100 px-1 rounded text-blue-800">{i.sku}</span>
-                                    <span className={`${netAvailable <= 0 ? 'text-red-500 font-bold' : ''}`}>Available: {netAvailable} {i.unit}</span>
-                                    <span className="text-slate-300">|</span>
-                                    <span>Stock: {i.quantityInStock}</span>
-                                    <span className="text-green-600 font-bold">Cost: {i.lastCost} L.E.</span>
+                                  <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">IN-STOCK</span>
+                                </button>
+                              );
+                            }
+
+                            if (suggestion.type === 'SUPPLIER') {
+                              const { supplier, part } = suggestion;
+                              return (
+                                <button
+                                  key={`supp-${part.id || `${supplier.id}-${part.partNumber}`}-${idx}`}
+                                  type="button"
+                                  onMouseDown={() => handleAddSupplierPart(supplier, part)}
+                                  className="w-full text-left p-4 hover:bg-amber-50 flex justify-between items-center group transition-colors"
+                                >
+                                  <div>
+                                    <div className="text-xs font-bold text-slate-800 group-hover:text-amber-700">
+                                      <i className="fa-solid fa-truck-field mr-2 opacity-50"></i>{part.description}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 flex gap-2 items-center">
+                                      <span className="font-mono bg-slate-100 px-1 rounded text-blue-800 font-bold">{part.partNumber}</span>
+                                      <span>Supplier: {supplier.name}</span>
+                                      <span className="text-amber-600 font-black">Offer: {part.price} L.E.</span>
+                                    </div>
                                   </div>
-                                </div>
-                                <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">IN-STOCK</span>
-                              </button>
-                            );
+                                  <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-2 py-0.5 rounded">EXTERNAL</span>
+                                </button>
+                              );
+                            }
+                            return null;
                           })}
-                          {supplierResults.map(({ supplier, part }, idx) => (
-                            <button
-                              key={`${part.id}-${idx}`}
-                              type="button"
-                              onMouseDown={() => handleAddSupplierPart(supplier, part)}
-                              className="w-full text-left p-4 hover:bg-amber-50 flex justify-between items-center group transition-colors"
-                            >
-                              <div>
-                                <div className="text-xs font-bold text-slate-800 group-hover:text-amber-700">
-                                  <i className="fa-solid fa-truck-field mr-2 opacity-50"></i>{part.description}
-                                </div>
-                                <div className="text-[10px] text-slate-400 flex gap-2 items-center">
-                                  <span className="font-mono bg-slate-100 px-1 rounded text-blue-800">{part.partNumber}</span>
-                                  <span>Supplier: {supplier.name}</span>
-                                  <span className="text-amber-600 font-black">Offer: {part.price} L.E.</span>
-                                </div>
-                              </div>
-                              <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-2 py-0.5 rounded">EXTERNAL</span>
-                            </button>
-                          ))}
                         </div>
                       )}
 

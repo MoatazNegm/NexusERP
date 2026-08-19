@@ -1,4 +1,4 @@
-﻿import { CustomerOrder, CustomerOrderItem, DEFAULT_CURRENCY, OrderStatus } from './types';
+import { CustomerOrder, CustomerOrderItem, DEFAULT_CURRENCY, OrderStatus } from './types';
 
 export const getItemEffectiveQty = (item: CustomerOrderItem): number => {
     const qty = item.alteredQty !== undefined && item.alteredQty !== null ? item.alteredQty : item.quantity;
@@ -41,3 +41,30 @@ export const getStatusLimitHours = (status: OrderStatus, settings: any): number 
         default: return 0;
     }
 };
+
+/**
+ * Calculates relevance score for auto-complete search across parts, descriptions, and vendors.
+ * Exact part number matches score highest (1000), followed by part number prefix (800),
+ * description prefix (600), part number substring (400), description substring (200),
+ * and vendor name substring (100).
+ */
+export const calculateCatalogMatchScore = (partNumber?: string, description?: string, vendorName?: string, query?: string): number => {
+    if (!query) return 0;
+    const q = query.toLowerCase().trim();
+    if (!q) return 0;
+    const p = (partNumber || '').toLowerCase().trim();
+    const d = (description || '').toLowerCase().trim();
+    const v = (vendorName || '').toLowerCase().trim();
+
+    const qClean = q.replace(/[\s\-_]/g, '');
+    const pClean = p.replace(/[\s\-_]/g, '');
+
+    if (p === q || (qClean && pClean === qClean)) return 1000;
+    if (p.startsWith(q) || (qClean && pClean.startsWith(qClean))) return 800;
+    if (d.startsWith(q)) return 600;
+    if (p.includes(q) || (qClean && pClean.includes(qClean))) return 400;
+    if (d.includes(q)) return 200;
+    if (v.includes(q)) return 100;
+    return 0;
+};
+

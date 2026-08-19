@@ -696,7 +696,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       OrderStatus.MANUFACTURING
     ].includes(order.status));
     setOrders(eligibleOrders);
-    setSuppliers(s);
+    setSuppliers(s.filter(supp => !supp.isDeletedSupplier && supp.name.trim().toLowerCase() !== 'deleted suppliers' && supp.name.trim().toLowerCase() !== 'deleted suppleirs'));
   };
 
   // Group procurement components by order, split by productionType

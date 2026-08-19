@@ -187,15 +187,149 @@ class DataService {
     const suppliers = await this.getSuppliers();
     const supp = suppliers.find(s => s.id === id);
     if (!supp) throw new Error('Vendor not found');
-    supp.priceList.push(part as any); // Backend will add ID
+
+    const isDeletedVault = supp.isDeletedSupplier || supp.name.trim().toLowerCase() === 'deleted suppliers' || supp.name.trim().toLowerCase() === 'deleted suppleirs';
+    if (isDeletedVault) {
+      throw new Error("Cannot manually add parts to 'Deleted Suppliers' vault.");
+    }
+
+    if (!supp.priceList) supp.priceList = [];
+
+    const normPn = (part.partNumber || '').trim().toLowerCase();
+    if (normPn) {
+      const duplicate = supp.priceList.find(p => (p.partNumber || '').trim().toLowerCase() === normPn);
+      if (duplicate) {
+        throw new Error(`Part Number / SKU "${part.partNumber.trim()}" already exists in ${supp.name} price list ("${duplicate.description}").`);
+      }
+    }
+
+    const partWithId: SupplierPart = {
+      id: `spl_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      ...part,
+      partNumber: part.partNumber.trim(),
+      description: part.description.trim()
+    };
+    supp.priceList.push(partWithId);
+    return this.put('suppliers', id, supp);
+  }
+  async updatePartInSupplier(id: string, partId: string, updates: Partial<SupplierPart>) {
+    const suppliers = await this.getSuppliers();
+    const supp = suppliers.find(s => s.id === id);
+    if (!supp) throw new Error('Vendor not found');
+
+    const isDeletedVault = supp.isDeletedSupplier || supp.name.trim().toLowerCase() === 'deleted suppliers' || supp.name.trim().toLowerCase() === 'deleted suppleirs';
+    if (isDeletedVault) {
+      throw new Error("Parts in 'Deleted Suppliers' are permanently archived and cannot be edited or modified by any user, including administrators.");
+    }
+
+    if (updates.partNumber) {
+      const normPn = updates.partNumber.trim().toLowerCase();
+      const duplicate = (supp.priceList || []).find(p => p.id !== partId && (p.partNumber || '').trim().toLowerCase() === normPn);
+      if (duplicate) {
+        throw new Error(`Part Number / SKU "${updates.partNumber.trim()}" already exists in ${supp.name} price list ("${duplicate.description}").`);
+      }
+    }
+
+    supp.priceList = (supp.priceList || []).map(p => {
+      if (p.id === partId || p.partNumber === partId) {
+        return {
+          ...p,
+          ...updates,
+          partNumber: updates.partNumber !== undefined ? updates.partNumber.trim() : p.partNumber,
+          description: updates.description !== undefined ? updates.description.trim() : p.description
+        };
+      }
+      return p;
+    });
     return this.put('suppliers', id, supp);
   }
   async removePartFromSupplier(id: string, partId: string) {
     const suppliers = await this.getSuppliers();
     const supp = suppliers.find(s => s.id === id);
     if (!supp) throw new Error('Vendor not found');
-    supp.priceList = supp.priceList.filter(p => p.id !== partId);
-    return this.put('suppliers', id, supp);
+
+    const isDeletedVault = supp.isDeletedSupplier || supp.name.trim().toLowerCase() === 'deleted suppliers' || supp.name.trim().toLowerCase() === 'deleted suppleirs';
+    if (isDeletedVault) {
+      throw new Error("Parts in 'Deleted Suppliers' are permanently archived and cannot be deleted by any user, including administrators.");
+    }
+
+    const partToRemove = (supp.priceList || []).find(p => p.id === partId);
+    if (!partToRemove) return;
+
+    // Remove from current supplier
+    supp.priceList = (supp.priceList || []).filter(p => p.id !== partId);
+    await this.put('suppliers', id, supp);
+
+    // If deleting from "Deleted Suppliers" itself, don't re-archive
+    const isAlreadyDeletedVault = supp.isDeletedSupplier || supp.name.trim().toLowerCase() === 'deleted suppliers' || supp.name.trim().toLowerCase() === 'deleted suppleirs';
+    if (isAlreadyDeletedVault) {
+      return;
+    }
+
+    // Find or create "Deleted Suppliers" vault
+    let deletedSupp = suppliers.find(s => s.isDeletedSupplier || s.name.trim().toLowerCase() === 'deleted suppliers' || s.name.trim().toLowerCase() === 'deleted suppleirs');
+    if (!deletedSupp) {
+      deletedSupp = await this.addSupplier({
+        name: 'Deleted Suppliers',
+        email: 'deleted@system.local',
+        phone: '',
+        address: 'Archived Parts & Deleted Suppliers Vault',
+        location: '',
+        contactName: 'System Vault',
+        contactPhone: '',
+        contactAddress: '',
+        contactEmail: ''
+      });
+      deletedSupp.isDeletedSupplier = true;
+      deletedSupp.priceList = [];
+    }
+
+    if (!deletedSupp.priceList) deletedSupp.priceList = [];
+
+    const archivedPart: SupplierPart = {
+      ...partToRemove,
+      id: partToRemove.id || `spl_del_${Date.now()}`,
+      originalSupplierId: supp.id,
+      originalSupplierName: supp.name,
+      deletedAt: new Date().toISOString()
+    };
+
+    deletedSupp.priceList = deletedSupp.priceList.filter(p => p.id !== archivedPart.id && (p.partNumber || '').trim().toLowerCase() !== (archivedPart.partNumber || '').trim().toLowerCase());
+    deletedSupp.priceList.push(archivedPart);
+    deletedSupp.isDeletedSupplier = true;
+
+    return this.put('suppliers', deletedSupp.id, deletedSupp);
+  }
+
+  async restorePartFromDeleted(partId: string, targetSupplierId?: string) {
+    const suppliers = await this.getSuppliers();
+    const deletedSupp = suppliers.find(s => s.isDeletedSupplier || s.name.trim().toLowerCase() === 'deleted suppliers' || s.name.trim().toLowerCase() === 'deleted suppleirs');
+    if (!deletedSupp || !deletedSupp.priceList) throw new Error('Deleted Suppliers vault not found');
+
+    const partToRestore = deletedSupp.priceList.find(p => p.id === partId);
+    if (!partToRestore) throw new Error('Part not found in Deleted Suppliers vault');
+
+    const destSuppId = targetSupplierId || partToRestore.originalSupplierId;
+    const destSupp = suppliers.find(s => s.id === destSuppId);
+    if (!destSupp) throw new Error('Original supplier not found to restore part to');
+
+    // Remove from Deleted Suppliers
+    deletedSupp.priceList = deletedSupp.priceList.filter(p => p.id !== partId);
+    await this.put('suppliers', deletedSupp.id, deletedSupp);
+
+    // Add back to destination supplier
+    if (!destSupp.priceList) destSupp.priceList = [];
+    const restoredPart: SupplierPart = {
+      id: partToRestore.id,
+      partNumber: partToRestore.partNumber,
+      description: partToRestore.description,
+      price: partToRestore.price,
+      currency: partToRestore.currency || 'L.E.'
+    };
+
+    destSupp.priceList = destSupp.priceList.filter(p => p.id !== restoredPart.id && (p.partNumber || '').trim().toLowerCase() !== (restoredPart.partNumber || '').trim().toLowerCase());
+    destSupp.priceList.push(restoredPart);
+    return this.put('suppliers', destSupp.id, destSupp);
   }
 
   async getSupplierPayments() { return this.get<SupplierPayment>('supplierPayments'); }

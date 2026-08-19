@@ -1,7 +1,7 @@
 {
   "name": "nexus-erp--",
   "private": true,
-  "version": "0.0.2000014",
+  "version": "0.0.2000025",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
-import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate } from '../utils';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, calculateCatalogMatchScore } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { PartHistory } from './PartHistory';
 
@@ -460,18 +460,48 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     return history;
   }, [orders, suppliers]);
 
-  const historyResults = useMemo(() => {
+  type RankedCatalogSuggestion =
+    | { type: 'INVENTORY'; score: number; inventory: InventoryItem }
+    | { type: 'SUPPLIER'; score: number; supplier: Supplier; part: SupplierPart };
+
+  const rankedSuggestions = useMemo<RankedCatalogSuggestion[]>(() => {
     if (selectedItem?.productionType === 'OUTSOURCING') return [];
     const descQuery = compSearch.toLowerCase().trim();
     const partQuery = partNumSearch.toLowerCase().trim();
     if (!descQuery && !partQuery) return [];
 
-    return Object.values(historyData).filter(h => {
-      const descMatch = descQuery ? h.description.toLowerCase().includes(descQuery) : true;
-      const partMatch = partQuery ? (h.componentNumber || '').toLowerCase().includes(partQuery) : true;
-      return descMatch && partMatch;
+    const list: RankedCatalogSuggestion[] = [];
+
+    // 1. Inventory (In-Stock Real Catalog)
+    inventory.forEach(inv => {
+      const scorePart = partQuery ? calculateCatalogMatchScore(inv.sku, inv.description, '', partQuery) : 0;
+      const scoreDesc = descQuery ? calculateCatalogMatchScore(inv.sku, inv.description, '', descQuery) : 0;
+      if (scorePart === 0 && scoreDesc === 0) return;
+      const totalScore = (scorePart > 0 && scoreDesc > 0)
+        ? (scorePart + scoreDesc + 500)
+        : Math.max(scorePart, scoreDesc) + 15; // slight boost for in-stock
+      list.push({ type: 'INVENTORY', score: totalScore, inventory: inv });
     });
-  }, [compSearch, partNumSearch, historyData]);
+
+    // 2. Suppliers (Active Real Commercial Catalogs Only - Non-deleted)
+    suppliers
+      .filter(supp => !supp.isDeletedSupplier && supp.name.trim().toLowerCase() !== 'deleted suppliers' && supp.name.trim().toLowerCase() !== 'deleted suppleirs')
+      .forEach(supp => {
+      (supp.priceList || []).forEach(part => {
+        const scorePart = partQuery ? calculateCatalogMatchScore(part.partNumber, part.description, supp.name, partQuery) : 0;
+        const scoreDesc = descQuery ? calculateCatalogMatchScore(part.partNumber, part.description, supp.name, descQuery) : 0;
+        if (scorePart === 0 && scoreDesc === 0) return;
+        const totalScore = (scorePart > 0 && scoreDesc > 0)
+          ? (scorePart + scoreDesc + 500)
+          : Math.max(scorePart, scoreDesc);
+        list.push({ type: 'SUPPLIER', score: totalScore, supplier: supp, part });
+      });
+    });
+
+    // Sort strictly descending by relevance score (Exact Part Number > Prefix Part Number > Prefix Description > etc.)
+    list.sort((a, b) => b.score - a.score);
+    return list;
+  }, [compSearch, partNumSearch, inventory, suppliers, selectedItem]);
 
   const generateContractNumber = (item?: CustomerOrderItem, comp?: ManufacturingComponent, hint?: string) => {
     if (hint && hint.trim()) return hint.trim();
@@ -483,35 +513,16 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   };
 
   const invResults = useMemo(() => {
-    if (selectedItem?.productionType === 'OUTSOURCING') return [];
-    const descQuery = compSearch.toLowerCase();
-    const partQuery = partNumSearch.toLowerCase();
-    if (!descQuery && !partQuery) return [];
-    return inventory.filter(i => {
-      const descMatch = descQuery ? (i.description || '').toLowerCase().includes(descQuery) : true;
-      const partMatch = partQuery ? (i.sku || '').toLowerCase().includes(partQuery) : true;
-      return descMatch && partMatch;
-    });
-  }, [compSearch, partNumSearch, inventory]);
+    return rankedSuggestions
+      .filter((r): r is Extract<RankedCatalogSuggestion, { type: 'INVENTORY' }> => r.type === 'INVENTORY')
+      .map(r => r.inventory);
+  }, [rankedSuggestions]);
 
   const supplierResults = useMemo(() => {
-    if (selectedItem?.productionType === 'OUTSOURCING') return [];
-    const descQuery = compSearch.toLowerCase();
-    const partQuery = partNumSearch.toLowerCase();
-    if (!descQuery && !partQuery) return [];
-
-    const results: { supplier: Supplier, part: SupplierPart }[] = [];
-    suppliers.forEach(supp => {
-      supp.priceList.forEach(part => {
-        const descMatch = descQuery ? (part.description || '').toLowerCase().includes(descQuery) : true;
-        const partMatch = partQuery ? (part.partNumber || '').toLowerCase().includes(partQuery) : true;
-        if (descMatch && partMatch) {
-          results.push({ supplier: supp, part });
-        }
-      });
-    });
-    return results;
-  }, [compSearch, partNumSearch, suppliers]);
+    return rankedSuggestions
+      .filter((r): r is Extract<RankedCatalogSuggestion, { type: 'SUPPLIER' }> => r.type === 'SUPPLIER')
+      .map(r => ({ supplier: r.supplier, part: r.part }));
+  }, [rankedSuggestions]);
 
   const openHistory = async (name: string, sku?: string) => {
     setIsHistoryLoading(true);
@@ -1382,83 +1393,64 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                       <i className="fa-solid fa-search absolute left-4 top-5 text-slate-300"></i>
                                     </div>
 
-                                    {showCompSuggestions && (invResults.length > 0 || historyResults.length > 0 || supplierResults.length > 0 || (compSearch || partNumSearch)) && (
+                                    {showCompSuggestions && (rankedSuggestions.length > 0 || (compSearch || partNumSearch)) && (
                                       <div className="absolute top-14 left-0 right-0 mt-3 bg-white border border-slate-200 rounded-[2rem] shadow-2xl z-[110] overflow-hidden divide-y divide-slate-50 max-h-80 overflow-y-auto animate-in slide-in-from-top-2 duration-300">
-                                        {invResults.map(i => {
-                                          const available = i.quantityInStock - (i.quantityReserved || 0);
-                                          const isLow = available > 0 && available <= compQty;
-                                          const isOut = available <= 0;
-                                          return (
-                                            <button key={i.id} onMouseDown={() => handleAddComponent(i)} className={`w-full text-left p-5 hover:bg-blue-50 flex justify-between items-center group transition-colors ${isOut ? 'opacity-50' : ''}`}>
-                                              <div>
-                                                <div className="font-black text-slate-800 group-hover:text-blue-600 text-xs">{i.description}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4">
-                                                  <span>SKU: {i.sku}</span>
-                                                  <span className={`font-black ${isOut ? 'text-rose-500' : isLow ? 'text-amber-500' : 'text-emerald-600'}`}>
-                                                    Available: {available} {i.unit}
+                                        {rankedSuggestions.map((suggestion) => {
+                                          if (suggestion.type === 'INVENTORY') {
+                                            const i = suggestion.inventory;
+                                            const available = i.quantityInStock - (i.quantityReserved || 0);
+                                            const isLow = available > 0 && available <= compQty;
+                                            const isOut = available <= 0;
+                                            return (
+                                              <button key={`inv-${i.id}`} onMouseDown={() => handleAddComponent(i)} className={`w-full text-left p-5 hover:bg-blue-50 flex justify-between items-center group transition-colors ${isOut ? 'opacity-50' : ''}`}>
+                                                <div>
+                                                  <div className="font-black text-slate-800 group-hover:text-blue-600 text-xs">{i.description}</div>
+                                                  <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4">
+                                                    <span className="font-mono font-bold text-blue-700">SKU: {i.sku}</span>
+                                                    <span className={`font-black ${isOut ? 'text-rose-500' : isLow ? 'text-amber-500' : 'text-emerald-600'}`}>
+                                                      Available: {available} {i.unit}
+                                                    </span>
+                                                    {(i.quantityReserved || 0) > 0 && (
+                                                      <span className="text-blue-500">Reserved: {i.quantityReserved}</span>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                                <div className="flex flex-col items-end gap-1">
+                                                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${isOut ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-700'}`}>
+                                                    {isOut ? 'Out of Stock' : 'In-Stock Catalog'}
                                                   </span>
-                                                  {(i.quantityReserved || 0) > 0 && (
-                                                    <span className="text-blue-500">Reserved: {i.quantityReserved}</span>
-                                                  )}
+                                                  <div className="text-[9px] font-black text-slate-800">L.E. {i.lastCost?.toLocaleString()}</div>
                                                 </div>
-                                              </div>
-                                              <div className="flex flex-col items-end gap-1">
-                                                <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${isOut ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-700'}`}>
-                                                  {isOut ? 'Out of Stock' : 'In-Stock Catalog'}
-                                                </span>
-                                                <div className="text-[9px] font-black text-slate-800">L.E. {i.lastCost?.toLocaleString()}</div>
-                                              </div>
-                                            </button>
-                                          );
-                                        })}
-                                        {historyResults.map(h => {
-                                          const lastPrice = h.prices[h.prices.length - 1];
-                                          const lastOrder = h.orders[h.orders.length - 1];
-                                          return (
-                                            <button
-                                              key={h.description + lastOrder?.orderNo}
-                                              onMouseDown={() => {
-                                                setCompSearch(h.description);
-                                                if (h.componentNumber) setPartNumSearch(h.componentNumber);
-                                                setShowCompSuggestions(false);
-                                              }}
-                                              className="w-full text-left p-5 hover:bg-slate-50 flex justify-between items-center group transition-colors border-l-4 border-slate-300"
-                                            >
-                                              <div>
-                                                <div className="font-black text-slate-800 group-hover:text-blue-600 text-xs">{h.description}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4 flex-wrap">
-                                                  <span>Part: {h.componentNumber || 'N/A'}</span>
-                                                  <span className="text-blue-600">Last Price: L.E. {lastPrice?.price?.toLocaleString()} ({lastPrice?.supplierName || 'N/A'})</span>
-                                                  <span>History: Ordered {lastOrder?.orderDate || 'N/A'}{lastOrder?.receivedDate ? ` • Received ${new Date(lastOrder.receivedDate).toLocaleDateString()}` : ''}</span>
-                                                </div>
-                                              </div>
-                                              <div className="flex flex-col items-end gap-1">
-                                                <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">Historical Library</span>
-                                                <div className="text-[9px] font-black text-slate-400 italic">Found in {h.orders.length} past orders</div>
-                                              </div>
-                                            </button>
-                                          );
-                                        })}
-                                        {supplierResults.map(({ supplier, part }) => (
-                                          <button key={part.id} onMouseDown={() => handleAddSupplierPart(supplier, part)} className="w-full text-left p-5 hover:bg-amber-50 flex justify-between items-center group transition-colors">
-                                            <div>
-                                              <div className="font-black text-slate-800 group-hover:text-amber-700 text-xs">{part.description}</div>
-                                              <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4">
-                                                <span>Vendor: {supplier.name}</span>
-                                                <span className="text-amber-600 font-black">L.E. {part.price?.toLocaleString()}</span>
-                                              </div>
-                                            </div>
-                                            <div className="flex flex-col items-end gap-1">
-                                              <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Procurement Market</span>
-                                              <button
-                                                onMouseDown={(e) => { e.stopPropagation(); openHistory(part.description, part.partNumber); }}
-                                                className="text-[9px] font-black text-blue-600 hover:underline"
-                                              >
-                                                View History
                                               </button>
-                                            </div>
-                                          </button>
-                                        ))}
+                                            );
+                                          }
+
+                                          if (suggestion.type === 'SUPPLIER') {
+                                            const { supplier, part } = suggestion;
+                                            return (
+                                              <button key={`supp-${part.id || `${supplier.id}-${part.partNumber}`}`} onMouseDown={() => handleAddSupplierPart(supplier, part)} className="w-full text-left p-5 hover:bg-amber-50 flex justify-between items-center group transition-colors">
+                                                <div>
+                                                  <div className="font-black text-slate-800 group-hover:text-amber-700 text-xs">{part.description}</div>
+                                                  <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4 flex-wrap">
+                                                    <span className="text-amber-800 font-mono font-bold">Part / SKU: {part.partNumber}</span>
+                                                    <span>Vendor: {supplier.name}</span>
+                                                    <span className="text-amber-600 font-black">L.E. {part.price?.toLocaleString()}</span>
+                                                  </div>
+                                                </div>
+                                                <div className="flex flex-col items-end gap-1">
+                                                  <span className="text-[8px] font-black uppercase px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Procurement Market</span>
+                                                  <button
+                                                    onMouseDown={(e) => { e.stopPropagation(); openHistory(part.description, part.partNumber); }}
+                                                    className="text-[9px] font-black text-blue-600 hover:underline"
+                                                  >
+                                                    View History
+                                                  </button>
+                                                </div>
+                                              </button>
+                                            );
+                                          }
+                                          return null;
+                                        })}
                                         <button
                                           onMouseDown={handleAddCustomProcurement}
                                           disabled={!compSearch.trim() && !partNumSearch.trim()}
@@ -1849,47 +1841,63 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
           {compHistory && (
             <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[300] flex items-center justify-center p-4">
-              <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl p-10 animate-in zoom-in-95 duration-300">
-                <div className="flex justify-between items-center mb-8">
+              <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-4xl p-8 md:p-10 animate-in zoom-in-95 duration-300 max-h-[90vh] flex flex-col">
+                <div className="flex justify-between items-center mb-6">
                   <div>
-                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Component Purchase History</h3>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Found {compHistory.length} previous instances</p>
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+                      <i className="fa-solid fa-clock-rotate-left text-blue-600"></i>
+                      <span>Component Order & Sourcing History</span>
+                    </h3>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Found {compHistory.length} historical order instances</p>
                   </div>
                   <button onClick={() => setCompHistory(null)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-all">
                     <i className="fa-solid fa-xmark"></i>
                   </button>
                 </div>
 
-                <div className="overflow-hidden border border-slate-100 rounded-3xl">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
+                <div className="overflow-y-auto flex-1 border border-slate-100 rounded-3xl">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100 sticky top-0">
                       <tr>
-                        <th className="px-6 py-4">Date</th>
+                        <th className="px-6 py-4">Order / Customer</th>
+                        <th className="px-6 py-4">Component Details</th>
                         <th className="px-6 py-4">Supplier</th>
-                        <th className="px-6 py-4">Qty</th>
+                        <th className="px-6 py-4 text-right">Qty</th>
                         <th className="px-6 py-4 text-right">Unit Price</th>
+                        <th className="px-6 py-4 text-center">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {compHistory.map((h, idx) => (
                         <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
                           <td className="px-6 py-4">
-                            <div className="text-[10px] font-bold text-slate-500">{new Date(h.date).toLocaleDateString()}</div>
-                            <div className="text-[8px] font-black text-blue-600 uppercase mt-0.5">{h.orderNumber}</div>
+                            <div className="font-bold text-slate-800">{h.orderNumber || 'Historical Order'}</div>
+                            <div className="text-[10px] text-slate-500 font-medium">{h.customerName}</div>
+                            <div className="text-[9px] text-slate-400 mt-0.5">{new Date(h.date).toLocaleDateString()}</div>
                           </td>
                           <td className="px-6 py-4">
-                            <div className="text-xs font-black text-slate-800 uppercase tracking-tight">{h.supplierName}</div>
-                            <div className="text-[8px] font-bold text-slate-400 uppercase mt-0.5">PO: {h.poNumber}</div>
+                            <div className="font-bold text-slate-800">{h.description}</div>
+                            {h.componentNumber && <div className="text-[10px] font-mono text-blue-600 font-bold">PN: {h.componentNumber}</div>}
+                            {h.productName && <div className="text-[9px] text-slate-400 italic">Item: {h.productName}</div>}
                           </td>
-                          <td className="px-6 py-4 text-xs font-bold text-slate-600">{h.quantity}</td>
+                          <td className="px-6 py-4">
+                            <div className="font-bold text-slate-700">{h.supplierName}</div>
+                            {h.poNumber && <div className="text-[9px] text-slate-400">PO: {h.poNumber}</div>}
+                          </td>
+                          <td className="px-6 py-4 text-right font-bold text-slate-700">{h.quantity} <span className="text-[9px] text-slate-400 font-normal">{h.unit || ''}</span></td>
                           <td className="px-6 py-4 text-right">
-                            <div className="text-sm font-black text-slate-800">{h.price.toLocaleString()} <span className="text-[9px] text-slate-400">L.E.</span></div>
+                            <div className="font-black text-slate-900">{h.price?.toLocaleString()} <span className="text-[9px] text-slate-400 font-normal">L.E.</span></div>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-slate-100 text-slate-700 border border-slate-200">
+                              {h.status || 'LOGGED'}
+                            </span>
                           </td>
                         </tr>
                       ))}
                       {compHistory.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="px-6 py-12 text-center text-[10px] font-black uppercase text-slate-300 italic tracking-[0.2em]">
+                          <td colSpan={6} className="px-6 py-12 text-center text-[10px] font-black uppercase text-slate-300 italic tracking-[0.2em]">
                             No historical records found for this component
                           </td>
                         </tr>
@@ -1897,8 +1905,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     </tbody>
                   </table>
                 </div>
-                <div className="mt-8 flex justify-end">
-                  <button onClick={() => setCompHistory(null)} className="px-8 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg shadow-slate-200">Close History</button>
+                <div className="mt-6 flex justify-end">
+                  <button onClick={() => setCompHistory(null)} className="px-8 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg shadow-slate-200 hover:bg-black transition-colors">Close History</button>
                 </div>
               </div>
             </div>

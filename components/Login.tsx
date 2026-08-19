@@ -16,24 +16,42 @@ export const Login: React.FC<LoginProps> = ({ onLogin, config }) => {
 
   const [environment, setEnvironment] = useState('live');
   const [environments, setEnvironments] = useState<AuthEnvironment[]>([
-    { id: 'live', label: 'Live ERP (Production)', type: 'live' }
+    { id: 'live', label: 'Live ERP (Production)', type: 'live' },
+    { id: 'self', label: 'Personal Sandbox (Isolated Testing)', type: 'personal' }
   ]);
   const [isLoadingEnvs, setIsLoadingEnvs] = useState(false);
 
-  // Discover environments when username is typed (debounced 300ms)
+  // Discover environments when username is typed (debounced 250ms)
   useEffect(() => {
-    if (!username.trim()) {
-      setEnvironments([{ id: 'live', label: 'Live ERP (Production)', type: 'live' }]);
-      setEnvironment('live');
-      return;
-    }
-    const timer = setTimeout(async () => {
+    let isCancelled = false;
+    const fetchEnvs = async () => {
       setIsLoadingEnvs(true);
-      const envs = await dataService.getAvailableEnvironments(username);
-      setEnvironments(envs);
-      setIsLoadingEnvs(false);
-    }, 300);
-    return () => clearTimeout(timer);
+      try {
+        const envs = await dataService.getAvailableEnvironments(username);
+        if (!isCancelled && envs && envs.length > 0) {
+          setEnvironments(envs);
+          setEnvironment(prev => {
+            if (envs.some(e => e.id === prev)) return prev;
+            return 'live';
+          });
+        }
+      } catch {
+        if (!isCancelled) {
+          setEnvironments([
+            { id: 'live', label: 'Live ERP (Production)', type: 'live' },
+            { id: 'self', label: 'Personal Sandbox (Isolated Testing)', type: 'personal' }
+          ]);
+        }
+      } finally {
+        if (!isCancelled) setIsLoadingEnvs(false);
+      }
+    };
+
+    const timer = setTimeout(fetchEnvs, username.trim() ? 250 : 0);
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
   }, [username]);
 
   const handleLogin = async (e: React.FormEvent) => {

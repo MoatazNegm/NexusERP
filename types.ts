@@ -126,6 +126,9 @@ export interface SupplierPart {
   description: string;
   price: number;
   currency: string;
+  originalSupplierId?: string;
+  originalSupplierName?: string;
+  deletedAt?: string;
 }
 
 export interface Supplier {
@@ -141,6 +144,7 @@ export interface Supplier {
   contactEmail?: string;
   isBlacklisted?: boolean;
   blacklistReason?: string;
+  isDeletedSupplier?: boolean;
   priceList?: SupplierPart[];
   logs?: LogEntry[];
 }

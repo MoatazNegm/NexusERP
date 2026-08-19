@@ -317,16 +317,28 @@ const readDb = (customPath = null) => {
 const writeDb = (data, customPath = null) => {
   const targetPath = customPath || DB_PATH;
   const bakPath = targetPath + '.local.bak';
+  const content = JSON.stringify(data, null, 2);
   try {
-    // Atomic write
     const tmpPath = targetPath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
-    fs.renameSync(tmpPath, targetPath);
+    fs.writeFileSync(tmpPath, content, 'utf8');
+    try {
+      fs.renameSync(tmpPath, targetPath);
+    } catch (renameErr) {
+      // Fallback for Windows / OneDrive filesystem locks
+      fs.writeFileSync(targetPath, content, 'utf8');
+      try { fs.unlinkSync(tmpPath); } catch {}
+    }
     try { fs.copyFileSync(targetPath, bakPath); } catch {}
     return true;
   } catch (err) {
-    console.error(`[DB] Write error on ${targetPath}:`, err);
-    return false;
+    try {
+      fs.writeFileSync(targetPath, content, 'utf8');
+      try { fs.copyFileSync(targetPath, bakPath); } catch {}
+      return true;
+    } catch (fallbackErr) {
+      console.error(`[DB] Write error on ${targetPath}:`, fallbackErr);
+      return false;
+    }
   }
 };
 
@@ -2027,28 +2039,36 @@ app.get('/api/v1/procurement/history', (req, res) => {
 
     const db = getDb(req);
     const history = [];
+    const descLower = (description || '').trim().toLowerCase();
+    const pnLower = (partNumber || '').trim().toLowerCase();
 
     (db.orders || []).forEach(order => {
         (order.items || []).forEach(item => {
             (item.components || []).forEach(comp => {
-                // Focus on ordered/fulfilled components
-                if (!['ORDERED', 'RECEIVED', 'RESERVED', 'CONSUMED', 'Manufactured'].includes(comp.status)) return;
+                const compDesc = (comp.description || comp.componentName || '').toLowerCase();
+                const compPn = (comp.componentNumber || comp.supplierPartNumber || comp.partNumber || '').toLowerCase();
 
-                const matchDesc = description && comp.description?.toLowerCase().includes(description.toLowerCase());
-                const matchPart = partNumber && (
-                    comp.componentNumber?.toLowerCase().includes(partNumber.toLowerCase()) ||
-                    comp.supplierPartNumber?.toLowerCase().includes(partNumber.toLowerCase())
-                );
+                const matchDesc = descLower && (compDesc.includes(descLower) || descLower.includes(compDesc));
+                const matchPart = pnLower && (compPn.includes(pnLower) || pnLower.includes(compPn));
 
                 if (matchDesc || matchPart) {
                     const supplier = (db.suppliers || []).find(s => s.id === comp.supplierId);
                     history.push({
-                        date: comp.statusUpdatedAt || order.orderDate,
-                        price: comp.unitCost,
-                        quantity: comp.quantity,
-                        supplierName: supplier ? supplier.name : (comp.supplierName || 'Unknown'),
-                        orderNumber: order.internalOrderNumber,
-                        poNumber: comp.poNumber
+                        orderId: order.id,
+                        orderNumber: order.internalOrderNumber || order.orderNumber || order.id,
+                        customerName: order.customerName || 'N/A',
+                        customerPo: order.customerPo || '',
+                        productName: item.productName || item.description || item.name || '',
+                        componentNumber: comp.componentNumber || comp.supplierPartNumber || comp.partNumber || '',
+                        description: comp.description || comp.componentName || '',
+                        date: comp.statusUpdatedAt || order.orderDate || order.dataEntryTimestamp || new Date().toISOString(),
+                        price: comp.unitCost ?? comp.cost ?? 0,
+                        quantity: comp.quantity || 1,
+                        unit: comp.unit || 'Units',
+                        supplierName: supplier ? supplier.name : (comp.supplierName || 'Unassigned'),
+                        poNumber: comp.poNumber || '',
+                        status: comp.status || 'PENDING',
+                        orderStatus: order.status || ''
                     });
                 }
             });
@@ -2056,8 +2076,8 @@ app.get('/api/v1/procurement/history', (req, res) => {
     });
 
     // Sort by date descending
-    history.sort((a, b) => new Date(b.date) - new Date(a.date));
-    res.json(history.slice(0, 20)); // Limit to last 20 records
+    history.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    res.json(history.slice(0, 50)); // Limit to last 50 records
 });
 
 app.post('/api/v1/customers/merge', (req, res) => {
@@ -3666,10 +3686,15 @@ app.post('/api/v1/relay/dispatch', async (req, res) => {
 app.get('/api/v1/auth/environments', (req, res) => {
   const queryUser = String(req.query.username || '').trim().toLowerCase();
   const headerUser = String(req.headers['x-user'] || '').trim().toLowerCase();
-  
-  const username = (headerUser && headerUser === queryUser) ? queryUser : '';
+  const username = queryUser || headerUser;
+
   if (!username) {
-    return res.json({ environments: [{ id: 'live', label: 'Live ERP (Production)', type: 'live' }] });
+    return res.json({
+      environments: [
+        { id: 'live', label: 'Live ERP (Production)', type: 'live' },
+        { id: 'self', label: 'Personal Sandbox (Isolated Testing)', type: 'personal' }
+      ]
+    });
   }
 
   const cached = discoveryCache.get(username);
@@ -3681,7 +3706,12 @@ app.get('/api/v1/auth/environments', (req, res) => {
   const liveUser = (liveDb.users || []).find(u => u.username.toLowerCase() === username);
 
   if (!liveUser) {
-    return res.json({ environments: [{ id: 'live', label: 'Live ERP (Production)', type: 'live' }] });
+    return res.json({
+      environments: [
+        { id: 'live', label: 'Live ERP (Production)', type: 'live' },
+        { id: 'self', label: 'Personal Sandbox (Isolated Testing)', type: 'personal' }
+      ]
+    });
   }
 
   const sanitized = sanitizeUsername(username);
@@ -4502,7 +4532,7 @@ setInterval(() => {
 }, 60000).unref();
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Backend] Running on http://localhost:${PORT}`);
+    console.log(`[Backend] Running exclusively on http://localhost:${PORT}`);
     runThresholdAudit();
     setInterval(runThresholdAudit, 60000);
 });
