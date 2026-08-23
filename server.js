@@ -1732,16 +1732,21 @@ app.use((req, res, next) => {
                 u => u.username.toLowerCase() === username.toLowerCase()
             );
 
-            // If user is not yet in sandbox, check if they are an administrator in Live DB
+            // If user is not yet in sandbox, auto-provision if:
+            // 1. User is the sandbox owner (e.g. user accessing their own sandbox)
+            // 2. User is an administrator in Live DB
+            // 3. User exists in Live DB
             if (!userEntry) {
                 const liveDb = readDb(DB_PATH);
                 const liveUser = (liveDb.users || []).find(
                     u => u.username.toLowerCase() === username.toLowerCase()
                 );
-                if (liveUser && (liveUser.roles || []).includes('admin')) {
+                if (liveUser) {
+                    const isOwner = username.toLowerCase() === sanitizedOwner.toLowerCase();
+                    const isAdmin = (liveUser.roles || []).includes('admin');
                     userEntry = {
                         ...liveUser,
-                        roles: liveUser.roles || ['admin']
+                        roles: isAdmin ? (liveUser.roles || ['admin']) : (liveUser.roles || [])
                     };
                     sandboxDb.users = sandboxDb.users || [];
                     sandboxDb.users.push(userEntry);
@@ -3642,6 +3647,24 @@ app.post('/api/v1/restore', (req, res) => {
 
     const { _sandboxes, sandboxes, ...cleanDb } = data;
 
+    // If restoring into a sandbox, ensure the sandbox owner and live admins are preserved in cleanDb.users
+    if (isSandbox(req)) {
+        const liveDb = readDb(DB_PATH);
+        const ownerName = req.sandboxOwner;
+        const liveOwner = (liveDb.users || []).find(u => sanitizeUsername(u.username) === ownerName);
+        const liveAdmins = (liveDb.users || []).filter(u => (u.roles || []).includes('admin'));
+
+        cleanDb.users = cleanDb.users || [];
+        if (liveOwner && !cleanDb.users.some(u => sanitizeUsername(u.username) === ownerName)) {
+            cleanDb.users.push(liveOwner);
+        }
+        for (const admin of liveAdmins) {
+            if (!cleanDb.users.some(u => u.username.toLowerCase() === admin.username.toLowerCase())) {
+                cleanDb.users.push(admin);
+            }
+        }
+    }
+
     // Migrate schema after restore so old backups work on new code versions
     applySchemaMigrations(cleanDb, getDbPath(req));
 
@@ -3709,6 +3732,21 @@ app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => 
       const extractedDb = path.join(tempDir, 'db.json');
       if (fs.existsSync(extractedDb)) {
         const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
+        const liveDb = readDb(DB_PATH);
+        const ownerName = req.sandboxOwner;
+        const liveOwner = (liveDb.users || []).find(u => sanitizeUsername(u.username) === ownerName);
+        const liveAdmins = (liveDb.users || []).filter(u => (u.roles || []).includes('admin'));
+
+        db.users = db.users || [];
+        if (liveOwner && !db.users.some(u => sanitizeUsername(u.username) === ownerName)) {
+            db.users.push(liveOwner);
+        }
+        for (const admin of liveAdmins) {
+            if (!db.users.some(u => u.username.toLowerCase() === admin.username.toLowerCase())) {
+                db.users.push(admin);
+            }
+        }
+
         applySchemaMigrations(db, getDbPath(req));
         if (!db.contracts) db.contracts = [];
         writeDb(db, getDbPath(req));
@@ -4121,7 +4159,13 @@ app.post('/api/v1/login', (req, res) => {
       writeDb(stubDb, sandboxPath);
     }
     const sandboxDb = readDb(sandboxPath);
-    const sandboxUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase()) || liveUser;
+    let sandboxUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!sandboxUser) {
+      sandboxUser = { ...liveUser, roles: liveUser.roles || [] };
+      sandboxDb.users = sandboxDb.users || [];
+      sandboxDb.users.push(sandboxUser);
+      writeDb(sandboxDb, sandboxPath);
+    }
     const { password: _, ...safe } = sandboxUser;
     return res.json({ ...safe, sandbox: true, sandboxOwner: sanitizeUsername(username), sandboxLabel: `My Own Sandbox (${username})` });
   }
