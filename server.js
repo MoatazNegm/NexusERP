@@ -4033,9 +4033,11 @@ app.get('/api/v1/auth/environments', (req, res) => {
       if (owner === sanitized) continue;
 
       try {
-        const db = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
-        const isAdmin = (liveUser.roles || []).includes('admin');
-        const hasAccess = (db.users || []).some(u => u.username.toLowerCase() === username && (isAdmin || u.sandboxAccess));
+        const fileContent = fs.readFileSync(path.join(__dirname, file), 'utf8');
+        if (!fileContent || fileContent.trim() === '') continue;
+        const db = JSON.parse(fileContent);
+        // Only show in login dropdown if explicitly granted sandboxAccess or if they are the owner
+        const hasAccess = (db.users || []).some(u => u.username.toLowerCase() === username && u.sandboxAccess);
         if (hasAccess) {
           const ownerUser = (db.users || []).find(u => u.username.toLowerCase() === owner);
           environments.push({
@@ -4236,8 +4238,8 @@ app.post('/api/v1/login', (req, res) => {
   const sandboxDb = readDb(sandboxPath);
   const sandboxUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
   
-  const isTargetAdmin = (liveDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase())?.roles?.includes('admin');
-  const hasAccess = sandboxUser && (sandboxUser.sandboxAccess || isTargetAdmin || sandboxUser.username.toLowerCase() === ownerSanitized);
+  // Require explicit sandboxAccess for shared sandboxes (unless it's the owner themselves)
+  const hasAccess = sandboxUser && (sandboxUser.sandboxAccess || sandboxUser.username.toLowerCase() === ownerSanitized);
   
   if (!hasAccess) return res.status(403).json({ error: "You do not have access to this team sandbox." });
   if (sandboxUser.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password for this sandbox." });
