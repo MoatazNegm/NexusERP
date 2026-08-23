@@ -60,6 +60,7 @@ export interface User {
   groupIds?: string[];
   avatar?: string;
   logs?: LogEntry[];
+  sandboxAccess?: boolean;
   sandbox?: boolean;
   sandboxOwner?: string;
   sandboxLabel?: string;

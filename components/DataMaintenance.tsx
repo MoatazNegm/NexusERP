@@ -1882,6 +1882,28 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <tr key={u.id} className="hover:bg-slate-50">
                       <td className="py-4 font-black text-slate-800">{u.name}</td>
                       <td className="py-4 font-mono text-xs text-blue-600">@{u.username}</td>
+                      {currentUser?.sandbox && (currentUser.sandboxOwner === currentUser.username || currentUser.roles.includes('admin')) && (
+                        <td className="py-4">
+                            <label className="flex items-center gap-2 cursor-pointer opacity-90 hover:opacity-100 transition-opacity">
+                              <input 
+                                type="checkbox" 
+                                checked={u.username === 'admin' || (currentUser.sandboxOwner && u.username.toLowerCase() === currentUser.sandboxOwner.toLowerCase()) ? true : !!u.sandboxAccess} 
+                                onChange={async (e) => {
+                                  try {
+                                    const updatedUser = { ...u, sandboxAccess: e.target.checked };
+                                    await dataService.saveUser(updatedUser);
+                                    loadMetadata();
+                                  } catch (err) {
+                                    alert("Failed to update access.");
+                                  }
+                                }}
+                                className="w-4 h-4 rounded text-blue-600 border-slate-300"
+                                disabled={u.username === 'admin' || (currentUser.sandboxOwner && u.username.toLowerCase() === currentUser.sandboxOwner.toLowerCase())}
+                              />
+                              <span className="text-[10px] uppercase font-bold text-slate-500">Sandbox Access</span>
+                            </label>
+                        </td>
+                      )}
                       <td className="py-4 text-right">
                         <button onClick={() => setEditingUser(u)} className="p-2 text-slate-400 hover:text-blue-600"><i className="fa-solid fa-pen"></i></button>
                         {u.username !== 'admin' && <button onClick={() => dataService.deleteUser(u.id).then(loadMetadata)} className="p-2 text-slate-400 hover:text-rose-600"><i className="fa-solid fa-trash"></i></button>}

@@ -1753,24 +1753,27 @@ app.use((req, res, next) => {
                 u => u.username.toLowerCase() === username.toLowerCase()
             );
 
-            // Auto-provision user if not in sandbox: owners, admins, and any live user get cloned in
+            // Auto-provision user if not in sandbox: owners, admins, and explicitly permitted users
             if (!userEntry && liveUser) {
                 userEntry = {
                     ...liveUser,
-                    roles: isAdmin ? (liveUser.roles || ['admin']) : (liveUser.roles || [])
+                    roles: liveUser.roles || [],
+                    sandboxAccess: false
                 };
                 sandboxDb.users = sandboxDb.users || [];
                 sandboxDb.users.push(userEntry);
                 writeDb(sandboxDb, sandboxPath);
-                console.log(`[Sandbox] Auto-provisioned user "${username}" into sandbox "${sanitizedOwner}"`);
+                console.log(`[Sandbox] Auto-provisioned user "${username}" into sandbox "${sanitizedOwner}" (Access Default: false)`);
             }
 
-            if (userEntry) {
+            const hasAccess = userEntry && (userEntry.sandboxAccess || isOwner || isAdmin);
+
+            if (hasAccess) {
                 req.sandboxDbPath = sandboxPath;
                 req.sandboxOwner = sanitizedOwner;
                 req.roles = userEntry.roles || [];
             } else {
-                return res.status(403).json({ error: 'ACCESS_REVOKED', message: 'Access to this sandbox has been revoked.' });
+                return res.status(403).json({ error: 'ACCESS_REVOKED', message: 'Access to this sandbox has been restricted.' });
             }
         }
     }
@@ -4031,7 +4034,8 @@ app.get('/api/v1/auth/environments', (req, res) => {
 
       try {
         const db = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
-        const hasAccess = (db.users || []).some(u => u.username.toLowerCase() === username);
+        const isAdmin = (liveUser.roles || []).includes('admin');
+        const hasAccess = (db.users || []).some(u => u.username.toLowerCase() === username && (isAdmin || u.sandboxAccess));
         if (hasAccess) {
           const ownerUser = (db.users || []).find(u => u.username.toLowerCase() === owner);
           environments.push({
@@ -4231,7 +4235,11 @@ app.post('/api/v1/login', (req, res) => {
 
   const sandboxDb = readDb(sandboxPath);
   const sandboxUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
-  if (!sandboxUser) return res.status(403).json({ error: "You do not have access to this team sandbox." });
+  
+  const isTargetAdmin = (liveDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase())?.roles?.includes('admin');
+  const hasAccess = sandboxUser && (sandboxUser.sandboxAccess || isTargetAdmin || sandboxUser.username.toLowerCase() === ownerSanitized);
+  
+  if (!hasAccess) return res.status(403).json({ error: "You do not have access to this team sandbox." });
   if (sandboxUser.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password for this sandbox." });
 
   const ownerUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === ownerSanitized);
