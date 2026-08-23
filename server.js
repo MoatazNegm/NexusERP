@@ -2024,7 +2024,7 @@ const updateInCollection = (col) => (req, res) => {
 
     if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
 
-    // Encrypt sensitive settings before storing
+    // Encrypt sensitive settings before storing with preservation guards for empty fields
     if (col === 'settings') {
         const oldMinMargin = oldItem.minimumMarginPct;
         const newMinMargin = req.body.minimumMarginPct;
@@ -2032,7 +2032,30 @@ const updateInCollection = (col) => (req, res) => {
         if (newMinMargin !== undefined && Number(newMinMargin) !== Number(oldMinMargin)) {
             reconcileOrdersMarginOnThresholdChange(db, Number(oldMinMargin), Number(newMinMargin), user);
         }
-        updated = encryptSettings(updated);
+
+        const merged = { ...oldItem, ...req.body };
+
+        // If update omitted or passed empty API key / passwords / logo, preserve existing values
+        if (oldItem.geminiConfig?.apiKey && (!req.body.geminiConfig?.apiKey || req.body.geminiConfig.apiKey === '')) {
+            merged.geminiConfig = { ...(merged.geminiConfig || {}), apiKey: oldItem.geminiConfig.apiKey };
+        }
+        if (oldItem.openaiConfig?.apiKey && (!req.body.openaiConfig?.apiKey || req.body.openaiConfig.apiKey === '')) {
+            merged.openaiConfig = { ...(merged.openaiConfig || {}), apiKey: oldItem.openaiConfig.apiKey };
+        }
+        if (oldItem.emailConfig?.password && (!req.body.emailConfig?.password || req.body.emailConfig.password === '')) {
+            merged.emailConfig = { ...(merged.emailConfig || {}), password: oldItem.emailConfig.password };
+        }
+        if (oldItem.companyLogo && (!req.body.companyLogo || req.body.companyLogo === '')) {
+            merged.companyLogo = oldItem.companyLogo;
+        }
+        if (oldItem.googleDriveConfig?.clientSecret && (!req.body.googleDriveConfig?.clientSecret || req.body.googleDriveConfig.clientSecret === '')) {
+            merged.googleDriveConfig = { ...(merged.googleDriveConfig || {}), clientSecret: oldItem.googleDriveConfig.clientSecret };
+        }
+        if (oldItem.localStorageConfig?.secretKey && (!req.body.localStorageConfig?.secretKey || req.body.localStorageConfig.secretKey === '')) {
+            merged.localStorageConfig = { ...(merged.localStorageConfig || {}), secretKey: oldItem.localStorageConfig.secretKey };
+        }
+
+        updated = encryptSettings(merged);
     }
 
     if (col === 'orders') {

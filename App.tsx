@@ -177,24 +177,6 @@ const App: React.FC = () => {
 
   const hasRole = (role: UserRole) => effectiveRoles.includes('admin') || effectiveRoles.includes(role);
 
-  // Persistent sync to backend (Admin only)
-  useEffect(() => {
-    if (isDbReady && currentUser && hasRole('admin')) {
-      const sync = async () => {
-        try {
-          await Promise.all([
-            dataService.updateSettings(config.settings),
-            dataService.updateModules(config.modules)
-          ]);
-        } catch (e) {
-          console.debug("Backend config sync pending/failed");
-          setConnectionError(true);
-        }
-      };
-      sync();
-    }
-  }, [config, isDbReady, currentUser, effectiveRoles]);
-
   useEffect(() => {
     if (currentUser) {
       dataService.performThresholdAudit(config, (msg) => console.debug(msg), true);
