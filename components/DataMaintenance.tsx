@@ -1891,7 +1891,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                                 onChange={async (e) => {
                                   try {
                                     const updatedUser = { ...u, sandboxAccess: e.target.checked };
-                                    await dataService.saveUser(updatedUser);
+                                    await dataService.updateUser(updatedUser.id, updatedUser);
                                     loadMetadata();
                                   } catch (err) {
                                     alert("Failed to update access.");
