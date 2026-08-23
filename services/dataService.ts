@@ -17,7 +17,8 @@ import {
   CompStatus,
   SupplierPayment,
   LedgerEntry,
-  AuthEnvironment
+  AuthEnvironment,
+  AdminSandboxInfo
 } from '../types';
 import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
 
@@ -756,6 +757,32 @@ class DataService {
     });
     if (!res.ok) throw new Error("Failed to reset sandbox");
     return true;
+  }
+
+  async getAdminSandboxes(): Promise<AdminSandboxInfo[]> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/admin/sandboxes`, {
+        headers: this.getAuthHeaders()
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.sandboxes || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async switchAdminSandbox(targetOwner: string): Promise<User> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/admin/switch-sandbox`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ targetOwner })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to switch sandbox");
+    }
+    return await res.json() as User;
   }
 
   async init() {

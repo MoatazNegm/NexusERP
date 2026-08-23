@@ -399,7 +399,27 @@ const transformSensitiveFields = (settings, fn) => {
 const encryptSettings = (settings) => transformSensitiveFields(settings, encryptValue);
 const decryptSettings = (settings) => transformSensitiveFields(settings, decryptValue);
 
-const resolveSettings = (db) => {
+const getLiveAiSettings = () => {
+    try {
+        const liveDb = readDb(DB_PATH);
+        const liveSettings = (liveDb.settings && Array.isArray(liveDb.settings) && liveDb.settings.length > 0)
+            ? liveDb.settings[0]
+            : (liveDb.settings || {});
+        return {
+            aiProvider: liveSettings.aiProvider || 'gemini',
+            geminiConfig: liveSettings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' },
+            openaiConfig: liveSettings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' }
+        };
+    } catch (e) {
+        return {
+            aiProvider: 'gemini',
+            geminiConfig: { apiKey: '', modelName: 'gemini-1.5-flash' },
+            openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' }
+        };
+    }
+};
+
+const resolveSettings = (db, isSandboxReq = false) => {
     const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
         ? db.settings[0]
         : (db.settings || {});
@@ -450,6 +470,13 @@ const resolveSettings = (db) => {
         },
         ...dbSettings
     };
+
+    if (isSandboxReq) {
+        const liveAi = getLiveAiSettings();
+        merged.aiProvider = liveAi.aiProvider;
+        merged.geminiConfig = liveAi.geminiConfig;
+        merged.openaiConfig = liveAi.openaiConfig;
+    }
 
     // Decrypt sensitive fields for internal use
     return decryptSettings(merged);
@@ -1701,9 +1728,26 @@ app.use((req, res, next) => {
 
         if (fs.existsSync(sandboxPath)) {
             const sandboxDb = readDb(sandboxPath);
-            const userEntry = (sandboxDb.users || []).find(
+            let userEntry = (sandboxDb.users || []).find(
                 u => u.username.toLowerCase() === username.toLowerCase()
             );
+
+            // If user is not yet in sandbox, check if they are an administrator in Live DB
+            if (!userEntry) {
+                const liveDb = readDb(DB_PATH);
+                const liveUser = (liveDb.users || []).find(
+                    u => u.username.toLowerCase() === username.toLowerCase()
+                );
+                if (liveUser && (liveUser.roles || []).includes('admin')) {
+                    userEntry = {
+                        ...liveUser,
+                        roles: liveUser.roles || ['admin']
+                    };
+                    sandboxDb.users = sandboxDb.users || [];
+                    sandboxDb.users.push(userEntry);
+                    writeDb(sandboxDb, sandboxPath);
+                }
+            }
 
             if (userEntry) {
                 req.sandboxDbPath = sandboxPath;
@@ -1791,12 +1835,35 @@ const getCollection = (col) => (req, res) => {
     if (col === 'users') return res.json((db[col] || []).map(({ password, ...u }) => u));
 
     if (col === 'orders') {
-        const settings = resolveSettings(db);
+        const settings = resolveSettings(db, isSandbox(req));
         return res.json((db[col] || []).map(o => calculateOrderHealth(o, settings)));
     }
 
-    // Decrypt sensitive settings before sending to frontend
+    // Decrypt sensitive settings before sending to frontend (inheriting live AI settings in sandboxes)
     if (col === 'settings') {
+        const settingsList = db[col] || [];
+        if (isSandbox(req)) {
+            const liveAi = getLiveAiSettings();
+            if (settingsList.length === 0) {
+                const defaultSettings = {
+                    id: 'system_settings',
+                    ...resolveSettings(db, true),
+                    aiProvider: liveAi.aiProvider,
+                    geminiConfig: liveAi.geminiConfig,
+                    openaiConfig: liveAi.openaiConfig
+                };
+                return res.json([decryptSettings(defaultSettings)]);
+            }
+            return res.json(settingsList.map(s => {
+                const merged = {
+                    ...s,
+                    aiProvider: liveAi.aiProvider,
+                    geminiConfig: liveAi.geminiConfig,
+                    openaiConfig: liveAi.openaiConfig
+                };
+                return decryptSettings(merged);
+            }));
+        }
         return res.json((db[col] || []).map(s => decryptSettings(s)));
     }
 
@@ -1812,8 +1879,21 @@ const getItemFromCollection = (col) => (req, res) => {
         return res.json(safe);
     }
     if (col === 'orders') {
-        const settings = resolveSettings(db);
+        const settings = resolveSettings(db, isSandbox(req));
         return res.json(calculateOrderHealth(item, settings));
+    }
+    if (col === 'settings') {
+        let s = item;
+        if (isSandbox(req)) {
+            const liveAi = getLiveAiSettings();
+            s = {
+                ...s,
+                aiProvider: liveAi.aiProvider,
+                geminiConfig: liveAi.geminiConfig,
+                openaiConfig: liveAi.openaiConfig
+            };
+        }
+        return res.json(decryptSettings(s));
     }
     res.json(item);
 };
@@ -3437,9 +3517,24 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
 app.get('/api/v1/backup', (req, res) => {
     const db = getDb(req);
-    // Settings remain encrypted in the backup file for security.
-    // The restore endpoint handles both encrypted and plaintext settings.
-    res.json(db);
+    if (!isSandbox(req)) {
+        // In Live ERP: Bundle all sandboxes so JSON export captures them
+        const sandboxes = {};
+        try {
+            const files = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
+            for (const file of files) {
+                const owner = file.replace('db.sandbox.', '').replace('.json', '');
+                try {
+                    sandboxes[owner] = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+                } catch {}
+            }
+        } catch (e) {
+            console.error("[Backup] Error bundling sandboxes:", e);
+        }
+        res.json({ ...db, _sandboxes: sandboxes });
+    } else {
+        res.json(db);
+    }
 });
 
 app.get('/api/v1/full-backup', (req, res) => {
@@ -3451,17 +3546,37 @@ app.get('/api/v1/full-backup', (req, res) => {
 
         const zip = new AdmZip();
 
-        // Add filtered database (exclude users and groups - they are backed up separately via Export Identities)
-        const db = getDb(req);
-        delete db.users;
-        delete db.userGroups;
-        const filteredDbStr = JSON.stringify(db, null, 2);
-        zip.addFile("db.json", Buffer.from(filteredDbStr, "utf8"));
+        if (isSandbox(req)) {
+            // Backup ONLY this specific sandbox
+            const sandboxDb = getDb(req);
+            const filteredDbStr = JSON.stringify(sandboxDb, null, 2);
+            zip.addFile("db.json", Buffer.from(filteredDbStr, "utf8"));
 
-        // Add uploads directory
-        const uploadsDir = UPLOADS_BASE;
-        if (fs.existsSync(uploadsDir)) {
-            zip.addLocalFolder(uploadsDir, 'uploads');
+            const sandboxUploads = getSandboxUploadsPath(req.sandboxOwner);
+            if (fs.existsSync(sandboxUploads)) {
+                zip.addLocalFolder(sandboxUploads, 'uploads');
+            }
+        } else {
+            // LIVE FULL SYSTEM BACKUP:
+            // 1. Include full live db.json (preserving users, userGroups, settings, orders, customers, etc.)
+            const liveDb = readDb(DB_PATH);
+            zip.addFile("db.json", Buffer.from(JSON.stringify(liveDb, null, 2), "utf8"));
+
+            // 2. Include all sandbox databases on disk (including sandbox users, settings, and test orders)
+            try {
+                const files = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
+                for (const file of files) {
+                    const sandboxContent = fs.readFileSync(path.join(__dirname, file));
+                    zip.addFile(file, sandboxContent);
+                }
+            } catch (e) {
+                console.error("[Full Backup] Error bundling sandboxes:", e);
+            }
+
+            // 3. Include full uploads directory (live uploads and all uploads/sandbox/<owner>/...)
+            if (fs.existsSync(UPLOADS_BASE)) {
+                zip.addLocalFolder(UPLOADS_BASE, 'uploads');
+            }
         }
 
         const rawBuffer = zip.toBuffer();
@@ -3502,10 +3617,25 @@ app.post('/api/v1/restore', (req, res) => {
         data.settings = data.settings.map(s => encryptSettings(s));
     }
 
-    // Migrate schema after restore so old backups work on new code versions
-    applySchemaMigrations(data, getDbPath(req));
+    const { _sandboxes, sandboxes, ...cleanDb } = data;
 
-    if (writeDb(data, getDbPath(req))) {
+    // Migrate schema after restore so old backups work on new code versions
+    applySchemaMigrations(cleanDb, getDbPath(req));
+
+    if (writeDb(cleanDb, getDbPath(req))) {
+        // If restoring in Live and sandboxes are in the JSON payload, restore each sandbox too
+        if (!isSandbox(req) && (_sandboxes || sandboxes)) {
+            const sMap = _sandboxes || sandboxes;
+            for (const [owner, sDb] of Object.entries(sMap)) {
+                try {
+                    const targetPath = getSandboxDbPath(owner);
+                    applySchemaMigrations(sDb, targetPath);
+                    writeDb(sDb, targetPath);
+                } catch (e) {
+                    console.error(`[Restore] Error restoring sandbox for ${owner}:`, e);
+                }
+            }
+        }
         console.log(`[System] Database restored manually at ${new Date().toISOString()}`);
         res.json({ message: "Restored" });
     } else {
@@ -3550,19 +3680,55 @@ app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => 
 
     const zip = new AdmZip(rawBuffer);
     zip.extractAllTo(tempDir, true);
-    const extractedDb = path.join(tempDir, 'db.json');
-    if (fs.existsSync(extractedDb)) {
-      const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
-      applySchemaMigrations(db, getDbPath(req));
-      if (!db.contracts) db.contracts = [];
-      writeDb(db, getDbPath(req));
+
+    if (isSandbox(req)) {
+      // Restoring inside a single sandbox
+      const extractedDb = path.join(tempDir, 'db.json');
+      if (fs.existsSync(extractedDb)) {
+        const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
+        applySchemaMigrations(db, getDbPath(req));
+        if (!db.contracts) db.contracts = [];
+        writeDb(db, getDbPath(req));
+      }
+      const extractedUploads = path.join(tempDir, 'uploads');
+      if (fs.existsSync(extractedUploads)) {
+        const targetUploads = getSandboxUploadsPath(req.sandboxOwner);
+        if (!fs.existsSync(targetUploads)) fs.mkdirSync(targetUploads, { recursive: true });
+        fs.cpSync(extractedUploads, targetUploads, { recursive: true });
+      }
+    } else {
+      // LIVE RESTORE: Restore live db.json AND all db.sandbox.*.json files AND all uploads
+      const extractedDb = path.join(tempDir, 'db.json');
+      if (fs.existsSync(extractedDb)) {
+        const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
+        applySchemaMigrations(db, DB_PATH);
+        if (!db.contracts) db.contracts = [];
+        writeDb(db, DB_PATH);
+      }
+
+      // Restore all extracted sandbox files
+      const extractedFiles = fs.readdirSync(tempDir);
+      for (const file of extractedFiles) {
+        if (file.startsWith('db.sandbox.') && file.endsWith('.json') && !file.endsWith('.local.bak') && !file.endsWith('.tmp')) {
+          try {
+            const sandboxDb = JSON.parse(fs.readFileSync(path.join(tempDir, file), 'utf8'));
+            const targetSandboxPath = path.join(__dirname, file);
+            applySchemaMigrations(sandboxDb, targetSandboxPath);
+            writeDb(sandboxDb, targetSandboxPath);
+          } catch (sbErr) {
+            console.error(`[Full Restore] Failed to restore sandbox file ${file}:`, sbErr);
+          }
+        }
+      }
+
+      // Restore uploads (live uploads and all uploads/sandbox/<owner>/...)
+      const extractedUploads = path.join(tempDir, 'uploads');
+      if (fs.existsSync(extractedUploads)) {
+        if (!fs.existsSync(UPLOADS_BASE)) fs.mkdirSync(UPLOADS_BASE, { recursive: true });
+        fs.cpSync(extractedUploads, UPLOADS_BASE, { recursive: true });
+      }
     }
-    const extractedUploads = path.join(tempDir, 'uploads');
-    if (fs.existsSync(extractedUploads)) {
-      const targetUploads = isSandbox(req) ? getSandboxUploadsPath(req.sandboxOwner) : UPLOADS_BASE;
-      if (!fs.existsSync(targetUploads)) fs.mkdirSync(targetUploads, { recursive: true });
-      fs.cpSync(extractedUploads, targetUploads, { recursive: true });
-    }
+
     res.json({ message: "Full system restore successful", isSandbox: isSandbox(req) });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -3586,6 +3752,27 @@ app.get('/api/v1/backup-users-groups', (req, res) => {
             helpLinks: dbSettings.helpLinks || [],
             helpVideos: dbSettings.helpVideos || []
         };
+
+        // If in Live ERP, also include users and userGroups for all sandboxes
+        if (!isSandbox(req)) {
+            payload.sandboxes = {};
+            try {
+                const files = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
+                for (const file of files) {
+                    const owner = file.replace('db.sandbox.', '').replace('.json', '');
+                    try {
+                        const sDb = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+                        payload.sandboxes[owner] = {
+                            users: sDb.users || [],
+                            userGroups: sDb.userGroups || []
+                        };
+                    } catch {}
+                }
+            } catch (e) {
+                console.error("[Backup Users/Groups] Error reading sandboxes:", e);
+            }
+        }
+
         const jsonStr = JSON.stringify(payload);
 
         const salt = crypto.randomBytes(16);
@@ -3662,6 +3849,23 @@ app.post('/api/v1/restore-users-groups', restoreUpload.single('archive'), (req, 
         }
 
         if (writeDb(db, getDbPath(req))) {
+            // If in Live ERP and sandbox identities are present in archive, restore into each sandbox
+            if (!isSandbox(req) && data.sandboxes) {
+                for (const [owner, sData] of Object.entries(data.sandboxes)) {
+                    try {
+                        const targetPath = getSandboxDbPath(owner);
+                        if (fs.existsSync(targetPath)) {
+                            const sDb = readDb(targetPath);
+                            if (sData.users) sDb.users = sData.users;
+                            if (sData.userGroups) sDb.userGroups = sData.userGroups;
+                            writeDb(sDb, targetPath);
+                        }
+                    } catch (e) {
+                        console.error(`[Restore Users/Groups] Failed for sandbox ${owner}:`, e);
+                    }
+                }
+            }
+
             console.log(`[System] Users, groups, and help content restored at ${new Date().toISOString()}`);
             res.json({ message: "Users, groups, and help content restored successfully" });
         } else {
@@ -3747,6 +3951,106 @@ app.get('/api/v1/auth/environments', (req, res) => {
   res.json(responseData);
 });
 
+// Admin-only: List all created sandboxes on disk (accessible from inside the admin sandbox)
+app.get('/api/v1/admin/sandboxes', (req, res) => {
+  const username = req.headers['x-user'];
+  if (!username) return res.status(401).json({ error: "Unauthorized" });
+
+  const liveDb = readDb(DB_PATH);
+  const liveUser = (liveDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase());
+  const isAdmin = liveUser && (liveUser.roles || []).includes('admin');
+  if (!isAdmin) {
+    return res.status(403).json({ error: "Access restricted to administrators." });
+  }
+
+  const currentSandboxOwner = req.headers['x-sandbox-owner'] ? sanitizeUsername(req.headers['x-sandbox-owner']) : sanitizeUsername(username);
+  const sandboxes = [];
+
+  try {
+    const files = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
+    for (const file of files) {
+      const owner = file.replace('db.sandbox.', '').replace('.json', '');
+      try {
+        const db = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+        const ownerUser = (liveDb.users || []).find(u => sanitizeUsername(u.username) === owner) ||
+                          (db.users || []).find(u => sanitizeUsername(u.username) === owner);
+        const ownerName = ownerUser?.name || owner;
+        const isSelf = owner === sanitizeUsername(username);
+        const isCurrent = owner === currentSandboxOwner;
+
+        sandboxes.push({
+          owner,
+          name: ownerName,
+          label: isSelf ? `My Own Sandbox (${ownerName})` : `${ownerName}'s Sandbox (${owner})`,
+          isSelf,
+          isCurrent,
+          ordersCount: (db.orders || []).length,
+          usersCount: (db.users || []).length
+        });
+      } catch (err) {}
+    }
+  } catch (e) {
+    console.error("Failed to list admin sandboxes:", e);
+  }
+
+  sandboxes.sort((a, b) => {
+    if (a.isSelf) return -1;
+    if (b.isSelf) return 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  res.json({ sandboxes });
+});
+
+// Admin-only: Switch active sandbox to another user's sandbox
+app.post('/api/v1/admin/switch-sandbox', (req, res) => {
+  const username = req.headers['x-user'];
+  const { targetOwner } = req.body;
+  if (!username || !targetOwner) return res.status(400).json({ error: "Missing username or targetOwner" });
+
+  const liveDb = readDb(DB_PATH);
+  const liveUser = (liveDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase());
+  const isAdmin = liveUser && (liveUser.roles || []).includes('admin');
+  if (!isAdmin) {
+    return res.status(403).json({ error: "Access restricted to administrators." });
+  }
+
+  const sanitizedTarget = sanitizeUsername(targetOwner);
+  const targetPath = getSandboxDbPath(sanitizedTarget);
+
+  if (!fs.existsSync(targetPath)) {
+    return res.status(404).json({ error: `Sandbox for user "${targetOwner}" not found.` });
+  }
+
+  const targetDb = readDb(targetPath);
+  let userEntry = (targetDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase());
+
+  // Auto-provision admin user into target sandbox if not present
+  if (!userEntry) {
+    userEntry = {
+      ...liveUser,
+      roles: liveUser.roles || ['admin']
+    };
+    targetDb.users = targetDb.users || [];
+    targetDb.users.push(userEntry);
+    writeDb(targetDb, targetPath);
+  }
+
+  const targetOwnerUser = (liveDb.users || []).find(u => sanitizeUsername(u.username) === sanitizedTarget) ||
+                         (targetDb.users || []).find(u => sanitizeUsername(u.username) === sanitizedTarget);
+  const targetName = targetOwnerUser?.name || sanitizedTarget;
+  const isSelf = sanitizedTarget === sanitizeUsername(username);
+  const label = isSelf ? `My Own Sandbox (${username})` : `${targetName}'s Sandbox (${sanitizedTarget})`;
+
+  const { password: _, ...safeUser } = userEntry;
+  return res.json({
+    ...safeUser,
+    sandbox: true,
+    sandboxOwner: sanitizedTarget,
+    sandboxLabel: label
+  });
+});
+
 app.post('/api/v1/login', (req, res) => {
   const { username, password, environment } = req.body;
   const targetEnv = environment || 'live';
@@ -3775,7 +4079,15 @@ app.post('/api/v1/login', (req, res) => {
     if (!fs.existsSync(sandboxPath)) {
       const stubPath = path.join(__dirname, 'db.stub.json');
       const stubDb = fs.existsSync(stubPath) ? JSON.parse(fs.readFileSync(stubPath, 'utf8')) : {};
-      stubDb.settings = []; stubDb.modules = []; stubDb.orders = []; stubDb.customers = []; stubDb.inventory = []; stubDb.notifications = []; stubDb.contracts = []; stubDb.supplierPayments = [];
+      const liveAi = getLiveAiSettings();
+      stubDb.settings = [{
+        id: 'system_settings',
+        aiProvider: liveAi.aiProvider,
+        geminiConfig: liveAi.geminiConfig,
+        openaiConfig: liveAi.openaiConfig,
+        dbSchemaVersion: CURRENT_SCHEMA_VERSION
+      }];
+      stubDb.modules = []; stubDb.orders = []; stubDb.customers = []; stubDb.inventory = []; stubDb.notifications = []; stubDb.contracts = []; stubDb.supplierPayments = [];
       stubDb.userGroups = [
         { id: 'ug_sales', name: 'Sales Department', roles: ['sales'], permissions: { canViewFinancials: false, canApproveTechReview: false, canReleaseHub: false, canManageUsers: false } },
         { id: 'ug_proc', name: 'Procurement Team', roles: ['procurement'], permissions: { canViewFinancials: true, canApproveTechReview: false, canReleaseHub: false, canManageUsers: false } },

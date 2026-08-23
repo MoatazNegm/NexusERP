@@ -189,28 +189,37 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
           responseText = response.text || "I was unable to process that query.";
         }
       } else {
-        const { apiKey, baseUrl, modelName } = config.settings.openaiConfig;
-        const endpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
+        const { apiKey, baseUrl, modelName } = config.settings.openaiConfig || {};
+        if (!apiKey) {
+          responseText = "Configuration Error: OpenAI API Key is missing. Please ask your administrator to configure it in System Control -> AI Engine.";
+        } else {
+          const upstreamEndpoint = `${(baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')}/chat/completions`;
+          const response = await fetch('/api/v1/ai-proxy/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              endpoint: upstreamEndpoint,
+              apiKey,
+              payload: {
+                model: modelName || 'gpt-4o',
+                messages: [
+                  { role: 'system', content: context },
+                  { role: 'user', content: userMsg }
+                ],
+                temperature: 0.2
+              }
+            })
+          });
 
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: modelName,
-            messages: [
-              { role: 'system', content: context },
-              { role: 'user', content: userMsg }
-            ],
-            temperature: 0.2
-          })
-        });
-
-        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-        const data = await response.json();
-        responseText = data.choices?.[0]?.message?.content || "No strategic insight returned.";
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error?.message || errData.error || `HTTP Error: ${response.status}`);
+          }
+          const data = await response.json();
+          responseText = data.choices?.[0]?.message?.content || "No strategic insight returned.";
+        }
       }
 
       setMessages(prev => [...prev, { role: 'ai', content: responseText }]);

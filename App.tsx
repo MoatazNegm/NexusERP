@@ -26,7 +26,7 @@ import { VersionFooter } from './components/VersionFooter';
 import { Login } from './components/Login';
 
 import { dataService } from './services/dataService';
-import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, UserGroup, DEFAULT_CURRENCY } from './types';
+import { AppConfig, OrderStatus, CustomerOrder, AIProvider, User, UserRole, UserGroup, DEFAULT_CURRENCY, AdminSandboxInfo } from './types';
 import { getItemEffectiveQty, getOrderCurrency } from './utils';
 
 // Backend handles threshold calculation (isOverdue flag)
@@ -55,6 +55,8 @@ const App: React.FC = () => {
   const [connectionError, setConnectionError] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
+  const [adminSandboxes, setAdminSandboxes] = useState<AdminSandboxInfo[]>([]);
+  const [isSwitchingSandbox, setIsSwitchingSandbox] = useState(false);
 
   const effectivelyCollapsed = isSidebarCollapsed && !isSidebarHovered;
 
@@ -69,10 +71,36 @@ const App: React.FC = () => {
     }
   };
 
+  const handleSwitchSandbox = async (targetOwner: string) => {
+    if (!targetOwner || !currentUser || targetOwner === currentUser.sandboxOwner) return;
+    setIsSwitchingSandbox(true);
+    try {
+      const switchedUser = await dataService.switchAdminSandbox(targetOwner);
+      setCurrentUser(switchedUser);
+      localStorage.setItem('nexus_user', JSON.stringify(switchedUser));
+      const freshSandboxes = await dataService.getAdminSandboxes();
+      setAdminSandboxes(freshSandboxes);
+      setRefreshKey(prev => prev + 1);
+    } catch (err: any) {
+      console.error("Failed to switch sandbox:", err);
+      alert(err.message || "Failed to switch sandbox");
+    } finally {
+      setIsSwitchingSandbox(false);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('nexus_user');
     setCurrentUser(null);
   };
+
+  useEffect(() => {
+    if (currentUser?.sandbox) {
+      dataService.getAdminSandboxes().then(setAdminSandboxes).catch(() => setAdminSandboxes([]));
+    } else {
+      setAdminSandboxes([]);
+    }
+  }, [currentUser?.sandbox, currentUser?.sandboxOwner, refreshKey]);
 
   useEffect(() => {
     if (currentUser) {
@@ -805,21 +833,40 @@ const App: React.FC = () => {
       </aside>
        <main className={`flex-1 transition-all duration-300 min-w-0 ${effectivelyCollapsed ? 'ml-20' : 'ml-72'}`}>
          {currentUser?.sandbox && (
-           <div className="bg-amber-500/10 border-b border-amber-500/30 px-6 py-2 flex items-center justify-between text-amber-400 text-xs font-semibold">
-             <div className="flex items-center gap-2">
+           <div className="bg-amber-500/10 border-b border-amber-500/30 px-6 py-2 flex flex-wrap items-center justify-between gap-3 text-amber-400 text-xs font-semibold">
+             <div className="flex items-center gap-2 flex-wrap">
                <span className="flex h-2 w-2 relative">
                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                </span>
                <span className="font-black uppercase tracking-wider">
-                 {currentUser.sandboxOwner === currentUser.username ? 'Personal Sandbox' : 'Shared Team Sandbox'}
+                 {currentUser.sandboxOwner === currentUser.username ? 'Personal Sandbox' : 'Operating in Sandbox'}
                </span>
                <span className="text-amber-200/70">
                  | Environment: <strong>{currentUser.sandboxLabel || currentUser.sandboxOwner}</strong>
                  | User: <strong>{currentUser.name} ({currentUser.username})</strong>
                </span>
              </div>
-             <div className="flex items-center gap-3">
+             <div className="flex items-center gap-3 flex-wrap">
+                {adminSandboxes.length > 0 && (
+                  <div className="flex items-center gap-2 bg-amber-950/80 px-3 py-1 rounded-xl border border-amber-500/50 shadow-md">
+                    <i className="fa-solid fa-users-gear text-amber-400 text-xs"></i>
+                    <span className="text-[11px] font-black uppercase text-amber-300 tracking-wider">Switch Sandbox:</span>
+                    <select
+                      value={currentUser.sandboxOwner || currentUser.username}
+                      disabled={isSwitchingSandbox}
+                      onChange={e => handleSwitchSandbox(e.target.value)}
+                      className="bg-slate-900 text-amber-200 border border-amber-500/50 rounded-lg px-2.5 py-1 text-xs font-bold outline-none cursor-pointer hover:bg-slate-800 focus:ring-2 focus:ring-amber-400 transition-all"
+                    >
+                      {adminSandboxes.map(sb => (
+                        <option key={sb.owner} value={sb.owner} className="bg-slate-900 text-white">
+                          {sb.isSelf ? `🧪 ${sb.label}` : `👥 ${sb.label}`}
+                        </option>
+                      ))}
+                    </select>
+                    {isSwitchingSandbox && <i className="fa-solid fa-circle-notch fa-spin text-amber-400 text-xs"></i>}
+                  </div>
+                )}
                <button 
                  onClick={() => setShowResetModal(true)}
                  className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded border border-amber-500/40 text-[11px] font-bold transition-colors"

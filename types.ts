@@ -72,6 +72,16 @@ export interface AuthEnvironment {
   owner?: string;
 }
 
+export interface AdminSandboxInfo {
+  owner: string;
+  name: string;
+  label: string;
+  isSelf: boolean;
+  isCurrent: boolean;
+  ordersCount?: number;
+  usersCount?: number;
+}
+
 export type AIProvider = 'gemini' | 'openai';
 
 export interface LogEntry {
