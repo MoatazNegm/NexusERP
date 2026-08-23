@@ -140,9 +140,11 @@ const App: React.FC = () => {
         }
 
         // BOOTSTRAP: If backend has no settings yet, seed them now so the audit service can find them
+        // Only do this on Live — sandboxes get settings initialized by the login endpoint
+        const isSandboxUser = currentUser?.sandbox;
         const needsSettingsBootstrap = !(backendConfig?.settings as any)?.id;
         const needsModulesBootstrap = !(backendConfig?.modules as any)?.id;
-        if (needsSettingsBootstrap || needsModulesBootstrap) {
+        if (!isSandboxUser && (needsSettingsBootstrap || needsModulesBootstrap)) {
           console.debug("[App] Bootstrapping missing settings/modules to backend");
           try {
             if (needsSettingsBootstrap) await dataService.updateSettings({ ...INITIAL_CONFIG.settings, id: 'system_settings' });

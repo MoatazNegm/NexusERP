@@ -1724,7 +1724,28 @@ app.use((req, res, next) => {
 
     if (sandboxOwner && username) {
         const sanitizedOwner = sanitizeUsername(sandboxOwner);
+        const sanitizedUser = sanitizeUsername(username);
         const sandboxPath = getSandboxDbPath(sanitizedOwner);
+        const isOwner = sanitizedUser === sanitizedOwner;
+        const liveDb = readDb(DB_PATH);
+        const liveUser = (liveDb.users || []).find(
+            u => u.username.toLowerCase() === username.toLowerCase()
+        );
+        const isAdmin = liveUser && (liveUser.roles || []).includes('admin');
+
+        // Auto-create sandbox file if it doesn't exist (owner or admin accessing)
+        if (!fs.existsSync(sandboxPath) && liveUser && (isOwner || isAdmin)) {
+            const liveAi = getLiveAiSettings();
+            const stubDb = {
+                settings: [{ id: 'system_settings', aiProvider: liveAi.aiProvider, geminiConfig: liveAi.geminiConfig, openaiConfig: liveAi.openaiConfig, dbSchemaVersion: CURRENT_SCHEMA_VERSION }],
+                modules: [], orders: [], customers: [], inventory: [], notifications: [], contracts: [], supplierPayments: [], suppliers: [], procurement: [],
+                userGroups: [
+                    { id: 'ug_mgmt', name: 'Executive Management', roles: ['admin'], permissions: { canViewFinancials: true, canApproveTechReview: true, canReleaseHub: true, canManageUsers: true } }
+                ],
+                users: [{ ...liveUser, roles: liveUser.roles || [] }]
+            };
+            writeDb(stubDb, sandboxPath);
+        }
 
         if (fs.existsSync(sandboxPath)) {
             const sandboxDb = readDb(sandboxPath);
@@ -1732,26 +1753,16 @@ app.use((req, res, next) => {
                 u => u.username.toLowerCase() === username.toLowerCase()
             );
 
-            // If user is not yet in sandbox, auto-provision if:
-            // 1. User is the sandbox owner (e.g. user accessing their own sandbox)
-            // 2. User is an administrator in Live DB
-            // 3. User exists in Live DB
-            if (!userEntry) {
-                const liveDb = readDb(DB_PATH);
-                const liveUser = (liveDb.users || []).find(
-                    u => u.username.toLowerCase() === username.toLowerCase()
-                );
-                if (liveUser) {
-                    const isOwner = username.toLowerCase() === sanitizedOwner.toLowerCase();
-                    const isAdmin = (liveUser.roles || []).includes('admin');
-                    userEntry = {
-                        ...liveUser,
-                        roles: isAdmin ? (liveUser.roles || ['admin']) : (liveUser.roles || [])
-                    };
-                    sandboxDb.users = sandboxDb.users || [];
-                    sandboxDb.users.push(userEntry);
-                    writeDb(sandboxDb, sandboxPath);
-                }
+            // Auto-provision user if not in sandbox: owners, admins, and any live user get cloned in
+            if (!userEntry && liveUser) {
+                userEntry = {
+                    ...liveUser,
+                    roles: isAdmin ? (liveUser.roles || ['admin']) : (liveUser.roles || [])
+                };
+                sandboxDb.users = sandboxDb.users || [];
+                sandboxDb.users.push(userEntry);
+                writeDb(sandboxDb, sandboxPath);
+                console.log(`[Sandbox] Auto-provisioned user "${username}" into sandbox "${sanitizedOwner}"`);
             }
 
             if (userEntry) {
@@ -3647,17 +3658,31 @@ app.post('/api/v1/restore', (req, res) => {
 
     const { _sandboxes, sandboxes, ...cleanDb } = data;
 
-    // If restoring into a sandbox, ensure the sandbox owner and live admins are preserved in cleanDb.users
+    // If restoring into a sandbox, merge existing sandbox users + owner + admins into the restored data
+    // This ensures nobody loses access after a restore (e.g. restoring live data into user's sandbox)
     if (isSandbox(req)) {
         const liveDb = readDb(DB_PATH);
         const ownerName = req.sandboxOwner;
-        const liveOwner = (liveDb.users || []).find(u => sanitizeUsername(u.username) === ownerName);
-        const liveAdmins = (liveDb.users || []).filter(u => (u.roles || []).includes('admin'));
+        const existingSandboxDb = readDb(getDbPath(req));
+        const existingUsers = existingSandboxDb.users || [];
 
         cleanDb.users = cleanDb.users || [];
+
+        // Merge all existing sandbox users (they had access before the restore — keep them)
+        for (const existingUser of existingUsers) {
+            if (!cleanDb.users.some(u => u.username.toLowerCase() === existingUser.username.toLowerCase())) {
+                cleanDb.users.push(existingUser);
+            }
+        }
+
+        // Ensure sandbox owner is present
+        const liveOwner = (liveDb.users || []).find(u => sanitizeUsername(u.username) === ownerName);
         if (liveOwner && !cleanDb.users.some(u => sanitizeUsername(u.username) === ownerName)) {
             cleanDb.users.push(liveOwner);
         }
+
+        // Ensure all live admins are present
+        const liveAdmins = (liveDb.users || []).filter(u => (u.roles || []).includes('admin'));
         for (const admin of liveAdmins) {
             if (!cleanDb.users.some(u => u.username.toLowerCase() === admin.username.toLowerCase())) {
                 cleanDb.users.push(admin);
@@ -3734,13 +3759,26 @@ app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => 
         const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
         const liveDb = readDb(DB_PATH);
         const ownerName = req.sandboxOwner;
-        const liveOwner = (liveDb.users || []).find(u => sanitizeUsername(u.username) === ownerName);
-        const liveAdmins = (liveDb.users || []).filter(u => (u.roles || []).includes('admin'));
+        const existingSandboxDb = readDb(getDbPath(req));
+        const existingUsers = existingSandboxDb.users || [];
 
         db.users = db.users || [];
+
+        // Merge all existing sandbox users (they had access before — keep them)
+        for (const existingUser of existingUsers) {
+            if (!db.users.some(u => u.username.toLowerCase() === existingUser.username.toLowerCase())) {
+                db.users.push(existingUser);
+            }
+        }
+
+        // Ensure sandbox owner is present
+        const liveOwner = (liveDb.users || []).find(u => sanitizeUsername(u.username) === ownerName);
         if (liveOwner && !db.users.some(u => sanitizeUsername(u.username) === ownerName)) {
             db.users.push(liveOwner);
         }
+
+        // Ensure all live admins are present
+        const liveAdmins = (liveDb.users || []).filter(u => (u.roles || []).includes('admin'));
         for (const admin of liveAdmins) {
             if (!db.users.some(u => u.username.toLowerCase() === admin.username.toLowerCase())) {
                 db.users.push(admin);
@@ -4186,6 +4224,10 @@ app.post('/api/v1/login', (req, res) => {
 
 
 app.post('/api/v1/init-defaults', (req, res) => {
+    // NEVER allow init-defaults to overwrite a sandbox — sandboxes are initialized by the login endpoint
+    if (isSandbox(req)) {
+        return res.status(400).json({ message: "NotEmpty" });
+    }
     const db = getDb(req);
     if (Object.keys(db).length === 0 || req.body.force) {
         const dd = req.body.defaults || {};
@@ -4196,6 +4238,10 @@ app.post('/api/v1/init-defaults', (req, res) => {
 });
 
 app.post('/api/v1/seed-users', (req, res) => {
+    // NEVER allow seed-users to overwrite sandbox users — sandboxes manage their own users
+    if (isSandbox(req)) {
+        return res.status(400).json({ message: "UsersAlreadyExist" });
+    }
     const db = getDb(req);
     if (db.users && db.users.length > 0) {
         return res.status(400).json({ message: "UsersAlreadyExist" });
