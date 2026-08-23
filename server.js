@@ -4070,7 +4070,11 @@ app.get('/api/v1/admin/sandboxes', (req, res) => {
     for (const file of files) {
       const owner = file.replace('db.sandbox.', '').replace('.json', '');
       try {
-        const db = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+        const fileContent = fs.readFileSync(path.join(__dirname, file), 'utf8');
+        if (!fileContent || fileContent.trim() === '') {
+            throw new Error("File is empty");
+        }
+        const db = JSON.parse(fileContent);
         const ownerUser = (liveDb.users || []).find(u => sanitizeUsername(u.username) === owner) ||
                           (db.users || []).find(u => sanitizeUsername(u.username) === owner);
         const ownerName = ownerUser?.name || owner;
@@ -4086,7 +4090,19 @@ app.get('/api/v1/admin/sandboxes', (req, res) => {
           ordersCount: (db.orders || []).length,
           usersCount: (db.users || []).length
         });
-      } catch (err) {}
+      } catch (err) {
+        // If the file is corrupted or empty, don't silently hide it! Show it to the admin.
+        sandboxes.push({
+          owner,
+          name: owner,
+          label: `⚠️ CORRUPTED Sandbox (${owner})`,
+          isSelf: owner === sanitizeUsername(username),
+          isCurrent: owner === currentSandboxOwner,
+          ordersCount: 0,
+          usersCount: 0,
+          isCorrupted: true
+        });
+      }
     }
   } catch (e) {
     console.error("Failed to list admin sandboxes:", e);
@@ -4151,7 +4167,8 @@ app.post('/api/v1/admin/switch-sandbox', (req, res) => {
 });
 
 app.post('/api/v1/login', (req, res) => {
-  const { username, password, environment } = req.body;
+  const { password, environment } = req.body;
+  const username = String(req.body.username || '').trim();
   const targetEnv = environment || 'live';
   const liveDb = readDb(DB_PATH);
 
