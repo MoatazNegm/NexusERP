@@ -407,13 +407,13 @@ const getLiveAiSettings = () => {
             : (liveDb.settings || {});
         return {
             aiProvider: liveSettings.aiProvider || 'gemini',
-            geminiConfig: liveSettings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' },
+            geminiConfig: liveSettings.geminiConfig || { apiKey: '', modelName: 'gemini-3.5-flash' },
             openaiConfig: liveSettings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' }
         };
     } catch (e) {
         return {
             aiProvider: 'gemini',
-            geminiConfig: { apiKey: '', modelName: 'gemini-1.5-flash' },
+            geminiConfig: { apiKey: '', modelName: 'gemini-3.5-flash' },
             openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' }
         };
     }
@@ -1113,7 +1113,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                 };
                 
                 // Automatic intelligence: search price list for match
-                const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === item.description.trim().toLowerCase());
+                const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(item.description || '').trim().toLowerCase());
                 if (match) newComp.supplierPartNumber = match.partNumber;
 
                 item.components = [newComp];
@@ -1126,7 +1126,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     
                     // Attempt to auto-populate part number if missing
                     if (!comp.supplierPartNumber) {
-                        const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => p.description.trim().toLowerCase() === comp.description.trim().toLowerCase());
+                        const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(comp.description || '').trim().toLowerCase());
                         if (match) comp.supplierPartNumber = match.partNumber;
                     }
                 }
@@ -3453,7 +3453,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 settlingOrder.items.forEach(settlingItem => {
                     // Find a matching item by description from the original blanket order
                     const originalItem = order.items.find(oi => 
-                        oi.description.trim().toLowerCase() === settlingItem.description.trim().toLowerCase()
+                        String(oi.description || '').trim().toLowerCase() === String(settlingItem.description || '').trim().toLowerCase()
                     );
                     
                     if (originalItem) {

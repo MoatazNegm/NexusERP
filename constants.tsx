@@ -22,7 +22,7 @@ export const INITIAL_CONFIG: AppConfig = {
   settings: {
     aiProvider: 'gemini',
     openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
-    geminiConfig: { apiKey: '', modelName: 'gemini-1.5-flash' },
+    geminiConfig: { apiKey: '', modelName: 'gemini-3.5-flash' },
     storageBackend: 'google-drive',
     googleDriveConfig: {
       enabled: true,

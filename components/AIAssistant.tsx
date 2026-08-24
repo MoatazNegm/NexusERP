@@ -176,7 +176,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config }) => {
 
       if (config.settings.aiProvider === 'gemini') {
         const apiKey = config.settings.geminiConfig?.apiKey;
-        const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
+        const modelName = config.settings.geminiConfig?.modelName || 'gemini-3.5-flash';
 
         if (!apiKey) {
           responseText = "Configuration Error: Gemini API Key is missing. Please ask your administrator to configure it in System Control -> AI Engine.";

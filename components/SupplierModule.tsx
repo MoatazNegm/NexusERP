@@ -579,7 +579,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
 
     if (config.settings.aiProvider === 'gemini') {
       const apiKey = config.settings.geminiConfig?.apiKey;
-      const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
+      const modelName = config.settings.geminiConfig?.modelName || 'gemini-3.5-flash';
       if (!apiKey) throw new Error('Gemini API key is not configured.');
 
       const ai = new GoogleGenAI({ apiKey });

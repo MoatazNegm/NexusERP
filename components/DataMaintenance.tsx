@@ -17,7 +17,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
 
-  const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-1.5-flash' });
+  const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-3.5-flash' });
   const [aiDraftOpenAI, setAiDraftOpenAI] = useState(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
   const [storageBackendDraft, setStorageBackendDraft] = useState<StorageBackend>(config.settings.storageBackend || 'google-drive');
   const [driveDraft, setDriveDraft] = useState<GoogleDriveConfig>(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
@@ -878,7 +878,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     <div className="flex items-center justify-between ml-1">
                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Model Name</label>
                       <span className="text-[8px] font-black text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">
-                         Active: {config.settings.geminiConfig?.modelName || 'gemini-1.5-flash'}
+                         Active: {config.settings.geminiConfig?.modelName || 'gemini-3.5-flash'}
                       </span>
                     </div>
                     <input
@@ -886,7 +886,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500 transition-all"
                       value={aiDraftGemini.modelName}
                       onChange={e => setAiDraftGemini(prev => ({ ...prev, modelName: e.target.value }))}
-                      placeholder="e.g. gemini-1.5-flash"
+                      placeholder="e.g. gemini-3.5-flash"
                     />
                   </div>
                   <div className="pt-4">
