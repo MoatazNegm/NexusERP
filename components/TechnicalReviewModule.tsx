@@ -651,7 +651,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const handleAddCustomProcurement = async () => {
     if (!selectedOrder || !selectedItem) return;
     if (selectedItem.productionType === 'OUTSOURCING') {
-      if (!compSearch.trim() || !compDurationVal || !compScope.trim()) return;
+      if (!compDurationVal || !compScope.trim()) return;
     } else {
       if (!compSearch.trim() && !partNumSearch.trim()) return;
     }
@@ -660,7 +660,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     const contractIdVal = selectedOrder.contractId || selectedOrder.blanketContractId || selectedOrder.customerReferenceNumber || generateContractNumber(selectedItem);
 
     const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-      description: compSearch.trim() || 'Custom Part',
+      description: compSearch.trim() || (selectedItem.productionType === 'OUTSOURCING' ? selectedItem.description : 'Custom Part'),
       quantity: compQty,
       unit: 'pcs',
       unitCost: 0,
@@ -1245,16 +1245,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               </div>
                             )}                            {selectedItem.productionType === 'OUTSOURCING' ? (
                               <div className="space-y-4 w-full">
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                  <div className="w-full space-y-1.5">
-                                    <label className="text-[9px] font-black text-violet-600 uppercase ml-1">Quantity</label>
-                                    <input
-                                      type="number"
-                                      className="w-full p-4 border-2 border-violet-100 rounded-2xl text-sm font-black outline-none focus:border-violet-500 transition-all text-center bg-white"
-                                      value={compQty}
-                                      onChange={e => setCompQty(parseInt(e.target.value) || 1)}
-                                    />
-                                  </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div className="w-full space-y-1.5">
                                     <label className="text-[9px] font-black text-violet-600 uppercase ml-1">Contract ID</label>
                                     <div className="p-4 border-2 border-violet-100 rounded-2xl text-sm font-mono font-black text-violet-900 bg-violet-50/50 flex items-center gap-2">
@@ -1263,22 +1254,12 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                     </div>
                                   </div>
                                   <div className="w-full space-y-1.5">
-                                    <label className="text-[9px] font-black text-violet-600 uppercase ml-1">Order ID</label>
+                                    <label className="text-[9px] font-black text-violet-600 uppercase ml-1">PO Number</label>
                                     <div className="p-4 border-2 border-violet-100 rounded-2xl text-sm font-mono font-black text-violet-900 bg-violet-50/50 flex items-center gap-2">
                                       <i className="fa-solid fa-hashtag text-violet-400"></i>
-                                      <span>{selectedOrder?.internalOrderNumber || selectedOrder?.id || 'N/A'}</span>
+                                      <span>{selectedOrder?.customerReferenceNumber || selectedOrder?.internalOrderNumber || 'N/A'}</span>
                                     </div>
                                   </div>
-                                </div>
-                                <div className="space-y-1.5">
-                                  <label className="text-[9px] font-black text-violet-600 uppercase ml-1">Service / Contract Description</label>
-                                  <textarea
-                                    placeholder={selectedItem.description || "Enter Service or Contract Description..."}
-                                    className="w-full p-4 border-2 border-violet-100 rounded-2xl text-sm font-bold outline-none focus:border-violet-500 transition-all bg-white resize-none min-h-[58px]"
-                                    rows={1}
-                                    value={compSearch}
-                                    onChange={e => setCompSearch(e.target.value)}
-                                  />
                                 </div>
                                 <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-violet-50/50 border border-violet-100 rounded-2xl">
                                   <div>
@@ -1536,7 +1517,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 <div className="px-1">
                                   <button
                                     onClick={handleAddCustomProcurement}
-                                    disabled={!compSearch.trim() || !compDurationVal || !compScope.trim()}
+                                    disabled={!compDurationVal || !compScope.trim()}
                                     className="w-full py-5 bg-violet-600 hover:bg-violet-700 text-white rounded-[2rem] font-black uppercase text-xs tracking-[0.2em] shadow-xl shadow-violet-100 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     <i className="fa-solid fa-plus-circle"></i>
