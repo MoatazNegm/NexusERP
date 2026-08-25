@@ -3483,9 +3483,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         // Order was cheaper - no credit needed, mark as settled
                         order.logs.push(createAuditLog(`Blanket order settled: Settling order ${settlingOrder.internalOrderNumber} was ${Math.abs(totalDifference).toLocaleString()} ${order.currency} less than original. No wallet credit needed.`, order.status, user));
                     } else if (totalDifference > 0) {
-                        // Customer overpaid - credit wallet
-                        customer.walletBalance = (customer.walletBalance || 0) + totalDifference;
-                        order.logs.push(createAuditLog(`Blanket order settled: ${totalDifference.toLocaleString()} ${order.currency} credited to customer wallet (new balance: ${customer.walletBalance.toLocaleString()} ${order.currency}). Settling order: ${settlingOrder.internalOrderNumber}`, order.status, user));
+                        // Customer overpaid - credit wallet (per-project)
+                        const projectKey = String((order.projectName || settlingOrder.projectName || '').trim()) || '(No Project)';
+                        customer.walletBalance = (customer.walletBalance || 0) + totalDifference; // aggregate
+                        customer.walletBalances = customer.walletBalances || {};
+                        customer.walletBalances[projectKey] = (customer.walletBalances[projectKey] || 0) + totalDifference;
+                        order.logs.push(createAuditLog(`Blanket order settled: ${totalDifference.toLocaleString()} ${order.currency} credited to customer wallet for project "${projectKey}" (new balance: ${customer.walletBalance.toLocaleString()} ${order.currency}). Settling order: ${settlingOrder.internalOrderNumber}`, order.status, user));
                         settlingOrder.logs.push(createAuditLog(`Settlement completed: ${totalDifference.toLocaleString()} ${order.currency} wallet credit applied from blanket order ${order.internalOrderNumber}`, settlingOrder.status, user));
                     } else {
                         order.logs.push(createAuditLog(`Blanket order settled: Exact match with ${settlingOrder.internalOrderNumber}. No wallet adjustment needed.`, order.status, user));
