@@ -828,6 +828,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                 apiKey,
                 payload: {
                   model: currentModel,
+                  max_tokens: 2048,
                   messages: [
                     {
                       role: "user",

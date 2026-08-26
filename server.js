@@ -4911,6 +4911,9 @@ app.post('/api/v1/ai-proxy/chat', async (req, res) => {
         if (!endpoint || !apiKey || !payload) {
             return res.status(400).json({ error: 'Missing endpoint, apiKey, or payload.' });
         }
+        if (!payload.max_tokens) {
+            payload.max_tokens = 2048;
+        }
         const upstream = await fetch(endpoint, {
             method: 'POST',
             headers: {
