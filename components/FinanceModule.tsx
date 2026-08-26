@@ -1493,53 +1493,96 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
             <div>
               <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Customer Wallets</div>
-              <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Wallet credit balances from blanket contract settlements</div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Wallet credit balances by project from blanket contract settlements</div>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-              <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
-                <tr>
-                  <th className="px-8 py-5 text-white">Customer</th>
-                  <th className="px-8 py-5 text-white text-end">Wallet Balance</th>
-                  <th className="px-8 py-5 text-white">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {[...customers]
-                  .filter(c => (c.walletBalance || 0) !== 0)
-                  .map(c => {
-                    const balance = (c.walletBalance || 0);
-                    return (
-                      <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="px-8 py-6">
-                          <div className="font-bold text-slate-800 text-sm">{c.name}</div>
-                          <div className="text-[10px] text-slate-400 font-bold mt-0.5">{c.email || 'N/A'}</div>
-                        </td>
-                        <td className="px-8 py-6 text-end">
-                          <span className={`inline-flex items-center gap-2 text-sm font-black px-4 py-2 rounded-xl border ${balance > 0 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-500 bg-slate-50 border-slate-200'}`}>
-                            <i className={`fa-solid fa-wallet ${balance > 0 ? 'text-emerald-500' : 'text-slate-400'}`}></i>
-                            {balance.toLocaleString()} L.E.
-                          </span>
-                        </td>
-                        <td className="px-8 py-6">
-                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase border ${balance > 0 ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                            {balance > 0 ? 'Credit Available' : 'No Credit'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                {customers.filter(c => (c.walletBalance || 0) !== 0).length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-8 py-16 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">
-                      <i className="fa-solid fa-wallet text-4xl block mb-3 opacity-20"></i>
-                      No customer wallet balances found
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+
+          <div className="px-8 pb-8 space-y-4">
+            {customers
+              .map(c => {
+                const projectMap = c.walletBalances || {};
+                let projects = Object.entries(projectMap)
+                  .filter(([, bal]) => (Number(bal) || 0) !== 0)
+                  .map(([project, bal]) => ({ project, balance: Number(bal) || 0 }));
+                // Legacy fallback: if a customer only has an aggregate wallet-balance
+                // (pre-existing data), surface it under an unspecified bucket.
+                const legacy = Number(c.walletBalance || 0);
+                if (projects.length === 0 && legacy !== 0) {
+                  projects = [{ project: 'Allocated (Legacy)', balance: legacy }];
+                }
+                const customerTotal = projects.reduce((s, p) => s + p.balance, 0);
+                const hasBalance = customerTotal !== 0 || legacy !== 0;
+                return { customer: c, projects, customerTotal, hasBalance };
+              })
+              .filter(x => x.hasBalance)
+              .map(({ customer, projects, customerTotal }) => (
+                <div key={customer.id} className="border border-slate-200 rounded-3xl overflow-hidden">
+                  {/* Customer header */}
+                  <div className="flex items-center justify-between gap-4 px-6 py-4 bg-slate-900">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center shrink-0">
+                        <i className="fa-solid fa-building"></i>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-black text-white text-sm truncate">{customer.name}</div>
+                        <div className="text-[10px] text-slate-400 font-bold truncate">{customer.email || 'N/A'}</div>
+                      </div>
+                    </div>
+                    <div className="text-end shrink-0">
+                      <div className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Total Wallet</div>
+                      <div className="text-lg font-black text-emerald-400">{customerTotal.toLocaleString()} L.E.</div>
+                    </div>
+                  </div>
+{/* Nested project rows */}
+                  {projects.length === 0 ? (
+                    <div className="px-6 py-4 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                      No project wallet allocations
+                    </div>
+                  ) : (
+                    <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+                      <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest">
+                        <tr>
+                          <th className="px-6 py-3">Project</th>
+                          <th className="px-6 py-3 text-end">Wallet Balance</th>
+                          <th className="px-6 py-3">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {projects.map(({ project, balance }) => (
+                          <tr key={project} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-2.5">
+                                <i className="fa-solid fa-diagram-project text-slate-300"></i>
+                                <span className="font-bold text-slate-700 text-sm">{project}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-end">
+                              <span className={`inline-flex items-center gap-2 text-sm font-black px-4 py-2 rounded-xl border ${balance > 0 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-500 bg-slate-50 border-slate-200'}`}>
+                                <i className={`fa-solid fa-wallet ${balance > 0 ? 'text-emerald-500' : 'text-slate-400'}`}></i>
+                                {balance.toLocaleString()} L.E.
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase border ${balance > 0 ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                {balance > 0 ? 'Credit Available' : 'No Credit'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              ))}
+            {customers.filter(c => {
+              const projectNonZero = (c.walletBalances && Object.values(c.walletBalances).some(v => (Number(v) || 0) !== 0)) || false;
+              return projectNonZero || (c.walletBalance && c.walletBalance !== 0);
+            }).length === 0 && (
+              <div className="text-center py-16">
+                <i className="fa-solid fa-wallet text-4xl block mb-3 text-slate-200"></i>
+                <div className="text-slate-400 font-bold text-sm uppercase tracking-widest">No customer wallet balances found</div>
+              </div>
+            )}
           </div>
         </div>
       )}

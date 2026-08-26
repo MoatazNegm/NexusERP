@@ -519,7 +519,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       const runVisionInference = async (scanBase64Data: string, scanMimeType: string): Promise<string> => {
         if (config.settings.aiProvider === 'gemini') {
           const apiKey = config.settings.geminiConfig?.apiKey;
-          const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
+          const modelName = config.settings.geminiConfig?.modelName || 'gemini-3.5-flash';
 
           if (!apiKey) {
             throw new Error("Gemini API Key is not configured.");
@@ -725,7 +725,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       perf['total_ms'] = performance.now() - t0;
       const provider = config.settings.aiProvider === 'gemini'
-        ? `Gemini (${config.settings.geminiConfig?.modelName || 'gemini-1.5-flash'})`
+        ? `Gemini (${config.settings.geminiConfig?.modelName || 'gemini-3.5-flash'})`
         : `OpenAI (${config.settings.openaiConfig?.modelName})`;
       console.group(`%c[NexusERP] OCR Profiling — ${provider}`, 'color: #6366f1; font-weight: bold;');
       console.table(

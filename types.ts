@@ -128,6 +128,8 @@ export interface Customer {
   appliesWithholdingTax?: boolean;
   minimumMarginPct?: number;
   walletBalance?: number;
+  /** Per-project wallet balances (key = project name). `walletBalance` is the aggregate total. */
+  walletBalances?: Record<string, number>;
   logs?: LogEntry[];
 }
 

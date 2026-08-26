@@ -579,7 +579,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
 
     if (config.settings.aiProvider === 'gemini') {
       const apiKey = config.settings.geminiConfig?.apiKey;
-      const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
+      const modelName = config.settings.geminiConfig?.modelName || 'gemini-3.5-flash';
       if (!apiKey) throw new Error('Gemini API key is not configured.');
 
       const ai = new GoogleGenAI({ apiKey });
@@ -989,7 +989,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
                         </h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                           <div className="space-y-1">
-                            <label className="text-xs font-bold text-slate-500 uppercase">Supplier Name *</label>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Supplier Name <span className="text-rose-500">*</span></label>
                             <input required disabled={!canEdit} className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-50 disabled:text-slate-500" value={suppForm.name} onChange={e => setSuppForm({ ...suppForm, name: e.target.value })} />
                           </div>
                           <div className="space-y-1">

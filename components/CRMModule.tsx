@@ -333,7 +333,7 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Company Name *</label>
+                        <label className="text-xs font-bold text-slate-500 uppercase">Company Name <span className="text-rose-500">*</span></label>
                         <input required className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none" value={custForm.name} onChange={e => setCustForm({ ...custForm, name: e.target.value })} />
                       </div>
                       <div className="space-y-1">
