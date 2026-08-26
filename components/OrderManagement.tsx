@@ -167,6 +167,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [contractFormTargetItems, setContractFormTargetItems] = useState('');
   const [contractFormReceivedDate, setContractFormReceivedDate] = useState(today);
   const [contractSearch, setContractSearch] = useState('');
+  const [loggedOrdersSearch, setLoggedOrdersSearch] = useState('');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [existingOrders, setExistingOrders] = useState<CustomerOrder[]>([]);
   const [customerName, setCustomerName] = useState('');
@@ -284,6 +285,70 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     return submitLog?.user || 'System';
   };
 
+  const filteredLoggedOrders = useMemo(() => {
+    if (!loggedOrdersSearch.trim()) return loggedOrders;
+    const q = loggedOrdersSearch.toLowerCase().trim();
+
+    return loggedOrders.filter(order => {
+      // 1. Internal reference & PO reference
+      const internalRef = (order.internalOrderNumber || '').toLowerCase();
+      const poRef = (order.customerReferenceNumber || '').toLowerCase();
+      if (internalRef.includes(q) || poRef.includes(q)) return true;
+
+      // 2. Customer name
+      const customer = (order.customerName || '').toLowerCase();
+      if (customer.includes(q)) return true;
+
+      // 3. Order Date (raw and formatted)
+      const orderDateRaw = (order.orderDate || '').toLowerCase();
+      const orderDateFormatted = order.orderDate ? new Date(order.orderDate).toLocaleDateString().toLowerCase() : '';
+      if (orderDateRaw.includes(q) || orderDateFormatted.includes(q)) return true;
+
+      // 4. Data Entry Timestamp & Submitted By
+      const dataEntryRaw = (order.dataEntryTimestamp || '').toLowerCase();
+      const dataEntryFormatted = formatOrderTimestamp(order.dataEntryTimestamp).toLowerCase();
+      const submittedBy = getSubmittedBy(order).toLowerCase();
+      if (dataEntryRaw.includes(q) || dataEntryFormatted.includes(q) || submittedBy.includes(q)) return true;
+
+      // 5. Last Edited Info (Timestamp & User)
+      const lastEdited = getLastEditedInfo(order);
+      const lastEditedUser = (lastEdited.user || '').toLowerCase();
+      const lastEditedTimestamp = formatOrderTimestamp(lastEdited.timestamp).toLowerCase();
+      if (lastEditedUser.includes(q) || lastEditedTimestamp.includes(q)) return true;
+
+      // 6. Blanket vs Non-Blanket keywords, contractId, blanketContractId, projectName
+      const isBlanketKeywords = order.blanketOrder ? 'blanket blanket order' : 'normal standard non-blanket non blanket';
+      if (isBlanketKeywords.includes(q)) return true;
+      if ((order.contractId || '').toLowerCase().includes(q)) return true;
+      if ((order.blanketContractId || '').toLowerCase().includes(q)) return true;
+      if ((order.projectName || '').toLowerCase().includes(q)) return true;
+
+      // 7. Status & Compliance tags
+      const status = (order.status || '').toLowerCase();
+      if (status.includes(q)) return true;
+      if (order.loggingComplianceViolation && 'logging delay delay violation'.includes(q)) return true;
+      if (order.status === OrderStatus.NEGATIVE_MARGIN && 'negative margin margin breach'.includes(q)) return true;
+
+      // 8. Line items & components
+      const lineCountStr = `${order.items?.length || 0} pos`;
+      if (lineCountStr.includes(q) || String(order.items?.length || 0) === q) return true;
+
+      for (const item of (order.items || [])) {
+        if ((item.description || '').toLowerCase().includes(q)) return true;
+        if ((item.unit || '').toLowerCase().includes(q)) return true;
+        if (String(item.quantity).includes(q)) return true;
+        if (String(item.pricePerUnit).includes(q)) return true;
+        for (const comp of (item.components || [])) {
+          if ((comp.description || '').toLowerCase().includes(q)) return true;
+          if ((comp.componentNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.source || '').toLowerCase().includes(q)) return true;
+        }
+      }
+
+      return false;
+    });
+  }, [loggedOrders, loggedOrdersSearch]);
+
   const requestSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
     if (sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -307,30 +372,56 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   }, [editingOrderId]);
 
   useEffect(() => {
-    if (!customerReferenceNumber || editingOrderId || isScanning) return;
+    if (!customerReferenceNumber || isScanning) return;
 
     const normalizedRef = customerReferenceNumber.trim().toLowerCase();
+    if (!normalizedRef) return;
     const normalizedCustomerName = customerName.trim().toLowerCase();
+
     const match = existingOrders.find(o => {
+      const oIntRef = o.internalOrderNumber?.trim().toLowerCase();
+      const oCustRef = o.customerReferenceNumber?.trim().toLowerCase();
+
       // Internal order numbers are globally unique
-      if (o.internalOrderNumber?.trim().toLowerCase() === normalizedRef) {
+      if (oIntRef && oIntRef === normalizedRef) {
         return true;
       }
       // Customer PO references are unique per customer
-      if (o.customerReferenceNumber?.trim().toLowerCase() === normalizedRef) {
+      if (oCustRef && oCustRef === normalizedRef) {
         if (!normalizedCustomerName) return true;
-        return o.customerName?.trim().toLowerCase() === normalizedCustomerName;
+        const oCust = o.customerName?.trim().toLowerCase() || '';
+        return (
+          oCust === normalizedCustomerName ||
+          oCust.includes(normalizedCustomerName) ||
+          normalizedCustomerName.includes(oCust)
+        );
       }
       return false;
     });
 
-    if (match && match.id !== lastAutoLoadedRef.current) {
-      console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber}`);
+    if (match) {
+      if (match.id === editingOrderId) {
+        // Ensure the active tab aligns with whether it is a blanket order or normal order
+        if (match.blanketOrder && (activeTab !== 'blanket' || blanketSubTab !== 'new_blanket')) {
+          setActiveTab('blanket');
+          setBlanketSubTab('new_blanket');
+          setBlanketOrder(true);
+        } else if (!match.blanketOrder && activeTab !== 'new') {
+          setActiveTab('new');
+          setBlanketOrder(false);
+        }
+        return;
+      }
+
+      console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber} (isBlanket: ${match.blanketOrder})`);
       lastAutoLoadedRef.current = match.id;
       loadOrder(match);
-      setMessage({ type: 'info', text: 'Existing PO identified. Record retrieved and loaded.' });
+      setMessage({
+        type: 'info',
+        text: `Existing ${match.blanketOrder ? 'Blanket Order' : 'Standard Order'} identified (${match.internalOrderNumber || match.customerReferenceNumber}). Switched to ${match.blanketOrder ? 'Blanket Orders' : 'New Orders'} tab.`
+      });
     }
-  }, [customerReferenceNumber, existingOrders.length, editingOrderId, isScanning]);
+  }, [customerReferenceNumber, existingOrders, editingOrderId, isScanning, activeTab, blanketSubTab, customerName]);
 
   const hasLoggingViolations = useMemo(() => {
     return loggedOrders.some(o => o.loggingComplianceViolation);
@@ -366,24 +457,24 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   };
 
   const loadOrder = (match: CustomerOrder) => {
-    setCustomerName(match.customerName);
+    setCustomerName(match.customerName || '');
     setCustomerReferenceNumber(String(match.customerReferenceNumber || match.internalOrderNumber || ''));
-    setOrderDate(match.orderDate);
+    setOrderDate(match.orderDate || today);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
-    setBlanketOrder(match.blanketOrder || false);
+    setBlanketOrder(!!match.blanketOrder);
     setProjectName(match.projectName || '');
     setBlanketContractId(match.blanketContractId || '');
     setContractId(match.contractId || '');
     const loadedDeliveryDays = match.targetDeliveryDays || 30;
     setTargetDeliveryDays(loadedDeliveryDays);
-    setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate, loadedDeliveryDays));
+    setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate || today, loadedDeliveryDays));
     // Multi-currency amendment: hydrate currency + conversionRate from the
     // existing record so editing a USD order does not silently reset it to L.E.
     setCurrency(match.currency || DEFAULT_CURRENCY);
     setConversionRate(match.conversionRate || 1);
 
-    setItems(match.items.map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
+    setItems((match.items || []).map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
 
     setEditingOrderId(match.id);
     if (match.blanketOrder) {
@@ -409,6 +500,121 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     });
     return { subtotal, taxTotal, total: subtotal + taxTotal };
   }, [items, orderTaxPercent]);
+
+  interface ModelBenchmarkEntry {
+    model: string;
+    status: 'healthy' | 'error';
+    lastResponseTimeMs: number;
+    avgResponseTimeMs: number;
+    successCount: number;
+    errorCount: number;
+    lastSuccessTimestamp?: number;
+    lastErrorTimestamp?: number;
+    lastErrorMessage?: string;
+  }
+
+  const BENCHMARK_STORAGE_KEY = 'nexus_ocr_model_benchmarks_v2';
+
+  const getModelBenchmarks = (): Record<string, ModelBenchmarkEntry> => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(BENCHMARK_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  };
+
+  const saveModelBenchmarks = (table: Record<string, ModelBenchmarkEntry>) => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(BENCHMARK_STORAGE_KEY, JSON.stringify(table));
+    } catch (_) {}
+  };
+
+  const recordModelSuccess = (model: string, durationMs: number) => {
+    const table = getModelBenchmarks();
+    const existing = table[model];
+    const newSuccessCount = (existing?.successCount || 0) + 1;
+    const newAvg = existing?.avgResponseTimeMs && existing.avgResponseTimeMs < 90000
+      ? Math.round((existing.avgResponseTimeMs * 0.4) + (durationMs * 0.6))
+      : durationMs;
+
+    table[model] = {
+      model,
+      status: 'healthy',
+      lastResponseTimeMs: durationMs,
+      avgResponseTimeMs: newAvg,
+      successCount: newSuccessCount,
+      errorCount: 0,
+      lastSuccessTimestamp: Date.now(),
+      lastErrorMessage: undefined
+    };
+    saveModelBenchmarks(table);
+    try {
+      localStorage.setItem('nexus_last_working_ai_model', model);
+    } catch (_) {}
+  };
+
+  const recordModelError = (model: string, errorMsg: string, durationMs: number = 0) => {
+    const table = getModelBenchmarks();
+    const existing = table[model];
+    table[model] = {
+      model,
+      status: 'error',
+      lastResponseTimeMs: durationMs || existing?.lastResponseTimeMs || 999999,
+      avgResponseTimeMs: existing?.avgResponseTimeMs || 999999,
+      successCount: existing?.successCount || 0,
+      errorCount: (existing?.errorCount || 0) + 1,
+      lastErrorTimestamp: Date.now(),
+      lastErrorMessage: errorMsg
+    };
+    saveModelBenchmarks(table);
+  };
+
+  const cleanAndParseJson = (rawText: string): any => {
+    if (!rawText || typeof rawText !== 'string') return {};
+    let cleaned = rawText.trim();
+    // Remove reasoning thought blocks like <thought>...</thought>
+    cleaned = cleaned.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+    // Remove markdown code fences
+    cleaned = cleaned.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+    // Extract outermost JSON object { ... }
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+    try {
+      return JSON.parse(cleaned);
+    } catch (e) {
+      console.error('[AI Scan] Failed to parse JSON:', cleaned, e);
+      return {};
+    }
+  };
+
+  const normalizeDate = (val: any): string => {
+    if (!val || typeof val !== 'string') return '';
+    const trimmed = val.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().split('T')[0];
+    }
+    return trimmed;
+  };
+
+  const normalizeCurrency = (rawCurr: any): Currency => {
+    if (!rawCurr || typeof rawCurr !== 'string') return DEFAULT_CURRENCY;
+    const upper = rawCurr.trim().toUpperCase();
+    if (['EGP', 'LE', 'L.E.', 'E.G.P.', 'POUND', 'EGYPTIAN POUND'].includes(upper)) {
+      return 'L.E.';
+    }
+    if (SUPPORTED_CURRENCIES.includes(upper as Currency)) {
+      return upper as Currency;
+    }
+    return DEFAULT_CURRENCY;
+  };
 
   const handleAIScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -449,18 +655,37 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       let parsedPdf: any = null;
       let rankedPages: number[] = [1];
       let primaryPage = 1;
+      let extractedPdfText = '';
 
       const t_read_start = performance.now();
       if (isPdfUpload) {
-        setMessage({ type: 'info', text: 'PDF detected. Analyzing pages 1-2 to find the strongest PO data region...' });
+        setMessage({ type: 'info', text: 'PDF detected. Extracting high-accuracy text and document pages...' });
         const pdfData = new Uint8Array(await file.arrayBuffer());
         parsedPdf = await getDocument({ data: pdfData }).promise;
+        
+        // Extract digital text from all pages (up to 3 pages)
+        const maxTextPages = Math.min(parsedPdf.numPages || 1, 3);
+        const textParts: string[] = [];
+        for (let p = 1; p <= maxTextPages; p++) {
+          try {
+            const pageObj = await parsedPdf.getPage(p);
+            const tc = await pageObj.getTextContent();
+            const pageStr = (tc.items || []).map((it: any) => it?.str || '').join(' ');
+            if (pageStr.trim()) {
+              textParts.push(`--- Page ${p} ---\n${pageStr}`);
+            }
+          } catch (err) {
+            console.warn(`[AI Scan] Failed to extract text from page ${p}:`, err);
+          }
+        }
+        extractedPdfText = textParts.join('\n\n');
+
         const t_score_start = performance.now();
         rankedPages = await pickPdfCandidatePages(parsedPdf, 2);
         perf['1_pdf_page_scoring_ms'] = performance.now() - t_score_start;
 
         primaryPage = rankedPages[0] || 1;
-        setMessage({ type: 'info', text: `PDF detected. Scanning page ${primaryPage} first based on PO signal scoring...` });
+        setMessage({ type: 'info', text: `Scanning page ${primaryPage} with multi-modal AI intelligence...` });
         base64Data = await renderPdfPageToJpegBase64(parsedPdf, primaryPage);
         inputMimeType = 'image/jpeg';
       } else {
@@ -472,57 +697,44 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       }
       perf['1_file_read_ms'] = performance.now() - t_read_start;
 
-      const existingCustomerNames = customers.map(c => c.name).slice(0, 50).join(', '); // Passing a sample of known names
+      const existingCustomerNames = customers.map(c => c.name).slice(0, 50).join(', ');
       const prompt = `
         Context: The following customers already exist in our database: [${existingCustomerNames}].
-        If the name on the PO is a logical match (e.g., "Google" vs "Google Inc"), you MUST use the exact name from the database.
+        If the customer name on the PO matches an existing customer (e.g. "Unilever Mashreq" vs "Unilever"), you MUST use the exact name from the database.
 
-        Extract all details from this Purchase Order image.
+        CRITICAL BUSINESS CONTEXT:
+        - The document is a Purchase Order issued TO us (our company is PACKAGING SERVICES PARTNERS PSP or similar).
+        - The "customer" is the BUYING client/organization issuing the PO (e.g. Unilever Mashreq For Manufacturing and Trading (S A E) / Unilever). Look under "Invoice To:", "Send To:", "Delivery Address:", "Requester:", and header logos.
+        - NEVER extract our own company/supplier name as the customer.
+        - Default items taxPercent to 14 if tax is detected (e.g., Tax Code 64, Input rate - 14% is standard 14% VAT).
+        - Convert all dates to YYYY-MM-DD format.
+
+        ${extractedPdfText ? `DOCUMENT EXTRACTED TEXT:\n${extractedPdfText}\n\n` : ''}
+
+        Extract all details from this Purchase Order.
         Structure the response as valid JSON with these keys:
         - customer: { name, email, phone, address, contactName }
-        - poRef: (The customer's PO number string)
-        - paymentSlaDays: (Payment terms in DAYS ONLY as an integer. Look EVERYWHERE on the PO: header, footer, terms & conditions, line item columns, and notes. Extract the number of days for payment terms like 'Net 30', '45 days', 'Payment due in 15 days', 'payable within 60 days of delivery', 'settlement 30 days post-delivery'. Only return the integer number of days.)
-        - paymentFromDelivery: (boolean, true if payment is calculated from delivery date like '30 days after delivery', 'payment due within 15 days of delivery', 'settlement post-delivery'. false if from PO/invoice date like 'Net 30', 'payment terms 45 days'.)
+        - poRef: (The customer's PO number string, e.g. "PO17431341")
+        - paymentSlaDays: (Payment terms in DAYS ONLY as an integer, e.g. 30. Look for Net 30, within 30 days, etc.)
+        - paymentFromDelivery: (boolean, true if payment is from delivery date, false if from invoice date)
         - date: (The PO issue date in YYYY-MM-DD format)
-        - deliveryDate: (Expected delivery date in YYYY-MM-DD format if found anywhere on the PO: headers, footers, terms & conditions, line item columns, notes, or delivery schedules. Leave empty string if not found.)
-        - deliveryTerms: (Free text describing any delivery terms or expectations found anywhere on the document. Leave empty string if not found.)
-        - incoterms: (Incoterms code if found: FOB, CIF, CFR, DDP, DAP, EXW, FCA, CPT, CIP. Leave empty string if not found.)
-        - currency: (Currency code if explicitly stated on the PO: USD, EUR, GBP, EGP, L.E., etc. Leave empty string if not found.)
-        - partialShipment: (boolean, true if the PO explicitly allows partial deliveries or split shipments. false otherwise.)
+        - deliveryDate: (Expected delivery date in YYYY-MM-DD format if found)
+        - deliveryTerms: (Free text describing delivery terms or expectations)
+        - incoterms: (Incoterms code if found: FOB, CIF, CFR, DDP, DAP, EXW, FCA, CPT, CIP)
+        - currency: (Currency code: EGP, USD, EUR, SAR, AED, GBP)
+        - partialShipment: (boolean)
         - items: [ { description, quantity, unit, price, taxPercent, deliveryDate?, deliveryTerms? } ]
 
-        CRITICAL EXTRACTION RULES:
-        1. Output ONLY the JSON object.
-        2. Scan the ENTIRE document including headers, footers, side margins, terms & conditions blocks, and line item columns for ALL fields.
-        3. For paymentSlaDays and paymentFromDelivery, look for phrases like:
-           - "Net 30" → 30, paymentFromDelivery: false
-           - "Payment due within 45 days" → 45, paymentFromDelivery: false
-           - "Payable 60 days after delivery" → 60, paymentFromDelivery: true
-           - "Settlement 30 days post-delivery" → 30, paymentFromDelivery: true
-           - "Payment terms: 90 days" → 90, paymentFromDelivery: false
-           - "Due in 15 days from invoice date" → 15, paymentFromDelivery: false
-           - "Due 30 days after receipt of goods" → 30, paymentFromDelivery: true
-        4. For deliveryDate and deliveryTerms, look in:
-           - Header/footer sections
-           - Terms & conditions blocks
-           - Line item columns (some POs have delivery dates per item)
-           - Side notes or annotations
-           - Delivery schedule tables
-           - Phrases like "Delivery within 2 weeks", "Expected delivery: 2024-03-15", "Ship by March 1st"
-        5. For incoterms, look for standard trade terms anywhere on the PO: FOB, CIF, CFR, DDP, DAP, EXW, FCA, CPT, CIP.
-        6. For partialShipment, look for phrases like: "partial shipments allowed", "split delivery permitted", "multiple deliveries accepted".
-        7. Default items taxPercent to 14 if tax is detected but the specific rate is not clearly legible (standard VAT).
-        8. If delivery info is found per line item, include it in that item's deliveryDate and deliveryTerms fields.
-        9. If a general delivery date applies to the whole PO, put it in the top-level deliveryDate field.
+        Return ONLY the JSON object.
       `;
 
       const runVisionInference = async (scanBase64Data: string, scanMimeType: string): Promise<string> => {
         if (config.settings.aiProvider === 'gemini') {
           const apiKey = config.settings.geminiConfig?.apiKey;
-          const modelName = config.settings.geminiConfig?.modelName || 'gemini-3.5-flash';
+          const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
 
           if (!apiKey) {
-            throw new Error("Gemini API Key is not configured.");
+            throw new Error("Gemini API Key is not configured. Please check Settings > AI Configuration.");
           }
 
           console.log('[AI Scan] Using Gemini model:', modelName);
@@ -540,46 +752,149 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             ],
             config: { responseMimeType: "application/json" }
           });
-          console.log('[AI Scan] Gemini raw response:', response);
-          return response.text || "{}";
+          if (!response.text || !response.text.trim()) {
+            throw new Error("Gemini returned an empty response.");
+          }
+          return response.text;
         }
 
         const { apiKey, baseUrl, modelName } = config.settings.openaiConfig;
-        console.log('[AI Scan] OpenAI config from settings:', { baseUrl, modelName, apiKeyExists: !!apiKey, apiKeyLength: apiKey?.length, apiKeyPrefix: apiKey?.substring(0, 15) });
         const upstreamEndpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
-        console.log('[AI Scan] Using OpenAI endpoint (via server proxy):', upstreamEndpoint, 'model:', modelName);
         if (!apiKey) {
-          throw new Error("OpenAI API Key is not configured. Please add your API key in Settings > AI Configuration.");
+          throw new Error("AI API Key is not configured. Please add your API key in Settings > AI Configuration.");
         }
-        const response = await fetch('/api/v1/ai-proxy/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            endpoint: upstreamEndpoint,
-            apiKey,
-            payload: {
-              model: modelName,
-              response_format: { type: "json_object" },
-              messages: [
-                {
-                  role: "user",
-                  content: [
-                    { type: "text", text: prompt },
+
+        const isRouter = baseUrl.includes('openrouter.ai');
+        const knownModels = [
+          'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+          'dots-studio/dots-3-note-preview:free',
+          'google/gemma-4-26b-a4b-it:free',
+          'minimax/minimax-m3:free',
+          'openrouter/auto'
+        ];
+        if (modelName && !knownModels.includes(modelName)) {
+          knownModels.unshift(modelName);
+        }
+
+        // Retrieve persistent benchmark metrics table
+        const benchmarkTable = getModelBenchmarks();
+
+        // 1. Healthy models, sorted by fastest historical average response time
+        const healthyModels = knownModels
+          .filter(m => benchmarkTable[m]?.status === 'healthy')
+          .sort((a, b) => (benchmarkTable[a]?.avgResponseTimeMs || 9999) - (benchmarkTable[b]?.avgResponseTimeMs || 9999));
+
+        // 2. Untested models (no historical record yet)
+        const untestedModels = knownModels.filter(m => !benchmarkTable[m]);
+
+        // 3. Previously errored models (retried after healthy ones, sorted by earliest error timestamp to let rate-limits expire)
+        const erroredModels = knownModels
+          .filter(m => benchmarkTable[m]?.status === 'error')
+          .sort((a, b) => (benchmarkTable[a]?.lastErrorTimestamp || 0) - (benchmarkTable[b]?.lastErrorTimestamp || 0));
+
+        // Prioritized sequence: Healthy (fastest first) -> Untested -> Errored (re-test for recovery)
+        const orderedCandidates = isRouter
+          ? Array.from(new Set([...healthyModels, ...untestedModels, ...erroredModels]))
+          : [modelName];
+
+        console.log('[AI Scan] Prioritized model candidate order:', orderedCandidates);
+        console.table(
+          orderedCandidates.map(m => ({
+            model: m,
+            status: benchmarkTable[m]?.status || 'untested',
+            avgMs: benchmarkTable[m]?.avgResponseTimeMs ?? 'N/A',
+            errors: benchmarkTable[m]?.errorCount ?? 0
+          }))
+        );
+
+        const executionLog: Array<{ model: string; status: 'ok' | 'error'; durationMs: number; errorMsg?: string }> = [];
+
+        for (const currentModel of orderedCandidates) {
+          const modelStart = performance.now();
+          try {
+            console.log(`[AI Scan] Requesting model: ${currentModel}...`);
+            const shortName = currentModel.split('/')[1]?.split(':')[0] || currentModel;
+            setMessage({ type: 'info', text: `Analyzing PO with ${shortName}...` });
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 22000); // 22s per-model timeout
+
+            const response = await fetch('/api/v1/ai-proxy/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                endpoint: upstreamEndpoint,
+                apiKey,
+                payload: {
+                  model: currentModel,
+                  messages: [
                     {
-                      type: "image_url",
-                      image_url: {
-                        url: `data:${scanMimeType};base64,${scanBase64Data}`
-                      }
+                      role: "user",
+                      content: [
+                        { type: "text", text: prompt },
+                        {
+                          type: "image_url",
+                          image_url: {
+                            url: `data:${scanMimeType};base64,${scanBase64Data}`
+                          }
+                        }
+                      ]
                     }
                   ]
                 }
-              ]
+              })
+            });
+
+            clearTimeout(timeoutId);
+            const duration = Math.round(performance.now() - modelStart);
+
+            const data = await response.json();
+            if (!response.ok || data.error) {
+              const errMsg = data.error?.message || (typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
+              console.warn(`[AI Scan] Model ${currentModel} failed after ${duration}ms:`, errMsg);
+              recordModelError(currentModel, errMsg, duration);
+              executionLog.push({ model: currentModel, status: 'error', durationMs: duration, errorMsg: errMsg });
+              continue;
             }
-          })
-        });
-        const data = await response.json();
-        console.log('[AI Scan] OpenAI raw response:', data);
-        return data.choices?.[0]?.message?.content || "{}";
+
+            const content = data.choices?.[0]?.message?.content;
+            if (content && content.trim()) {
+              console.log(`[AI Scan] SUCCESS with model: ${currentModel} in ${duration}ms! (Updated benchmark table)`);
+              recordModelSuccess(currentModel, duration);
+              executionLog.push({ model: currentModel, status: 'ok', durationMs: duration });
+
+              console.group(`%c[NexusERP] AI OCR Benchmark Table (Updated)`, 'color: #10b981; font-weight: bold;');
+              console.table(Object.values(getModelBenchmarks()));
+              console.groupEnd();
+
+              return content;
+            } else {
+              const errMsg = "Model returned empty content payload";
+              recordModelError(currentModel, errMsg, duration);
+              executionLog.push({ model: currentModel, status: 'error', durationMs: duration, errorMsg: errMsg });
+            }
+          } catch (err: any) {
+            const duration = Math.round(performance.now() - modelStart);
+            const errMsg = err.name === 'AbortError' ? 'Request timed out (22s limit)' : (err.message || 'Network error');
+            console.warn(`[AI Scan] Error contacting ${currentModel} after ${duration}ms:`, errMsg);
+            recordModelError(currentModel, errMsg, duration);
+            executionLog.push({ model: currentModel, status: 'error', durationMs: duration, errorMsg: errMsg });
+          }
+        }
+
+        // Exhaustive failure: all candidate models failed
+        const diagnosticList = executionLog
+          .map((log, idx) => `• ${log.model} (${(log.durationMs / 1000).toFixed(1)}s): ${log.errorMsg || 'Failed'}`)
+          .join('\n');
+
+        console.group('%c[NexusERP] All AI OCR Models Failed', 'color: #ef4444; font-weight: bold;');
+        console.table(executionLog);
+        console.groupEnd();
+
+        throw new Error(
+          `All ${executionLog.length} AI models failed to process this document:\n${diagnosticList}\n\nPlease check your AI settings or network connectivity.`
+        );
       };
 
       const t_ai_primary_start = performance.now();
@@ -587,9 +902,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       perf['2_ai_primary_inference_ms'] = performance.now() - t_ai_primary_start;
       console.log('[AI Scan] Primary text output:', textOutput);
 
-      console.log('[AI Scan] Parsing extracted text:', textOutput);
       const t_parse_start = performance.now();
-      let extracted = JSON.parse(textOutput);
+      let extracted = cleanAndParseJson(textOutput);
       perf['3_json_parse_ms'] = performance.now() - t_parse_start;
       console.log('[AI Scan] Parsed extracted:', extracted);
 
@@ -607,11 +921,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         console.log('[AI Scan] Fallback text output:', fallbackTextOutput);
 
         const t_fallback_parse_start = performance.now();
-        const fallbackExtracted = JSON.parse(fallbackTextOutput);
+        const fallbackExtracted = cleanAndParseJson(fallbackTextOutput);
         perf['3d_json_fallback_parse_ms'] = performance.now() - t_fallback_parse_start;
 
         extracted = mergeExtractionResults(extracted, fallbackExtracted);
         console.log('[AI Scan] Merged extraction result:', extracted);
+      }
+
+      if (!hasStrongExtraction(extracted) && !extracted.customer?.name && !extracted.poRef && (!extracted.items || extracted.items.length === 0)) {
+        throw new Error("AI did not detect any valid PO fields from this document. Please check AI settings or enter details manually.");
       }
 
       if (extracted.customer?.name) {
@@ -646,16 +964,24 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         console.log('[AI Scan] No customer name found in extraction');
       }
 
-      setCustomerReferenceNumber(extracted.poRef || '');
-      if (extracted.date) setOrderDate(extracted.date);
+      if (extracted.poRef) {
+        setCustomerReferenceNumber(String(extracted.poRef).trim());
+      }
+      if (extracted.date) {
+        const normDate = normalizeDate(extracted.date);
+        if (normDate) setOrderDate(normDate);
+      }
 
       if (extracted.deliveryDate) {
-        console.log('[AI Scan] Found delivery date:', extracted.deliveryDate);
-        setTargetDeliveryDate(extracted.deliveryDate);
-        const start = new Date(extracted.date || orderDate);
-        const end = new Date(extracted.deliveryDate);
-        const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-        if (diff > 0) setTargetDeliveryDays(diff);
+        const normDeliveryDate = normalizeDate(extracted.deliveryDate);
+        if (normDeliveryDate) {
+          console.log('[AI Scan] Found delivery date:', normDeliveryDate);
+          setTargetDeliveryDate(normDeliveryDate);
+          const start = new Date(normalizeDate(extracted.date) || orderDate);
+          const end = new Date(normDeliveryDate);
+          const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+          if (diff > 0) setTargetDeliveryDays(diff);
+        }
       }
       if (extracted.deliveryTerms) {
         console.log('[AI Scan] Found delivery terms:', extracted.deliveryTerms);
@@ -666,12 +992,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         console.log('[AI Scan] Found incoterms:', extracted.incoterms);
       }
 
-      // Extract currency if found — only set when the AI detected a value AND that
-      // value is in our supported list, otherwise fall through to the form's
-      // current default (L.E.).
-      if (extracted.currency && SUPPORTED_CURRENCIES.includes(extracted.currency)) {
-        console.log('[AI Scan] Found currency:', extracted.currency);
-        setCurrency(extracted.currency);
+      // Extract and normalize currency
+      if (extracted.currency) {
+        const normCurr = normalizeCurrency(extracted.currency);
+        console.log('[AI Scan] Found currency:', extracted.currency, 'normalized:', normCurr);
+        setCurrency(normCurr);
       }
 
       // Extract partial shipment flag
@@ -700,20 +1025,26 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           extracted.paymentFromDelivery ? '(from delivery date)' : '(from PO/invoice date)');
       }
 
-      if (extracted.items) {
+      if (extracted.items && Array.isArray(extracted.items) && extracted.items.length > 0) {
         console.log('[AI Scan] Found items:', extracted.items.length);
         const t_items_start = performance.now();
         const firstDetectedTax = extracted.items.find((i: any) => i?.taxPercent !== null && i?.taxPercent !== undefined)?.taxPercent;
-        const normalizedOrderTax = Number.isFinite(Number(firstDetectedTax)) ? Number(firstDetectedTax) : DEFAULT_TAX_PERCENT;
+        const rawTaxNum = typeof firstDetectedTax === 'string' ? parseFloat(firstDetectedTax.replace(/[^\d.]/g, '')) : Number(firstDetectedTax);
+        const normalizedOrderTax = Number.isFinite(rawTaxNum) ? rawTaxNum : DEFAULT_TAX_PERCENT;
         setOrderTaxPercent(normalizedOrderTax);
         setItems(extracted.items.map((i: any, idx: number) => {
+          const itemQty = Number(i.quantity) || 1;
+          const itemPrice = Number(i.price ?? i.unitPrice ?? i.pricePerUnit ?? i.amount ?? i.lineAmount) || 0;
+          const itemTaxRaw = typeof i.taxPercent === 'string' ? parseFloat(i.taxPercent.replace(/[^\d.]/g, '')) : Number(i.taxPercent);
+          const itemTax = Number.isFinite(itemTaxRaw) ? itemTaxRaw : normalizedOrderTax;
+
           return {
             id: `temp_${Date.now()}_${idx}`,
-            description: i.description,
-            quantity: i.quantity || 1,
+            description: i.description || `Item ${idx + 1}`,
+            quantity: itemQty,
             unit: i.unit || 'pcs',
-            pricePerUnit: i.price,
-            taxPercent: normalizedOrderTax,
+            pricePerUnit: itemPrice,
+            taxPercent: itemTax,
             taxDetected: true,
             logs: []
           };
@@ -725,14 +1056,21 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       perf['total_ms'] = performance.now() - t0;
       const provider = config.settings.aiProvider === 'gemini'
-        ? `Gemini (${config.settings.geminiConfig?.modelName || 'gemini-3.5-flash'})`
+        ? `Gemini (${config.settings.geminiConfig?.modelName || 'gemini-1.5-flash'})`
         : `OpenAI (${config.settings.openaiConfig?.modelName})`;
       console.group(`%c[NexusERP] OCR Profiling — ${provider}`, 'color: #6366f1; font-weight: bold;');
       console.table(
         Object.entries(perf).map(([step, ms]) => ({ step, 'time (ms)': ms.toFixed(2) }))
       );
       console.groupEnd();
-      setMessage({ type: 'success', text: 'finished' });
+
+      const extractedItemsCount = extracted.items?.length || 0;
+      const extractedPo = extracted.poRef ? `PO #${extracted.poRef}` : 'Purchase Order';
+      const extractedCust = extracted.customer?.name ? ` for ${extracted.customer.name}` : '';
+      setMessage({
+        type: 'success',
+        text: `Successfully extracted ${extractedPo}${extractedCust} (${extractedItemsCount} line item${extractedItemsCount === 1 ? '' : 's'}).`
+      });
 
     } catch (err: any) {
       perf['total_ms'] = performance.now() - t0;
@@ -1747,7 +2085,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       ) : activeTab === 'logged' ? (
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-6 bg-slate-50 border-b flex justify-between items-center">
+            <div className="p-6 bg-slate-50 border-b flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-lg">
                   <i className="fa-solid fa-inbox text-xl"></i>
@@ -1756,6 +2094,26 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Logged Order Registry</h2>
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Manage and resume uncommitted operational records</p>
                 </div>
+              </div>
+              {/* Search Box */}
+              <div className="relative w-full md:w-80">
+                <input
+                  type="text"
+                  className="w-full pl-10 pr-8 py-2 border-2 border-slate-200 rounded-xl bg-white text-xs font-bold outline-none focus:border-blue-500 transition-all shadow-inner"
+                  placeholder="Search PO, internal ref, customer, dates, user..."
+                  value={loggedOrdersSearch}
+                  onChange={e => setLoggedOrdersSearch(e.target.value)}
+                />
+                <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-400 text-xs"></i>
+                {loggedOrdersSearch && (
+                  <button
+                    onClick={() => setLoggedOrdersSearch('')}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 text-xs transition-colors"
+                    title="Clear search"
+                  >
+                    <i className="fa-solid fa-xmark"></i>
+                  </button>
+                )}
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -1785,13 +2143,30 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                 </thead>
 
                 <tbody className="divide-y divide-slate-50">
-                  {loggedOrders.map(draft => (
+                  {filteredLoggedOrders.map(draft => (
 
                     <tr key={draft.id} className={`hover:bg-slate-50/80 transition-all group ${draft.loggingComplianceViolation ? 'bg-rose-50 hover:!bg-rose-100 border-l-4 border-rose-500' : ''} ${draft.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/30 hover:!bg-rose-50 border-l-4 border-rose-400' : ''}`}>
 
                       <td className="px-8 py-6">
-                        <div className="font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</span>
+                          {draft.blanketOrder ? (
+                            <span className="text-[9px] font-black text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200 uppercase tracking-wider">
+                              <i className="fa-solid fa-layer-group text-[8px] mr-1"></i>Blanket
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-black text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 uppercase tracking-wider">
+                              Normal
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">PO: {draft.customerReferenceNumber || 'N/A'}</div>
+                        {draft.contractId && (
+                          <div className="text-[9px] text-teal-600 font-bold uppercase mt-0.5">Contract: {draft.contractId}</div>
+                        )}
+                        {draft.projectName && (
+                          <div className="text-[9px] text-slate-400 font-medium mt-0.5">Project: {draft.projectName}</div>
+                        )}
                         {draft.loggingComplianceViolation && <div className="mt-1"><span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-200 uppercase tracking-wider">Logging Delay</span></div>}
                         {draft.status === OrderStatus.NEGATIVE_MARGIN && <div className="mt-1"><span className="text-[9px] font-black text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-300 uppercase tracking-wider">Negative Margin</span></div>}
                       </td>
@@ -1826,13 +2201,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       </td>
                     </tr>
                   ))}
-                  {loggedOrders.length === 0 && (
+                  {filteredLoggedOrders.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-8 py-20 text-center">
+                      <td colSpan={7} className="px-8 py-20 text-center">
 
                         <div className="flex flex-col items-center gap-3 text-slate-300">
                           <i className="fa-solid fa-folder-open text-5xl opacity-10"></i>
-                          <p className="font-black text-xs uppercase tracking-[0.2em]">No Active Logged Orders Found</p>
+                          <p className="font-black text-xs uppercase tracking-[0.2em]">
+                            {loggedOrdersSearch ? `No matching logged orders found for "${loggedOrdersSearch}"` : 'No Active Logged Orders Found'}
+                          </p>
                         </div>
                       </td>
                     </tr>

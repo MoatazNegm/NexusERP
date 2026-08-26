@@ -737,10 +737,45 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const filteredOrders = useMemo(() => {
     const q = search.toLowerCase().trim();
-    const filtered = ordersWithPL.filter(o =>
-      (o.internalOrderNumber.toLowerCase().includes(q) || o.customerName.toLowerCase().includes(q)) &&
-      ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)
-    );
+    const filtered = ordersWithPL.filter(o => {
+      if ([OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)) return false;
+      if (!q) return true;
+
+      // 1. Internal order number & Customer PO reference
+      if ((o.internalOrderNumber || '').toLowerCase().includes(q)) return true;
+      if ((o.customerReferenceNumber || '').toLowerCase().includes(q)) return true;
+
+      // 2. Customer name
+      if ((o.customerName || '').toLowerCase().includes(q)) return true;
+
+      // 3. Invoice number
+      if ((o.invoiceNumber || '').toLowerCase().includes(q)) return true;
+
+      // 4. Contract & Project
+      if ((o.contractId || '').toLowerCase().includes(q)) return true;
+      if ((o.blanketContractId || '').toLowerCase().includes(q)) return true;
+      if ((o.projectName || '').toLowerCase().includes(q)) return true;
+
+      // 5. Dates
+      const orderDateRaw = (o.orderDate || '').toLowerCase();
+      const orderDateFormatted = o.orderDate ? new Date(o.orderDate).toLocaleDateString().toLowerCase() : '';
+      if (orderDateRaw.includes(q) || orderDateFormatted.includes(q)) return true;
+
+      // 6. Status & Currency
+      if ((o.status || '').toLowerCase().includes(q)) return true;
+      if (getOrderCurrency(o).toLowerCase().includes(q)) return true;
+
+      // 7. Line Items & components
+      for (const item of (o.items || [])) {
+        if ((item.description || '').toLowerCase().includes(q)) return true;
+        for (const comp of (item.components || [])) {
+          if ((comp.description || '').toLowerCase().includes(q)) return true;
+          if ((comp.componentNumber || '').toLowerCase().includes(q)) return true;
+        }
+      }
+
+      return false;
+    });
 
     const sorted = [...filtered].sort((a: any, b: any) => {
       let valA: any = a[sortConfig.key];
@@ -767,7 +802,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     const filtered = orders.filter(o =>
       o.appliesWithholdingTax &&
       o.status === OrderStatus.FULFILLED &&
-      (o.customerName.toLowerCase().includes(q) || o.internalOrderNumber.toLowerCase().includes(q)) &&
+      ((o.customerName || '').toLowerCase().includes(q) ||
+       (o.internalOrderNumber || '').toLowerCase().includes(q) ||
+       (o.customerReferenceNumber || '').toLowerCase().includes(q)) &&
       new Date(o.orderDate || o.dataEntryTimestamp).getFullYear() === year
     );
 
@@ -1109,7 +1146,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       const q = contractSearch.toLowerCase().trim();
       result = result.filter(c => {
         const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
-        const linkedMatch = linked.some(bo => bo.internalOrderNumber?.toLowerCase().includes(q));
+        const linkedMatch = linked.some(bo => 
+          bo.internalOrderNumber?.toLowerCase().includes(q) ||
+          bo.customerReferenceNumber?.toLowerCase().includes(q)
+        );
         const dateStr = new Date(c.receivedDate || c.createdAt || '').toLocaleDateString();
         return (
           c.id.toLowerCase().includes(q) ||
@@ -1420,7 +1460,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         ) : (
           <div className="relative w-full xl:w-96">
             <input
-              type="text" placeholder={t("finance.history.searchHistory") || "Search entries..."}
+              type="text" placeholder={t("finance.orders.searchOrders") || "Search internal ID, PO ref, customer..."}
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
               value={search} onChange={e => setSearch(e.target.value)}
             />
@@ -1916,54 +1956,54 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           )}
         </div>
       ) : activeTab !== 'ledger' && activeTab !== 'history' && activeTab !== 'contracts' && activeTab !== 'customer_wallets' ? (
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh]">
         <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
             <tr>
               {activeTab === 'blacklist_hold' ? (
                 <>
-                  <th className="px-8 py-5 text-white">{t("finance.orders.operationalContext") || "Operational Context"}</th>
-                  <th className="px-8 py-5 text-white cursor-pointer select-none" onClick={() => handleSort('name')}>
+                  <th className="px-4 py-3.5 text-white">{t("finance.orders.operationalContext") || "Operational Context"}</th>
+                  <th className="px-4 py-3.5 text-white cursor-pointer select-none" onClick={() => handleSort('name')}>
                     {t("finance.entities.entityType")} {sortConfig.key === 'name' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
-                  <th className="px-8 py-5 text-white">{t("finance.orders.accountStatus") || "Account Status"}</th>
-                  <th className="px-8 py-5 text-white text-end">{t("finance.orders.creditAction") || "Credit Action"}</th>
+                  <th className="px-4 py-3.5 text-white">{t("finance.orders.accountStatus") || "Account Status"}</th>
+                  <th className="px-4 py-3.5 text-white text-end">{t("finance.orders.creditAction") || "Credit Action"}</th>
                 </>
               ) : (
                 <>
                   {columnOrder.map(col => {
                     if (col === 'context') return (
-                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('internalOrderNumber')}>
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-4 py-3.5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('internalOrderNumber')}>
                         {activeTab === 'tax_clearances' ? (t("finance.orders.taxPoDetails") || 'Tax PO Details') : (t("finance.orders.operationalContext") || 'Operational Context')} {sortConfig.key === 'internalOrderNumber' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                       </th>
                     );
                     if (col === 'date') return (
-                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-4 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('orderDate')}>
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-3 py-3.5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('orderDate')}>
                         {activeTab === 'tax_clearances' ? (t("finance.orders.targetRevenue") || 'Target Revenue (99%)') : (t("finance.orders.orderDate") || 'Order Date')} {sortConfig.key === 'orderDate' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                       </th>
                     );
                     if (col === 'currency') return (
-                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-4 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('currency')}>
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-2.5 py-3.5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('currency')}>
                         Currency {sortConfig.key === 'currency' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                       </th>
                     );
                     if (col === 'revenue') return (
-                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('grossRevenue')}>
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-3.5 py-3.5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('grossRevenue')}>
                         {activeTab === 'tax_clearances' ? (t("finance.orders.whtValue") || 'WHT Value (1%)') : (t("finance.orders.revenueMetrics") || 'Revenue Metrics')} {sortConfig.key === 'grossRevenue' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                       </th>
                     );
                     if (col === 'markup') return (
-                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('markupPct')}>
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-3 py-3.5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('markupPct')}>
                         {activeTab === 'tax_clearances' ? (t("finance.orders.clearanceStatus") || 'Clearance Status') : (t("finance.orders.markupAnalysis") || 'Markup Analysis')} {sortConfig.key === 'markupPct' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                       </th>
                     );
                     if (col === 'status') return (
-                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('status')}>
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-3 py-3.5 text-white cursor-pointer select-none transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`} onClick={() => handleSort('status')}>
                         {activeTab === 'tax_clearances' ? '-' : (t("finance.orders.slaStatus") || 'SLA / Status')} {sortConfig.key === 'status' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
                       </th>
                     );
                     if (col === 'actions') return (
-                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-8 py-5 text-white text-right transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`}>
+                      <th key={col} draggable onDragStart={e => handleDragStart(e, col)} onDragOver={e => handleDragOver(e, col)} onDrop={e => handleDrop(e, col)} className={`px-4 py-3.5 text-white text-right transition-all ${dragOverCol === col ? 'bg-white/10' : ''}`}>
                         {activeTab === 'tax_clearances' ? '-' : (t("finance.orders.authActions") || 'Auth Actions')}
                       </th>
                     );
@@ -1985,17 +2025,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   return 0;
                 }).map(c => (
                   <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-8 py-6">
+                    <td className="px-4 py-4">
                       <div className="font-black text-slate-800">{c.name}</div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">{t("finance.orders.customerAccount") || "Customer Account"}</div>
                     </td>
-                    <td className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-tighter">{t("finance.entities.clientRelations")}</td>
-                    <td className="px-8 py-6">
+                    <td className="px-4 py-4 text-xs font-bold text-slate-500 uppercase tracking-tighter">{t("finance.entities.clientRelations")}</td>
+                    <td className="px-4 py-4">
                       <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${c.isHold ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
                         {c.isHold ? t("finance.entities.creditHold") : t("finance.entities.accountActive")}
                       </span>
                     </td>
-                    <td className="px-8 py-6 text-end">
+                    <td className="px-4 py-4 text-end">
                       <button onClick={() => setDecisionModal({ type: 'customerHold', entityId: c.id, entityName: c.name, currentValue: c.isHold })} className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${c.isHold ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-rose-600 text-white hover:bg-rose-700'}`}>
                         {c.isHold ? t("finance.entities.releaseHold") : t("finance.entities.engageCreditHold")}
                       </button>
@@ -2011,19 +2051,19 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   return 0;
                 }).map(s => (
                   <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-8 py-6">
+                    <td className="px-4 py-4">
                       <div className="font-black text-slate-800">{s.name}</div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">{t("finance.orders.vendorEntity") || "Vendor Entity"}</div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Vendor Account</div>
                     </td>
-                    <td className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-tighter">{t("finance.orders.supplyChain") || "Supply Chain"}</td>
-                    <td className="px-8 py-6">
-                      <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${s.isBlacklisted ? 'bg-slate-900 text-white border-black' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
-                        {s.isBlacklisted ? t("finance.entities.blacklisted") : t("finance.entities.approvedVendor")}
+                    <td className="px-4 py-4 text-xs font-bold text-slate-500 uppercase tracking-tighter">{t("finance.entities.vendorRelations")}</td>
+                    <td className="px-4 py-4">
+                      <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${s.isHold ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
+                        {s.isHold ? t("finance.entities.creditHold") : t("finance.entities.accountActive")}
                       </span>
                     </td>
-                    <td className="px-8 py-6 text-end">
-                      <button onClick={() => setDecisionModal({ type: 'supplierBlacklist', entityId: s.id, entityName: s.name, currentValue: s.isBlacklisted })} className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${s.isBlacklisted ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-900 text-white hover:bg-black'}`}>
-                        {s.isBlacklisted ? t("finance.entities.restoreVendor") : t("finance.entities.blacklistVendor")}
+                    <td className="px-4 py-4 text-end">
+                      <button onClick={() => setDecisionModal({ type: 'supplierHold', entityId: s.id, entityName: s.name, currentValue: s.isHold })} className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${s.isHold ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-rose-600 text-white hover:bg-rose-700'}`}>
+                        {s.isHold ? t("finance.entities.releaseHold") : t("finance.entities.engageCreditHold")}
                       </button>
                     </td>
                   </tr>
@@ -2042,8 +2082,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
                       {columnOrder.map(col => {
                         if (col === 'context') return (
-                          <td key={col} className="px-8 py-6">
-                            <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
+                          <td key={col} className="px-4 py-4">
+                            <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-wrap">
+                              <span>{o.internalOrderNumber}</span>
+                              {o.customerReferenceNumber && (
+                                <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                  PO: {o.customerReferenceNumber}
+                                </span>
+                              )}
+                            </div>
                             <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2">
                               {o.customerName}
                               {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
@@ -2055,27 +2102,27 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         );
                         if (col === 'currency') {
                           return (
-                            <td key={col} className="px-4 py-6">
+                            <td key={col} className="px-2.5 py-4">
                               <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{oCurrency}</span>
                             </td>
                           );
                         }
                         if (col === 'date' || col === 'revenue' || col === 'markup' || col === 'status' || col === 'actions') {
                           // Tax clearances mapping: date->revenue, revenue->WHT, markup->status
-                          if (col === 'date') return <td key={col} className="px-8 py-6 text-sm font-black text-slate-700">{targetRevenue.toLocaleString()} {oCurrency}</td>;
-                          if (col === 'revenue') return <td key={col} className="px-8 py-6 text-sm font-black text-amber-600">{whtAmount.toLocaleString()} {oCurrency}</td>;
+                          if (col === 'date') return <td key={col} className="px-3 py-4 text-sm font-black text-slate-700">{targetRevenue.toLocaleString()} {oCurrency}</td>;
+                          if (col === 'revenue') return <td key={col} className="px-3.5 py-4 text-sm font-black text-amber-600">{whtAmount.toLocaleString()} {oCurrency}</td>;
                           if (col === 'markup') return (
-                            <td key={col} className="px-8 py-6 text-end">
+                            <td key={col} className="px-3 py-4 text-end">
                               {o.whtCertificateFile ? (
-                                <a href={`http://localhost:3005/${o.whtCertificateFile}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-100 transition-all">
+                                <a href={`http://localhost:3005/${o.whtCertificateFile}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-100 transition-all">
                                   <i className="fa-solid fa-file-shield text-base"></i> Tax Cleared
                                 </a>
                               ) : (
                                 <div className="flex flex-col items-end gap-2">
-                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-600 border border-rose-100 rounded-lg text-[9px] font-black uppercase">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-lg text-[9px] font-black uppercase">
                                     <i className="fa-solid fa-clock"></i> Pending Proof
                                   </span>
-                                  <label className="cursor-pointer px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-black transition-all inline-flex items-center gap-2 shadow-lg shadow-slate-200">
+                                  <label className="cursor-pointer px-3 py-1.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-black transition-all inline-flex items-center gap-2 shadow-lg shadow-slate-200">
                                     <i className={`fa-solid ${isProcessing ? 'fa-spinner fa-spin' : 'fa-cloud-arrow-up'}`}></i> Upload Certificate
                                     <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" disabled={isProcessing} onChange={e => handleUploadWHT(o.id, e)} />
                                   </label>
@@ -2092,7 +2139,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 })}
                 {whtOrders.length === 0 && (
                   <tr>
-                    <td colSpan={columnOrder.length} className="px-8 py-16 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">
+                    <td colSpan={columnOrder.length} className="px-4 py-16 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">
                       <i className="fa-solid fa-file-invoice-dollar text-4xl block mb-3 opacity-20"></i>
                       No Tax Clearance Records Found
                     </td>
@@ -2124,8 +2171,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   <tr className={`hover:bg-slate-50/80 transition-colors ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/20' : ''}`}>
                     {columnOrder.map(col => {
                       if (col === 'context') return (
-                        <td key={col} className="px-8 py-6">
-                          <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
+                        <td key={col} className="px-4 py-4">
+                          <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-wrap">
+                            <span>{o.internalOrderNumber}</span>
+                            {o.customerReferenceNumber && (
+                              <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                PO: {o.customerReferenceNumber}
+                              </span>
+                            )}
+                          </div>
                           <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2">
                             {o.customerName}
                             {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
@@ -2144,7 +2198,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         </td>
                       );
                       if (col === 'date') return (
-                        <td key={col} className="px-4 py-6">
+                        <td key={col} className="px-3 py-4">
                           <div className="text-xs font-black text-slate-700 uppercase tracking-tighter">
                             {o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}
                           </div>
@@ -2152,16 +2206,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         </td>
                       );
                       if (col === 'currency') return (
-                        <td key={col} className="px-4 py-6">
+                        <td key={col} className="px-2.5 py-4">
                           <div className="flex items-center gap-1">
                             <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{pl.currency}</span>
-                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest leading-tight">
-                              <div>Conv. Rate</div>
+                            <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest leading-tight">
+                              <div>Conv.</div>
                               <input
                                 type="number"
                                 step="any"
                                 min="0"
-                                className="w-20 px-2 py-1 mt-0.5 border border-slate-200 rounded-md text-[10px] font-black text-slate-700 outline-none focus:border-blue-500"
+                                className="w-16 px-1 py-0.5 mt-0.5 border border-slate-200 rounded-md text-[9px] font-black text-slate-700 outline-none focus:border-blue-500"
                                 defaultValue={pl.conversionRate}
                                 title="Multiplier to bring PO cost into the order's revenue currency. Used only for the P/L threshold check. Default 1 = no conversion."
                                 onBlur={async (e) => {
@@ -2181,7 +2235,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         </td>
                       );
                       if (col === 'revenue') return (
-                        <td key={col} className="px-8 py-6">
+                        <td key={col} className="px-3.5 py-4">
                           <div className="flex items-center gap-2">
                             <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} {pl.currency}</div>
                           </div>
@@ -2191,8 +2245,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         </td>
                       );
                       if (col === 'markup') return (
-                        <td key={col} className="px-8 py-6">
-                          <div className={`px-3 py-1.5 rounded-xl border-2 text-[10px] font-black w-fit shadow-sm ${isBreach ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-emerald-50 border-emerald-100 text-emerald-600'}`}>
+                        <td key={col} className="px-3 py-4">
+                          <div className={`px-2.5 py-1 rounded-xl border-2 text-[10px] font-black w-fit shadow-sm ${isBreach ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-emerald-50 border-emerald-100 text-emerald-600'}`}>
                             {pl.markupPct.toFixed(1)}% Markup
                           </div>
                           <div className="text-[8px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Target: {config.settings.minimumMarginPct}% (in {pl.currency})</div>
@@ -2201,8 +2255,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       if (col === 'status') {
                         const isExceedingPayment = (totalAuthorizedGross + draftSum) > pl.paid + 0.01; // small epsilon for float precision
                         return (
-                          <td key={col} className="px-8 py-6">
-                            <div className="flex flex-col gap-2">
+                          <td key={col} className="px-3 py-4">
+                            <div className="flex flex-col gap-1.5">
                               <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
                                 {getDynamicOrderStatusStyle(o, config).label}
                               </div>
@@ -2218,20 +2272,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         );
                       }
                       if (col === 'actions') return (
-                        <td key={col} className="px-8 py-6 text-end">
-                          <div className="flex justify-end gap-2 items-center">
+                        <td key={col} className="px-4 py-4 text-end">
+                          <div className="flex justify-end gap-1.5 items-center flex-nowrap">
                             {isInvoicedOrLater && (
                               <>
                                 <button
                                   onClick={() => handleDownloadInvoice(o)}
-                                  className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200"
+                                  className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200 shrink-0"
                                   title="Download Tax Invoice"
                                 >
                                   {isDownloading && printOrder?.id === o.id ? <i className="fa-solid fa-circle-notch fa-spin text-xs"></i> : <i className="fa-solid fa-file-arrow-down text-xs"></i>}
                                 </button>
                                 <button
                                   onClick={() => setDecisionModal({ type: 'cancelInvoice', entityId: o.id, entityName: o.internalOrderNumber })}
-                                  className="px-4 py-2 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[9px] font-black uppercase hover:bg-rose-100 transition-all flex items-center gap-2"
+                                  className="px-2.5 py-1.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[9px] font-black uppercase hover:bg-rose-100 transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
                                   title="Void current invoice and return to Billing stage"
                                 >
                                   <i className="fa-solid fa-file-circle-xmark"></i> Void
@@ -2239,11 +2293,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               </>
                             )}
                             {o.status === OrderStatus.NEGATIVE_MARGIN && (
-                              <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-rose-200">Force Auth</button>
+                              <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-2.5 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm shadow-rose-200 shrink-0 whitespace-nowrap">Force Auth</button>
                             )}
-                            <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-blue-200">{t("finance.orders.generateInvoice") || "Generate Invoice"}</button>
-                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg shadow-emerald-200">{t("finance.orders.recordPayment") || "Record Payment"}</button>
-                            <div className="flex gap-1">
+                            <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm shadow-blue-200 shrink-0 whitespace-nowrap flex items-center gap-1"><i className="fa-solid fa-file-invoice text-[10px]"></i> {t("finance.orders.generateInvoice") || "Invoice"}</button>
+                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }} className="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm shadow-emerald-200 shrink-0 whitespace-nowrap flex items-center gap-1"><i className="fa-solid fa-money-bill-wave text-[10px]"></i> {t("finance.orders.recordPayment") || "Payment"}</button>
+                            <div className="flex gap-1 items-center shrink-0">
                               {!o.einvoiceRequested && (
                                 <button
                                   onClick={async () => {
@@ -2252,19 +2306,19 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                       fetchData();
                                     }
                                   }}
-                                  className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-lg hover:bg-amber-700 transition-all"
+                                  className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-700 transition-all shrink-0 whitespace-nowrap flex items-center gap-1"
                                   title="Request Gov. E-Invoice"
                                 >
-                                  <i className="fa-solid fa-file-invoice mr-1"></i> Gov
+                                  <i className="fa-solid fa-landmark text-[10px]"></i> Gov
                                 </button>
                               )}
                               {o.einvoiceRequested && !o.einvoiceFile && (
-                                <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center">
+                                <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center shrink-0">
                                   <i className="fa-solid fa-clock mr-1"></i>
                                 </span>
                               )}
-                              <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-2 text-slate-300 hover:text-amber-500 transition-colors" title="Toggle Hold"><i className="fa-solid fa-hand"></i></button>
-                              <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-2 text-slate-300 hover:text-rose-500 transition-colors" title="Reject Order"><i className="fa-solid fa-ban"></i></button>
+                              <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-1.5 text-slate-300 hover:text-amber-500 transition-colors shrink-0" title="Toggle Hold"><i className="fa-solid fa-hand text-xs"></i></button>
+                              <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors shrink-0" title="Reject Order"><i className="fa-solid fa-ban text-xs"></i></button>
                             </div>
                           </div>
                         </td>
@@ -2543,6 +2597,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         allHistoryEntries.push({
                           orderId: o.id,
                           orderNumber: o.internalOrderNumber,
+                          customerReferenceNumber: o.customerReferenceNumber,
                           customerName: o.customerName,
                           orderStatus: o.status,
                           ...entry
@@ -2569,6 +2624,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         allHistoryEntries.push({
                           orderId: o.id,
                           orderNumber: o.internalOrderNumber,
+                          customerReferenceNumber: o.customerReferenceNumber,
                           customerName: o.customerName,
                           orderStatus: log.status || o.status,
                           type: message.includes('Payment') ? 'payment' :
@@ -2589,6 +2645,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       allHistoryEntries.push({
                         orderId: o.id,
                         orderNumber: o.internalOrderNumber,
+                        customerReferenceNumber: o.customerReferenceNumber,
                         customerName: o.customerName,
                         orderStatus: o.status,
                         type: 'payment',
@@ -2596,7 +2653,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         message: `Payment recorded: ${payment.amount.toLocaleString()} ${getOrderCurrency(o)}`,
                         timestamp: payment.date || new Date().toISOString(),
                         user: payment.user || 'System',
-                                  receiptNumber: payment.receiptNumber || `RCV-${order.internalOrderNumber.replace(/[^\w]/g, '').slice(-6)}-${String(idx + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`
+                        receiptNumber: payment.receiptNumber || `RCV-${o.internalOrderNumber ? o.internalOrderNumber.replace(/[^\w]/g, '').slice(-6) : '000000'}-${String(idx + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`
                       });
                     });
                   }
@@ -2608,6 +2665,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   allHistoryEntries = allHistoryEntries.filter(entry => {
                     const searchableText = [
                       entry.orderNumber || '',
+                      entry.customerReferenceNumber || '',
                       entry.customerName || '',
                       entry.orderStatus || '',
                       entry.type || '',
@@ -2708,8 +2766,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                  entry.type === 'authorization' ? 'Finance Authorization' :
                                  t("finance.history.financialTransaction")}
                               </div>
-                              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-                                {entry.orderNumber} • {entry.customerName} • {entry.orderStatus?.replace(/_/g, ' ')}
+                              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-2 flex-wrap">
+                                <span>{entry.orderNumber}</span>
+                                {entry.customerReferenceNumber && (
+                                  <span className="text-slate-400 font-bold normal-case text-[9px] bg-slate-200/60 px-1 py-0.5 rounded">
+                                    PO: {entry.customerReferenceNumber}
+                                  </span>
+                                )}
+                                <span>•</span>
+                                <span>{entry.customerName}</span>
+                                <span>•</span>
+                                <span>{entry.orderStatus?.replace(/_/g, ' ')}</span>
                               </div>
                             </div>
                           </div>
