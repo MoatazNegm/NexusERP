@@ -321,7 +321,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       if (isBlanketKeywords.includes(q)) return true;
       if ((order.contractId || '').toLowerCase().includes(q)) return true;
       if ((order.blanketContractId || '').toLowerCase().includes(q)) return true;
-      if ((order.projectName || '').toLowerCase().includes(q)) return true;
+      if (order.projectName && (order.projectName.toLowerCase().includes(q) || `project: ${order.projectName}`.toLowerCase().includes(q) || `project ${order.projectName}`.toLowerCase().includes(q))) return true;
+      if (!order.projectName && ('non-project non project nonproject non_project'.includes(q) || q === 'non' || q === 'non-project' || q === 'non project')) return true;
 
       // 7. Status & Compliance tags
       const status = (order.status || '').toLowerCase();

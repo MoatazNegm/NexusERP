@@ -780,7 +780,18 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (o.internalOrderNumber?.toLowerCase().includes(q)) return true;
     if (o.customerReferenceNumber?.toLowerCase().includes(q)) return true;
     if (o.customerName?.toLowerCase().includes(q)) return true;
-    if (o.projectName?.toLowerCase().includes(q)) return true;
+
+    // Project Name / Non-Project search
+    const hasProject = Boolean(o.projectName && o.projectName.trim());
+    if (hasProject) {
+      if (o.projectName?.toLowerCase().includes(q)) return true;
+      if (`project: ${o.projectName}`.toLowerCase().includes(q)) return true;
+      if (`project ${o.projectName}`.toLowerCase().includes(q)) return true;
+      if (q === 'project' || (q.length >= 3 && 'project'.includes(q))) return true;
+    } else {
+      if ('non-project non project nonproject non_project'.includes(q) || q === 'non' || q === 'non-project' || q === 'non project') return true;
+    }
+
     if (o.orderDate?.toLowerCase().includes(q)) return true;
     if (o.dataEntryTimestamp?.toLowerCase().includes(q)) return true;
     if (o.contractId?.toLowerCase().includes(q)) return true;
@@ -2080,7 +2091,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search PO #, Int ID, parts, descriptions..."
+                    placeholder="Search PO #, Int ID, project, non-project, parts..."
                     className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all shadow-inner"
                   />
                   {searchTerm && (
@@ -2163,12 +2174,16 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             )}
                           </div>
                           <div className="font-black text-slate-800">{o.customerName}</div>
-                          {o.projectName && (
-                            <div className="text-[9px] font-black text-violet-600 uppercase flex items-center gap-1">
-                              <i className="fa-solid fa-diagram-project"></i> {o.projectName}
+                          {o.projectName ? (
+                            <div className="text-[9px] font-black text-violet-600 uppercase flex items-center gap-1.5 mt-0.5" title="Project Name">
+                              <i className="fa-solid fa-diagram-project"></i> <span>Project: <strong className="text-violet-700">{o.projectName}</strong></span>
+                            </div>
+                          ) : (
+                            <div className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1.5 mt-0.5" title="Non-Project Order">
+                              <i className="fa-solid fa-folder-open text-slate-400"></i> <span>Non-Project</span>
                             </div>
                           )}
-                          <div className="text-[9px] text-slate-400 font-bold uppercase">{comps.length} {t('procurement.component.components')}</div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">{comps.length} {t('procurement.component.components')}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
