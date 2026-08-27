@@ -435,6 +435,10 @@ The auto-complete dropdown in **Technical Review** (`TechnicalReviewModule.tsx`)
 - **PO Reference Header Badge:** In `ProcurementModule.tsx`, every order card header prominently displays the customer's PO reference badge (`PO: <customerReferenceNumber>`) alongside the internal order number in both the **Trade/Manufacturing** (`purchases`) and **Blanket Orders** (`outsourcing`) views.
 - **Universal Multi-Field Search Box:** A dedicated search input in the Procurement section header filters orders in real time across all visible attributes, including internal order numbers, customer PO references, customer names, project names, item order numbers & descriptions, part numbers, component descriptions, supplier names, supplier part numbers, PO numbers, RFP IDs, and manufacturing steps.
 
+### 8. Strict Blanket Order Classification & Procurement UI Clarity
+- **Order Management Strict Classification:** `isOrderBlanket` exclusively evaluates the explicit `blanketOrder: true` flag set during the initial logging via the "New Blanket Order" view. Orders with outsourcing items or component contracts are no longer falsely classified as Blanket Orders.
+- **Procurement Outsourcing Workflow Renaming:** To eliminate user confusion between true Blanket Orders and standard orders with outsourcing services, the "Blanket Orders" tab in `ProcurementModule.tsx` (and its corresponding `i18n` localization keys) has been universally renamed to "Outsourcing" and "Outsourcing Workflow".
+
 ---
 
 ## Server & Runtime Architecture Updates
