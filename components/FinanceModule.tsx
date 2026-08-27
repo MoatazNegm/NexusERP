@@ -571,6 +571,25 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [dispatchReceiptInputs, setDispatchReceiptInputs] = useState<Record<string, string>>({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+
+  const toggleOrderExpand = (orderId: string) => {
+    setExpandedOrderIds(prev => ({
+      ...prev,
+      [orderId]: !prev[orderId]
+    }));
+  };
+
+  const handleToggleExpandAll = () => {
+    const allExpanded = filteredOrders.length > 0 && filteredOrders.every(o => expandedOrderIds[o.id]);
+    if (allExpanded) {
+      setExpandedOrderIds({});
+    } else {
+      const next: Record<string, boolean> = {};
+      filteredOrders.forEach(o => { next[o.id] = true; });
+      setExpandedOrderIds(next);
+    }
+  };
 
   // Supplier Payments state
   const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>(['all']);
@@ -751,10 +770,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       // 3. Invoice number
       if ((o.invoiceNumber || '').toLowerCase().includes(q)) return true;
 
-      // 4. Contract & Project
+      // 4. Contract & Project (supports searching project name or 'non-project' / 'project')
       if ((o.contractId || '').toLowerCase().includes(q)) return true;
       if ((o.blanketContractId || '').toLowerCase().includes(q)) return true;
-      if ((o.projectName || '').toLowerCase().includes(q)) return true;
+      if (q === 'non-project' || q === 'non project' || q === 'nonproject') {
+        if (!o.projectName || o.projectName.trim() === '') return true;
+      } else if (q === 'project' || q === 'projects') {
+        if (o.projectName && o.projectName.trim() !== '') return true;
+      } else if ((o.projectName || '').toLowerCase().includes(q)) {
+        return true;
+      }
 
       // 5. Dates
       const orderDateRaw = (o.orderDate || '').toLowerCase();
@@ -1458,13 +1483,25 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
           </div>
         ) : (
-          <div className="relative w-full xl:w-96">
-            <input
-              type="text" placeholder={t("finance.orders.searchOrders") || "Search internal ID, PO ref, customer..."}
-              className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
-              value={search} onChange={e => setSearch(e.target.value)}
-            />
-            <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+          <div className="flex items-center gap-3 w-full xl:w-auto">
+            {(activeTab === 'orders' || activeTab === 'billing_details') && filteredOrders.length > 0 && (
+              <button
+                onClick={handleToggleExpandAll}
+                className="px-3.5 py-3 bg-white border-2 border-slate-100 rounded-2xl text-[10px] font-black uppercase text-slate-600 hover:text-blue-600 hover:border-blue-200 transition-all shadow-sm flex items-center gap-2 shrink-0"
+                title={filteredOrders.every(o => expandedOrderIds[o.id]) ? 'Collapse All Items' : 'Expand All Items'}
+              >
+                <i className={`fa-solid ${filteredOrders.every(o => expandedOrderIds[o.id]) ? 'fa-compress' : 'fa-expand'} text-xs`}></i>
+                <span>{filteredOrders.every(o => expandedOrderIds[o.id]) ? 'Collapse All' : 'Expand All'}</span>
+              </button>
+            )}
+            <div className="relative w-full xl:w-96">
+              <input
+                type="text" placeholder={t("finance.orders.searchOrders") || "Search ID, PO, customer, project (or 'non-project')..."}
+                className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
+                value={search} onChange={e => setSearch(e.target.value)}
+              />
+              <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+            </div>
           </div>
         )}
       </div>
@@ -2090,6 +2127,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                   PO: {o.customerReferenceNumber}
                                 </span>
                               )}
+                              {o.projectName && o.projectName.trim() !== '' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs">
+                                  <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
+                                  Project: {o.projectName}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight">
+                                  <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
+                                  Non-Project
+                                </span>
+                              )}
                             </div>
                             <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2">
                               {o.customerName}
@@ -2166,17 +2214,36 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 draftSum += draftQty * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
               });
 
+              const isExpanded = Boolean(expandedOrderIds[o.id]);
+
               return (
                 <React.Fragment key={o.id}>
-                  <tr className={`hover:bg-slate-50/80 transition-colors ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/20' : ''}`}>
+                  <tr 
+                    onClick={() => toggleOrderExpand(o.id)}
+                    className={`hover:bg-slate-50/80 transition-colors cursor-pointer select-none ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/20' : ''}`}
+                  >
                     {columnOrder.map(col => {
                       if (col === 'context') return (
                         <td key={col} className="px-4 py-4">
                           <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-wrap">
-                            <span>{o.internalOrderNumber}</span>
+                            <span className="flex items-center gap-1.5 font-black">
+                              <i className={`fa-solid fa-chevron-right text-[9px] text-slate-400 transition-transform ${isExpanded ? 'rotate-90 text-blue-600' : ''}`}></i>
+                              {o.internalOrderNumber}
+                            </span>
                             {o.customerReferenceNumber && (
                               <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
                                 PO: {o.customerReferenceNumber}
+                              </span>
+                            )}
+                            {o.projectName && o.projectName.trim() !== '' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs">
+                                <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
+                                Project: {o.projectName}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight">
+                                <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
+                                Non-Project
                               </span>
                             )}
                           </div>
@@ -2185,6 +2252,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
                               <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
                             )}
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full border border-slate-200">
+                              {o.items.length} {o.items.length === 1 ? 'item' : 'items'}
+                            </span>
                           </div>
                           {o.isSettlingOrder && (
                             <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[8px] font-black uppercase">
@@ -2206,7 +2276,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         </td>
                       );
                       if (col === 'currency') return (
-                        <td key={col} className="px-2.5 py-4">
+                        <td key={col} className="px-2.5 py-4" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center gap-1">
                             <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{pl.currency}</span>
                             <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest leading-tight">
@@ -2272,7 +2342,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         );
                       }
                       if (col === 'actions') return (
-                        <td key={col} className="px-4 py-4 text-end">
+                        <td key={col} className="px-4 py-4 text-end" onClick={e => e.stopPropagation()}>
                           <div className="flex justify-end gap-1.5 items-center flex-nowrap">
                             {isInvoicedOrLater && (
                               <>
@@ -2327,104 +2397,106 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     })}
                   </tr>
 
-                  {/* Inline Line Items for Authorization */}
-                  <tr className="bg-slate-50/50 border-b-2 border-slate-100">
-                    <td colSpan={columnOrder.length} className="px-8 pb-6 bg-transparent">
-                      <div className="bg-white rounded-2xl shadow-inner border border-slate-200 overflow-hidden divide-y divide-slate-100">
-                        <div className="px-4 py-2 bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest grid grid-cols-12 gap-4 items-center">
-                          <div className="col-span-5">{t("finance.poItemDefinition") || "PO Item Definition"}</div>
-                          <div className="col-span-1 text-center">{t("finance.orders.hubReady") || "Hub Rdy"}</div>
-                          <div className="col-span-2 text-center">{t("finance.orders.authorized") || "Authorized"}</div>
-                          <div className="col-span-1 text-center">{t("finance.orders.shipped") || "Shipped"}</div>
-                          <div className="col-span-3 text-end pr-2">{t("finance.orders.dispatchReceipt") || "Dispatch Autho. Receipt"}</div>
-                        </div>
-                        {o.items.map(it => {
-                          const inHub = it.hubReceivedQty || 0;
-                          const approved = it.approvedForDispatchQty || 0;
-                          const dispatched = it.dispatchedQty || 0;
-                          const maxAuth = Math.max(0, inHub - approved);
+                  {/* Inline Line Items for Authorization - collapsible */}
+                  {isExpanded && (
+                    <tr className="bg-slate-50/50 border-b-2 border-slate-100">
+                      <td colSpan={columnOrder.length} className="px-8 pb-6 bg-transparent" onClick={e => e.stopPropagation()}>
+                        <div className="bg-white rounded-2xl shadow-inner border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                          <div className="px-4 py-2 bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest grid grid-cols-12 gap-4 items-center">
+                            <div className="col-span-5">{t("finance.poItemDefinition") || "PO Item Definition"}</div>
+                            <div className="col-span-1 text-center">{t("finance.orders.hubReady") || "Hub Rdy"}</div>
+                            <div className="col-span-2 text-center">{t("finance.orders.authorized") || "Authorized"}</div>
+                            <div className="col-span-1 text-center">{t("finance.orders.shipped") || "Shipped"}</div>
+                            <div className="col-span-3 text-end pr-2">{t("finance.orders.dispatchReceipt") || "Dispatch Autho. Receipt"}</div>
+                          </div>
+                          {o.items.map(it => {
+                            const inHub = it.hubReceivedQty || 0;
+                            const approved = it.approvedForDispatchQty || 0;
+                            const dispatched = it.dispatchedQty || 0;
+                            const maxAuth = Math.max(0, inHub - approved);
 
-                          const itemGrossPerUnit = (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
-                          const draftSumFromOthers = draftSum - ((parseFloat(dispatchReceiptInputs[it.id]) || 0) * itemGrossPerUnit);
-                          const availableAmount = pl.paid - totalAuthorizedGross - draftSumFromOthers;
-                          const maxAffordablePieces = itemGrossPerUnit > 0 ? Math.max(0, Math.floor(availableAmount / itemGrossPerUnit)) : maxAuth;
-                          const finalMaxQty = Math.min(maxAffordablePieces, maxAuth);
+                            const itemGrossPerUnit = (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
+                            const draftSumFromOthers = draftSum - ((parseFloat(dispatchReceiptInputs[it.id]) || 0) * itemGrossPerUnit);
+                            const availableAmount = pl.paid - totalAuthorizedGross - draftSumFromOthers;
+                            const maxAffordablePieces = itemGrossPerUnit > 0 ? Math.max(0, Math.floor(availableAmount / itemGrossPerUnit)) : maxAuth;
+                            const finalMaxQty = Math.min(maxAffordablePieces, maxAuth);
 
-                          return (
-                            <div key={it.id} className="px-4 py-3 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors">
-                              <div className="col-span-5">
-                                <div className="font-bold text-xs text-slate-800 line-clamp-1">{it.description}</div>
-                                <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                                  Tgt: {getItemEffectiveQty(it)} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} {pl.currency}
+                            return (
+                              <div key={it.id} className="px-4 py-3 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors">
+                                <div className="col-span-5">
+                                  <div className="font-bold text-xs text-slate-800 line-clamp-1">{it.description}</div>
+                                  <div className="text-[10px] text-slate-500 font-bold mt-0.5">
+                                    Tgt: {getItemEffectiveQty(it)} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} {pl.currency}
+                                  </div>
+                                </div>
+                                <div className="col-span-1 text-center font-black text-sky-600 text-xs">{inHub}</div>
+                                <div className="col-span-2 text-center text-[10px] font-bold">
+                                  {approved > 0 ? (
+                                    <span className={`px-2 py-0.5 rounded-full ${approved >= inHub ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                      {approved} Auth
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 opacity-50 block text-center">None</span>
+                                  )}
+                                </div>
+                                <div className="col-span-1 text-center font-black text-slate-400 text-xs">{dispatched}</div>
+                                <div className="col-span-3 flex justify-end gap-2 items-center">
+                                  {maxAuth > 0 ? (
+                                    <>
+                                      <div className="flex flex-col items-end gap-1">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={maxAuth}
+                                          placeholder={`Max: ${maxAuth}`}
+                                          value={dispatchReceiptInputs[it.id] !== undefined ? dispatchReceiptInputs[it.id] : ''}
+                                          onChange={(e) => {
+                                            const val = parseFloat(e.target.value);
+                                            if (e.target.value === '' || isNaN(val)) {
+                                              setDispatchReceiptInputs(p => ({ ...p, [it.id]: e.target.value }));
+                                            } else {
+                                              setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(Math.min(val, maxAuth)) }));
+                                            }
+                                          }}
+                                          className={`w-20 px-2 py-1.5 text-xs text-center font-bold border-2 rounded-lg outline-none transition-all ${
+                                            (parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 
+                                            ? 'border-rose-500 bg-rose-50 text-rose-600 animate-shake' 
+                                            : 'border-slate-200 focus:border-indigo-400'
+                                          }`}
+                                        />
+                                        {(parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 && (
+                                          <div className="text-[8px] font-black text-rose-500 uppercase tracking-tighter">
+                                            Excess: {((parseFloat(dispatchReceiptInputs[it.id]) || 0) - maxAffordablePieces).toLocaleString()} {it.unit}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <button
+                                        disabled={isProcessing}
+                                        onClick={() => handleInlineDispatchAuth(o.id, it.id)}
+                                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-black uppercase shadow flex items-center gap-1 disabled:opacity-50"
+                                      >
+                                        <i className="fa-solid fa-file-signature"></i> Auth
+                                      </button>
+                                      <button
+                                        disabled={isProcessing || finalMaxQty <= 0}
+                                        onClick={() => setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(finalMaxQty) }))}
+                                        className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-lg text-[9px] font-black uppercase shadow-sm flex items-center gap-1 disabled:opacity-50 transition-all"
+                                        title="Set to max quantity affordable with current partial payment balance"
+                                      >
+                                        Max Paid
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <div className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">Fully Cleared</div>
+                                  )}
                                 </div>
                               </div>
-                              <div className="col-span-1 text-center font-black text-sky-600 text-xs">{inHub}</div>
-                              <div className="col-span-2 text-center text-[10px] font-bold">
-                                {approved > 0 ? (
-                                  <span className={`px-2 py-0.5 rounded-full ${approved >= inHub ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                    {approved} Auth
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-400 opacity-50 block text-center">None</span>
-                                )}
-                              </div>
-                              <div className="col-span-1 text-center font-black text-slate-400 text-xs">{dispatched}</div>
-                              <div className="col-span-3 flex justify-end gap-2 items-center">
-                                {maxAuth > 0 ? (
-                                  <>
-                                    <div className="flex flex-col items-end gap-1">
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        max={maxAuth}
-                                        placeholder={`Max: ${maxAuth}`}
-                                        value={dispatchReceiptInputs[it.id] !== undefined ? dispatchReceiptInputs[it.id] : ''}
-                                        onChange={(e) => {
-                                          const val = parseFloat(e.target.value);
-                                          if (e.target.value === '' || isNaN(val)) {
-                                            setDispatchReceiptInputs(p => ({ ...p, [it.id]: e.target.value }));
-                                          } else {
-                                            setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(Math.min(val, maxAuth)) }));
-                                          }
-                                        }}
-                                        className={`w-20 px-2 py-1.5 text-xs text-center font-bold border-2 rounded-lg outline-none transition-all ${
-                                          (parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 
-                                          ? 'border-rose-500 bg-rose-50 text-rose-600 animate-shake' 
-                                          : 'border-slate-200 focus:border-indigo-400'
-                                        }`}
-                                      />
-                                      {(parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 && (
-                                        <div className="text-[8px] font-black text-rose-500 uppercase tracking-tighter">
-                                          Excess: {((parseFloat(dispatchReceiptInputs[it.id]) || 0) - maxAffordablePieces).toLocaleString()} {it.unit}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <button
-                                      disabled={isProcessing}
-                                      onClick={() => handleInlineDispatchAuth(o.id, it.id)}
-                                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-black uppercase shadow flex items-center gap-1 disabled:opacity-50"
-                                    >
-                                      <i className="fa-solid fa-file-signature"></i> Auth
-                                    </button>
-                                    <button
-                                      disabled={isProcessing || finalMaxQty <= 0}
-                                      onClick={() => setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(finalMaxQty) }))}
-                                      className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-lg text-[9px] font-black uppercase shadow-sm flex items-center gap-1 disabled:opacity-50 transition-all"
-                                      title="Set to max quantity affordable with current partial payment balance"
-                                    >
-                                      Max Paid
-                                    </button>
-                                  </>
-                                ) : (
-                                  <div className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">Fully Cleared</div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </td>
-                  </tr>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                 </React.Fragment>
               );
             })}

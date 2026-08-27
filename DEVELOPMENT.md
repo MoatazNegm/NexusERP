@@ -444,6 +444,13 @@ The auto-complete dropdown in **Technical Review** (`TechnicalReviewModule.tsx`)
 - **Unified Multi-Model Fallback Engine:** The Strategic AI Assistant (`AIAssistant.tsx`) now shares the exact same resilient multi-model fallback engine, benchmarking metrics (`nexus_ocr_model_benchmarks_v2`), and failover queue used by Order Management OCR. In OpenRouter/OpenAI mode, requests automatically sequence through healthy, fast models (`nvidia/nemotron-3-nano-omni-30b`, `dots-studio/dots-3-note-preview`, `google/gemma-4-26b`, `minimax/minimax-m3`, and `openrouter/auto`) with per-model timeouts and instant recovery. In Gemini mode, native Google GenAI is invoked.
 - **Sandbox-Specific Operational Digestion:** The assistant directly ingests the active user's environment context (`isSandbox`, `sandboxOwner`, `environmentName`, user roles) and entire sandbox order ledger (including PO references, project associations, manufacturing stages, hub warehouse levels, dispatch tracking, supplier pricing, and audit logs). It accurately explains sandbox-specific data, provides targeted bottleneck analysis, renders Mermaid diagrams, and guides users through the complete 8-stage Nexus ERP operational lifecycle and simulation practice.
 
+### 10. Finance View Project Tagging, Universal Project Search & Collapsible Cards
+- **Project Name & Non-Project Badging:** Order cells in `FinanceModule.tsx` (across both Active Orders, Billing Details, and Tax Clearances) prominently render distinct badges indicating the project name (`Project: <projectName>`) with a violet badge and icon when present, or a clear `Non-Project` indicator when no project is attached.
+- **Universal Multi-Query Search:** The Finance search filter directly supports searching by project name substrings as well as explicit keywords: `non-project` / `non project` / `nonproject` (isolates non-project orders) and `project` / `projects` (isolates project-linked orders).
+- **Collapsible Order Cards by Default:** All order rows in Finance start closed by default to provide a compact, scannable overview. Clicking any order row smoothly toggles the card open/closed to inspect its detailed line item authorization breakdown, with chevron indicators and item count pills.
+- **Global Toolbar Controls:** A dedicated "Expand All / Collapse All" toggle button is available in the toolbar to expand or collapse all visible order cards simultaneously.
+- **Interaction Isolation:** Interactive buttons (Invoice, Payment, Void, Gov E-Invoice, Hold, Reject, Download) and numeric inputs (currency conversion, dispatch authorization) prevent event propagation, ensuring actions can be performed without toggling card expansion.
+
 ---
 
 ## Server & Runtime Architecture Updates
