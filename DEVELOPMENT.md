@@ -440,6 +440,10 @@ The auto-complete dropdown in **Technical Review** (`TechnicalReviewModule.tsx`)
 - **Order Management Strict Classification:** `isOrderBlanket` exclusively evaluates the explicit `blanketOrder: true` flag set during the initial logging via the "New Blanket Order" view. Orders with outsourcing items or component contracts are no longer falsely classified as Blanket Orders.
 - **Procurement Outsourcing Workflow Renaming:** To eliminate user confusion between true Blanket Orders and standard orders with outsourcing services, the "Blanket Orders" tab in `ProcurementModule.tsx` (and its corresponding `i18n` localization keys) has been universally renamed to "Outsourcing" and "Outsourcing Workflow".
 
+### 9. Unified Strategic AI Engine & Sandbox Intelligence Digestion
+- **Unified Multi-Model Fallback Engine:** The Strategic AI Assistant (`AIAssistant.tsx`) now shares the exact same resilient multi-model fallback engine, benchmarking metrics (`nexus_ocr_model_benchmarks_v2`), and failover queue used by Order Management OCR. In OpenRouter/OpenAI mode, requests automatically sequence through healthy, fast models (`nvidia/nemotron-3-nano-omni-30b`, `dots-studio/dots-3-note-preview`, `google/gemma-4-26b`, `minimax/minimax-m3`, and `openrouter/auto`) with per-model timeouts and instant recovery. In Gemini mode, native Google GenAI is invoked.
+- **Sandbox-Specific Operational Digestion:** The assistant directly ingests the active user's environment context (`isSandbox`, `sandboxOwner`, `environmentName`, user roles) and entire sandbox order ledger (including PO references, project associations, manufacturing stages, hub warehouse levels, dispatch tracking, supplier pricing, and audit logs). It accurately explains sandbox-specific data, provides targeted bottleneck analysis, renders Mermaid diagrams, and guides users through the complete 8-stage Nexus ERP operational lifecycle and simulation practice.
+
 ---
 
 ## Server & Runtime Architecture Updates
