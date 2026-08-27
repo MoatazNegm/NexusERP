@@ -108,6 +108,15 @@ const App: React.FC = () => {
   const handleLogout = () => {
     localStorage.removeItem('nexus_user');
     setCurrentUser(null);
+    setOrders([]);
+    setAdminSandboxes([]);
+    setRefreshKey(prev => prev + 1);
+  };
+
+  const handleLogin = (user: User) => {
+    localStorage.setItem('nexus_user', JSON.stringify(user));
+    setCurrentUser(user);
+    setRefreshKey(prev => prev + 1);
   };
 
   useEffect(() => {
@@ -738,7 +747,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (!currentUser) return <Login onLogin={setCurrentUser} config={config} />;
+  if (!currentUser) return <Login onLogin={handleLogin} config={config} />;
 
   return (
     <div className={`min-h-screen flex bg-slate-50`}>
@@ -824,14 +833,14 @@ const App: React.FC = () => {
               <button onClick={() => setIsChangePassOpen(true)} className="text-slate-500 hover:text-blue-400 transition-colors">
                 <i className="fa-solid fa-key text-xs"></i>
               </button>
-              <button onClick={() => setCurrentUser(null)} className="text-slate-500 hover:text-rose-500 transition-colors">
+              <button onClick={handleLogout} className="text-slate-500 hover:text-rose-500 transition-colors">
                 <i className="fa-solid fa-power-off text-xs"></i>
               </button>
             </div>
           </div>
         )}
       </aside>
-       <main className={`flex-1 transition-all duration-300 min-w-0 ${effectivelyCollapsed ? 'ml-20' : 'ml-72'}`}>
+       <main key={currentUser ? `${currentUser.username}_${currentUser.sandboxOwner || 'live'}` : 'anonymous'} className={`flex-1 transition-all duration-300 min-w-0 ${effectivelyCollapsed ? 'ml-20' : 'ml-72'}`}>
          {currentUser?.sandbox && (
            <div className="bg-amber-500/10 border-b border-amber-500/30 px-6 py-2 flex flex-wrap items-center justify-between gap-3 text-amber-400 text-xs font-semibold">
              <div className="flex items-center gap-2 flex-wrap">

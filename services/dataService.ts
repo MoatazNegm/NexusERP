@@ -743,7 +743,11 @@ class DataService {
         throw new Error(err.error || 'Invalid identity or passcode');
       }
 
-      return await response.json() as User;
+      const user = await response.json() as User;
+      if (typeof window !== 'undefined' && user) {
+        localStorage.setItem('nexus_user', JSON.stringify(user));
+      }
+      return user;
     } catch (error) {
       console.error("Login verification error:", error);
       throw error;
