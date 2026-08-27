@@ -453,4 +453,9 @@ The auto-complete dropdown in **Technical Review** (`TechnicalReviewModule.tsx`)
 - Ports `3005` and `4005` are completely freed for external services.
 
 ### 3. Resilient Database Persistence
-- `writeDb` in `server.js` employs atomic write via `.tmp` file renaming with an automatic direct-write fallback to handle temporary Windows / OneDrive filesystem locks (`EPERM`).
+- `writeDb` in `server.js` employs atomic write via `.tmp` file renaming with an automatic direct-write fallback to handle temporary Windows / OneDrive filesystem locks (`EPERM`).
+
+### 4. Sandbox Session Login Snapshots & 'Revert to Login State'
+- **Automatic Login Snapshot Capture:** Whenever a user authenticates into a Sandbox environment (or an admin switches into another user's sandbox), the backend server automatically saves a snapshot file `db.sandbox.<owner>.login_snapshot.json` representing the state at logon.
+- **Revert to Login State Button & Modal:** In `App.tsx`, a dedicated `<button> Revert to Login State` (styled with a sky-blue badge and clock icon) is positioned beside `Reset Data` in the top sandbox banner.
+- **Scenario Replay & Training:** When confirmed, the frontend invokes `dataService.revertSandboxToLogin()` (`POST /api/v1/sandbox/revert-login`), restoring the database back to the initial login snapshot so users can test various simulation scenarios starting from the exact same point in time.

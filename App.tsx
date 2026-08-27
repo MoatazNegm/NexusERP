@@ -55,6 +55,8 @@ const App: React.FC = () => {
   const [connectionError, setConnectionError] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
+  const [showRevertLoginModal, setShowRevertLoginModal] = useState(false);
+  const [isRevertingLogin, setIsRevertingLogin] = useState(false);
   const [adminSandboxes, setAdminSandboxes] = useState<AdminSandboxInfo[]>([]);
   const [isSwitchingSandbox, setIsSwitchingSandbox] = useState(false);
 
@@ -68,6 +70,20 @@ const App: React.FC = () => {
       setRefreshKey(prev => prev + 1);
     } catch (err) {
       console.error("Failed to reset sandbox:", err);
+    }
+  };
+
+  const handleConfirmRevertLogin = async () => {
+    setIsRevertingLogin(true);
+    try {
+      await dataService.revertSandboxToLogin();
+      setShowRevertLoginModal(false);
+      setRefreshKey(prev => prev + 1);
+    } catch (err: any) {
+      console.error("Failed to revert sandbox to login state:", err);
+      alert(err.message || "Failed to revert sandbox to login state");
+    } finally {
+      setIsRevertingLogin(false);
     }
   };
 
@@ -851,12 +867,19 @@ const App: React.FC = () => {
                     {isSwitchingSandbox && <i className="fa-solid fa-circle-notch fa-spin text-amber-400 text-xs"></i>}
                   </div>
                 )}
-               <button 
-                 onClick={() => setShowResetModal(true)}
-                 className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded border border-amber-500/40 text-[11px] font-bold transition-colors"
-               >
-                 <i className="fa-solid fa-rotate-left mr-1"></i> Reset Data
-               </button>
+                <button 
+                  onClick={() => setShowRevertLoginModal(true)}
+                  className="px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 rounded border border-sky-500/40 text-[11px] font-bold transition-colors flex items-center gap-1"
+                  title="Revert database back to the snapshot taken when you logged on"
+                >
+                  <i className="fa-solid fa-clock-rotate-left mr-1"></i> Revert to Login State
+                </button>
+                <button 
+                  onClick={() => setShowResetModal(true)}
+                  className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded border border-amber-500/40 text-[11px] font-bold transition-colors"
+                >
+                  <i className="fa-solid fa-rotate-left mr-1"></i> Reset Data
+                </button>
                <button 
                  onClick={handleLogout}
                  className="text-amber-300 hover:text-white underline text-[11px]"
@@ -956,6 +979,49 @@ const App: React.FC = () => {
                 className="flex-1 py-3 bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-rose-700 disabled:opacity-50 transition-colors"
               >
                 Confirm Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showRevertLoginModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-md p-8 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-sky-500 to-blue-600"></div>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center text-lg font-black">
+                <i className="fa-solid fa-clock-rotate-left"></i>
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Revert to Login State</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Restore Initial Session Snapshot</p>
+              </div>
+            </div>
+            <p className="text-sm font-semibold text-slate-600 mb-6 leading-relaxed">
+              This will restore all sandbox orders, customers, inventory, and records back to the exact snapshot captured when you logged into this sandbox session. All test data created since logon will be undone so you can practice a fresh scenario.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowRevertLoginModal(false)}
+                disabled={isRevertingLogin}
+                className="flex-1 py-3 bg-slate-100 text-slate-500 font-black text-[10px] uppercase rounded-xl hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={isRevertingLogin}
+                onClick={handleConfirmRevertLogin}
+                className="flex-1 py-3 bg-sky-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-sky-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-sky-200"
+              >
+                {isRevertingLogin ? (
+                  <>
+                    <i className="fa-solid fa-circle-notch fa-spin"></i> Reverting...
+                  </>
+                ) : (
+                  <>
+                    <i className="fa-solid fa-clock-rotate-left"></i> Confirm Revert
+                  </>
+                )}
               </button>
             </div>
           </div>

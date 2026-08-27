@@ -759,6 +759,18 @@ class DataService {
     return true;
   }
 
+  async revertSandboxToLogin(): Promise<boolean> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/sandbox/revert-login`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to revert sandbox to login state");
+    }
+    return true;
+  }
+
   async getAdminSandboxes(): Promise<AdminSandboxInfo[]> {
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/admin/sandboxes`, {

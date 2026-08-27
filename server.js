@@ -24,6 +24,19 @@ const sanitizeUsername = (username) => {
 };
 
 const getSandboxDbPath = (owner) => path.join(__dirname, `db.sandbox.${sanitizeUsername(owner)}.json`);
+const getSandboxLoginSnapshotPath = (owner) => path.join(__dirname, `db.sandbox.${sanitizeUsername(owner)}.login_snapshot.json`);
+const saveSandboxLoginSnapshot = (owner) => {
+  const sandboxPath = getSandboxDbPath(owner);
+  const snapshotPath = getSandboxLoginSnapshotPath(owner);
+  if (fs.existsSync(sandboxPath)) {
+    try {
+      fs.copyFileSync(sandboxPath, snapshotPath);
+      console.log(`[Sandbox] Saved login snapshot for ${owner}`);
+    } catch (e) {
+      console.error(`[Sandbox] Failed to save login snapshot for ${owner}:`, e);
+    }
+  }
+};
 const getSandboxUploadsPath = (owner) => path.join(UPLOADS_BASE, 'sandbox', sanitizeUsername(owner));
 const getDbPath = (req) => req.sandboxDbPath || DB_PATH;
 const isSandbox = (req) => Boolean(req.sandboxDbPath);
@@ -1772,6 +1785,10 @@ app.use((req, res, next) => {
                 req.sandboxDbPath = sandboxPath;
                 req.sandboxOwner = sanitizedOwner;
                 req.roles = userEntry.roles || [];
+                const snapshotPath = getSandboxLoginSnapshotPath(sanitizedOwner);
+                if (!fs.existsSync(snapshotPath)) {
+                    saveSandboxLoginSnapshot(sanitizedOwner);
+                }
             } else {
                 return res.status(403).json({ error: 'ACCESS_REVOKED', message: 'Access to this sandbox has been restricted.' });
             }
@@ -2295,6 +2312,24 @@ app.post('/api/v1/sandbox/reset', (req, res) => {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
   res.json({ success: true, message: "Sandbox reset successfully." });
+});
+
+app.post('/api/v1/sandbox/revert-login', (req, res) => {
+  if (!isSandbox(req)) return res.status(400).json({ error: "Must be in sandbox mode." });
+  const snapshotPath = getSandboxLoginSnapshotPath(req.sandboxOwner);
+  const sandboxPath = getDbPath(req);
+  if (!fs.existsSync(snapshotPath)) {
+    return res.status(404).json({ error: "No initial login snapshot found for this sandbox session." });
+  }
+  try {
+    const snapshotDb = readDb(snapshotPath);
+    writeDb(snapshotDb, sandboxPath);
+    console.log(`[Sandbox] Reverted sandbox for ${req.sandboxOwner} to login snapshot`);
+    res.json({ success: true, message: "Sandbox reverted to login state successfully." });
+  } catch (err) {
+    console.error("[Sandbox] Failed to revert to login snapshot:", err);
+    res.status(500).json({ error: "Failed to revert to login state." });
+  }
 });
 
 
@@ -4168,6 +4203,8 @@ app.post('/api/v1/admin/switch-sandbox', (req, res) => {
   const isSelf = sanitizedTarget === sanitizeUsername(username);
   const label = isSelf ? `My Own Sandbox (${username})` : `${targetName}'s Sandbox (${sanitizedTarget})`;
 
+  saveSandboxLoginSnapshot(sanitizedTarget);
+
   const { password: _, ...safeUser } = userEntry;
   return res.json({
     ...safeUser,
@@ -4232,6 +4269,7 @@ app.post('/api/v1/login', (req, res) => {
       sandboxDb.users.push(sandboxUser);
       writeDb(sandboxDb, sandboxPath);
     }
+    saveSandboxLoginSnapshot(username);
     const { password: _, ...safe } = sandboxUser;
     return res.json({ ...safe, sandbox: true, sandboxOwner: sanitizeUsername(username), sandboxLabel: `My Own Sandbox (${username})` });
   }
@@ -4249,6 +4287,7 @@ app.post('/api/v1/login', (req, res) => {
   if (!hasAccess) return res.status(403).json({ error: "You do not have access to this team sandbox." });
   if (sandboxUser.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password for this sandbox." });
 
+  saveSandboxLoginSnapshot(ownerSanitized);
   const ownerUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === ownerSanitized);
   const { password: _, ...safe } = sandboxUser;
   return res.json({ ...safe, sandbox: true, sandboxOwner: ownerSanitized, sandboxLabel: `${ownerUser?.name || ownerSanitized}'s Team Sandbox` });
