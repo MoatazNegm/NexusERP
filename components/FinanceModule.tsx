@@ -752,6 +752,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     return { revenue, grossRevenue, cost, costInOrderCurrency, conversionRate: rate, currency: getOrderCurrency(order), paid, outstanding: Math.max(0, targetRev - paid), marginPct, markupPct };
   };
 
+  const getOrderProjectName = useCallback((order: CustomerOrder): string => {
+    if (order.projectName && order.projectName.trim() !== '') {
+      return order.projectName.trim();
+    }
+    if (order.blanketContractId) {
+      const parent = orders.find(p => p.id === order.blanketContractId || p.internalOrderNumber === order.blanketContractId || p.customerReferenceNumber === order.blanketContractId);
+      if (parent?.projectName && parent.projectName.trim() !== '') {
+        return parent.projectName.trim();
+      }
+    }
+    const legacy = (order as any).project || (order as any).project_name || (order as any).projectName || '';
+    return typeof legacy === 'string' ? legacy.trim() : '';
+  }, [orders]);
+
   const ordersWithPL = useMemo(() => orders.map(o => ({ ...o, pl: getPL(o) })), [orders]);
 
   const filteredOrders = useMemo(() => {
@@ -770,15 +784,22 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       // 3. Invoice number
       if ((o.invoiceNumber || '').toLowerCase().includes(q)) return true;
 
-      // 4. Contract & Project (supports searching project name or 'non-project' / 'project')
+      // 4. Contract & Project Name search (supports matching any part of project name, 'project', or 'non-project')
       if ((o.contractId || '').toLowerCase().includes(q)) return true;
       if ((o.blanketContractId || '').toLowerCase().includes(q)) return true;
-      if (q === 'non-project' || q === 'non project' || q === 'nonproject') {
-        if (!o.projectName || o.projectName.trim() === '') return true;
-      } else if (q === 'project' || q === 'projects') {
-        if (o.projectName && o.projectName.trim() !== '') return true;
-      } else if ((o.projectName || '').toLowerCase().includes(q)) {
-        return true;
+
+      const proj = getOrderProjectName(o).toLowerCase();
+      const hasProj = Boolean(proj);
+
+      if (hasProj) {
+        if (proj.includes(q)) return true;
+        if (`project: ${proj}`.includes(q)) return true;
+        if (`project ${proj}`.includes(q)) return true;
+        if (q === 'project' || q === 'projects' || (q.length >= 3 && 'project'.includes(q))) return true;
+        const tokens = q.split(/\s+/).filter(Boolean);
+        if (tokens.length > 1 && tokens.every(tok => proj.includes(tok))) return true;
+      } else {
+        if ('non-project non project nonproject non_project'.includes(q) || q === 'non' || q === 'non-project' || q === 'non project') return true;
       }
 
       // 5. Dates
@@ -817,21 +838,39 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     });
 
     return sorted;
-  }, [ordersWithPL, search, sortConfig]);
+  }, [ordersWithPL, search, sortConfig, getOrderProjectName]);
 
   const whtOrders = useMemo(() => {
     const q = whtSearch.toLowerCase().trim();
     const now = new Date();
     const year = whtPeriod === 'this_year' ? now.getFullYear() : now.getFullYear() - 1;
 
-    const filtered = orders.filter(o =>
-      o.appliesWithholdingTax &&
-      o.status === OrderStatus.FULFILLED &&
-      ((o.customerName || '').toLowerCase().includes(q) ||
-       (o.internalOrderNumber || '').toLowerCase().includes(q) ||
-       (o.customerReferenceNumber || '').toLowerCase().includes(q)) &&
-      new Date(o.orderDate || o.dataEntryTimestamp).getFullYear() === year
-    );
+    const filtered = orders.filter(o => {
+      if (!o.appliesWithholdingTax || o.status !== OrderStatus.FULFILLED) return false;
+      const orderYear = new Date(o.orderDate || o.dataEntryTimestamp).getFullYear();
+      if (orderYear !== year) return false;
+      if (!q) return true;
+
+      if ((o.customerName || '').toLowerCase().includes(q)) return true;
+      if ((o.internalOrderNumber || '').toLowerCase().includes(q)) return true;
+      if ((o.customerReferenceNumber || '').toLowerCase().includes(q)) return true;
+      if ((o.invoiceNumber || '').toLowerCase().includes(q)) return true;
+
+      const proj = getOrderProjectName(o).toLowerCase();
+      const hasProj = Boolean(proj);
+      if (hasProj) {
+        if (proj.includes(q)) return true;
+        if (`project: ${proj}`.includes(q)) return true;
+        if (`project ${proj}`.includes(q)) return true;
+        if (q === 'project' || q === 'projects' || (q.length >= 3 && 'project'.includes(q))) return true;
+        const tokens = q.split(/\s+/).filter(Boolean);
+        if (tokens.length > 1 && tokens.every(tok => proj.includes(tok))) return true;
+      } else {
+        if ('non-project non project nonproject non_project'.includes(q) || q === 'non' || q === 'non-project' || q === 'non project') return true;
+      }
+
+      return false;
+    });
 
     const sorted = [...filtered].sort((a: any, b: any) => {
       const valA = a[sortConfig.key] || '';
@@ -842,7 +881,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     });
 
     return sorted;
-  }, [orders, whtSearch, whtPeriod, sortConfig]);
+  }, [orders, whtSearch, whtPeriod, sortConfig, getOrderProjectName]);
 
   const handleUploadWHT = async (orderId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2128,17 +2167,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                   PO: {o.customerReferenceNumber}
                                 </span>
                               )}
-                              {o.projectName && o.projectName.trim() !== '' ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0">
-                                  <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
-                                  Project: {o.projectName}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0">
-                                  <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
-                                  Non-Project
-                                </span>
-                              )}
+                              {(() => {
+                                const proj = getOrderProjectName(o);
+                                return proj ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0">
+                                    <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
+                                    Project: {proj}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0">
+                                    <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
+                                    Non-Project
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2">
                               {o.customerName}
@@ -2241,17 +2283,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                 PO: {o.customerReferenceNumber}
                               </span>
                             )}
-                            {o.projectName && o.projectName.trim() !== '' ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0">
-                                <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
-                                Project: {o.projectName}
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0">
-                                <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
-                                Non-Project
-                              </span>
-                            )}
+                            {(() => {
+                              const proj = getOrderProjectName(o);
+                              return proj ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0">
+                                  <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
+                                  Project: {proj}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0">
+                                  <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
+                                  Non-Project
+                                </span>
+                              );
+                            })()}
                           </div>
                           <div className="font-bold text-slate-800 text-sm tracking-tight mt-1 flex items-center gap-2 flex-wrap">
                             <span>{o.customerName}</span>

@@ -795,12 +795,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (o.customerName?.toLowerCase().includes(q)) return true;
 
     // Project Name / Non-Project search
-    const hasProject = Boolean(o.projectName && o.projectName.trim());
+    const getOrderProjName = (ord: CustomerOrder): string => {
+      if (ord.projectName && ord.projectName.trim() !== '') return ord.projectName.trim();
+      if (ord.blanketContractId) {
+        const parent = allOrders.find(p => p.id === ord.blanketContractId || p.internalOrderNumber === ord.blanketContractId || p.customerReferenceNumber === ord.blanketContractId);
+        if (parent?.projectName && parent.projectName.trim() !== '') return parent.projectName.trim();
+      }
+      const legacy = (ord as any).project || (ord as any).project_name || (ord as any).projectName || '';
+      return typeof legacy === 'string' ? legacy.trim() : '';
+    };
+
+    const proj = getOrderProjName(o).toLowerCase();
+    const hasProject = Boolean(proj);
     if (hasProject) {
-      if (o.projectName?.toLowerCase().includes(q)) return true;
-      if (`project: ${o.projectName}`.toLowerCase().includes(q)) return true;
-      if (`project ${o.projectName}`.toLowerCase().includes(q)) return true;
-      if (q === 'project' || (q.length >= 3 && 'project'.includes(q))) return true;
+      if (proj.includes(q)) return true;
+      if (`project: ${proj}`.includes(q)) return true;
+      if (`project ${proj}`.includes(q)) return true;
+      if (q === 'project' || q === 'projects' || (q.length >= 3 && 'project'.includes(q))) return true;
+      const tokens = q.split(/\s+/).filter(Boolean);
+      if (tokens.length > 1 && tokens.every(tok => proj.includes(tok))) return true;
     } else {
       if ('non-project non project nonproject non_project'.includes(q) || q === 'non' || q === 'non-project' || q === 'non project') return true;
     }
