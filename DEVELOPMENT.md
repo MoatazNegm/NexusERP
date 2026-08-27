@@ -431,6 +431,10 @@ The auto-complete dropdown in **Technical Review** (`TechnicalReviewModule.tsx`)
 - **Autocomplete Scope:** Autocomplete dropdowns in Sourcing Catalogs (`TechnicalReviewModule.tsx` and `StudyingModule.tsx`) strictly search **real, active catalog items** (`INVENTORY` stock and active `SUPPLIERS` price lists). Past customer order components are excluded from autocomplete suggestions to prevent phantom or duplicate suggestions.
 - **Part Order & Customer History:** Users can view the historical customer order usage of any real part by clicking the <i className="fa-solid fa-clock-rotate-left"></i> icon in the **Commercial Price List**, **Deleted Suppliers Vault**, or **Technical Review Sourcing Catalogs**. The modal displays all past customer orders where the part was used, including the internal order number, customer name, PO reference, date, logged description, quantity, unit cost, and order/component status.
 
+### 7. Procurement PO Reference Display & Universal Search
+- **PO Reference Header Badge:** In `ProcurementModule.tsx`, every order card header prominently displays the customer's PO reference badge (`PO: <customerReferenceNumber>`) alongside the internal order number in both the **Trade/Manufacturing** (`purchases`) and **Blanket Orders** (`outsourcing`) views.
+- **Universal Multi-Field Search Box:** A dedicated search input in the Procurement section header filters orders in real time across all visible attributes, including internal order numbers, customer PO references, customer names, project names, item order numbers & descriptions, part numbers, component descriptions, supplier names, supplier part numbers, PO numbers, RFP IDs, and manufacturing steps.
+
 ---
 
 ## Server & Runtime Architecture Updates

@@ -383,6 +383,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [activeTab, setActiveTab] = useState<'purchases' | 'outsourcing' | 'history'>('purchases');
+  const [searchTerm, setSearchTerm] = useState('');
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null);
   const poTemplateRef = useRef<HTMLDivElement>(null);
   const [poPrintData, setPoPrintData] = useState<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier } | null>(null);
@@ -768,6 +769,57 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       return 0;
     });
   }, [orders, sortConfig]);
+
+  const matchesSearch = (group: { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }, term: string): boolean => {
+    if (!term) return true;
+    const q = term.trim().toLowerCase();
+    if (!q) return true;
+
+    const o = group.order;
+    // 1. Order level fields
+    if (o.internalOrderNumber?.toLowerCase().includes(q)) return true;
+    if (o.customerReferenceNumber?.toLowerCase().includes(q)) return true;
+    if (o.customerName?.toLowerCase().includes(q)) return true;
+    if (o.projectName?.toLowerCase().includes(q)) return true;
+    if (o.orderDate?.toLowerCase().includes(q)) return true;
+    if (o.dataEntryTimestamp?.toLowerCase().includes(q)) return true;
+    if (o.contractId?.toLowerCase().includes(q)) return true;
+    if (o.blanketContractId?.toLowerCase().includes(q)) return true;
+
+    // 2. Line Item level fields
+    for (const it of o.items || []) {
+      if (it.description?.toLowerCase().includes(q)) return true;
+      if (it.orderNumber?.toLowerCase().includes(q)) return true;
+      if (it.supplierPartNumber?.toLowerCase().includes(q)) return true;
+      if (it.unit?.toLowerCase().includes(q)) return true;
+      if (String(it.quantity).includes(q)) return true;
+      if (String(it.pricePerUnit).includes(q)) return true;
+    }
+
+    // 3. Component level fields
+    for (const { item: it, comp: c } of group.comps) {
+      if (c.partNumber?.toLowerCase().includes(q)) return true;
+      if (c.description?.toLowerCase().includes(q)) return true;
+      if (c.supplierName?.toLowerCase().includes(q)) return true;
+      if (c.supplierPartNumber?.toLowerCase().includes(q)) return true;
+      if (c.poNumber?.toLowerCase().includes(q)) return true;
+      if (c.rfpId?.toLowerCase().includes(q)) return true;
+      if (c.status?.toLowerCase().includes(q)) return true;
+      if (c.source?.toLowerCase().includes(q)) return true;
+      if (c.rawMaterialName?.toLowerCase().includes(q)) return true;
+      if (c.manufacturingStep?.toLowerCase().includes(q)) return true;
+    }
+
+    return false;
+  };
+
+  const filteredPurchaseGroups = useMemo(() => {
+    return purchaseGroups.filter(g => matchesSearch(g, searchTerm));
+  }, [purchaseGroups, searchTerm]);
+
+  const filteredOutsourcingGroups = useMemo(() => {
+    return outsourcingGroups.filter(g => matchesSearch(g, searchTerm));
+  }, [outsourcingGroups, searchTerm]);
 
   const requestSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
@@ -2008,45 +2060,66 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           </div>
 
           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-10">
               <div>
                 <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-4">
                   {activeTab === 'outsourcing' ? t('procurement.outsourcingTitle') : t('procurement.title')}
-
                 </h2>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
                   {activeTab === 'outsourcing'
-                    ? `${t('procurement.subtitle.operationalServices')} • ${outsourcingGroups.length} ${t('procurement.subtitle.ordersPending')}`
-                    : `${t('procurement.subtitle.supplyChain')} • ${purchaseGroups.length} ${t('procurement.subtitle.ordersPending')}`}
+                    ? `${t('procurement.subtitle.operationalServices')} • ${filteredOutsourcingGroups.length}${searchTerm ? ` of ${outsourcingGroups.length}` : ''} ${t('procurement.subtitle.ordersPending')}`
+                    : `${t('procurement.subtitle.supplyChain')} • ${filteredPurchaseGroups.length}${searchTerm ? ` of ${purchaseGroups.length}` : ''} ${t('procurement.subtitle.ordersPending')}`}
                 </p>
               </div>
 
-              {/* Sorting Bar */}
-              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 self-end md:self-auto">
-                <span className="text-[9px] font-black uppercase text-slate-400 px-3 tracking-widest whitespace-nowrap">{t('procurement.sort.prioritySort')}:</span>
-                <div className="flex gap-1">
-                  {[
-                    { key: 'orderDate', label: t('procurement.sort.poReceived') },
-                    { key: 'customer', label: t('procurement.sort.entity') },
-                    { key: 'customerReferenceNumber', label: t('procurement.sort.poHash') },
-                    { key: 'internalOrderNumber', label: t('procurement.sort.intId') }
-                  ].map(btn => (
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
+                {/* Search Box */}
+                <div className="relative min-w-[260px] sm:min-w-[320px]">
+                  <i className="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xs pointer-events-none"></i>
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search PO #, Int ID, parts, descriptions..."
+                    className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all shadow-inner"
+                  />
+                  {searchTerm && (
                     <button
-                      key={btn.key}
-                      onClick={() => requestSort(btn.key)}
-                      className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${sortConfig.key === btn.key ? 'bg-white text-blue-600 shadow-md ring-1 ring-blue-50' : 'text-slate-400 hover:text-slate-600'}`}
+                      onClick={() => setSearchTerm('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
+                      title="Clear search"
                     >
-                      {btn.label}
-                      <SortIcon column={btn.key} />
+                      <i className="fa-solid fa-circle-xmark"></i>
                     </button>
-                  ))}
+                  )}
+                </div>
+
+                {/* Sorting Bar */}
+                <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 self-end sm:self-auto">
+                  <span className="text-[9px] font-black uppercase text-slate-400 px-3 tracking-widest whitespace-nowrap">{t('procurement.sort.prioritySort')}:</span>
+                  <div className="flex gap-1">
+                    {[
+                      { key: 'orderDate', label: t('procurement.sort.poReceived') },
+                      { key: 'customer', label: t('procurement.sort.entity') },
+                      { key: 'customerReferenceNumber', label: t('procurement.sort.poHash') },
+                      { key: 'internalOrderNumber', label: t('procurement.sort.intId') }
+                    ].map(btn => (
+                      <button
+                        key={btn.key}
+                        onClick={() => requestSort(btn.key)}
+                        className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${sortConfig.key === btn.key ? 'bg-white text-blue-600 shadow-md ring-1 ring-blue-50' : 'text-slate-400 hover:text-slate-600'}`}
+                      >
+                        {btn.label}
+                        <SortIcon column={btn.key} />
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
 
-
             <div className="space-y-8">
-              {(activeTab === 'outsourcing' ? outsourcingGroups : purchaseGroups).map(({ order: o, comps }) => {
+              {(activeTab === 'outsourcing' ? filteredOutsourcingGroups : filteredPurchaseGroups).map(({ order: o, comps }) => {
                 // Binary 0/1 PO-readiness gate:
                 // Each component is 1 if it has reached AWARDED or beyond, 0 if still pre-PO.
                 // "readyForPo" = at least one comp is AWARDED (needs PO) AND all others are 1 (won't block it).
@@ -2075,8 +2148,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           <i className="fa-solid fa-file-lines"></i>
                         </div>
                         <div>
-                          <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest flex items-center gap-2">
-                            {o.internalOrderNumber}
+                          <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest flex items-center flex-wrap gap-2">
+                            <span>{o.internalOrderNumber}</span>
+                            {o.customerReferenceNumber && (
+                              <span className="text-[10px] font-bold text-slate-600 bg-slate-200/80 px-2 py-0.5 rounded-lg border border-slate-300 font-mono tracking-normal" title="Customer PO Reference">
+                                PO: <span className="text-slate-900 font-black">{o.customerReferenceNumber}</span>
+                              </span>
+                            )}
                             {itemsInFactoryCount > 0 && (
                               <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
                                 <i className="fa-solid fa-bolt mr-1"></i>
@@ -2509,10 +2587,22 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   </div>
                 );
               })}
-              {((activeTab === 'outsourcing' ? outsourcingGroups : purchaseGroups).length === 0) && (
+              {((activeTab === 'outsourcing' ? filteredOutsourcingGroups : filteredPurchaseGroups).length === 0) && (
                 <div className="p-24 text-center text-slate-300 italic uppercase text-xs font-black tracking-widest flex flex-col items-center gap-4">
-                  <i className={`fa-solid ${activeTab === 'outsourcing' ? 'fa-handshake-angle' : 'fa-clipboard-check'} text-5xl opacity-10`}></i>
-                  {activeTab === 'outsourcing' ? t('procurement.actions.noActive') : t('procurement.actions.pipelineEmpty')}
+                  <i className={`fa-solid ${searchTerm ? 'fa-magnifying-glass' : (activeTab === 'outsourcing' ? 'fa-handshake-angle' : 'fa-clipboard-check')} text-5xl opacity-10`}></i>
+                  {searchTerm ? (
+                    <>
+                      <span className="text-slate-400 not-italic font-bold">No orders found matching "{searchTerm}"</span>
+                      <button
+                        onClick={() => setSearchTerm('')}
+                        className="mt-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-[10px] font-black not-italic normal-case transition-colors flex items-center gap-1.5"
+                      >
+                        <i className="fa-solid fa-xmark"></i> Clear Search Filter
+                      </button>
+                    </>
+                  ) : (
+                    activeTab === 'outsourcing' ? t('procurement.actions.noActive') : t('procurement.actions.pipelineEmpty')
+                  )}
                 </div>
               )}
             </div>

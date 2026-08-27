@@ -61,7 +61,7 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
 
       const getUserInfo = (username?: string) => {
          const userObj = users.find(u => u.username === username);
-         const userGroups = userObj?.groupIds?.map(gid => groups.find(g => g.id === gid)?.name || '') || [];
+         const userGroups = userObj?.groupIds?.map(gid => groups.find(g => g.id === gid)?.name || '').filter(Boolean) || [];
          return { fullName: userObj?.name || 'System', userGroups };
       };
 
@@ -71,10 +71,11 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
             const { fullName, userGroups } = getUserInfo(log.user);
             list.push({
                ...log,
+               message: log.message || '',
                sourceType: 'ORDER',
-               poRef: order.internalOrderNumber,
-               poCustomerRef: order.customerReferenceNumber,
-               customerName: order.customerName,
+               poRef: order.internalOrderNumber || '',
+               poCustomerRef: order.customerReferenceNumber || '',
+               customerName: order.customerName || '',
                userFullName: fullName,
                userGroups
             });
@@ -84,20 +85,22 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
          order.items?.forEach(item => {
             item.logs?.forEach(log => {
                const { fullName, userGroups } = getUserInfo(log.user);
-               const isCompAction = log.message.toLowerCase().includes('component') || log.message.toLowerCase().includes('bom');
+               const msg = log.message || '';
+               const isCompAction = msg.toLowerCase().includes('component') || msg.toLowerCase().includes('bom');
                let extractedComp = '';
-               const compMatch = log.message.match(/"([^"]+)"/);
+               const compMatch = msg.match(/"([^"]+)"/);
                if (isCompAction && compMatch) extractedComp = compMatch[1];
 
                list.push({
                   ...log,
+                  message: msg,
                   sourceType: isCompAction ? 'COMPONENT' : 'ITEM',
-                  poRef: order.internalOrderNumber,
-                  poCustomerRef: order.customerReferenceNumber,
-                  customerName: order.customerName,
+                  poRef: order.internalOrderNumber || '',
+                  poCustomerRef: order.customerReferenceNumber || '',
+                  customerName: order.customerName || '',
                   userFullName: fullName,
-                  itemRef: item.description,
-                  itemId: item.orderNumber,
+                  itemRef: item.description || '',
+                  itemId: item.orderNumber || '',
                   compRef: extractedComp || undefined,
                   userGroups
                });
@@ -111,13 +114,14 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
             const { fullName, userGroups } = getUserInfo(log.user);
              list.push({
                 ...log,
+                message: log.message || '',
                 sourceType: 'CUSTOMER',
                 poRef: 'CUSTOMER_MGMT',
                 poCustomerRef: '',
-                customerName: cust.name,
+                customerName: cust.name || '',
                 userFullName: fullName,
                 userGroups,
-                entityName: cust.name
+                entityName: cust.name || ''
              });
          });
       });
@@ -128,13 +132,14 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
             const { fullName, userGroups } = getUserInfo(log.user);
              list.push({
                 ...log,
+                message: log.message || '',
                 sourceType: 'SUPPLIER',
                 poRef: 'SUPPLIER_REL',
                 poCustomerRef: '',
-                customerName: supp.name,
+                customerName: supp.name || '',
                 userFullName: fullName,
                 userGroups,
-                entityName: supp.name
+                entityName: supp.name || ''
              });
          });
       });
@@ -145,13 +150,14 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
             const { fullName, userGroups } = getUserInfo(log.user);
              list.push({
                 ...log,
+                message: log.message || '',
                 sourceType: 'INVENTORY',
                 poRef: inv.sku || 'INV_SKU',
                 poCustomerRef: '',
                 customerName: 'Internal Stock',
                 userFullName: fullName,
                 userGroups,
-                entityName: inv.description
+                entityName: inv.description || ''
              });
          });
       });
@@ -162,13 +168,14 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
             const { fullName, userGroups } = getUserInfo(log.user);
              list.push({
                 ...log,
+                message: log.message || '',
                 sourceType: 'USER',
                 poRef: 'USER_ADMIN',
                 poCustomerRef: '',
                 customerName: 'System Security',
                 userFullName: fullName,
                 userGroups,
-                entityName: `@${u.username}`
+                entityName: u.username ? `@${u.username}` : ''
              });
          });
       });
@@ -177,21 +184,34 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
    }, [orders, users, groups, customers, suppliers, inventory]);
 
    const filteredLogs = useMemo(() => {
-      const query = search.toLowerCase().trim();
+      const query = (search || '').toLowerCase().trim();
       return allLogs.filter(log => {
-          const matchesSearch =
-             log.message.toLowerCase().includes(query) ||
-             log.poRef.toLowerCase().includes(query) ||
-             log.poCustomerRef.toLowerCase().includes(query) ||
-             log.customerName.toLowerCase().includes(query) ||
-             (log.user || '').toLowerCase().includes(query) ||
-             (log.userFullName.toLowerCase().includes(query) || (log.entityName?.toLowerCase() || '').includes(query)) ||
-             (log.itemRef?.toLowerCase() || '').includes(query) ||
-             (log.itemId?.toLowerCase() || '').includes(query) ||
-             (log.compRef?.toLowerCase() || '').includes(query);
+         const msg = (log.message || '').toLowerCase();
+         const poRef = (log.poRef || '').toLowerCase();
+         const poCustRef = (log.poCustomerRef || '').toLowerCase();
+         const custName = (log.customerName || '').toLowerCase();
+         const userStr = (log.user || '').toLowerCase();
+         const userFullName = (log.userFullName || '').toLowerCase();
+         const entityName = (log.entityName || '').toLowerCase();
+         const itemRef = (log.itemRef || '').toLowerCase();
+         const itemId = (log.itemId || '').toLowerCase();
+         const compRef = (log.compRef || '').toLowerCase();
+
+         const matchesSearch = !query ||
+            msg.includes(query) ||
+            poRef.includes(query) ||
+            poCustRef.includes(query) ||
+            custName.includes(query) ||
+            userStr.includes(query) ||
+            userFullName.includes(query) ||
+            entityName.includes(query) ||
+            itemRef.includes(query) ||
+            itemId.includes(query) ||
+            compRef.includes(query);
 
          const matchesUser = selectedUser === 'all' || log.user === selectedUser;
-         const matchesGroup = selectedGroup === 'all' || log.userGroups.includes(groups.find(g => g.id === selectedGroup)?.name || '');
+         const targetGroupName = groups.find(g => g.id === selectedGroup)?.name;
+         const matchesGroup = selectedGroup === 'all' || (targetGroupName ? (log.userGroups || []).includes(targetGroupName) : false);
          const matchesPo = selectedPo === 'all' || log.poRef === selectedPo;
          const matchesSource = sourceFilter === 'all' || log.sourceType === sourceFilter;
 
@@ -204,7 +224,7 @@ export const SystemLogs: React.FC<{ refreshKey?: number }> = ({ refreshKey }) =>
             matchesDate = new Date(log.timestamp) >= weekAgo;
          }
 
-         return matchesSearch && matchesUser && matchesGroup && matchesPo && matchesDate && matchesSource;
+         return Boolean(matchesSearch && matchesUser && matchesGroup && matchesPo && matchesDate && matchesSource);
       });
    }, [allLogs, search, selectedUser, selectedGroup, selectedPo, dateFilter, groups, sourceFilter]);
 
