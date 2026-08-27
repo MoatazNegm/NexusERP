@@ -2202,24 +2202,24 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           <i className={`fa-solid ${isExpanded ? 'fa-folder-open' : 'fa-folder'} text-base`}></i>
                         </div>
                         <div>
-                          <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest flex items-center flex-wrap gap-2">
-                            <span>{o.internalOrderNumber}</span>
+                          <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest flex items-center flex-nowrap gap-2 whitespace-nowrap">
+                            <span className="whitespace-nowrap shrink-0">{o.internalOrderNumber}</span>
                             {o.customerReferenceNumber && (
-                              <span className="text-[10px] font-bold text-slate-600 bg-slate-200/80 px-2 py-0.5 rounded-lg border border-slate-300 font-mono tracking-normal" title="Customer PO Reference">
+                              <span className="text-[10px] font-bold text-slate-600 bg-slate-200/80 px-2 py-0.5 rounded-lg border border-slate-300 font-mono tracking-normal whitespace-nowrap shrink-0" title="Customer PO Reference">
                                 PO: <span className="text-slate-900 font-black">{o.customerReferenceNumber}</span>
                               </span>
                             )}
                             {o.projectName ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs" title="Project Name">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Project Name">
                                 <i className="fa-solid fa-diagram-project text-violet-500"></i> Project: <strong className="text-violet-700">{o.projectName}</strong>
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight" title="Non-Project Order">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Non-Project Order">
                                 <i className="fa-solid fa-folder-minus text-slate-400"></i> Non-Project
                               </span>
                             )}
                             {itemsInFactoryCount > 0 && (
-                              <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
+                              <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200 whitespace-nowrap shrink-0" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
                                 <i className="fa-solid fa-bolt mr-1"></i>
                                 {itemsInFactoryCount}/{totalItems} {t('procurement.component.factoryReady')}
                               </span>
@@ -2227,10 +2227,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           </div>
                           <div className="font-black text-slate-800 text-sm mt-1 flex items-center gap-2 flex-wrap">
                             <span>{o.customerName}</span>
-                            <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200">
-                              <span>{comps.length} {t('procurement.component.components')}</span>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200 whitespace-nowrap shrink-0">
+                              <span className="whitespace-nowrap">{comps.length} {t('procurement.component.components')}</span>
                               <span className="text-slate-300">•</span>
-                              <span className="text-blue-600 font-black flex items-center gap-1 hover:text-blue-700">
+                              <span className="text-blue-600 font-black flex items-center gap-1 hover:text-blue-700 whitespace-nowrap">
                                 {isExpanded ? 'Click to collapse' : 'Expand to show components'}
                                 <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
                               </span>

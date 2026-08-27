@@ -2120,20 +2120,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       {columnOrder.map(col => {
                         if (col === 'context') return (
                           <td key={col} className="px-4 py-4">
-                            <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-wrap">
-                              <span>{o.internalOrderNumber}</span>
+                            <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-nowrap whitespace-nowrap">
+                              <span className="whitespace-nowrap shrink-0">{o.internalOrderNumber}</span>
                               {o.customerReferenceNumber && (
-                                <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap shrink-0">
                                   PO: {o.customerReferenceNumber}
                                 </span>
                               )}
                               {o.projectName && o.projectName.trim() !== '' ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0">
                                   <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
                                   Project: {o.projectName}
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0">
                                   <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
                                   Non-Project
                                 </span>
@@ -2225,20 +2225,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     {columnOrder.map(col => {
                       if (col === 'context') return (
                         <td key={col} className="px-4 py-3">
-                          <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-wrap">
-                            <span>{o.internalOrderNumber}</span>
+                          <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-nowrap whitespace-nowrap">
+                            <span className="whitespace-nowrap shrink-0">{o.internalOrderNumber}</span>
                             {o.customerReferenceNumber && (
-                              <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                              <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap shrink-0">
                                 PO: {o.customerReferenceNumber}
                               </span>
                             )}
                             {o.projectName && o.projectName.trim() !== '' ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0">
                                 <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
                                 Project: {o.projectName}
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0">
                                 <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
                                 Non-Project
                               </span>
@@ -2249,10 +2249,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
                               <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
                             )}
-                            <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200">
-                              <span>{o.items.length} {o.items.length === 1 ? 'item' : 'items'}</span>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200 whitespace-nowrap shrink-0">
+                              <span className="whitespace-nowrap">{o.items.length} {o.items.length === 1 ? 'item' : 'items'}</span>
                               <span className="text-slate-300">•</span>
-                              <span className="text-blue-600 font-black inline-flex items-center gap-1 hover:text-blue-700">
+                              <span className="text-blue-600 font-black inline-flex items-center gap-1 hover:text-blue-700 whitespace-nowrap">
                                 {isExpanded ? 'Click to collapse' : 'Expand to show components'}
                                 <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
                               </span>
