@@ -2226,10 +2226,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       if (col === 'context') return (
                         <td key={col} className="px-4 py-4">
                           <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-wrap">
-                            <span className="flex items-center gap-1.5 font-black">
-                              <i className={`fa-solid fa-chevron-right text-[9px] text-slate-400 transition-transform ${isExpanded ? 'rotate-90 text-blue-600' : ''}`}></i>
-                              {o.internalOrderNumber}
-                            </span>
+                            <span>{o.internalOrderNumber}</span>
                             {o.customerReferenceNumber && (
                               <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
                                 PO: {o.customerReferenceNumber}
@@ -2252,8 +2249,13 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
                               <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
                             )}
-                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full border border-slate-200">
-                              {o.items.length} {o.items.length === 1 ? 'item' : 'items'}
+                          </div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span>{o.items.length} {o.items.length === 1 ? 'item' : 'items'}</span>
+                            <span>•</span>
+                            <span className="text-blue-600 font-black inline-flex items-center gap-1 hover:text-blue-700">
+                              {isExpanded ? 'Click to collapse' : 'Expand to show components'}
+                              <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
                             </span>
                           </div>
                           {o.isSettlingOrder && (

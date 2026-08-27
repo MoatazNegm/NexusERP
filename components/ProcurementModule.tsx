@@ -2230,7 +2230,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <span>{comps.length} {t('procurement.component.components')}</span>
                             <span>•</span>
                             <span className="text-blue-600 font-black flex items-center gap-1">
-                              {isExpanded ? 'Click to collapse' : 'Click to expand components'}
+                              {isExpanded ? 'Click to collapse' : 'Expand to show components'}
                               <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
                             </span>
                           </div>
