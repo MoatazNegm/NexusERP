@@ -2224,7 +2224,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   >
                     {columnOrder.map(col => {
                       if (col === 'context') return (
-                        <td key={col} className="px-4 py-4">
+                        <td key={col} className="px-4 py-3">
                           <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-wrap">
                             <span>{o.internalOrderNumber}</span>
                             {o.customerReferenceNumber && (
@@ -2244,29 +2244,35 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               </span>
                             )}
                           </div>
-                          <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2">
-                            {o.customerName}
+                          <div className="font-bold text-slate-800 text-sm tracking-tight mt-1 flex items-center gap-2 flex-wrap">
+                            <span>{o.customerName}</span>
                             {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
                               <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
                             )}
-                          </div>
-                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-1.5 flex-wrap">
-                            <span>{o.items.length} {o.items.length === 1 ? 'item' : 'items'}</span>
-                            <span>•</span>
-                            <span className="text-blue-600 font-black inline-flex items-center gap-1 hover:text-blue-700">
-                              {isExpanded ? 'Click to collapse' : 'Expand to show components'}
-                              <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200">
+                              <span>{o.items.length} {o.items.length === 1 ? 'item' : 'items'}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-blue-600 font-black inline-flex items-center gap-1 hover:text-blue-700">
+                                {isExpanded ? 'Click to collapse' : 'Expand to show components'}
+                                <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
+                              </span>
                             </span>
                           </div>
-                          {o.isSettlingOrder && (
-                            <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[8px] font-black uppercase">
-                              <i className="fa-solid fa-link"></i> Blanket Settling
+                          {(o.isSettlingOrder || o.blanketContractId || o.invoiceNumber) && (
+                            <div className="mt-1 flex items-center gap-2 flex-wrap text-[9px]">
+                              {o.isSettlingOrder && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[8px] font-black uppercase">
+                                  <i className="fa-solid fa-link"></i> Blanket Settling
+                                </span>
+                              )}
+                              {o.blanketContractId && (
+                                <span className="font-mono font-black text-indigo-500 uppercase">Contract: {o.blanketContractId}</span>
+                              )}
+                              {o.invoiceNumber && (
+                                <span className="font-black text-emerald-600 uppercase">Tax Invoice: {o.invoiceNumber}</span>
+                              )}
                             </div>
                           )}
-                          {o.blanketContractId && (
-                            <div className="text-[9px] font-mono font-black text-indigo-500 uppercase mt-1">Contract: {o.blanketContractId}</div>
-                          )}
-                          {o.invoiceNumber && <div className="text-[9px] font-black text-emerald-600 uppercase mt-1">Tax Invoice: {o.invoiceNumber}</div>}
                         </td>
                       );
                       if (col === 'date') return (

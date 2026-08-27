@@ -2209,6 +2209,15 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 PO: <span className="text-slate-900 font-black">{o.customerReferenceNumber}</span>
                               </span>
                             )}
+                            {o.projectName ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs" title="Project Name">
+                                <i className="fa-solid fa-diagram-project text-violet-500"></i> Project: <strong className="text-violet-700">{o.projectName}</strong>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight" title="Non-Project Order">
+                                <i className="fa-solid fa-folder-minus text-slate-400"></i> Non-Project
+                              </span>
+                            )}
                             {itemsInFactoryCount > 0 && (
                               <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
                                 <i className="fa-solid fa-bolt mr-1"></i>
@@ -2216,22 +2225,15 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               </span>
                             )}
                           </div>
-                          <div className="font-black text-slate-800 text-sm mt-0.5">{o.customerName}</div>
-                          {o.projectName ? (
-                            <div className="text-[9px] font-black text-violet-600 uppercase flex items-center gap-1.5 mt-0.5" title="Project Name">
-                              <i className="fa-solid fa-diagram-project"></i> <span>Project: <strong className="text-violet-700">{o.projectName}</strong></span>
-                            </div>
-                          ) : (
-                            <div className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1.5 mt-0.5" title="Non-Project Order">
-                              <i className="fa-solid fa-folder-open text-slate-400"></i> <span>Non-Project</span>
-                            </div>
-                          )}
-                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-2">
-                            <span>{comps.length} {t('procurement.component.components')}</span>
-                            <span>•</span>
-                            <span className="text-blue-600 font-black flex items-center gap-1">
-                              {isExpanded ? 'Click to collapse' : 'Expand to show components'}
-                              <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
+                          <div className="font-black text-slate-800 text-sm mt-1 flex items-center gap-2 flex-wrap">
+                            <span>{o.customerName}</span>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200">
+                              <span>{comps.length} {t('procurement.component.components')}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-blue-600 font-black flex items-center gap-1 hover:text-blue-700">
+                                {isExpanded ? 'Click to collapse' : 'Expand to show components'}
+                                <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
+                              </span>
                             </span>
                           </div>
                         </div>
