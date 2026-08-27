@@ -2108,15 +2108,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </>
             ) : activeTab === 'tax_clearances' ? (
               <>
-                {whtOrders.map(o => {
+                {whtOrders.map((o, orderIdx) => {
                   let grossRevenue = 0;
                   o.items.forEach(it => grossRevenue += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
                   const whtAmount = grossRevenue * 0.01;
                   const targetRevenue = grossRevenue * 0.99;
                   const oCurrency = getOrderCurrency(o);
+                  const isEvenRow = orderIdx % 2 === 1;
 
                   return (
-                    <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={o.id} className={`${isEvenRow ? 'bg-slate-100/60' : 'bg-white'} hover:bg-blue-50/60 transition-colors border-b border-slate-100`}>
                       {columnOrder.map(col => {
                         if (col === 'context') return (
                           <td key={col} className="px-4 py-4">
@@ -2194,7 +2195,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   </tr>
                 )}
               </>
-            ) : filteredOrders.map(o => {
+            ) : filteredOrders.map((o, orderIdx) => {
               const pl = (o as any).pl;
               const isBreach = isMarginBreach(pl.costInOrderCurrency ?? pl.cost, pl.markupPct, config.settings.minimumMarginPct);
               const currentTab = activeTab as string;
@@ -2215,12 +2216,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               });
 
               const isExpanded = Boolean(expandedOrderIds[o.id]);
+              const isEvenRow = orderIdx % 2 === 1;
+              const rowBg = o.status === OrderStatus.NEGATIVE_MARGIN
+                ? 'bg-rose-50/30'
+                : isExpanded
+                ? 'bg-blue-50/30'
+                : isEvenRow
+                ? 'bg-slate-100/60'
+                : 'bg-white';
 
               return (
                 <React.Fragment key={o.id}>
                   <tr 
                     onClick={() => toggleOrderExpand(o.id)}
-                    className={`hover:bg-slate-50/80 transition-colors cursor-pointer select-none ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/20' : ''}`}
+                    className={`${rowBg} hover:bg-blue-50/60 transition-colors cursor-pointer select-none border-b border-slate-100`}
                   >
                     {columnOrder.map(col => {
                       if (col === 'context') return (
@@ -2350,31 +2359,55 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         );
                       }
                       if (col === 'actions') return (
-                        <td key={col} className="px-4 py-4 text-end" onClick={e => e.stopPropagation()}>
+                        <td key={col} className="px-3 py-3 text-end" onClick={e => e.stopPropagation()}>
                           <div className="flex justify-end gap-1.5 items-center flex-nowrap">
                             {isInvoicedOrLater && (
                               <>
                                 <button
                                   onClick={() => handleDownloadInvoice(o)}
-                                  className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200 shrink-0"
+                                  className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200 shrink-0"
                                   title="Download Tax Invoice"
                                 >
                                   {isDownloading && printOrder?.id === o.id ? <i className="fa-solid fa-circle-notch fa-spin text-xs"></i> : <i className="fa-solid fa-file-arrow-down text-xs"></i>}
                                 </button>
                                 <button
                                   onClick={() => setDecisionModal({ type: 'cancelInvoice', entityId: o.id, entityName: o.internalOrderNumber })}
-                                  className="px-2.5 py-1.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[9px] font-black uppercase hover:bg-rose-100 transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
+                                  className="w-8 h-8 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[8px] font-black uppercase hover:bg-rose-100 transition-all flex flex-col items-center justify-center text-center leading-none shrink-0"
                                   title="Void current invoice and return to Billing stage"
                                 >
-                                  <i className="fa-solid fa-file-circle-xmark"></i> Void
+                                  <i className="fa-solid fa-file-circle-xmark text-[10px] mb-0.5"></i>
+                                  <span>Void</span>
                                 </button>
                               </>
                             )}
                             {o.status === OrderStatus.NEGATIVE_MARGIN && (
-                              <button onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })} className="px-2.5 py-1.5 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm shadow-rose-200 shrink-0 whitespace-nowrap">Force Auth</button>
+                              <button
+                                onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })}
+                                className="px-1.5 py-1 min-h-[32px] bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-rose-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight"
+                                title="Force Margin Authorization"
+                              >
+                                <span>Force</span>
+                                <span>Auth</span>
+                              </button>
                             )}
-                            <button onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })} className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm shadow-blue-200 shrink-0 whitespace-nowrap flex items-center gap-1"><i className="fa-solid fa-file-invoice text-[10px]"></i> {t("finance.orders.generateInvoice") || "Invoice"}</button>
-                            <button onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }} className="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm shadow-emerald-200 shrink-0 whitespace-nowrap flex items-center gap-1"><i className="fa-solid fa-money-bill-wave text-[10px]"></i> {t("finance.orders.recordPayment") || "Payment"}</button>
+                            <button
+                              onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })}
+                              className="px-2 py-1 min-h-[32px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-blue-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all"
+                              title="Generate Tax Invoice"
+                            >
+                              <i className="fa-solid fa-file-invoice text-[9px]"></i>
+                              <span className="mt-0.5">Generate</span>
+                              <span>Invoice</span>
+                            </button>
+                            <button
+                              onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }}
+                              className="px-2 py-1 min-h-[32px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-emerald-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all"
+                              title="Record Payment"
+                            >
+                              <i className="fa-solid fa-money-bill-wave text-[9px]"></i>
+                              <span className="mt-0.5">Record</span>
+                              <span>Payment</span>
+                            </button>
                             <div className="flex gap-1 items-center shrink-0">
                               {!o.einvoiceRequested && (
                                 <button
@@ -2384,19 +2417,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                       fetchData();
                                     }
                                   }}
-                                  className="px-2.5 py-1.5 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-700 transition-all shrink-0 whitespace-nowrap flex items-center gap-1"
+                                  className="w-8 h-8 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm transition-all shrink-0 flex flex-col items-center justify-center text-center leading-none"
                                   title="Request Gov. E-Invoice"
                                 >
-                                  <i className="fa-solid fa-landmark text-[10px]"></i> Gov
+                                  <i className="fa-solid fa-landmark text-[10px] mb-0.5"></i>
+                                  <span>Gov</span>
                                 </button>
                               )}
                               {o.einvoiceRequested && !o.einvoiceFile && (
-                                <span className="px-2 py-1 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center shrink-0">
-                                  <i className="fa-solid fa-clock mr-1"></i>
+                                <span className="w-8 h-8 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center justify-center shrink-0" title="Gov Invoice Requested">
+                                  <i className="fa-solid fa-clock"></i>
                                 </span>
                               )}
-                              <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-1.5 text-slate-300 hover:text-amber-500 transition-colors shrink-0" title="Toggle Hold"><i className="fa-solid fa-hand text-xs"></i></button>
-                              <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors shrink-0" title="Reject Order"><i className="fa-solid fa-ban text-xs"></i></button>
+                              <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-1 text-slate-300 hover:text-amber-500 transition-colors shrink-0" title="Toggle Hold"><i className="fa-solid fa-hand text-xs"></i></button>
+                              <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-1 text-slate-300 hover:text-rose-500 transition-colors shrink-0" title="Reject Order"><i className="fa-solid fa-ban text-xs"></i></button>
                             </div>
                           </div>
                         </td>
