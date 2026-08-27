@@ -372,21 +372,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   }, [editingOrderId]);
 
   const isOrderBlanket = (order: CustomerOrder): boolean => {
-    if (order.blanketOrder) return true;
-    if (order.contractId || order.blanketContractId) return true;
-    if (order.items?.some(it => it.productionType === 'OUTSOURCING')) return true;
-    if (order.items?.some(it => it.components?.some(c => c.contractNumber || c.contractStartDate || c.contractDuration))) return true;
-    return false;
+    return !!order.blanketOrder;
   };
 
   const getOrderContractId = (order: CustomerOrder): string => {
     if (order.contractId) return order.contractId;
     if (order.blanketContractId) return order.blanketContractId;
-    for (const it of order.items || []) {
-      for (const c of it.components || []) {
-        if (c.contractNumber) return c.contractNumber;
-      }
-    }
     return '';
   };
 
