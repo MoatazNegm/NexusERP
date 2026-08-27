@@ -384,6 +384,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [activeTab, setActiveTab] = useState<'purchases' | 'outsourcing' | 'history'>('purchases');
   const [searchTerm, setSearchTerm] = useState('');
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
+
+  const toggleOrderExpand = (orderId: string) => {
+    setExpandedOrderIds(prev => {
+      const next = new Set(prev);
+      if (next.has(orderId)) {
+        next.delete(orderId);
+      } else {
+        next.add(orderId);
+      }
+      return next;
+    });
+  };
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null);
   const poTemplateRef = useRef<HTMLDivElement>(null);
   const [poPrintData, setPoPrintData] = useState<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier } | null>(null);
@@ -2105,8 +2118,31 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   )}
                 </div>
 
-                {/* Sorting Bar */}
-                <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 self-end sm:self-auto">
+                {/* Sorting & Expand All Bar */}
+                <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 self-end sm:self-auto flex-wrap">
+                  {(() => {
+                    const currentGroups = activeTab === 'outsourcing' ? filteredOutsourcingGroups : filteredPurchaseGroups;
+                    const allCurrentExpanded = currentGroups.length > 0 && currentGroups.every(g => expandedOrderIds.has(g.order.id));
+
+                    const toggleAllExpanded = () => {
+                      if (allCurrentExpanded) {
+                        setExpandedOrderIds(new Set());
+                      } else {
+                        setExpandedOrderIds(new Set(currentGroups.map(g => g.order.id)));
+                      }
+                    };
+
+                    return (
+                      <button
+                        onClick={toggleAllExpanded}
+                        className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-sm mr-1"
+                        title={allCurrentExpanded ? "Collapse All Orders" : "Expand All Orders"}
+                      >
+                        <i className={`fa-solid ${allCurrentExpanded ? 'fa-angles-up' : 'fa-angles-down'} text-blue-600`}></i>
+                        <span>{allCurrentExpanded ? 'Collapse All' : 'Expand All'}</span>
+                      </button>
+                    );
+                  })()}
                   <span className="text-[9px] font-black uppercase text-slate-400 px-3 tracking-widest whitespace-nowrap">{t('procurement.sort.prioritySort')}:</span>
                   <div className="flex gap-1">
                     {[
@@ -2131,6 +2167,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
             <div className="space-y-8">
               {(activeTab === 'outsourcing' ? filteredOutsourcingGroups : filteredPurchaseGroups).map(({ order: o, comps }) => {
+                const isExpanded = expandedOrderIds.has(o.id);
+
                 // Binary 0/1 PO-readiness gate:
                 // Each component is 1 if it has reached AWARDED or beyond, 0 if still pre-PO.
                 // "readyForPo" = at least one comp is AWARDED (needs PO) AND all others are 1 (won't block it).
@@ -2151,12 +2189,17 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                 const totalItems = o.items.length;
 
                 return (
-                  <div key={o.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden">
+                  <div key={o.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden transition-all shadow-sm">
                     {/* Order Header */}
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 bg-slate-100/80 border-b border-slate-200">
+                    <div 
+                      onClick={() => toggleOrderExpand(o.id)}
+                      className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 bg-slate-100/80 border-b border-slate-200 cursor-pointer hover:bg-slate-200/60 transition-all select-none group"
+                    >
                       <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center text-blue-600 text-lg">
-                          <i className="fa-solid fa-file-lines"></i>
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg transition-all shadow-sm ${
+                          isExpanded ? 'bg-blue-600 text-white shadow-blue-200' : 'bg-white text-blue-600 group-hover:bg-blue-50'
+                        }`}>
+                          <i className={`fa-solid ${isExpanded ? 'fa-folder-open' : 'fa-folder'} text-base`}></i>
                         </div>
                         <div>
                           <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest flex items-center flex-wrap gap-2">
@@ -2173,7 +2216,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               </span>
                             )}
                           </div>
-                          <div className="font-black text-slate-800">{o.customerName}</div>
+                          <div className="font-black text-slate-800 text-sm mt-0.5">{o.customerName}</div>
                           {o.projectName ? (
                             <div className="text-[9px] font-black text-violet-600 uppercase flex items-center gap-1.5 mt-0.5" title="Project Name">
                               <i className="fa-solid fa-diagram-project"></i> <span>Project: <strong className="text-violet-700">{o.projectName}</strong></span>
@@ -2183,13 +2226,21 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               <i className="fa-solid fa-folder-open text-slate-400"></i> <span>Non-Project</span>
                             </div>
                           )}
-                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">{comps.length} {t('procurement.component.components')}</div>
+                          <div className="text-[9px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-2">
+                            <span>{comps.length} {t('procurement.component.components')}</span>
+                            <span>•</span>
+                            <span className="text-blue-600 font-black flex items-center gap-1">
+                              {isExpanded ? 'Click to collapse' : 'Click to expand components'}
+                              <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
+                            </span>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 flex-wrap" onClick={(e) => e.stopPropagation()}>
                         {/* Rollback button - blocked if any component has PO */}
                         <button
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation();
                             if (anyOrdered) {
                               alert('Cannot rollback: There are active Purchase Orders on this order. Cancel all POs first using the Cancel PO button on each component.');
                               return;
@@ -2208,7 +2259,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         {readyForPo && allOrderProcurementAwarded && (
                           <button
                             disabled={o.status === OrderStatus.NEGATIVE_MARGIN || !allOrderProcurementAwarded}
-                            onClick={async () => {
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               const po = await dataService.getUniquePoNumber();
                               setPoNumberInput(po);
                               const awarded = comps.filter(({ comp: cc }) => cc.status === 'AWARDED');
@@ -2231,7 +2283,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         )}
                         {activeTab === 'outsourcing' && o.items.some(item => item.productionType === 'OUTSOURCING') && (
                           <button
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               const outsourcingItems = o.items.filter(item => item.productionType === 'OUTSOURCING');
                               const entries = outsourcingItems.map(item => ({
                                 itemId: item.id,
@@ -2264,7 +2317,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     </div>
 
                     {/* Components List */}
-                    <div className="divide-y divide-slate-100">
+                    {isExpanded && (
+                    <div className="divide-y divide-slate-100 animate-in fade-in duration-200">
                       {comps.map(({ item: i, comp: c }) => {
                         const isContractExpired = (() => {
                           if (activeTab !== 'outsourcing') return false;
@@ -2596,9 +2650,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               </>
                             )}
                           </div>
-                        )
+                        );
                       })}
                     </div>
+                    )}
                   </div>
                 );
               })}
