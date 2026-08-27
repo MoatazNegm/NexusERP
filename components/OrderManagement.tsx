@@ -371,22 +371,35 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     if (!editingOrderId) lastAutoLoadedRef.current = null;
   }, [editingOrderId]);
 
-  useEffect(() => {
-    if (!customerReferenceNumber || isScanning) return;
+  const isOrderBlanket = (order: CustomerOrder): boolean => {
+    if (order.blanketOrder) return true;
+    if (order.contractId || order.blanketContractId) return true;
+    if (order.items?.some(it => it.productionType === 'OUTSOURCING')) return true;
+    if (order.items?.some(it => it.components?.some(c => c.contractNumber || c.contractStartDate || c.contractDuration))) return true;
+    return false;
+  };
 
+  const getOrderContractId = (order: CustomerOrder): string => {
+    if (order.contractId) return order.contractId;
+    if (order.blanketContractId) return order.blanketContractId;
+    for (const it of order.items || []) {
+      for (const c of it.components || []) {
+        if (c.contractNumber) return c.contractNumber;
+      }
+    }
+    return '';
+  };
+
+  // When customerReferenceNumber matches an existing order, auto-populate the form
+  useEffect(() => {
+    if (!customerReferenceNumber.trim() || isScanning) return;
     const normalizedRef = customerReferenceNumber.trim().toLowerCase();
-    if (!normalizedRef) return;
     const normalizedCustomerName = customerName.trim().toLowerCase();
 
     const match = existingOrders.find(o => {
-      const oIntRef = o.internalOrderNumber?.trim().toLowerCase();
       const oCustRef = o.customerReferenceNumber?.trim().toLowerCase();
-
-      // Internal order numbers are globally unique
-      if (oIntRef && oIntRef === normalizedRef) {
-        return true;
-      }
-      // Customer PO references are unique per customer
+      const oIntNum = o.internalOrderNumber?.trim().toLowerCase();
+      if (oIntNum && oIntNum === normalizedRef) return true;
       if (oCustRef && oCustRef === normalizedRef) {
         if (!normalizedCustomerName) return true;
         const oCust = o.customerName?.trim().toLowerCase() || '';
@@ -400,25 +413,26 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     });
 
     if (match) {
+      const isBlanket = isOrderBlanket(match);
       if (match.id === editingOrderId) {
         // Ensure the active tab aligns with whether it is a blanket order or normal order
-        if (match.blanketOrder && (activeTab !== 'blanket' || blanketSubTab !== 'new_blanket')) {
+        if (isBlanket && (activeTab !== 'blanket' || blanketSubTab !== 'new_blanket')) {
           setActiveTab('blanket');
           setBlanketSubTab('new_blanket');
           setBlanketOrder(true);
-        } else if (!match.blanketOrder && activeTab !== 'new') {
+        } else if (!isBlanket && activeTab !== 'new') {
           setActiveTab('new');
           setBlanketOrder(false);
         }
         return;
       }
 
-      console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber} (isBlanket: ${match.blanketOrder})`);
+      console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber} (isBlanket: ${isBlanket})`);
       lastAutoLoadedRef.current = match.id;
       loadOrder(match);
       setMessage({
         type: 'info',
-        text: `Existing ${match.blanketOrder ? 'Blanket Order' : 'Standard Order'} identified (${match.internalOrderNumber || match.customerReferenceNumber}). Switched to ${match.blanketOrder ? 'Blanket Orders' : 'New Orders'} tab.`
+        text: `Existing ${isBlanket ? 'Blanket Order' : 'Standard Order'} identified (${match.internalOrderNumber || match.customerReferenceNumber}). Switched to ${isBlanket ? 'Blanket Orders' : 'New Orders'} tab.`
       });
     }
   }, [customerReferenceNumber, existingOrders, editingOrderId, isScanning, activeTab, blanketSubTab, customerName]);
@@ -457,15 +471,18 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   };
 
   const loadOrder = (match: CustomerOrder) => {
+    const isBlanket = isOrderBlanket(match);
+    const resolvedContractId = getOrderContractId(match);
+
     setCustomerName(match.customerName || '');
     setCustomerReferenceNumber(String(match.customerReferenceNumber || match.internalOrderNumber || ''));
     setOrderDate(match.orderDate || today);
     setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
-    setBlanketOrder(!!match.blanketOrder);
+    setBlanketOrder(isBlanket);
     setProjectName(match.projectName || '');
-    setBlanketContractId(match.blanketContractId || '');
-    setContractId(match.contractId || '');
+    setBlanketContractId(match.blanketContractId || resolvedContractId);
+    setContractId(resolvedContractId);
     const loadedDeliveryDays = match.targetDeliveryDays || 30;
     setTargetDeliveryDays(loadedDeliveryDays);
     setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate || today, loadedDeliveryDays));
@@ -477,7 +494,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setItems((match.items || []).map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
 
     setEditingOrderId(match.id);
-    if (match.blanketOrder) {
+    if (isBlanket) {
       setActiveTab('blanket');
       setBlanketSubTab('new_blanket');
     } else {
