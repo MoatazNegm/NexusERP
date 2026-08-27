@@ -91,9 +91,9 @@ export const translations: Record<string, any> = {
       poItemDefinition: 'PO Item Definition',
     },
     procurement: {
-      title: 'Commercial Procurement', outsourcingTitle: 'Blanket Orders Workflow',
+      title: 'Commercial Procurement', outsourcingTitle: 'Outsourcing Workflow',
       tabs: {
-        sourcing: 'Trade/Manufacture', outsourcing: 'Blanket Orders', awarded: 'Awarded', ordered: 'Ordered',
+        sourcing: 'Trade/Manufacture', outsourcing: 'Outsourcing', awarded: 'Awarded', ordered: 'Ordered',
         delivered: 'Delivered', history: 'History', purchases: 'Purchases',
       },
       rfp: {
@@ -317,9 +317,9 @@ export const translations: Record<string, any> = {
       poItemDefinition: 'تعريف بند أمر الشراء',
     },
     procurement: {
-      title: 'المشتريات التجارية', outsourcingTitle: 'سير عمل الأوامر الإطارية',
+      title: 'المشتريات التجارية', outsourcingTitle: 'سير عمل التوريد الخارجي / المقاولات',
       tabs: {
-        sourcing: 'التجارة/التصنيع', outsourcing: 'أوامر إطارية', awarded: 'مُنحت', ordered: 'تم الطلب',
+        sourcing: 'التجارة/التصنيع', outsourcing: 'توريد خارجي', awarded: 'مُنحت', ordered: 'تم الطلب',
         delivered: 'تم التسليم', history: 'السجل', purchases: 'المشتريات',
       },
       rfp: {

@@ -1626,7 +1626,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
             onClick={() => setActiveTab('outsourcing')}
             className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'outsourcing' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
           >
-            <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Blanket Orders'}
+            <i className="fa-solid fa-handshake-angle mr-2"></i> {t('procurement.tabs.outsourcing') || 'Outsourcing'}
           </button>
           <button
             onClick={() => setActiveTab('history')}
