@@ -55,6 +55,52 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, 'uploads')
 if (!fs.existsSync(UPLOADS_BASE)) {
     fs.mkdirSync(UPLOADS_BASE, { recursive: true });
 }
+
+// Synchronize authoritative user accounts, roles, group memberships, and profiles from live db to all sandbox databases
+const syncAuthoritativeUsersToSandboxes = (liveDb) => {
+    if (!liveDb || !Array.isArray(liveDb.users)) return;
+    try {
+        const files = fs.readdirSync(__dirname).filter(
+            f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.login_snapshot.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp')
+        );
+        for (const file of files) {
+            const sPath = path.join(__dirname, file);
+            const sDb = readDb(sPath);
+            if (!sDb || !Array.isArray(sDb.users)) continue;
+            let changed = false;
+            for (const liveUser of liveDb.users) {
+                const sIdx = sDb.users.findIndex(u => u.username.toLowerCase() === liveUser.username.toLowerCase());
+                if (sIdx !== -1) {
+                    const sUser = sDb.users[sIdx];
+                    const rolesChanged = JSON.stringify(sUser.roles || []) !== JSON.stringify(liveUser.roles || []);
+                    const groupsChanged = JSON.stringify(sUser.groupIds || []) !== JSON.stringify(liveUser.groupIds || []);
+                    const nameChanged = sUser.name !== liveUser.name;
+                    const emailChanged = sUser.email !== liveUser.email;
+                    const passChanged = liveUser.password && sUser.password !== liveUser.password;
+
+                    if (rolesChanged || groupsChanged || nameChanged || emailChanged || passChanged) {
+                        sDb.users[sIdx] = {
+                            ...sUser,
+                            roles: liveUser.roles || [],
+                            groupIds: liveUser.groupIds || [],
+                            name: liveUser.name || sUser.name,
+                            email: liveUser.email || sUser.email,
+                            password: liveUser.password || sUser.password
+                        };
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) {
+                writeDb(sDb, sPath);
+                console.log(`[Sandbox Sync] Synchronized authoritative users/roles to ${file}`);
+            }
+        }
+    } catch (e) {
+        console.error('[Sandbox Sync] Error syncing users across sandboxes:', e);
+    }
+};
+
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
 const CURRENT_SCHEMA_VERSION = 4; // Increment when introducing new schema migrations
@@ -1771,12 +1817,39 @@ app.use((req, res, next) => {
                 userEntry = {
                     ...liveUser,
                     roles: liveUser.roles || [],
+                    groupIds: liveUser.groupIds || [],
                     sandboxAccess: false
                 };
                 sandboxDb.users = sandboxDb.users || [];
                 sandboxDb.users.push(userEntry);
                 writeDb(sandboxDb, sandboxPath);
                 console.log(`[Sandbox] Auto-provisioned user "${username}" into sandbox "${sanitizedOwner}" (Access Default: false)`);
+            } else if (userEntry && liveUser) {
+                // Ensure live authoritative roles and profile are synced into sandbox
+                let changed = false;
+                if (JSON.stringify(userEntry.roles || []) !== JSON.stringify(liveUser.roles || [])) {
+                    userEntry.roles = liveUser.roles || [];
+                    changed = true;
+                }
+                if (JSON.stringify(userEntry.groupIds || []) !== JSON.stringify(liveUser.groupIds || [])) {
+                    userEntry.groupIds = liveUser.groupIds || [];
+                    changed = true;
+                }
+                if (userEntry.name !== liveUser.name) {
+                    userEntry.name = liveUser.name;
+                    changed = true;
+                }
+                if (userEntry.email !== liveUser.email) {
+                    userEntry.email = liveUser.email;
+                    changed = true;
+                }
+                if (liveUser.password && userEntry.password !== liveUser.password) {
+                    userEntry.password = liveUser.password;
+                    changed = true;
+                }
+                if (changed) {
+                    writeDb(sandboxDb, sandboxPath);
+                }
             }
 
             const hasAccess = userEntry && (userEntry.sandboxAccess || isOwner || isAdmin);
@@ -1784,7 +1857,7 @@ app.use((req, res, next) => {
             if (hasAccess) {
                 req.sandboxDbPath = sandboxPath;
                 req.sandboxOwner = sanitizedOwner;
-                req.roles = userEntry.roles || [];
+                req.roles = liveUser ? (liveUser.roles || []) : (userEntry.roles || []);
                 const snapshotPath = getSandboxLoginSnapshotPath(sanitizedOwner);
                 if (!fs.existsSync(snapshotPath)) {
                     saveSandboxLoginSnapshot(sanitizedOwner);
@@ -2034,8 +2107,12 @@ const addToCollection = (col) => (req, res) => {
     }
 
     db[col].push(newItem);
-    if (writeDb(db, getDbPath(req))) res.status(201).json(col === 'users' ? (({ password, ...u }) => u)(newItem) : newItem);
-    else res.status(500).json({ error: "Write failed" });
+    if (writeDb(db, getDbPath(req))) {
+        if (col === 'users' || col === 'userGroups') {
+            syncAuthoritativeUsersToSandboxes(readDb(DB_PATH));
+        }
+        res.status(201).json(col === 'users' ? (({ password, ...u }) => u)(newItem) : newItem);
+    } else res.status(500).json({ error: "Write failed" });
 };
 
 const updateInCollection = (col) => (req, res) => {
@@ -2150,8 +2227,12 @@ const updateInCollection = (col) => (req, res) => {
     }
 
     db[col][index] = updated;
-    if (writeDb(db, getDbPath(req))) res.json(col === 'users' ? (({ password, ...u }) => u)(updated) : updated);
-    else res.status(500).json({ error: "Update failed" });
+    if (writeDb(db, getDbPath(req))) {
+        if (col === 'users' || col === 'userGroups') {
+            syncAuthoritativeUsersToSandboxes(readDb(DB_PATH));
+        }
+        res.json(col === 'users' ? (({ password, ...u }) => u)(updated) : updated);
+    } else res.status(500).json({ error: "Update failed" });
 };
 
 const deleteFromCollection = (col) => (req, res) => {
@@ -2167,8 +2248,12 @@ const deleteFromCollection = (col) => (req, res) => {
     }
 
     db[col] = db[col].filter(it => it.id !== req.params.id);
-    if (writeDb(db, getDbPath(req))) res.json({ message: "Deleted" });
-    else res.status(500).json({ error: "Delete failed" });
+    if (writeDb(db, getDbPath(req))) {
+        if (col === 'users' || col === 'userGroups') {
+            syncAuthoritativeUsersToSandboxes(readDb(DB_PATH));
+        }
+        res.json({ message: "Deleted" });
+    } else res.status(500).json({ error: "Delete failed" });
 };
 
 // --- ROUTES ---
@@ -4186,14 +4271,22 @@ app.post('/api/v1/admin/switch-sandbox', (req, res) => {
   const targetDb = readDb(targetPath);
   let userEntry = (targetDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase());
 
-  // Auto-provision admin user into target sandbox if not present
+  // Auto-provision admin user into target sandbox if not present, or sync latest live roles
   if (!userEntry) {
     userEntry = {
       ...liveUser,
-      roles: liveUser.roles || ['admin']
+      roles: liveUser.roles || ['admin'],
+      groupIds: liveUser.groupIds || []
     };
     targetDb.users = targetDb.users || [];
     targetDb.users.push(userEntry);
+    writeDb(targetDb, targetPath);
+  } else {
+    userEntry.roles = liveUser.roles || [];
+    userEntry.groupIds = liveUser.groupIds || [];
+    userEntry.name = liveUser.name || userEntry.name;
+    userEntry.email = liveUser.email || userEntry.email;
+    userEntry.password = liveUser.password;
     writeDb(targetDb, targetPath);
   }
 
@@ -4208,6 +4301,8 @@ app.post('/api/v1/admin/switch-sandbox', (req, res) => {
   const { password: _, ...safeUser } = userEntry;
   return res.json({
     ...safeUser,
+    roles: liveUser.roles || [],
+    groupIds: liveUser.groupIds || [],
     sandbox: true,
     sandboxOwner: sanitizedTarget,
     sandboxLabel: label
@@ -4258,20 +4353,27 @@ app.post('/api/v1/login', (req, res) => {
         { id: 'ug_wh', name: 'Warehouse & Logistics', roles: ['warehouse', 'logistics'], permissions: { canViewFinancials: false, canApproveTechReview: false, canReleaseHub: true, canManageUsers: false } },
         { id: 'ug_mgmt', name: 'Executive Management', roles: ['admin'], permissions: { canViewFinancials: true, canApproveTechReview: true, canReleaseHub: true, canManageUsers: true } }
       ];
-      stubDb.users = [{ ...liveUser, roles: liveUser.roles || [] }];
+      stubDb.users = [{ ...liveUser, roles: liveUser.roles || [], groupIds: liveUser.groupIds || [] }];
       writeDb(stubDb, sandboxPath);
     }
     const sandboxDb = readDb(sandboxPath);
     let sandboxUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase());
     if (!sandboxUser) {
-      sandboxUser = { ...liveUser, roles: liveUser.roles || [] };
+      sandboxUser = { ...liveUser, roles: liveUser.roles || [], groupIds: liveUser.groupIds || [] };
       sandboxDb.users = sandboxDb.users || [];
       sandboxDb.users.push(sandboxUser);
+      writeDb(sandboxDb, sandboxPath);
+    } else {
+      sandboxUser.roles = liveUser.roles || [];
+      sandboxUser.groupIds = liveUser.groupIds || [];
+      sandboxUser.name = liveUser.name || sandboxUser.name;
+      sandboxUser.email = liveUser.email || sandboxUser.email;
+      sandboxUser.password = liveUser.password;
       writeDb(sandboxDb, sandboxPath);
     }
     saveSandboxLoginSnapshot(username);
     const { password: _, ...safe } = sandboxUser;
-    return res.json({ ...safe, sandbox: true, sandboxOwner: sanitizeUsername(username), sandboxLabel: `My Own Sandbox (${username})` });
+    return res.json({ ...safe, roles: liveUser.roles || [], groupIds: liveUser.groupIds || [], sandbox: true, sandboxOwner: sanitizeUsername(username), sandboxLabel: `My Own Sandbox (${username})` });
   }
 
   const ownerSanitized = sanitizeUsername(targetEnv);
@@ -4281,16 +4383,35 @@ app.post('/api/v1/login', (req, res) => {
   const sandboxDb = readDb(sandboxPath);
   const sandboxUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
   
-  const isTargetAdmin = (liveDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase())?.roles?.includes('admin');
+  const liveTargetUser = (liveDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
+  const isTargetAdmin = liveTargetUser?.roles?.includes('admin');
   const hasAccess = sandboxUser && (sandboxUser.sandboxAccess || isTargetAdmin || sandboxUser.username.toLowerCase() === ownerSanitized);
   
   if (!hasAccess) return res.status(403).json({ error: "You do not have access to this team sandbox." });
-  if (sandboxUser.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password for this sandbox." });
+  if (sandboxUser.password !== hashPassword(password) && liveTargetUser?.password !== hashPassword(password)) {
+    return res.status(401).json({ error: "Invalid username or password for this sandbox." });
+  }
+
+  if (liveTargetUser && sandboxUser) {
+    sandboxUser.roles = liveTargetUser.roles || [];
+    sandboxUser.groupIds = liveTargetUser.groupIds || [];
+    sandboxUser.name = liveTargetUser.name || sandboxUser.name;
+    sandboxUser.email = liveTargetUser.email || sandboxUser.email;
+    sandboxUser.password = liveTargetUser.password;
+    writeDb(sandboxDb, sandboxPath);
+  }
 
   saveSandboxLoginSnapshot(ownerSanitized);
   const ownerUser = (sandboxDb.users || []).find(u => u.username.toLowerCase() === ownerSanitized);
   const { password: _, ...safe } = sandboxUser;
-  return res.json({ ...safe, sandbox: true, sandboxOwner: ownerSanitized, sandboxLabel: `${ownerUser?.name || ownerSanitized}'s Team Sandbox` });
+  return res.json({
+    ...safe,
+    roles: liveTargetUser?.roles || sandboxUser.roles || [],
+    groupIds: liveTargetUser?.groupIds || sandboxUser.groupIds || [],
+    sandbox: true,
+    sandboxOwner: ownerSanitized,
+    sandboxLabel: `${ownerUser?.name || ownerSanitized}'s Team Sandbox`
+  });
 });
 
 
@@ -4981,6 +5102,7 @@ app.get('{*path}', (req, res) => {
 
 const startupDb = readDb();
 repairNegativeMarginOrders(startupDb);
+syncAuthoritativeUsersToSandboxes(startupDb);
 
 // Sweep every db.sandbox.*.json in the project root, run applySchemaMigrations on
 // any whose schema version is older than CURRENT_SCHEMA_VERSION, and write the

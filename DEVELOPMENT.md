@@ -463,4 +463,12 @@ The auto-complete dropdown in **Technical Review** (`TechnicalReviewModule.tsx`)
 ### 4. Sandbox Session Login Snapshots & 'Revert to Login State'
 - **Automatic Login Snapshot Capture:** Whenever a user authenticates into a Sandbox environment (or an admin switches into another user's sandbox), the backend server automatically saves a snapshot file `db.sandbox.<owner>.login_snapshot.json` representing the state at logon.
 - **Revert to Login State Button & Modal:** In `App.tsx`, a dedicated `<button> Revert to Login State` (styled with a sky-blue badge and clock icon) is positioned beside `Reset Data` in the top sandbox banner.
-- **Scenario Replay & Training:** When confirmed, the frontend invokes `dataService.revertSandboxToLogin()` (`POST /api/v1/sandbox/revert-login`), restoring the database back to the initial login snapshot so users can test various simulation scenarios starting from the exact same point in time.
+- **Scenario Replay & Training:** When confirmed, the frontend invokes `dataService.revertSandboxToLogin()` (`POST /api/v1/sandbox/revert-login`), restoring the database back to the initial login snapshot so users can test various simulation scenarios starting from the exact same point in time.
+
+### 5. Authoritative User Role & Profile Synchronization Across Sandboxes
+- **Live Database as Source of Truth:** `db.json` is the authoritative source of truth for user roles, user group assignments, names, emails, and credentials.
+- **Universal Multi-Layer Sync Pipeline:**
+  1. **Startup Sweep:** `syncAuthoritativeUsersToSandboxes(startupDb)` runs on server boot, sweeping all existing sandbox databases (`db.sandbox.*.json`) and propagating live user roles/profiles.
+  2. **User Management Mutation Hook:** Any user creation, role update, or deletion in User Management (`addToCollection`, `updateInCollection`, `deleteFromCollection`) immediately triggers `syncAuthoritativeUsersToSandboxes`.
+  3. **Login & Sandbox Switch Verification:** During `/api/v1/login` (personal sandbox or team sandbox) and `/api/v1/admin/switch-sandbox`, the backend synchronizes the authenticating user against `liveDb.users` and returns the latest live `roles` and `groupIds`.
+  4. **Multi-Tenant Middleware Check:** Requests dispatched with `x-sandbox-owner` continuously reconcile `userEntry.roles` with `liveUser.roles`, ensuring that role amendments immediately grant or restrict module views and permissions across all sandboxes without delay.
