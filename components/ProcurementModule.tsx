@@ -712,9 +712,23 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const purchaseGroups = useMemo(() => {
     const map = new Map<string, { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }>();
     orders.forEach(o => {
-      o.items.forEach(i => {
+      o.items.forEach((i, idx) => {
         if (i.productionType === 'OUTSOURCING') return; // Skip in this tab
-        i.components?.forEach(c => {
+        const itemComps = (i.components && i.components.length > 0)
+          ? i.components
+          : [{
+              id: `c_${o.id}_${i.id}`,
+              description: i.description,
+              quantity: getItemEffectiveQty(i),
+              unit: i.unit || 'pcs',
+              unitCost: 0,
+              taxPercent: i.taxPercent || 14,
+              source: 'PROCUREMENT',
+              status: 'PENDING_OFFER',
+              componentNumber: i.supplierPartNumber || `CMP-${o.internalOrderNumber || 'ORD'}-${idx + 1}-1`
+            } as ManufacturingComponent];
+
+        itemComps.forEach(c => {
           if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(c.status || '')) {
             if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
             map.get(o.id)!.comps.push({ item: i, comp: c });
@@ -742,9 +756,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const outsourcingGroups = useMemo(() => {
     const map = new Map<string, { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }>();
     orders.forEach(o => {
-      o.items.forEach(i => {
+      o.items.forEach((i, idx) => {
         if (i.productionType !== 'OUTSOURCING') return; // Skip in this tab
-        i.components?.forEach(c => {
+        const itemComps = (i.components && i.components.length > 0)
+          ? i.components
+          : [{
+              id: `c_${o.id}_${i.id}`,
+              description: i.description,
+              quantity: getItemEffectiveQty(i),
+              unit: i.unit || 'pcs',
+              unitCost: 0,
+              taxPercent: i.taxPercent || 14,
+              source: 'PROCUREMENT',
+              status: 'PENDING_OFFER',
+              componentNumber: i.supplierPartNumber || `CMP-${o.internalOrderNumber || 'ORD'}-${idx + 1}-1`,
+              contractNumber: o.contractId || (o.blanketContractId ? `CON-${o.blanketContractId}` : undefined),
+              contractStartDate: o.orderDate || undefined
+            } as ManufacturingComponent];
+
+        itemComps.forEach(c => {
           if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '')) {
             // Auto-cleanup: If contract end date passed more than 1 month ago, treat as finished and remove from active list
             if (c.contractStartDate && c.contractDuration) {

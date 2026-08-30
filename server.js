@@ -1196,6 +1196,26 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             }
         }
 
+        if (item.productionType === 'OUTSOURCING') {
+            if (!item.components || item.components.length === 0) {
+                const contractNum = order.contractId || order.blanketContractId || `CON-${order.internalOrderNumber || 'ORD'}-${idx + 1}`;
+                const newComp = {
+                    id: `c_${Date.now()}_${idx}_0`,
+                    description: item.description,
+                    quantity: getItemEffectiveQty(item),
+                    unit: item.unit || 'pcs',
+                    unitCost: 0,
+                    taxPercent: item.taxPercent || 14,
+                    source: 'PROCUREMENT',
+                    status: 'PENDING_OFFER',
+                    componentNumber: item.supplierPartNumber || `CMP-${order.internalOrderNumber || 'ORD'}-${idx + 1}-1`,
+                    contractNumber: contractNum,
+                    contractStartDate: order.orderDate || undefined
+                };
+                item.components = [newComp];
+            }
+        }
+
         item.components.forEach((comp, cIdx) => {
             if (!comp.id) comp.id = `c_${Date.now()}_${idx}_${cIdx}`;
             if (!comp.componentNumber) {
@@ -2482,8 +2502,26 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (order.items.some(it => !it.isAccepted)) throw new Error("All items must be accepted before finalizing study");
                 order.status = OrderStatus.WAITING_SUPPLIERS;
                 
-                // Transition all NEW procurement components to PENDING_OFFER so Procurement sees them
-                order.items.forEach(item => {
+                // Ensure all items have their procurement components and transition to PENDING_OFFER
+                order.items.forEach((item, idx) => {
+                    if (!item.components || item.components.length === 0) {
+                        const contractNum = order.contractId || order.blanketContractId || `CON-${order.internalOrderNumber || 'ORD'}-${idx + 1}`;
+                        item.components = [{
+                            id: `c_${Date.now()}_${idx}_0`,
+                            description: item.description,
+                            quantity: getItemEffectiveQty(item),
+                            unit: item.unit || 'pcs',
+                            unitCost: 0,
+                            taxPercent: item.taxPercent || 14,
+                            source: 'PROCUREMENT',
+                            status: 'PENDING_OFFER',
+                            componentNumber: item.supplierPartNumber || `CMP-${order.internalOrderNumber || 'ORD'}-${idx + 1}-1`,
+                            contractNumber: item.productionType === 'OUTSOURCING' ? contractNum : undefined,
+                            contractStartDate: order.orderDate || undefined,
+                            procurementStartedAt: new Date().toISOString(),
+                            statusUpdatedAt: new Date().toISOString()
+                        }];
+                    }
                     (item.components || []).forEach(comp => {
                         if (comp.source === 'PROCUREMENT' && ['NEW', 'PENDING_OFFER'].includes(comp.status)) {
                             comp.status = 'PENDING_OFFER';
