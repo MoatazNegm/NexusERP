@@ -124,7 +124,7 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
               <input
                 type="text"
                 className="w-full pl-10 pr-4 py-2.5 border rounded-xl bg-white text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 border-slate-200 text-sm transition-all"
-                placeholder="Search by ID, Customer, Items..."
+                placeholder="Search by ID, Customer, Items, Project, Blanket (or 'non-project')..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -201,38 +201,68 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
-            {orders.map(order => (
-              <tr
-                key={order.id}
-                onClick={() => setSelectedOrder(order)}
-                className="hover:bg-blue-50/30 cursor-pointer transition-colors group"
-              >
-                <td className="px-6 py-4 whitespace-nowrap text-slate-500 text-xs font-medium">
-                  {new Date(order.dataEntryTimestamp).toLocaleDateString()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-slate-500 text-xs font-medium">{order.orderDate}</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <div className="font-bold text-slate-800 flex items-center gap-2">
-                      {order.customerName}
-                      {order.items.some(i => getItemEffectiveStatus(i) !== order.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
-                        <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
+            {orders.map((order, orderIdx) => {
+              const isEvenRow = orderIdx % 2 === 1;
+              return (
+                <tr
+                  key={order.id}
+                  onClick={() => setSelectedOrder(order)}
+                  className={`${isEvenRow ? 'bg-slate-50/70' : 'bg-white'} hover:bg-blue-50/40 cursor-pointer transition-colors group`}
+                >
+                  <td className="px-6 py-4 whitespace-nowrap text-slate-500 text-xs font-medium">
+                    {new Date(order.dataEntryTimestamp).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-slate-500 text-xs font-medium">{order.orderDate}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <div className="font-bold text-slate-800 flex items-center gap-2">
+                        {order.customerName}
+                        {order.items.some(i => getItemEffectiveStatus(i) !== order.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
+                          <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
+                        )}
+                      </div>
+                      {order.loggingComplianceViolation && (
+                        <div className="group/warn relative">
+                          <i className="fa-solid fa-triangle-exclamation text-rose-500 text-[10px] animate-pulse"></i>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[8px] font-black uppercase rounded opacity-0 group-hover/warn:opacity-100 transition-opacity whitespace-nowrap z-50">
+                            Logging Delay Breach
+                          </div>
+                        </div>
                       )}
                     </div>
-                    {order.loggingComplianceViolation && (
-                      <div className="group/warn relative">
-                        <i className="fa-solid fa-triangle-exclamation text-rose-500 text-[10px] animate-pulse"></i>
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[8px] font-black uppercase rounded opacity-0 group-hover/warn:opacity-100 transition-opacity whitespace-nowrap z-50">
-                          Logging Delay Breach
-                        </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-mono text-[10px] text-blue-600 font-black uppercase whitespace-nowrap">{order.internalOrderNumber}</span>
+                      {order.blanketOrder ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200 text-[8px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap" title="Blanket Contract Order">
+                          <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200 text-[8px] font-bold uppercase tracking-tight whitespace-nowrap" title="Standard Order">
+                          Standard
+                        </span>
+                      )}
+                      {order.blanketOrder && order.projectName && order.projectName.trim() !== '' ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 text-[8px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap" title={`Project: ${order.projectName}`}>
+                          <i className="fa-solid fa-diagram-project text-[8px] text-violet-500"></i> Project: {order.projectName}
+                        </span>
+                      ) : !order.blanketOrder && order.projectName && order.projectName.trim() !== '' ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 text-[8px] font-bold uppercase tracking-tight whitespace-nowrap" title={`Project: ${order.projectName}`}>
+                          <i className="fa-solid fa-diagram-project text-[8px] text-violet-500"></i> {order.projectName}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-medium mt-1">Ref: {order.customerReferenceNumber || 'None'}</div>
+                    {order.contractId && (
+                      <div className="text-[9px] text-teal-600 font-bold uppercase mt-0.5">Contract: {order.contractId}</div>
+                    )}
+                    {order.blanketContractId && (
+                      <div className="text-[9px] text-indigo-600 font-bold uppercase mt-0.5 flex items-center gap-1">
+                        <i className="fa-solid fa-link text-[8px]"></i> Settling: {order.blanketContractId}
                       </div>
                     )}
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <div className="font-mono text-[10px] text-blue-600 font-bold">{order.internalOrderNumber}</div>
-                  <div className="text-[10px] text-slate-400 font-medium">Ref: {order.customerReferenceNumber || 'None'}</div>
-                </td>
+                  </td>
                 <td className="px-6 py-4">
                   <div className="flex flex-col gap-1 items-start">
                     <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border bg-${getDynamicOrderStatusStyle(order, config).color}-50 text-${getDynamicOrderStatusStyle(order, config).color}-600 border-${getDynamicOrderStatusStyle(order, config).color}-100 flex items-center gap-1.5 w-fit`}>
@@ -270,7 +300,8 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
                   {order.items.length} <i className="fa-solid fa-chevron-right text-[10px] ml-2 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                 </td>
               </tr>
-            ))}
+            );
+          })}
           </tbody>
         </table>
 

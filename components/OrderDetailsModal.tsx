@@ -331,16 +331,42 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                 <span className="px-3 py-1 bg-slate-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest" title="Order currency">
                   <i className="fa-solid fa-coins mr-1 opacity-60"></i>{orderCurrency}
                 </span>
+                {order.blanketOrder ? (
+                  <span className="px-3 py-1 bg-teal-50 text-teal-700 rounded-full text-[10px] font-black uppercase tracking-widest border border-teal-200 flex items-center gap-1.5 shadow-xs">
+                    <i className="fa-solid fa-layer-group text-[9px]"></i> Blanket
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 bg-slate-100 text-slate-500 rounded-full text-[10px] font-bold uppercase tracking-widest border border-slate-200">
+                    Standard
+                  </span>
+                )}
+                {order.projectName && order.projectName.trim() !== '' && (
+                  <span className="px-3 py-1 bg-violet-50 text-violet-700 rounded-full text-[10px] font-black uppercase tracking-widest border border-violet-200 flex items-center gap-1.5 shadow-xs">
+                    <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i> Project: {order.projectName}
+                  </span>
+                )}
                 {order.status === OrderStatus.REJECTED && (
                   <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-[10px] font-black uppercase border border-red-200">Permanently Closed</span>
                 )}
               </div>
-              <div className="flex items-center gap-4 mt-1">
+              <div className="flex items-center gap-4 mt-1 flex-wrap">
                 <div className={`text-xs font-bold uppercase tracking-widest text-${getDynamicOrderStatusStyle(order, config).color}-600`}>
                   {getDynamicOrderStatusStyle(order, config).label} Stage
                 </div>
                 <div className="w-1 h-1 bg-slate-300 rounded-full"></div>
-                <div className="text-xs text-slate-400 font-medium">Ref: {order.customerReferenceNumber}</div>
+                <div className="text-xs text-slate-400 font-medium">Ref: {order.customerReferenceNumber || 'None'}</div>
+                {order.contractId && (
+                  <>
+                    <div className="w-1 h-1 bg-slate-300 rounded-full"></div>
+                    <div className="text-xs text-teal-600 font-bold uppercase">Contract: {order.contractId}</div>
+                  </>
+                )}
+                {order.blanketContractId && (
+                  <>
+                    <div className="w-1 h-1 bg-slate-300 rounded-full"></div>
+                    <div className="text-xs text-indigo-600 font-bold uppercase">Settling: {order.blanketContractId}</div>
+                  </>
+                )}
               </div>
             </div>
           </div>

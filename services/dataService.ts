@@ -689,20 +689,44 @@ class DataService {
     if (params.statuses?.length) orders = orders.filter((o: CustomerOrder) => params.statuses.includes(o.status));
 
     if (params.query) {
-      const q = params.query.toLowerCase();
-      orders = orders.filter((o: CustomerOrder) =>
-        (o.internalOrderNumber || '').toLowerCase().includes(q) ||
-        (o.customerName || '').toLowerCase().includes(q) ||
-        (o.customerReferenceNumber || '').toLowerCase().includes(q) ||
-        o.items.some(i => 
+      const q = params.query.toLowerCase().trim();
+      orders = orders.filter((o: CustomerOrder) => {
+        if ((o.internalOrderNumber || '').toLowerCase().includes(q)) return true;
+        if ((o.customerName || '').toLowerCase().includes(q)) return true;
+        if ((o.customerReferenceNumber || '').toLowerCase().includes(q)) return true;
+        if ((o.contractId || '').toLowerCase().includes(q)) return true;
+        if ((o.blanketContractId || '').toLowerCase().includes(q)) return true;
+        if ((o.invoiceNumber || '').toLowerCase().includes(q)) return true;
+
+        // Blanket / Non-Blanket keyword search
+        if (q === 'blanket' || q === 'blanket order' || q === 'blanket orders') {
+          if (o.blanketOrder) return true;
+        } else if (q === 'standard' || q === 'normal' || q === 'non-blanket' || q === 'non blanket' || q === 'nonblanket') {
+          if (!o.blanketOrder) return true;
+        }
+
+        // Project search: any part of project name or 'project' / 'non-project'
+        const proj = (o.projectName || '').toLowerCase();
+        if (proj) {
+          if (proj.includes(q)) return true;
+          if (`project: ${proj}`.includes(q)) return true;
+          if (`project ${proj}`.includes(q)) return true;
+          if (q === 'project' || q === 'projects' || (q.length >= 3 && 'project'.includes(q))) return true;
+          const tokens = q.split(/\s+/).filter(Boolean);
+          if (tokens.length > 1 && tokens.every(tok => proj.includes(tok))) return true;
+        } else {
+          if ('non-project non project nonproject non_project'.includes(q) || q === 'non' || q === 'non-project' || q === 'non project') return true;
+        }
+
+        return (o.items || []).some(i => 
           (i.id || '').toLowerCase().includes(q) ||
           (i.description || '').toLowerCase().includes(q) ||
           (i.components || []).some(c => 
             (c.componentNumber || '').toLowerCase().includes(q) ||
             (c.description || '').toLowerCase().includes(q)
           )
-        )
-      );
+        );
+      });
     }
     return orders;
   }
