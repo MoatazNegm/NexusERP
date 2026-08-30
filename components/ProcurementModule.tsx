@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
 import { jsPDF } from 'jspdf';
@@ -461,8 +461,9 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       console.warn('Cost sheet modal: failed to refresh order data', err);
     }
 
-    const outsourcingItems = (freshOrder.items || []).filter(item => item.productionType === 'OUTSOURCING');
-    const entries = outsourcingItems.map(item => ({
+    const candidateItems = (freshOrder.items || []).filter(item => item.costSheetFile || item.costSheetText || item.productionType === 'OUTSOURCING');
+    const targetItems = candidateItems.length > 0 ? candidateItems : (freshOrder.items || []);
+    const entries = targetItems.map(item => ({
       itemId: item.id,
       orderNumber: item.orderNumber,
       description: item.description,
@@ -473,8 +474,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     setCostSheetModalOrder(freshOrder);
     setCostSheetModalEntries(entries);
 
-    const firstItemWithFile = outsourcingItems.find(item => item.costSheetFile);
-    const defaultItem = firstItemWithFile || outsourcingItems[0] || null;
+    const firstItemWithFile = targetItems.find(item => item.costSheetFile);
+    const defaultItem = firstItemWithFile || targetItems[0] || null;
     setCostSheetModalSelectedItemId(defaultItem?.id || null);
 
     if (defaultItem) {
@@ -702,13 +703,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const fetchData = async () => {
     const [o, s] = await Promise.all([dataService.getOrders(), dataService.getSuppliers()]);
     setAllOrders(o);
-    const eligibleOrders = o.filter(order => [
-      OrderStatus.WAITING_SUPPLIERS,
-      OrderStatus.NEGATIVE_MARGIN,
-      OrderStatus.TECHNICAL_REVIEW,
-      OrderStatus.WAITING_FACTORY,
-      OrderStatus.MANUFACTURING
-    ].includes(order.status));
+    const eligibleOrders = o.filter(order => order.status !== OrderStatus.REJECTED && order.status !== OrderStatus.FULFILLED);
     setOrders(eligibleOrders);
     setSuppliers(s.filter(supp => !supp.isDeletedSupplier && supp.name.trim().toLowerCase() !== 'deleted suppliers' && supp.name.trim().toLowerCase() !== 'deleted suppleirs'));
   };
@@ -783,6 +778,16 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     });
   }, [orders, sortConfig]);
 
+  const getOrderProjName = useCallback((ord: CustomerOrder): string => {
+    if (ord.projectName && ord.projectName.trim() !== '') return ord.projectName.trim();
+    if (ord.blanketContractId) {
+      const parent = allOrders.find(p => p.id === ord.blanketContractId || p.internalOrderNumber === ord.blanketContractId || p.customerReferenceNumber === ord.blanketContractId);
+      if (parent?.projectName && parent.projectName.trim() !== '') return parent.projectName.trim();
+    }
+    const legacy = (ord as any).project || (ord as any).project_name || (ord as any).projectName || '';
+    return typeof legacy === 'string' ? legacy.trim() : '';
+  }, [allOrders]);
+
   const matchesSearch = (group: { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }, term: string): boolean => {
     if (!term) return true;
     const q = term.trim().toLowerCase();
@@ -793,17 +798,6 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (o.internalOrderNumber?.toLowerCase().includes(q)) return true;
     if (o.customerReferenceNumber?.toLowerCase().includes(q)) return true;
     if (o.customerName?.toLowerCase().includes(q)) return true;
-
-    // Project Name / Non-Project search
-    const getOrderProjName = (ord: CustomerOrder): string => {
-      if (ord.projectName && ord.projectName.trim() !== '') return ord.projectName.trim();
-      if (ord.blanketContractId) {
-        const parent = allOrders.find(p => p.id === ord.blanketContractId || p.internalOrderNumber === ord.blanketContractId || p.customerReferenceNumber === ord.blanketContractId);
-        if (parent?.projectName && parent.projectName.trim() !== '') return parent.projectName.trim();
-      }
-      const legacy = (ord as any).project || (ord as any).project_name || (ord as any).projectName || '';
-      return typeof legacy === 'string' ? legacy.trim() : '';
-    };
 
     const proj = getOrderProjName(o).toLowerCase();
     const hasProject = Boolean(proj);
@@ -822,6 +816,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (o.dataEntryTimestamp?.toLowerCase().includes(q)) return true;
     if (o.contractId?.toLowerCase().includes(q)) return true;
     if (o.blanketContractId?.toLowerCase().includes(q)) return true;
+
+    // Blanket / Standard search keywords
+    if (q === 'blanket' || q === 'blanket order' || q === 'blanket orders') {
+      if (o.blanketOrder) return true;
+    } else if (q === 'standard' || q === 'normal' || q === 'non-blanket' || q === 'non blanket' || q === 'nonblanket') {
+      if (!o.blanketOrder) return true;
+    }
 
     // 2. Line Item level fields
     for (const it of o.items || []) {
@@ -2222,15 +2223,27 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 PO: <span className="text-slate-900 font-black">{o.customerReferenceNumber}</span>
                               </span>
                             )}
-                            {o.projectName ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Project Name">
-                                <i className="fa-solid fa-diagram-project text-violet-500"></i> Project: <strong className="text-violet-700">{o.projectName}</strong>
+                            {o.blanketOrder ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
+                                <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Non-Project Order">
-                                <i className="fa-solid fa-folder-minus text-slate-400"></i> Non-Project
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Standard Order">
+                                Standard
                               </span>
                             )}
+                            {(() => {
+                              const pName = getOrderProjName(o);
+                              return pName ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title={`Project Name: ${pName}`}>
+                                  <i className="fa-solid fa-diagram-project text-violet-500"></i> Project: <strong className="text-violet-700">{pName}</strong>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Non-Project Order">
+                                  <i className="fa-solid fa-folder-minus text-slate-400"></i> Non-Project
+                                </span>
+                              );
+                            })()}
                             {itemsInFactoryCount > 0 && (
                               <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200 whitespace-nowrap shrink-0" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
                                 <i className="fa-solid fa-bolt mr-1"></i>
@@ -2296,25 +2309,45 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <i className="fa-solid fa-file-invoice"></i> {t('procurement.po.issuePOAll')}
                           </button>
                         )}
-                        {activeTab === 'outsourcing' && o.items.some(item => item.productionType === 'OUTSOURCING') && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const outsourcingItems = o.items.filter(item => item.productionType === 'OUTSOURCING');
-                              const entries = outsourcingItems.map(item => ({
-                                itemId: item.id,
-                                orderNumber: item.orderNumber,
-                                description: item.description,
-                                costSheetText: item.costSheetText || '',
-                                costSheetFileName: item.costSheetFileName
-                              }));
-                              openCostSheetModal(o);
-                            }}
-                            className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase bg-violet-600 text-white hover:bg-violet-700 shadow-lg shadow-violet-100 transition-all flex items-center gap-2"
-                            title="Open editable cost sheet"
-                          >
-                            <i className="fa-solid fa-file-lines"></i> Cost Sheet
-                          </button>
+                        {/* Cost Sheet / Download Cost Sheet Button */}
+                        {(o.blanketOrder || o.items.some(item => item.costSheetFile || item.costSheetText || item.productionType === 'OUTSOURCING')) && (
+                          <div className="flex items-center gap-2">
+                            {/* Download Cost Sheet Button (if file attached) */}
+                            {o.items.some(item => item.costSheetFile) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const itemWithFile = o.items.find(item => item.costSheetFile);
+                                  if (itemWithFile && itemWithFile.costSheetFile) {
+                                    const link = document.createElement('a');
+                                    link.href = itemWithFile.costSheetFile;
+                                    link.download = itemWithFile.costSheetFileName || `CostSheet-${o.internalOrderNumber || o.customerReferenceNumber}.xlsx`;
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                  } else {
+                                    openCostSheetModal(o);
+                                  }
+                                }}
+                                className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-100 transition-all flex items-center gap-2"
+                                title="Download attached Excel cost sheet"
+                              >
+                                <i className="fa-solid fa-file-excel"></i> Download Cost Sheet
+                              </button>
+                            )}
+
+                            {/* View / Edit Cost Sheet Button */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openCostSheetModal(o);
+                              }}
+                              className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase bg-violet-600 text-white hover:bg-violet-700 shadow-lg shadow-violet-100 transition-all flex items-center gap-2"
+                              title="Open interactive cost sheet viewer/editor"
+                            >
+                              <i className="fa-solid fa-file-lines"></i> Cost Sheet
+                            </button>
+                          </div>
                         )}
                         {anyOrderProcurementNotReady && (
                           <div className="flex items-center gap-1.5 text-[8px] font-black text-rose-600 uppercase bg-rose-50 px-3 py-1.5 rounded-lg">

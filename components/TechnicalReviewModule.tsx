@@ -309,16 +309,6 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setIsPoPreviewExpanded(false);
   }, [selectedOrder?.id]);
 
-  useEffect(() => {
-    if (selectedOrder?.blanketOrder && selectedItem && selectedItem.productionType !== 'OUTSOURCING') {
-      dataService.setProductionType(selectedOrder.id, selectedItem.id, 'OUTSOURCING').then(updated => {
-        setSelectedOrder(updated);
-        const updatedItem = updated.items.find(it => it.id === selectedItem.id);
-        if (updatedItem) setSelectedItem(updatedItem);
-      });
-    }
-  }, [selectedOrder?.id, selectedItem?.id]);
-
   const fetchData = async (keepSelection = true) => {
     const [o, i, s] = await Promise.all([
       dataService.getOrders(),
