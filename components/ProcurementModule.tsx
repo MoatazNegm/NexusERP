@@ -435,6 +435,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
   const [isCostSheetUploading, setIsCostSheetUploading] = useState(false);
   const costSheetFileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadTargetOrder, setUploadTargetOrder] = useState<{ order: CustomerOrder; itemId: string } | null>(null);
+  const headerCostSheetInputRef = useRef<HTMLInputElement>(null);
   const [costSheetFullscreen, setCostSheetFullscreen] = useState<boolean>(false);
   // Frozen header measurement for the cost-sheet grid (rows 2-4 + column A stay fixed).
   const costSheetTheadRef = useRef<HTMLTableSectionElement>(null);
@@ -591,6 +593,41 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       } finally {
         setIsCostSheetUploading(false);
         if (costSheetFileInputRef.current) costSheetFileInputRef.current.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const triggerHeaderCostSheetUpload = (order: CustomerOrder, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const targetItem = order.items.find(i => i.costSheetFile) || order.items.find(i => i.productionType === 'OUTSOURCING') || order.items[0];
+    if (!targetItem) {
+      alert("No valid line item found to attach cost sheet.");
+      return;
+    }
+    setUploadTargetOrder({ order, itemId: targetItem.id });
+    if (headerCostSheetInputRef.current) {
+      headerCostSheetInputRef.current.value = '';
+      headerCostSheetInputRef.current.click();
+    }
+  };
+
+  const handleHeaderCostSheetFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !uploadTargetOrder) return;
+    const { order, itemId } = uploadTargetOrder;
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const result = evt.target?.result as string;
+      try {
+        await dataService.uploadCostSheet(order.id, itemId, result, file.name);
+        await fetchData();
+        alert(`Cost sheet '${file.name}' successfully uploaded and updated for order ${order.internalOrderNumber || order.customerReferenceNumber}.`);
+      } catch (err: any) {
+        alert(err.message || 'Failed to upload and overwrite cost sheet.');
+      } finally {
+        setUploadTargetOrder(null);
+        if (headerCostSheetInputRef.current) headerCostSheetInputRef.current.value = '';
       }
     };
     reader.readAsDataURL(file);
@@ -2128,6 +2165,14 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           </div>
 
           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+            {/* Hidden Cost Sheet Upload Input for Order Headers */}
+            <input
+              type="file"
+              ref={headerCostSheetInputRef}
+              onChange={handleHeaderCostSheetFileChange}
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+            />
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-10">
               <div>
                 <h2 className="text-3xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-4">
@@ -2339,9 +2384,9 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <i className="fa-solid fa-file-invoice"></i> {t('procurement.po.issuePOAll')}
                           </button>
                         )}
-                        {/* Cost Sheet / Download Cost Sheet Button */}
+                        {/* Cost Sheet / Download / Upload Buttons */}
                         {(o.blanketOrder || o.items.some(item => item.costSheetFile || item.costSheetText || item.productionType === 'OUTSOURCING')) && (
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             {/* Download Cost Sheet Button (if file attached) */}
                             {o.items.some(item => item.costSheetFile) && (
                               <button
@@ -2359,12 +2404,21 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                     openCostSheetModal(o);
                                   }
                                 }}
-                                className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-100 transition-all flex items-center gap-2"
+                                className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-100 transition-all flex items-center gap-2 whitespace-nowrap"
                                 title="Download attached Excel cost sheet"
                               >
                                 <i className="fa-solid fa-file-excel"></i> Download Cost Sheet
                               </button>
                             )}
+
+                            {/* Upload / Overwrite Cost Sheet Button */}
+                            <button
+                              onClick={(e) => triggerHeaderCostSheetUpload(o, e)}
+                              className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-100 transition-all flex items-center gap-2 whitespace-nowrap"
+                              title="Upload and overwrite the cost sheet spreadsheet for this order"
+                            >
+                              <i className="fa-solid fa-file-arrow-up"></i> Upload
+                            </button>
 
                             {/* View / Edit Cost Sheet Button */}
                             <button
@@ -2372,7 +2426,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                 e.stopPropagation();
                                 openCostSheetModal(o);
                               }}
-                              className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase bg-violet-600 text-white hover:bg-violet-700 shadow-lg shadow-violet-100 transition-all flex items-center gap-2"
+                              className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase bg-violet-600 text-white hover:bg-violet-700 shadow-md shadow-violet-100 transition-all flex items-center gap-2 whitespace-nowrap"
                               title="Open interactive cost sheet viewer/editor"
                             >
                               <i className="fa-solid fa-file-lines"></i> Cost Sheet
