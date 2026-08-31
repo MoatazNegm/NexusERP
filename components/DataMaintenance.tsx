@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend } from '../types';
+import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend, ApiKey } from '../types';
 
 interface DataMaintenanceProps {
   config: AppConfig;
@@ -10,7 +10,7 @@ interface DataMaintenanceProps {
   isAdmin: boolean;
 }
 
-type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'integrations' | 'email' | 'ledger' | 'data' | 'help';
+type SettingsTab = 'modules' | 'thresholds' | 'groups' | 'users' | 'intelligence' | 'integrations' | 'email' | 'ledger' | 'data' | 'help' | 'apikeys';
 
 export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConfigUpdate, onRefresh, currentUser, isAdmin }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('modules');
@@ -36,6 +36,15 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [showPasscodeModal, setShowPasscodeModal] = useState<{ type: 'export' | 'import' | 'full-export' | 'full-import' | 'users-groups-export' | 'users-groups-import', file?: File } | null>(null);
   const [passcode, setPasscode] = useState('');
   const [backupFileName, setBackupFileName] = useState('');
+
+  // API keys (ERP Test Tool machine authentication)
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [isLoadingApiKeys, setIsLoadingApiKeys] = useState(false);
+  const [showCreateApiKeyModal, setShowCreateApiKeyModal] = useState(false);
+  const [newApiKeyName, setNewApiKeyName] = useState('');
+  const [newApiKeyOwner, setNewApiKeyOwner] = useState(currentUser.username);
+  const [createdApiKeySecret, setCreatedApiKeySecret] = useState<ApiKey | null>(null);
+  const [copiedKeyPrefix, setCopiedKeyPrefix] = useState<string | null>(null);
 
 
   const [groups, setGroups] = useState<UserGroup[]>([]);
@@ -191,6 +200,80 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     ]);
     setGroups(g);
     setUsers(u);
+  };
+
+  // --- API KEYS (ERP Test Tool machine authentication) ---
+  const loadApiKeys = async () => {
+    setIsLoadingApiKeys(true);
+    try {
+      setApiKeys((await dataService.getApiKeys()) || []);
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e?.message || 'Failed to load API keys.' });
+    } finally {
+      setIsLoadingApiKeys(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'apikeys') {
+      loadMetadata();
+      loadApiKeys();
+    }
+  }, [activeTab]);
+
+  const handleCreateApiKey = async () => {
+    if (!newApiKeyName.trim()) {
+      setMessage({ type: 'error', text: 'Key name is required.' });
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const created = await dataService.createApiKey({
+        name: newApiKeyName.trim(),
+        username: newApiKeyOwner.trim() || undefined
+      });
+      setCreatedApiKeySecret(created);
+      setNewApiKeyName('');
+      setMessage({ type: 'success', text: 'API key generated successfully. Copy it now — it will not be shown again.' });
+      await loadApiKeys();
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e?.message || 'Failed to generate API key.' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleToggleApiKey = async (k: ApiKey) => {
+    try {
+      await dataService.updateApiKey(k.id, { enabled: !k.enabled });
+      setApiKeys(prev => prev.map(x => x.id === k.id ? { ...x, enabled: !k.enabled } : x));
+      setMessage({ type: 'success', text: `API key "${k.name}" ${k.enabled ? 'disabled' : 'enabled'}.` });
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e?.message || 'Failed to update API key.' });
+    }
+  };
+
+  const handleRevokeApiKey = async (k: ApiKey) => {
+    if (!window.confirm(`Revoke API key "${k.name}" (${k.prefix}…)? This cannot be undone.`)) return;
+    try {
+      await dataService.deleteApiKey(k.id);
+      setApiKeys(prev => prev.filter(x => x.id !== k.id));
+      if (createdApiKeySecret?.id === k.id) setCreatedApiKeySecret(null);
+      setMessage({ type: 'success', text: `API key "${k.name}" revoked.` });
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e?.message || 'Failed to revoke API key.' });
+    }
+  };
+
+  const handleCopyApiKey = async (k: ApiKey) => {
+    if (!k.key) return;
+    try {
+      await navigator.clipboard.writeText(k.key);
+      setCopiedKeyPrefix(k.prefix);
+      setTimeout(() => setCopiedKeyPrefix(null), 2000);
+    } catch {
+      setMessage({ type: 'error', text: 'Copy failed — select and copy the key manually.' });
+    }
   };
 
   useEffect(() => {
@@ -766,9 +849,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex border-b border-slate-100 bg-slate-50/50 overflow-x-auto custom-scrollbar">
-          {(['modules', 'thresholds', 'ledger', 'groups', 'users', 'intelligence', 'integrations', 'email', 'data', 'help'] as const).map(tab => (
+          {(['modules', 'thresholds', 'ledger', 'groups', 'users', 'intelligence', 'integrations', 'email', 'apikeys', 'data', 'help'] as const).map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`px-10 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative whitespace-nowrap ${activeTab === tab ? 'text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}>
-              {tab === 'email' ? 'Relay Node' : tab === 'intelligence' ? 'AI Engine' : tab === 'integrations' ? 'Integrations' : tab === 'help' ? 'Help' : tab}
+              {tab === 'email' ? 'Relay Node' : tab === 'intelligence' ? 'AI Engine' : tab === 'integrations' ? 'Integrations' : tab === 'apikeys' ? 'API Keys' : tab === 'help' ? 'Help' : tab}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600"></div>}
             </button>
           ))}
@@ -2418,6 +2501,182 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          )}
+{activeTab === 'apikeys' && (
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="p-8 bg-gradient-to-r from-indigo-50 to-violet-50 rounded-[2.5rem] border border-indigo-100 space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-200">
+                      <i className="fa-solid fa-key"></i>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">API Keys</h3>
+                      <p className="text-xs text-slate-500 font-medium">Machine-level authentication for the ERP Test Tool &amp; external integrations</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { setShowCreateApiKeyModal(true); setCreatedApiKeySecret(null); }}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase rounded-xl shadow-lg shadow-indigo-200 transition-all disabled:opacity-50"
+                    disabled={!isAdmin}
+                  >
+                    <i className="fa-solid fa-plus mr-2"></i>Generate New Key
+                  </button>
+                </div>
+
+                <div className="p-4 bg-white/70 border border-indigo-100 rounded-2xl text-xs text-slate-600 leading-relaxed">
+                  <span className="font-black text-slate-800 uppercase tracking-widest text-[9px] block mb-1.5">How to use in the ERP Test Tool</span>
+                  API keys replace <code className="font-mono bg-slate-100 px-1 rounded text-indigo-600">--username / --password</code> for remote / production test runs:
+                  <pre className="mt-2 p-3 bg-slate-900 text-emerald-300 font-mono text-[11px] rounded-xl whitespace-pre-wrap">node runners/run-NexusERP-tests.js --target production --api-key nex_… --environment self</pre>
+                  Or set <code className="font-mono bg-slate-100 px-1 rounded text-indigo-600">NEXUSERP_API_KEY</code> in the test tool's <code className="font-mono bg-slate-100 px-1 rounded text-indigo-600">.env</code>. The key is shown only once, at creation time.
+                </div>
+              </div>
+      {/* Create-key modal / inline form */}
+              {showCreateApiKeyModal && isAdmin && (
+                <div className="p-8 bg-white rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-slate-700 uppercase tracking-widest">
+                      <i className="fa-solid fa-key text-indigo-500 mr-2"></i>Generate API Key
+                    </h4>
+                    <button onClick={() => setShowCreateApiKeyModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50">
+                      <i className="fa-solid fa-xmark"></i>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Key Name</label>
+                      <input
+                        className="w-full p-3 border rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                        placeholder="e.g. ERP Test Tool — CI pipeline"
+                        value={newApiKeyName}
+                        onChange={e => setNewApiKeyName(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleCreateApiKey()}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Owner User (optional — defaults to you)</label>
+                      <select
+                        className="w-full p-3 border rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                        value={newApiKeyOwner}
+                        onChange={e => setNewApiKeyOwner(e.target.value)}
+                      >
+                        {users.map(u => (
+                          <option key={u.id} value={u.username}>@{u.username} — {u.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      onClick={handleCreateApiKey}
+                      disabled={isProcessing || !newApiKeyName.trim()}
+                      className="px-8 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl shadow-xl disabled:opacity-50"
+                    >
+                      {isProcessing ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i>Generating…</> : <><i className="fa-solid fa-bolt mr-2"></i>Generate Key</>}
+                    </button>
+                    <button onClick={() => setShowCreateApiKeyModal(false)} className="px-8 py-3 bg-slate-100 text-slate-500 font-black text-[10px] uppercase rounded-xl">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Newly generated key — shown exactly once */}
+              {createdApiKeySecret && createdApiKeySecret.key && (
+                <div className="p-6 bg-emerald-50 border-2 border-emerald-300 rounded-[2rem] space-y-4 animate-in fade-in">
+                  <div className="flex items-center gap-3">
+                    <i className="fa-solid fa-circle-check text-emerald-600 text-xl"></i>
+                    <h4 className="text-xs font-black text-emerald-800 uppercase tracking-widest">Key Generated — Copy It Now</h4>
+                  </div>
+                  <p className="text-sm text-emerald-700 font-medium -mt-2">This is the only time the full key is shown. Treat it like a password.</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="flex-1 min-w-[280px] p-3 bg-slate-900 text-emerald-300 font-mono text-xs rounded-xl break-all">
+                      {createdApiKeySecret.key}
+                    </code>
+                    <button
+                      onClick={() => handleCopyApiKey(createdApiKeySecret)}
+                      className="px-5 py-3 bg-emerald-600 text-white font-black text-[10px] uppercase rounded-xl shadow-lg shadow-emerald-200"
+                    >
+                      {copiedKeyPrefix === createdApiKeySecret.prefix ? <><i className="fa-solid fa-check mr-2"></i>Copied</> : <><i className="fa-regular fa-copy mr-2"></i>Copy</>}
+                    </button>
+                    <button
+                      onClick={() => setCreatedApiKeySecret(null)}
+                      className="px-5 py-3 bg-white text-emerald-700 border border-emerald-200 font-black text-[10px] uppercase rounded-xl"
+                    >
+                      Done
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">Owner: @{createdApiKeySecret.username} · Prefix: {createdApiKeySecret.prefix}…</p>
+                </div>
+              )}
+
+      {/* Existing keys table */}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active API Keys</h4>
+                  {isLoadingApiKeys && <i className="fa-solid fa-circle-notch fa-spin text-indigo-400 text-xs"></i>}
+                </div>
+                {apiKeys.length > 0 ? (
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-slate-50/50 border-b border-slate-100">
+                        <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Name</th>
+                        <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Owner</th>
+                        <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Key</th>
+                        <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Created</th>
+                        <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Last Used</th>
+                        <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Status</th>
+                        <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {apiKeys.map(k => (
+                        <tr key={k.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-6 py-3 font-bold text-slate-700 text-xs">{k.name}</td>
+                          <td className="px-6 py-3">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black text-blue-600 bg-blue-50 rounded-lg px-2 py-1">@{k.username}</span>
+                          </td>
+                          <td className="px-6 py-3 font-mono text-[11px] text-slate-500">{k.prefix}…</td>
+                          <td className="px-6 py-3 text-[11px] text-slate-500">{new Date(k.createdAt).toLocaleString()}</td>
+                          <td className="px-6 py-3 text-[11px] text-slate-500">{k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : <span className="italic text-slate-400">never</span>}</td>
+                          <td className="px-6 py-3">
+                            <span className={`inline-flex items-center gap-1.5 text-[9px] font-black uppercase ${k.enabled ? 'text-emerald-600 bg-emerald-50' : 'text-slate-400 bg-slate-100'} rounded-lg px-2 py-1`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${k.enabled ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                              {k.enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => handleToggleApiKey(k)}
+                                title={k.enabled ? 'Disable key' : 'Enable key'}
+                                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                              >
+                                <i className={`fa-solid ${k.enabled ? 'fa-toggle-on' : 'fa-toggle-off'} text-base`}></i>
+                              </button>
+                              <button
+                                onClick={() => handleRevokeApiKey(k)}
+                                title="Revoke key"
+                                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                              >
+                                <i className="fa-solid fa-trash-can text-[11px]"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  !isLoadingApiKeys && (
+                    <div className="p-10 bg-white text-center">
+                      <i className="fa-solid fa-key text-slate-300 text-2xl mb-3"></i>
+                      <p className="text-xs text-slate-400 font-bold">No API keys yet. Generate one to authenticate the ERP Test Tool.</p>
+                    </div>
+                  )
+                )}
               </div>
             </div>
           )}

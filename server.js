@@ -405,6 +405,47 @@ const getDb = (req) => readDb(getDbPath(req));
 // --- HELPERS ---
 const hashPassword = (pass) => crypto.createHash('sha256').update(pass).digest('hex');
 
+// --- API KEY HELPERS (machine / ERP Test Tool authentication) ---
+// API keys are stored (SHA-256 hashed, never in plaintext) in the LIVE database
+// `apiKeys` collection. A key is bound to an owner user, and the ERP Test Tool
+// presents it to /api/v1/login (or the x-api-key header) instead of a password.
+const API_KEY_PREFIX = 'nex_';
+const makeApiKeyId = () => `apikey_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+const generateApiKey = () => `${API_KEY_PREFIX}${crypto.randomBytes(32).toString('base64url')}`;
+const hashApiKey = (key) => crypto.createHash('sha256').update(String(key || '')).digest('hex');
+
+// Resolve a live API-key secret to its stored record (null when unknown/disabled).
+// `touch` persists lastUsedAt (login path); the middleware hot-path skips it to
+// avoid rewriting the (large) live DB on every request.
+const findApiKeyBySecret = (secret, { touch = false } = {}) => {
+  if (!secret || typeof secret !== 'string') return null;
+  const liveDb = readDb(DB_PATH);
+  const list = liveDb.apiKeys || [];
+  const hash = hashApiKey(secret.trim());
+  const rec = list.find(k => k.keyHash === hash);
+  if (!rec || rec.enabled === false) return null;
+  if (touch) {
+    const last = rec.lastUsedAt ? Date.parse(rec.lastUsedAt) : NaN;
+    if (!Number.isFinite(last) || (Date.now() - last) > 60 * 60 * 1000) {
+      rec.lastUsedAt = new Date().toISOString();
+      liveDb.apiKeys = list;
+      writeDb(liveDb, DB_PATH);
+    }
+  }
+  return rec;
+};
+
+// Admin gate for API-key management routes. The live DB is the authority even
+// when the caller is currently resolving through a sandbox.
+const isAdminUser = (req) => {
+  if ((req.roles || []).includes('admin')) return true;
+  const liveDb = readDb(DB_PATH);
+  const username = String(req.headers['x-user'] || req.user || '').trim();
+  if (!username) return false;
+  const user = (liveDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase());
+  return !!user && (user.roles || []).includes('admin');
+};
+
 // --- AES-256-CBC CIPHER FOR SENSITIVE SETTINGS ---
 const CIPHER_KEY = crypto.createHash('sha256').update(FACTORY_PASS).digest(); // 32 bytes
 const CIPHER_PREFIX = 'ENC:';
@@ -1793,8 +1834,18 @@ app.use(bodyParser.json({ limit: '50mb' }));
 // Live mode (no header) is a zero-disk-IO pass-through; roles are evaluated
 // downstream by each handler that needs them.
 app.use((req, res, next) => {
-    const username = req.headers['x-user'];
+    const apiKeyHeader = String(req.headers['x-api-key'] || '').trim();
+    let username = req.headers['x-user'];
     const sandboxOwner = req.headers['x-sandbox-owner'];
+
+    // API-key header authentication (ERP Test Tool / machine clients): when an
+    // x-api-key header is present it resolves to the key's owner user (identity
+    // match against the live DB). Sandbox tenancy still applies via x-sandbox-owner.
+    if (apiKeyHeader) {
+        const keyRec = findApiKeyBySecret(apiKeyHeader, { touch: false });
+        if (!keyRec) return res.status(401).json({ error: 'Invalid API key.' });
+        username = keyRec.username;
+    }
 
     req.user = username || null;
     req.roles = [];
@@ -4348,10 +4399,21 @@ app.post('/api/v1/admin/switch-sandbox', (req, res) => {
 });
 
 app.post('/api/v1/login', (req, res) => {
-  const { password, environment } = req.body;
-  const username = String(req.body.username || '').trim();
+  const { password, environment, apiKey } = req.body;
+  let username = String(req.body.username || '').trim();
   const targetEnv = environment || 'live';
   const liveDb = readDb(DB_PATH);
+
+  // --- API KEY authentication (ERP Test Tool, alternative to username + password) ---
+  // An admin-generated API key resolves to its owner user, then the normal
+  // environment resolution below proceeds identically to a password login.
+  let authedViaApiKey = false;
+  if (apiKey && !password) {
+    const keyRec = findApiKeyBySecret(String(apiKey).trim(), { touch: true });
+    if (!keyRec) return res.status(401).json({ error: "Invalid API key." });
+    username = keyRec.username;
+    authedViaApiKey = true;
+  }
 
   const isFactory = username === 'factory' && (Date.now() - SERVER_START_TIME) < 300000 && password === FACTORY_PASS;
   if (isFactory) {
@@ -4363,14 +4425,14 @@ app.post('/api/v1/login', (req, res) => {
 
   if (targetEnv === 'live') {
     const user = (liveDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
-    if (!user || user.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password" });
+    if (!user || (!authedViaApiKey && user.password !== hashPassword(password))) return res.status(401).json({ error: "Invalid username or password" });
     const { password: _, ...safe } = user;
-    return res.json(safe);
+    return res.json({ ...safe, authMethod: authedViaApiKey ? 'api-key' : 'password' });
   }
 
   if (targetEnv === 'self' || targetEnv.toLowerCase() === (username || '').toLowerCase()) {
     const liveUser = (liveDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
-    if (!liveUser || liveUser.password !== hashPassword(password)) return res.status(401).json({ error: "Invalid username or password" });
+    if (!liveUser || (!authedViaApiKey && liveUser.password !== hashPassword(password))) return res.status(401).json({ error: "Invalid username or password" });
 
     const sandboxPath = getSandboxDbPath(username);
     if (!fs.existsSync(sandboxPath)) {
@@ -4426,7 +4488,7 @@ app.post('/api/v1/login', (req, res) => {
   const hasAccess = sandboxUser && (sandboxUser.sandboxAccess || isTargetAdmin || sandboxUser.username.toLowerCase() === ownerSanitized);
   
   if (!hasAccess) return res.status(403).json({ error: "You do not have access to this team sandbox." });
-  if (sandboxUser.password !== hashPassword(password) && liveTargetUser?.password !== hashPassword(password)) {
+  if (!authedViaApiKey && sandboxUser.password !== hashPassword(password) && liveTargetUser?.password !== hashPassword(password)) {
     return res.status(401).json({ error: "Invalid username or password for this sandbox." });
   }
 
@@ -4448,8 +4510,87 @@ app.post('/api/v1/login', (req, res) => {
     groupIds: liveTargetUser?.groupIds || sandboxUser.groupIds || [],
     sandbox: true,
     sandboxOwner: ownerSanitized,
-    sandboxLabel: `${ownerUser?.name || ownerSanitized}'s Team Sandbox`
+    sandboxLabel: `${ownerUser?.name || ownerSanitized}'s Team Sandbox`,
+    authMethod: authedViaApiKey ? 'api-key' : 'password'
   });
+});
+
+
+// --- API KEYS (ERP Test Tool machine authentication) ---
+// Admin-only endpoints for generating / listing / toggling / revoking API keys.
+// Keys live in the LIVE database `apiKeys` collection; the full secret is only
+// returned once, at creation time.
+app.get('/api/v1/api-keys', (req, res) => {
+    if (!isAdminUser(req)) return res.status(403).json({ error: 'Admin privileges are required to manage API keys.' });
+    const liveDb = readDb(DB_PATH);
+    const safe = (liveDb.apiKeys || []).map(({ keyHash, ...rest }) => rest);
+    return res.json(safe);
+});
+
+app.post('/api/v1/api-keys', (req, res) => {
+    if (!isAdminUser(req)) return res.status(403).json({ error: 'Admin privileges are required to manage API keys.' });
+    const liveDb = readDb(DB_PATH);
+    const name = String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Key name is required.' });
+
+    const creator = String(req.headers['x-user'] || req.user || 'admin').trim();
+    let ownerUsername = String(req.body.username || '').trim();
+    if (!ownerUsername) ownerUsername = creator;
+
+    const ownerUser = (liveDb.users || []).find(u => u.username.toLowerCase() === ownerUsername.toLowerCase());
+    if (!ownerUser) return res.status(400).json({ error: `User "${ownerUsername}" does not exist.` });
+
+    const secret = generateApiKey();
+    const record = {
+        id: makeApiKeyId(),
+        name,
+        username: ownerUser.username,
+        keyHash: hashApiKey(secret),
+        prefix: secret.slice(0, 14),
+        createdAt: new Date().toISOString(),
+        createdBy: creator,
+        lastUsedAt: null,
+        enabled: true
+    };
+    liveDb.apiKeys = liveDb.apiKeys || [];
+    liveDb.apiKeys.push(record);
+    if (!writeDb(liveDb, DB_PATH)) return res.status(500).json({ error: 'Failed to store API key.' });
+
+    console.log(`[API Keys] Created key "${name}" for ${record.username} by ${creator}.`);
+    const { keyHash, ...safeRecord } = record;
+    return res.status(201).json({ ...safeRecord, key: secret });
+});
+
+app.put('/api/v1/api-keys/:id', (req, res) => {
+    if (!isAdminUser(req)) return res.status(403).json({ error: 'Admin privileges are required to manage API keys.' });
+    const liveDb = readDb(DB_PATH);
+    const list = liveDb.apiKeys || [];
+    const idx = list.findIndex(k => k.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'API key not found.' });
+
+    const updates = {};
+    if (typeof req.body.name === 'string' && req.body.name.trim()) updates.name = req.body.name.trim();
+    if (typeof req.body.enabled === 'boolean') updates.enabled = req.body.enabled;
+    list[idx] = { ...list[idx], ...updates };
+    liveDb.apiKeys = list;
+    if (!writeDb(liveDb, DB_PATH)) return res.status(500).json({ error: 'Failed to update API key.' });
+
+    const { keyHash, ...safeRecord } = list[idx];
+    return res.json(safeRecord);
+});
+
+app.delete('/api/v1/api-keys/:id', (req, res) => {
+    if (!isAdminUser(req)) return res.status(403).json({ error: 'Admin privileges are required to manage API keys.' });
+    const liveDb = readDb(DB_PATH);
+    const list = liveDb.apiKeys || [];
+    const idx = list.findIndex(k => k.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'API key not found.' });
+
+    list.splice(idx, 1);
+    liveDb.apiKeys = list;
+    if (!writeDb(liveDb, DB_PATH)) return res.status(500).json({ error: 'Failed to delete API key.' });
+
+    return res.json({ success: true, message: 'API key revoked.' });
 });
 
 

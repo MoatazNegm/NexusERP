@@ -18,7 +18,8 @@ import {
   SupplierPayment,
   LedgerEntry,
   AuthEnvironment,
-  AdminSandboxInfo
+  AdminSandboxInfo,
+  ApiKey
 } from '../types';
 import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
 
@@ -735,6 +736,16 @@ class DataService {
   async addUserGroup(group: Omit<UserGroup, 'id'>) { return this.post('userGroups', group); }
   async updateUserGroup(id: string, updates: Partial<UserGroup>) { return this.put('userGroups', id, updates); }
   async deleteUserGroup(id: string) { return this.delete('userGroups', id); }
+
+  // --- API KEYS (ERP Test Tool machine authentication) ---
+  async getApiKeys(): Promise<ApiKey[]> { return this.get<ApiKey>('api-keys'); }
+  async createApiKey(payload: { name: string; username?: string }): Promise<ApiKey> {
+    return this.post<ApiKey>('api-keys', payload);
+  }
+  async updateApiKey(id: string, updates: Partial<Pick<ApiKey, 'name' | 'enabled'>>): Promise<ApiKey> {
+    return this.put<ApiKey>('api-keys', id, updates);
+  }
+  async deleteApiKey(id: string) { return this.delete('api-keys', id); }
 
 
 
