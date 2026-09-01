@@ -443,8 +443,34 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const costSheetStubRef = useRef<HTMLTableCellElement>(null);
   const costSheetRowRef = useRef<HTMLTableRowElement>(null);
   const [costSheetFrozenTop, setCostSheetFrozenTop] = useState(0);
-  const [costSheetFrozenLeft, setCostSheetFrozenLeft] = useState(0);
   const [costSheetRowHeight, setCostSheetRowHeight] = useState(0);
+  const [noRfpOverrides, setNoRfpOverrides] = useState<Record<string, boolean>>({});
+
+  const hasCostSheetUploaded = (o: CustomerOrder, item?: CustomerOrderItem) => {
+    if (item) return Boolean(item.costSheetFile || item.costSheetText);
+    return (o.items || []).some(i => Boolean(i.costSheetFile || i.costSheetText));
+  };
+
+  const isOrderNoRfp = (o: CustomerOrder) => {
+    if (noRfpOverrides[o.id] !== undefined) return noRfpOverrides[o.id];
+    return hasCostSheetUploaded(o);
+  };
+
+  const isCompNoRfp = (o: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent) => {
+    const compKey = `${o.id}_${item.id}_${comp.id}`;
+    if (noRfpOverrides[compKey] !== undefined) return noRfpOverrides[compKey];
+    if (noRfpOverrides[o.id] !== undefined) return noRfpOverrides[o.id];
+    return hasCostSheetUploaded(o, item);
+  };
+
+  const handleToggleOrderNoRfp = (orderId: string, val: boolean) => {
+    setNoRfpOverrides(prev => ({ ...prev, [orderId]: val }));
+  };
+
+  const handleToggleCompNoRfp = (orderId: string, itemId: string, compId: string, val: boolean) => {
+    const compKey = `${orderId}_${itemId}_${compId}`;
+    setNoRfpOverrides(prev => ({ ...prev, [compKey]: val }));
+  };
 
   useEffect(() => {
     if (!costSheetWorkbook) return;
@@ -2431,6 +2457,34 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             >
                               <i className="fa-solid fa-file-lines"></i> Cost Sheet
                             </button>
+
+                            {/* Auto No RFP Needed Checkbox for Outsourcing */}
+                            {(activeTab === 'outsourcing' || o.items.some(item => item.productionType === 'OUTSOURCING')) && (
+                              <label
+                                onClick={(e) => e.stopPropagation()}
+                                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-[9px] font-black uppercase cursor-pointer select-none transition-all ${
+                                  isOrderNoRfp(o)
+                                    ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-sm'
+                                    : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                                }`}
+                                title={
+                                  hasCostSheetUploaded(o)
+                                    ? 'Cost sheet attached: No need to send RFPs to suppliers (Direct Award enabled)'
+                                    : 'No cost sheet attached: Send RFPs to suppliers before awarding'
+                                }
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isOrderNoRfp(o)}
+                                  onChange={(e) => handleToggleOrderNoRfp(o.id, e.target.checked)}
+                                  className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 h-3.5 w-3.5 cursor-pointer"
+                                />
+                                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                                  <i className={`fa-solid ${isOrderNoRfp(o) ? 'fa-bolt text-amber-500' : 'fa-paper-plane text-slate-400'} text-[9px]`}></i>
+                                  No RFP Needed
+                                </span>
+                              </label>
+                            )}
                           </div>
                         )}
                         {anyOrderProcurementNotReady && (
@@ -2498,6 +2552,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                     <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
                                       BATCH: {c.rfpId.substring(0, 6)}
                                     </span>
+                                  )}
+                                  {activeTab === 'outsourcing' && c.status === 'PENDING_OFFER' && (
+                                    <label
+                                      onClick={(e) => e.stopPropagation()}
+                                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[8px] font-black uppercase cursor-pointer transition-all ${
+                                        isCompNoRfp(o, i, c)
+                                          ? 'bg-amber-50 border-amber-200 text-amber-800'
+                                          : 'bg-slate-50 border-slate-200 text-slate-400 hover:border-slate-300'
+                                      }`}
+                                      title="Direct award tender without sending RFPs"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isCompNoRfp(o, i, c)}
+                                        onChange={(e) => handleToggleCompNoRfp(o.id, i.id, c.id || '', e.target.checked)}
+                                        className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 h-3 w-3 cursor-pointer"
+                                      />
+                                      <span>No RFP Needed</span>
+                                    </label>
                                   )}
                                 </div>
                                 <div className="font-black text-slate-800 text-base tracking-tight">
@@ -2596,15 +2669,40 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   </div>
 
                                   {c.status === 'PENDING_OFFER' && (
-                                    <button onClick={() => {
-                                      setActiveAction({ type: 'RFP', order: o, item: i, comp: c });
-                                      setRfpSelection(c.rfpSupplierIds || []);
-                                      // Auto-select other components with the same rfpId if it exists
-                                      const sameRfpIds = c.rfpId ? comps.filter(x => x.comp.rfpId === c.rfpId).map(x => x.comp.id!) : [c.id!];
-                                      setRfpCompSelection(sameRfpIds);
-                                    }}
-                                      className="px-4 py-2 bg-slate-900 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-black transition-all"
-                                    >{t('procurement.rfp.sendRfp')}</button>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      {/* Direct Award button if No RFP Needed is checked */}
+                                      {isCompNoRfp(o, i, c) && (
+                                        <button
+                                          onClick={() => {
+                                            const samePending = comps.filter(x => x.comp.status === 'PENDING_OFFER' || x.comp.status === 'RFP_SENT');
+                                            const displayComps = samePending.length > 0 ? samePending : [comps.find(x => x.comp.id === c.id)!];
+                                            setMultiComps(displayComps);
+                                            setSelectedCompIds([c.id!]);
+                                            setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
+                                            setAwardCosts({ [c.id!]: (c.unitCost || 0).toString() });
+                                            setAwardTaxPercent((c.taxPercent || 14).toString());
+                                          }}
+                                          className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-700 transition-all flex items-center gap-1.5"
+                                          title="Direct award tender (Cost Sheet uploaded - no RFP needed)"
+                                        >
+                                          <i className="fa-solid fa-award"></i> {t('procurement.rfp.awardTender')}
+                                        </button>
+                                      )}
+
+                                      <button onClick={() => {
+                                        setActiveAction({ type: 'RFP', order: o, item: i, comp: c });
+                                        setRfpSelection(c.rfpSupplierIds || []);
+                                        // Auto-select other components with the same rfpId if it exists
+                                        const sameRfpIds = c.rfpId ? comps.filter(x => x.comp.rfpId === c.rfpId).map(x => x.comp.id!) : [c.id!];
+                                        setRfpCompSelection(sameRfpIds);
+                                      }}
+                                        className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase shadow-sm transition-all ${
+                                          isCompNoRfp(o, i, c)
+                                            ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                                            : 'bg-slate-900 text-white hover:bg-black'
+                                        }`}
+                                      >{t('procurement.rfp.sendRfp')}</button>
+                                    </div>
                                   )}
                                   {c.status === 'RFP_SENT' && (
                                     <div className="flex items-center gap-3">
