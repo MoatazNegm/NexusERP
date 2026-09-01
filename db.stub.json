@@ -6,7 +6,9 @@
   "orders": [],
   "customers": [],
   "inventory": [],
+  "suppliers": [],
   "notifications": [],
   "contracts": [],
-  "supplierPayments": []
+  "supplierPayments": [],
+  "apiKeys": []
 }

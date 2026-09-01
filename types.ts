@@ -368,6 +368,25 @@ export interface HelpLink {
   description: string;
 }
 
+/**
+ * Machine / ERP Test Tool API key. The full secret (`key`) is returned ONLY in
+ * the create response and is never stored or served back in plaintext.
+ */
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** Owner user the key authenticates as. */
+  username: string;
+  /** Leading characters of the secret, for display/identification. */
+  prefix: string;
+  createdAt: string;
+  createdBy: string;
+  lastUsedAt?: string | null;
+  enabled: boolean;
+  /** Present only on the create response. */
+  key?: string;
+}
+
 export interface OpenAIConfig {
   apiKey: string;
   baseUrl: string;
