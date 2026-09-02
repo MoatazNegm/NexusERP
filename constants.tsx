@@ -2,8 +2,8 @@
 import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGroup, CustomerOrderItem, ManufacturingComponent, CustomerOrder } from './types';
 import { getItemEffectiveQty } from './utils';
 
-// Application Version - Increment by 0.00001 for every code update
-export const APP_VERSION = '1.0001005';
+// Application Version - Increment by 0.000001 for every code update
+export const APP_VERSION = '1.0001015';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
