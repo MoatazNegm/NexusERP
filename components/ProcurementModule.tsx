@@ -214,6 +214,45 @@ const evaluateCostSheetFormula = (formula: string, cells: CostSheetCell[][], row
   }
 };
 
+/**
+ * Resolve every formula cell in the grid against the current editable values,
+ * cascading through formulas that reference other formulas (fixed-point, capped
+ * at a few passes). Returns a value grid aligned to `cells` indices — used both
+ * to render calculated cells live while editing and to bake fresh cached values
+ * into the workbook on save so downstream parsers see the edited totals.
+ */
+const computeResolvedCostSheetValues = (
+  cells: CostSheetCell[][],
+  rowOffset = 0,
+  colOffset = 0,
+): (string | number)[][] => {
+  const resolved: (string | number)[][] = cells.map(row => row.map(c => (c ? c.value : '')));
+  // A working copy whose `.value` tracks the latest resolved result, so the
+  // reference lookups inside evaluateCostSheetFormula pick up cascading changes.
+  const view: CostSheetCell[][] = cells.map((row, r) =>
+    row.map((c, cc) => ({ ...(c || { address: '', value: '' as string | number, isEditable: false }), value: resolved[r][cc] })),
+  );
+  const MAX_PASSES = 6;
+  for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+    let changed = false;
+    for (let r = 0; r < cells.length; r += 1) {
+      const row = cells[r] || [];
+      for (let cc = 0; cc < row.length; cc += 1) {
+        const cell = row[cc];
+        if (!cell || !cell.formula) continue;
+        const out = evaluateCostSheetFormula(cell.formula, view, rowOffset, colOffset);
+        if (out !== resolved[r][cc]) {
+          resolved[r][cc] = out;
+          view[r][cc].value = out;
+          changed = true;
+        }
+      }
+    }
+    if (!changed) break;
+  }
+  return resolved;
+};
+
 const parseCostSheetDataUrl = (dataUrl: string, persistedEditableCells?: string[], persistedCellColors?: Record<string, string>) => {
   const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
   const workbook = XLSX.read(base64, { type: 'base64', cellStyles: true, cellNF: true });
@@ -708,6 +747,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [costSheetCells, setCostSheetCells] = useState<CostSheetCell[][]>([]);
   const [costSheetRowOffset, setCostSheetRowOffset] = useState<number>(0);
   const [costSheetColOffset, setCostSheetColOffset] = useState<number>(0);
+  // Calculated cells re-evaluated live against the current editable values
+  // (cascading through formula-of-formula), aligned to costSheetCells indices.
+  const resolvedCostSheetValues = useMemo(
+    () => computeResolvedCostSheetValues(costSheetCells, costSheetRowOffset, costSheetColOffset),
+    [costSheetCells, costSheetRowOffset, costSheetColOffset],
+  );
   const [costSheetFileChanged, setCostSheetFileChanged] = useState(false);
   const [costSheetParseError, setCostSheetParseError] = useState<string | null>(null);
   const [isCostSheetSaving, setIsCostSheetSaving] = useState(false);
@@ -913,6 +958,29 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         const worksheetCell = worksheet[address] || { t: 's', v: '' };
         worksheetCell.v = cell.value;
         worksheetCell.t = typeof cell.value === 'number' ? 'n' : 's';
+        worksheet[address] = worksheetCell;
+      });
+    });
+
+    // Bake the re-evaluated result of every calculated cell into its cached value
+    // (keeping the formula, so Excel still recalculates on open). Downstream
+    // readers use sheet_to_json, which returns the cached value — this is what
+    // makes the edit flow through to the card's Working Resources / Real Cost.
+    const resolved = computeResolvedCostSheetValues(costSheetCells, costSheetRowOffset, costSheetColOffset);
+    costSheetCells.forEach((row, rowIndex) => {
+      row.forEach((cell, colIndex) => {
+        if (!cell.formula) return;
+        const address = XLSX.utils.encode_cell({ r: rowIndex + costSheetRowOffset, c: colIndex + costSheetColOffset });
+        const worksheetCell = worksheet[address];
+        if (!worksheetCell) return;
+        const val = resolved[rowIndex]?.[colIndex];
+        if (typeof val === 'number' && !isNaN(val)) {
+          worksheetCell.v = val;
+          worksheetCell.t = 'n';
+        } else if (val !== undefined && val !== '') {
+          worksheetCell.v = val;
+          worksheetCell.t = 's';
+        }
         worksheet[address] = worksheetCell;
       });
     });
@@ -4460,7 +4528,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   </td>
                                   {Array.from({ length: Math.max(...costSheetCells.map(r => r.length), 0) }, (_, colIndex) => {
                                     const cell = row[colIndex] || { address: '', value: '', formula: undefined, isEditable: false };
-                                    const displayValue = cell.formula ? evaluateCostSheetFormula(cell.formula, costSheetCells, costSheetRowOffset, costSheetColOffset) : cell.value;
+                                    const displayValue = cell.formula
+                                      ? (resolvedCostSheetValues[rowIndex]?.[colIndex]
+                                          ?? evaluateCostSheetFormula(cell.formula, costSheetCells, costSheetRowOffset, costSheetColOffset))
+                                      : cell.value;
                                     const cellBg = cell.bgColor
                                       ? cell.bgColor
                                       : cell.isEditable

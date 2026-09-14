@@ -205,6 +205,23 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     return !!(order.blanketOrder || order.contractId || order.blanketContractId);
   };
 
+  const getLastEditedInfo = (order: CustomerOrder) => {
+    const realUserLogs = (order.logs || [])
+      .filter(log =>
+        !!log.timestamp &&
+        !!log.user &&
+        log.user.trim().toLowerCase() !== 'system'
+      )
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+    const latestLog = realUserLogs.pop();
+
+    return {
+      timestamp: latestLog?.timestamp || order.dataEntryTimestamp,
+      user: latestLog?.user || 'System'
+    };
+  };
+
   // Delivery Note PDF & POD State moved to ShipmentModule
 
   useEffect(() => { fetchData(); }, [refreshKey]);
@@ -240,6 +257,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           aVal = a.dataEntryTimestamp || '';
           bVal = b.dataEntryTimestamp || '';
           break;
+        case 'lastEdited':
+          aVal = getLastEditedInfo(a).timestamp || '';
+          bVal = getLastEditedInfo(b).timestamp || '';
+          break;
         case 'customer':
           aVal = a.customerName || '';
           bVal = b.customerName || '';
@@ -264,23 +285,6 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     const parsed = new Date(timestamp);
     if (Number.isNaN(parsed.getTime())) return 'N/A';
     return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-  };
-
-  const getLastEditedInfo = (order: CustomerOrder) => {
-    const realUserLogs = (order.logs || [])
-      .filter(log =>
-        !!log.timestamp &&
-        !!log.user &&
-        log.user.trim().toLowerCase() !== 'system'
-      )
-      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-
-    const latestLog = realUserLogs.pop();
-
-    return {
-      timestamp: latestLog?.timestamp || order.dataEntryTimestamp,
-      user: latestLog?.user || 'System'
-    };
   };
 
   const getSubmittedBy = (order: CustomerOrder) => {
@@ -2337,8 +2341,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('dataEntryTimestamp')}>
                       Submitted Into The System <SortIcon column="dataEntryTimestamp" />
                     </th>
-                    <th className="px-8 py-5">
-                      Last Edited
+                    <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('lastEdited')}>
+                      Last Edited <SortIcon column="lastEdited" />
                     </th>
                     <th className="px-8 py-5 cursor-pointer group hover:text-blue-600 transition-colors" onClick={() => requestSort('customer')}>
                       Customer Entity <SortIcon column="customer" />

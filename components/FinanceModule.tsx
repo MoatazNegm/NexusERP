@@ -46,7 +46,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets';
+type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'blanket_history';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   if (order.status === OrderStatus.DELIVERED) {
@@ -515,6 +515,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [historySearch, setHistorySearch] = useState('');
+  const [blanketHistorySearch, setBlanketHistorySearch] = useState('');
   const [whtPeriod, setWhtPeriod] = useState<'this_year' | 'last_year'>('this_year');
   const [whtSearch, setWhtSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'desc' });
@@ -767,6 +768,95 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     const legacy = (order as any).project || (order as any).project_name || (order as any).projectName || '';
     return typeof legacy === 'string' ? legacy.trim() : '';
   }, [orders]);
+
+  const isOrderBlanket = useCallback((order: CustomerOrder): boolean =>
+    !!(order.blanketOrder || order.contractId || order.blanketContractId), []);
+
+  // Mirrors ProcurementModule's "No RFP Needed" determination (minus its
+  // session-local checkbox-override cache, which isn't visible outside that
+  // module) so the Orders tab can tell whether procurement still needs to run
+  // an RFP for this order before treating it as Blanket in the badge below.
+  const isOrderNoRfpNeeded = useCallback((order: CustomerOrder): boolean => {
+    const procComponents = (order.items || []).flatMap(it => it.components || []).filter(c => c.source === 'PROCUREMENT');
+    if (procComponents.length > 0 && procComponents.every(c => c.noRfpNeeded === false)) return false;
+    const isOutsourcing = (order.items || []).some(i => i.productionType === 'OUTSOURCING');
+    if (isOutsourcing) return true;
+    return (order.items || []).some(i => Boolean(i.costSheetFile || i.costSheetText));
+  }, []);
+
+  // The order's most recently uploaded outsourcing cost sheet ("last month's" sheet):
+  // the latest entry in an item's costSheets history, falling back to the item's
+  // current attached file when no history array has been recorded yet.
+  const getBlanketOrderLatestCostSheet = useCallback((order: CustomerOrder): { fileName: string; fileData: string; uploadedAt?: string } | null => {
+    const items = order.items || [];
+    const targetItem =
+      items.find(i => (i.costSheets || []).length > 0) ||
+      items.find(i => i.costSheetFile) ||
+      items.find(i => i.productionType === 'OUTSOURCING') ||
+      null;
+    if (!targetItem) return null;
+    const history = targetItem.costSheets || [];
+    if (history.length > 0) {
+      const latest = history[history.length - 1];
+      if (latest.fileData) {
+        return { fileName: latest.fileName || 'cost-sheet.xlsx', fileData: latest.fileData, uploadedAt: latest.uploadedAt };
+      }
+    }
+    if (targetItem.costSheetFile) {
+      return { fileName: targetItem.costSheetFileName || 'cost-sheet.xlsx', fileData: targetItem.costSheetFile };
+    }
+    return null;
+  }, []);
+
+  const blanketOrdersByMonth = useMemo(() => {
+    const q = blanketHistorySearch.trim().toLowerCase();
+    const filtered = orders.filter(isOrderBlanket).filter(o => {
+      if (!q) return true;
+      const proj = getOrderProjectName(o).toLowerCase();
+      const contract = (o.contractId || o.blanketContractId || '').toLowerCase();
+      return (
+        (o.internalOrderNumber || '').toLowerCase().includes(q) ||
+        (o.customerReferenceNumber || '').toLowerCase().includes(q) ||
+        (o.customerName || '').toLowerCase().includes(q) ||
+        contract.includes(q) ||
+        proj.includes(q)
+      );
+    });
+
+    const groups = new Map<string, { label: string; orders: CustomerOrder[] }>();
+    for (const o of filtered) {
+      const dateStr = o.orderDate || o.dataEntryTimestamp;
+      const d = dateStr ? new Date(dateStr) : null;
+      const valid = d && !isNaN(d.getTime());
+      const key = valid ? `${d!.getFullYear()}-${String(d!.getMonth() + 1).padStart(2, '0')}` : 'undated';
+      const label = valid ? d!.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : (t('finance.blanketHistory.undatedMonth') || 'Undated');
+      if (!groups.has(key)) groups.set(key, { label, orders: [] });
+      groups.get(key)!.orders.push(o);
+    }
+
+    return Array.from(groups.entries())
+      .sort(([keyA], [keyB]) => {
+        if (keyA === 'undated') return 1;
+        if (keyB === 'undated') return -1;
+        return keyB.localeCompare(keyA); // most recent month first
+      })
+      .map(([key, val]) => ({
+        key,
+        label: val.label,
+        orders: [...val.orders].sort((a, b) =>
+          new Date(b.orderDate || b.dataEntryTimestamp || 0).getTime() - new Date(a.orderDate || a.dataEntryTimestamp || 0).getTime()
+        ),
+      }));
+  }, [orders, blanketHistorySearch, isOrderBlanket, getOrderProjectName, t]);
+
+  const downloadCostSheetFile = (fileData: string, fileName: string) => {
+    const link = document.createElement('a');
+    link.href = fileData;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const ordersWithPL = useMemo(() => orders.map(o => ({ ...o, pl: getPL(o) })), [orders]);
 
@@ -1470,7 +1560,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <div className="flex flex-col md:flex-row items-start md:items-center gap-4 w-full xl:w-auto overflow-hidden">
           <LanguageToggle />
           <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-full shadow-inner overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
-          {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'customer_wallets'] as const).map(tab => (
+          {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1522,6 +1612,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             <div className="text-xs text-slate-500 mt-1 px-1">
               Search through descriptions, account names, groups, amounts, dates, and transaction details
             </div>
+          </div>
+        ) : activeTab === 'blanket_history' ? (
+          <div className="relative w-full xl:w-96">
+            <input
+              type="text" placeholder={t("finance.blanketHistory.searchPlaceholder") || "Search order #, customer, contract, project..."}
+              className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
+              value={blanketHistorySearch} onChange={e => setBlanketHistorySearch(e.target.value)}
+            />
+            <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
           </div>
         ) : (
           <div className="flex items-center gap-3 w-full xl:w-auto">
@@ -1598,6 +1697,105 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               emptyMessage="No active blanket contracts found"
               storageKey="finance-contracts-table"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Blanket History Tab — blanket orders grouped by month, with each order's latest cost sheet */}
+      {activeTab === 'blanket_history' && (
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+          <div className="px-8 pt-8 pb-4 flex items-center gap-3 border-b border-slate-100">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+              <i className="fa-solid fa-calendar-days text-xl"></i>
+            </div>
+            <div>
+              <div className="font-black text-slate-800 uppercase tracking-widest text-lg">{t('finance.blanketHistory.title') || 'Blanket Orders History'}</div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">{t('finance.blanketHistory.subtitle') || "Blanket orders grouped by month, with each order's latest cost sheet"}</div>
+            </div>
+          </div>
+
+          <div className="p-8 space-y-8">
+            {blanketOrdersByMonth.length === 0 && (
+              <div className="text-center py-16">
+                <i className="fa-solid fa-calendar-xmark text-4xl block mb-3 text-slate-200"></i>
+                <div className="text-slate-400 font-bold text-sm uppercase tracking-widest">{t('finance.blanketHistory.noOrders') || 'No blanket orders found'}</div>
+              </div>
+            )}
+            {blanketOrdersByMonth.map(group => (
+              <div key={group.key} className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-black text-slate-800 uppercase tracking-widest">{group.label}</div>
+                  <div className="h-px flex-1 bg-slate-100"></div>
+                  <span className="text-[9px] font-black uppercase text-slate-400 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 whitespace-nowrap">
+                    {group.orders.length === 1
+                      ? (t('finance.blanketHistory.orderCountSingular') || '1 order')
+                      : (t('finance.blanketHistory.ordersCount', { count: String(group.orders.length) }) || `${group.orders.length} orders`)}
+                  </span>
+                </div>
+                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                  <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+                    <thead className="bg-slate-50 text-[9px] font-black uppercase text-slate-400 tracking-widest">
+                      <tr>
+                        <th className="px-5 py-3">{t('finance.blanketHistory.order') || 'Order'}</th>
+                        <th className="px-5 py-3">{t('finance.blanketHistory.customer') || 'Customer'}</th>
+                        <th className="px-5 py-3">{t('finance.blanketHistory.contract') || 'Contract'}</th>
+                        <th className="px-5 py-3">{t('finance.blanketHistory.status') || 'Status'}</th>
+                        <th className="px-5 py-3 text-end">{t('finance.blanketHistory.costSheet') || 'Cost Sheet'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {group.orders.map(o => {
+                        const sheet = getBlanketOrderLatestCostSheet(o);
+                        const proj = getOrderProjectName(o);
+                        const contractRef = o.contractId || o.blanketContractId;
+                        return (
+                          <tr key={o.id} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="px-5 py-3">
+                              <div className="font-mono text-xs font-black text-blue-600">{o.internalOrderNumber}</div>
+                              {o.customerReferenceNumber && (
+                                <div className="text-[9px] text-slate-400 font-bold mt-0.5">PO: {o.customerReferenceNumber}</div>
+                              )}
+                              {proj && (
+                                <div className="text-[9px] text-violet-600 font-bold mt-0.5 inline-flex items-center gap-1">
+                                  <i className="fa-solid fa-diagram-project"></i>{proj}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-5 py-3"><span className="font-bold text-slate-700 text-sm">{o.customerName}</span></td>
+                            <td className="px-5 py-3">
+                              {contractRef ? (
+                                <span className="font-mono text-[10px] font-black text-teal-600 uppercase">{contractRef}</span>
+                              ) : (
+                                <span className="text-[10px] text-slate-300 italic">—</span>
+                              )}
+                            </td>
+                            <td className="px-5 py-3">
+                              <span className="px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-slate-100 text-slate-600 border border-slate-200 whitespace-nowrap">
+                                {o.status}
+                              </span>
+                            </td>
+                            <td className="px-5 py-3 text-end">
+                              {sheet ? (
+                                <button
+                                  onClick={() => downloadCostSheetFile(sheet.fileData, sheet.fileName)}
+                                  className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-all inline-flex items-center gap-1.5 whitespace-nowrap"
+                                  title={sheet.uploadedAt ? `Uploaded ${new Date(sheet.uploadedAt).toLocaleDateString()}` : 'Download the latest cost sheet on file'}
+                                >
+                                  <i className="fa-solid fa-file-excel"></i>
+                                  {t('finance.blanketHistory.downloadCostSheet') || 'Download Cost Sheet'}
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-slate-300 italic">{t('finance.blanketHistory.noCostSheet') || 'No cost sheet'}</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -2050,7 +2248,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
           )}
         </div>
-      ) : activeTab !== 'ledger' && activeTab !== 'history' && activeTab !== 'contracts' && activeTab !== 'customer_wallets' ? (
+      ) : activeTab !== 'ledger' && activeTab !== 'history' && activeTab !== 'contracts' && activeTab !== 'customer_wallets' && activeTab !== 'blanket_history' ? (
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh]">
         <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
@@ -2259,6 +2457,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             ) : filteredOrders.map((o, orderIdx) => {
               const pl = (o as any).pl;
               const isBlanketOrder = !!(o.blanketOrder || o.contractId || o.blanketContractId);
+              // The Blanket badge additionally requires "No RFP Needed" in Procurement —
+              // an order linked to a blanket contract still shows as Non-Blanket while
+              // procurement hasn't cleared it off the RFP requirement.
+              const showBlanketBadge = isBlanketOrder && isOrderNoRfpNeeded(o);
               const isBreach = !isBlanketOrder && isMarginBreach(pl.costInOrderCurrency ?? pl.cost, pl.markupPct, config.settings.minimumMarginPct);
               const currentTab = activeTab as string;
               const showRow = currentTab === 'orders' ||
@@ -2317,6 +2519,18 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                 </span>
                               );
                             })()}
+                            {showBlanketBadge ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
+                                <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
+                              </span>
+                            ) : (
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0"
+                                title={isBlanketOrder ? 'Linked to a blanket contract, but Procurement has not marked this order as No RFP Needed' : 'Standard Order'}
+                              >
+                                Non-Blanket
+                              </span>
+                            )}
                           </div>
                           <div className="font-bold text-slate-800 text-sm tracking-tight mt-1 flex items-center gap-2 flex-wrap">
                             <span>{o.customerName}</span>
