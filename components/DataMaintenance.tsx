@@ -1,6 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend, ApiKey } from '../types';
+import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend, ApiKey, SandboxMember } from '../types';
+
+// Client-side mirror of server.js `sanitizeUsername`. Used for client
+// comparisons only (e.g. "is the current user the sandbox owner?") —
+// the server re-validates every server-side decision with its own copy.
+const sanitizeUsernameLocal = (raw: string | undefined | null): string => {
+  if (!raw || typeof raw !== 'string') return 'user';
+  const cleaned = raw
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 32);
+  return cleaned || 'user';
+};
 
 interface DataMaintenanceProps {
   config: AppConfig;
@@ -52,6 +67,23 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [users, setUsers] = useState<User[]>([]);
   const [editingGroup, setEditingGroup] = useState<Partial<UserGroup> | null>(null);
   const [editingUser, setEditingUser] = useState<Partial<User & { password?: string }> | null>(null);
+
+  // --- Sandbox Team management (multi-sandbox collaboration) ---
+  // Visible only when the caller is signed into a sandbox they own
+  // (or is a live admin acting in any sandbox). Members are fetched
+  // lazily when the Users tab opens.
+  const [sandboxMembers, setSandboxMembers] = useState<SandboxMember[]>([]);
+  const [isLoadingSandboxMembers, setIsLoadingSandboxMembers] = useState(false);
+  const [showInviteMemberModal, setShowInviteMemberModal] = useState(false);
+  const [inviteMemberUsername, setInviteMemberUsername] = useState('');
+  const [inviteMemberAccess, setInviteMemberAccess] = useState(true);
+  const [isInvitingMember, setIsInvitingMember] = useState(false);
+
+  const canManageSandboxTeam = !!currentUser?.sandbox && !!currentUser?.sandboxOwner && (
+    currentUser.roles.includes('admin') ||
+    sanitizeUsernameLocal(currentUser.username) === sanitizeUsernameLocal(currentUser.sandboxOwner)
+  );
+  const sandboxOwnerSanitized = currentUser?.sandboxOwner ? sanitizeUsernameLocal(currentUser.sandboxOwner) : '';
 
   const [testEmailRecipient, setTestEmailRecipient] = useState('');
   const [isTestingEmail, setIsTestingEmail] = useState(false);
@@ -203,6 +235,55 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     setUsers(u);
   };
 
+  const loadSandboxMembers = async () => {
+    if (!canManageSandboxTeam || !sandboxOwnerSanitized) return;
+    setIsLoadingSandboxMembers(true);
+    try {
+      const data = await dataService.getSandboxMembers(sandboxOwnerSanitized);
+      setSandboxMembers(data.members || []);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to load sandbox members.');
+    } finally {
+      setIsLoadingSandboxMembers(false);
+    }
+  };
+
+  const handleInviteMember = async () => {
+    const u = inviteMemberUsername.trim();
+    if (!u) return;
+    setIsInvitingMember(true);
+    try {
+      await dataService.addSandboxMember(sandboxOwnerSanitized, u, { sandboxAccess: inviteMemberAccess });
+      setShowInviteMemberModal(false);
+      setInviteMemberUsername('');
+      setInviteMemberAccess(true);
+      await loadSandboxMembers();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to invite member.');
+    } finally {
+      setIsInvitingMember(false);
+    }
+  };
+
+  const handleToggleMemberAccess = async (member: SandboxMember) => {
+    try {
+      await dataService.updateSandboxMember(sandboxOwnerSanitized, member.username, { sandboxAccess: !member.sandboxAccess });
+      await loadSandboxMembers();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update member access.');
+    }
+  };
+
+  const handleRemoveMember = async (member: SandboxMember) => {
+    if (!confirm(`Revoke "${member.username}"'s access to this sandbox? You can re-invite them later.`)) return;
+    try {
+      await dataService.removeSandboxMember(sandboxOwnerSanitized, member.username);
+      await loadSandboxMembers();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to revoke member.');
+    }
+  };
+
   // --- API KEYS (ERP Test Tool machine authentication) ---
   const loadApiKeys = async () => {
     setIsLoadingApiKeys(true);
@@ -219,6 +300,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     if (activeTab === 'apikeys') {
       loadMetadata();
       loadApiKeys();
+    }
+    if (activeTab === 'users') {
+      loadMetadata();
+      loadSandboxMembers();
     }
   }, [activeTab]);
 
@@ -1935,9 +2020,108 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
           {activeTab === 'users' && (
             <div className="space-y-6">
+              {canManageSandboxTeam && (
+                <div className="p-8 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-[2.5rem] border border-indigo-100 space-y-5">
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                        <i className="fa-solid fa-users-gear text-xl"></i>
+                      </div>
+                      <div>
+                        <h4 className="text-base font-black text-slate-700 uppercase tracking-tight">Sandbox Team</h4>
+                        <p className="text-xs text-slate-500 font-bold">
+                          Manage who can sign in to <span className="font-mono text-indigo-700">@{sandboxOwnerSanitized}</span>'s sandbox.
+                          Each member keeps their own dedicated live roles inside this sandbox.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowInviteMemberModal(true)}
+                      className="px-4 py-2 bg-indigo-600 text-white font-black text-[10px] uppercase rounded-xl shadow-lg hover:bg-indigo-700 transition-all"
+                    >
+                      <i className="fa-solid fa-user-plus mr-2"></i>Invite Member
+                    </button>
+                  </div>
+
+                  {isLoadingSandboxMembers ? (
+                    <div className="text-center py-6 text-slate-400 text-xs font-black uppercase tracking-widest">
+                      <i className="fa-solid fa-circle-notch fa-spin mr-2"></i>Loading sandbox members…
+                    </div>
+                  ) : sandboxMembers.length === 0 ? (
+                    <div className="text-center py-6 text-slate-400 text-xs font-black uppercase tracking-widest border-2 border-dashed border-indigo-100 rounded-2xl">
+                      No members yet. Invite a live user to collaborate.
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-2xl border border-indigo-100 overflow-hidden">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="bg-indigo-50/40 border-b border-indigo-100">
+                            <th className="px-6 py-3 text-[9px] font-black text-indigo-700 uppercase tracking-widest">Member</th>
+                            <th className="px-6 py-3 text-[9px] font-black text-indigo-700 uppercase tracking-widest">Live Roles</th>
+                            <th className="px-6 py-3 text-[9px] font-black text-indigo-700 uppercase tracking-widest">Sandbox Access</th>
+                            <th className="px-6 py-3 text-[9px] font-black text-indigo-700 uppercase tracking-widest text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {sandboxMembers.map(m => (
+                            <tr key={m.id} className="hover:bg-slate-50">
+                              <td className="px-6 py-3">
+                                <div className="font-black text-slate-800">{m.name}</div>
+                                <div className="font-mono text-xs text-blue-600">@{m.username}{m.isOwner && <span className="ml-2 text-[9px] text-indigo-600 font-black">(OWNER)</span>}</div>
+                                {m.liveAccess === false && (
+                                  <div className="text-[9px] text-rose-500 font-black uppercase mt-1">
+                                    <i className="fa-solid fa-ban mr-1"></i>Live disabled
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-6 py-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {(m.liveRoles || []).map(r => (
+                                    <span key={r} className="px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-slate-100 text-slate-600">{r}</span>
+                                  ))}
+                                  {(!m.liveRoles || m.liveRoles.length === 0) && <span className="text-slate-400 text-xs">—</span>}
+                                </div>
+                              </td>
+                              <td className="px-6 py-3">
+                                {m.isOwner ? (
+                                  <span className="text-[10px] font-black uppercase text-emerald-600"><i className="fa-solid fa-check mr-1"></i>Always</span>
+                                ) : (
+                                  <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!m.sandboxAccess}
+                                      onChange={() => handleToggleMemberAccess(m)}
+                                      className="w-4 h-4 rounded text-indigo-600 border-slate-300"
+                                    />
+                                    <span className="text-[10px] uppercase font-bold text-slate-500">
+                                      {m.sandboxAccess ? 'Granted' : 'Revoked'}
+                                    </span>
+                                  </label>
+                                )}
+                              </td>
+                              <td className="px-6 py-3 text-right">
+                                {!m.isOwner && (
+                                  <button
+                                    onClick={() => handleRemoveMember(m)}
+                                    className="p-2 text-slate-400 hover:text-rose-600"
+                                    title="Revoke access"
+                                  >
+                                    <i className="fa-solid fa-user-slash"></i>
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex justify-between items-center">
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Active System Identities</h3>
-                {!editingUser && <button onClick={() => setEditingUser({ name: '', username: '', roles: [], groupIds: [] })} className="px-4 py-2 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl">Add User</button>}
+                {!editingUser && <button onClick={() => setEditingUser({ name: '', username: '', roles: [], groupIds: [], liveAccess: true })} className="px-4 py-2 bg-blue-600 text-white font-black text-[10px] uppercase rounded-xl">Add User</button>}
               </div>
               {editingUser && (
                 <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-200 space-y-6">
@@ -1962,6 +2146,34 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
                   <div className="space-y-4">
                     <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Direct Roles & Group Membership</label>
+
+                    {isAdmin && editingUser.username !== 'admin' && (
+                      <div className="p-4 rounded-2xl border border-emerald-100 bg-emerald-50/40 flex items-center justify-between gap-4">
+                        <div>
+                          <div className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">Live ERP Access</div>
+                          <div className="text-xs text-slate-600 mt-1">
+                            When disabled, this user can no longer sign in to the Live environment.
+                            Sandbox logins remain available.
+                            {editingUser.username === currentUser?.username && (
+                              <span className="block mt-1 text-rose-600 font-bold">
+                                You are editing your own account — toggling this will lock you out of Live.
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editingUser.liveAccess !== false}
+                            onChange={e => setEditingUser({ ...editingUser, liveAccess: e.target.checked })}
+                            className="w-5 h-5 rounded text-emerald-600 border-slate-300"
+                          />
+                          <span className="text-[10px] font-black uppercase text-emerald-700">
+                            {editingUser.liveAccess === false ? 'Disabled' : 'Enabled'}
+                          </span>
+                        </label>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
                         <span className="text-[8px] font-black text-slate-400 uppercase">Assigned Roles</span>
@@ -1998,18 +2210,118 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   </div>
                 </div>
               )}
+
+              {showInviteMemberModal && (
+                <div className="p-8 bg-white rounded-[2.5rem] border border-indigo-200 shadow-lg space-y-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                        <i className="fa-solid fa-user-plus text-xl"></i>
+                      </div>
+                      <div>
+                        <h4 className="text-base font-black text-slate-700 uppercase tracking-tight">Invite Sandbox Member</h4>
+                        <p className="text-xs text-slate-500 font-bold">
+                          The invited user must already exist in the Live database. Their live roles will be applied inside this sandbox.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setShowInviteMemberModal(false); setInviteMemberUsername(''); setInviteMemberAccess(true); }}
+                      className="text-slate-400 hover:text-slate-600 p-2"
+                    >
+                      <i className="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Live Username</label>
+                      <input
+                        className="w-full p-4 border-2 border-white rounded-2xl bg-slate-50 font-mono text-sm outline-none focus:border-indigo-500 transition-all"
+                        value={inviteMemberUsername}
+                        onChange={e => setInviteMemberUsername(e.target.value)}
+                        placeholder="e.g. finance"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Sandbox Access</label>
+                      <label className="flex items-center gap-3 p-4 rounded-2xl border-2 border-white bg-slate-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={inviteMemberAccess}
+                          onChange={e => setInviteMemberAccess(e.target.checked)}
+                          className="w-5 h-5 rounded text-indigo-600 border-slate-300"
+                        />
+                        <div>
+                          <div className="text-[10px] font-black uppercase text-slate-700">
+                            {inviteMemberAccess ? 'Granted on invite' : 'Inactive (owner can enable later)'}
+                          </div>
+                          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">
+                            {inviteMemberAccess ? 'Member can sign in immediately.' : 'Member row exists but login is blocked until you enable.'}
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-4 border-t border-indigo-100">
+                    <button
+                      onClick={() => { setShowInviteMemberModal(false); setInviteMemberUsername(''); setInviteMemberAccess(true); }}
+                      className="px-8 py-3 bg-slate-200 text-slate-600 font-black text-[10px] uppercase rounded-xl"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleInviteMember}
+                      disabled={!inviteMemberUsername.trim() || isInvitingMember}
+                      className="px-10 py-3 bg-indigo-600 text-white font-black text-[10px] uppercase rounded-xl shadow-xl disabled:opacity-50"
+                    >
+                      {isInvitingMember ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i>Inviting…</> : 'Send Invite'}
+                    </button>
+                  </div>
+                </div>
+              )}
               <table className="w-full text-left">
                 <tbody className="divide-y divide-slate-100">
                   {users.map(u => (
                     <tr key={u.id} className="hover:bg-slate-50">
                       <td className="py-4 font-black text-slate-800">{u.name}</td>
                       <td className="py-4 font-mono text-xs text-blue-600">@{u.username}</td>
+                      {isAdmin && (
+                        <td className="py-4">
+                          <label className="flex items-center gap-2 cursor-pointer opacity-90 hover:opacity-100 transition-opacity">
+                            <input
+                              type="checkbox"
+                              checked={u.username === 'admin' ? true : u.liveAccess !== false}
+                              onChange={async (e) => {
+                                if (u.username === currentUser?.username) {
+                                  alert("You cannot change your own Live Access. Ask another administrator to do it for you.");
+                                  return;
+                                }
+                                try {
+                                  const updatedUser = { ...u, liveAccess: e.target.checked };
+                                  await dataService.updateUser(updatedUser.id, updatedUser);
+                                  loadMetadata();
+                                  onRefresh();
+                                } catch (err) {
+                                  alert("Failed to update Live Access.");
+                                }
+                              }}
+                              className="w-4 h-4 rounded text-emerald-600 border-slate-300"
+                              disabled={u.username === 'admin'}
+                              title="Disable this user's login to Live ERP. Sandbox login still works."
+                            />
+                            <span className="text-[10px] uppercase font-bold text-slate-500">Live Access</span>
+                          </label>
+                        </td>
+                      )}
                       {currentUser?.sandbox && (currentUser.sandboxOwner === currentUser.username || currentUser.roles.includes('admin')) && (
                         <td className="py-4">
                             <label className="flex items-center gap-2 cursor-pointer opacity-90 hover:opacity-100 transition-opacity">
-                              <input 
-                                type="checkbox" 
-                                checked={u.username === 'admin' || (currentUser.sandboxOwner && u.username.toLowerCase() === currentUser.sandboxOwner.toLowerCase()) ? true : !!u.sandboxAccess} 
+                              <input
+                                type="checkbox"
+                                checked={u.username === 'admin' || (currentUser.sandboxOwner && u.username.toLowerCase() === currentUser.sandboxOwner.toLowerCase()) ? true : !!u.sandboxAccess}
                                 onChange={async (e) => {
                                   try {
                                     const updatedUser = { ...u, sandboxAccess: e.target.checked };

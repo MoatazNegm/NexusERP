@@ -1,8 +1,8 @@
-# AGENTS.md
+# DEVELOPMENT.md
 
-NexusVSC / NexusERP â€” a per-customer ERP (Finance, Procurement, Inventory, Manufacturing, Shipment, CRM, Gov E-Invoice). One repo = one customer copy, distributed as an installed app (not SaaS).
+NexusVSC / NexusERP — a per-customer ERP (Finance, Procurement, Inventory, Manufacturing, Shipment, CRM, Gov E-Invoice). One repo = one customer copy, distributed as an installed app (not SaaS).
 
-This file is the **single source of project truth for AI agents** â€” it absorbed `DEVELOPMENT.md`. If you change a project rule, change it here.
+This file is the **single source of project truth for developers and AI agents** — it consolidates and absorbs all developer specifications, agent guidelines, and operational procedures. If you change a project rule or feature architecture, update it here.
 
 ---
 
@@ -13,7 +13,7 @@ This file is the **single source of project truth for AI agents** â€” it ab
 | Frontend | React 19 + TypeScript + Vite 6 |
 | Styling | Tailwind CSS 4 (via `@tailwindcss/postcss`) + PostCSS |
 | Backend | Node.js + Express 5 (single `server.js`) |
-| State | React hooks only â€” no Redux/Zustand |
+| State | React hooks only — no Redux/Zustand |
 | DB | JSON file (`db.json` + `db.sandbox.*.json` for v3.5.1 sandboxes) over REST |
 | i18n | Custom `LanguageContext` + `locales/translations.ts` |
 | AI | Gemini (`@google/genai`) + OpenRouter/OpenAI with multi-model fallback engine |
@@ -23,11 +23,11 @@ This file is the **single source of project truth for AI agents** â€” it ab
 
 ## Fastest path to a code change
 
-1. **Find the feature module.** `components/{Feature}Module.tsx` â€” one file per business domain (see "Components by business domain" below).
+1. **Find the feature module.** `components/{Feature}Module.tsx` — one file per business domain (see "Components by business domain" below).
 2. **Read the type.** `types.ts` is the domain model. Add/modify interfaces here first.
 3. **Read or add the API surface.** `services/dataService.ts` is the only HTTP client. Never call `fetch()` from a component.
 4. **Read or add the server handler.** `server.js` registers routes near the top and a generic dispatch action endpoint `{ orderId, action, payload }` for mutations; generic CRUD lives at `/api/v1/<collection>`.
-5. **Touch the DB carefully.** Roles and module mappings live in `db.json` `settings.availableRoles` / `settings.roleMappings`. Do not edit `db.json` by hand â€” use the schema migration system (see "Hard rules" Â§5).
+5. **Touch the DB carefully.** Roles and module mappings live in `db.json` `settings.availableRoles` / `settings.roleMappings`. Do not edit `db.json` by hand — use the schema migration system (see "Hard rules" §5).
 
 ---
 
@@ -40,18 +40,19 @@ node server.js         # production-style: Express serves dist/ + API on :5005
 npm run build          # Vite build -> dist/
 ```
 
-> The backend listens **exclusively on port 5005** (or `process.env.PORT`). Ports 3005 / 4005 are intentionally free for external services. To restart, kill only the PID bound to 5005 â€” **never** `Stop-Process -Name node` or `taskkill /IM node.exe /F` (see "Build, Run, and Deploy Lifecycle" below).
+> The backend listens **exclusively on port 5005** (or `process.env.PORT`). Ports 3005 / 4005 are intentionally free for external services. To restart, kill only the PID bound to 5005 — **never** `Stop-Process -Name node` or `taskkill /IM node.exe /F` (see "Build, Run, and Deploy Lifecycle" below).
 
-**`VITE_BACKEND_URL`:** defaults to empty string â†’ relative paths â†’ same origin. Leave it unset in dev (Vite proxies `/api` to `:3006`) and in production (Express serves `dist/` on the same origin). Set it only when API and frontend are deployed to **different origins**.
+**`VITE_BACKEND_URL`:** defaults to empty string → relative paths → same origin. Leave it unset in dev (Vite proxies `/api` to `:3006`) and in production (Express serves `dist/` on the same origin). Set it only when API and frontend are deployed to **different origins**.
 
 There is no `npm test`. Functional tests are Node scripts in repo root (`test_*.js`, `verify_*.js`) and `scripts/*.cjs` (one-off maintenance). Run them with `node test_*.js`.
 
 ---
 
-## Project layout (entry points only â€” for the rest, `ls <dir>`)
+## Project layout (entry points only — for the rest, `ls <dir>`)
 
 ```
-AGENTS.md                # this file (the only project-doc file)
+DEVELOPMENT.md           # this file (the single consolidated project truth)
+AGENTS.md                # pointer to DEVELOPMENT.md for AI agent discovery
 README.md                # AI-Studio stub; ignore for real work
 App.tsx                  # root component, view router, sandbox banner, login/logout
 index.tsx                # ReactDOM.createRoot mount
@@ -617,7 +618,30 @@ On-read migration in `readDb()` is still a backstop, so a sandbox DB that gets c
 1. **Startup sweep** â€” `syncAuthoritativeUsersToSandboxes(startupDb)` runs on server boot, sweeping all existing sandbox DBs and propagating live user roles/profiles.
 2. **User Management mutation hook** â€” any user creation, role update, or deletion in User Management immediately triggers `syncAuthoritativeUsersToSandboxes`.
 3. **Login & sandbox switch verification** â€” during `/api/v1/login` and `/api/v1/admin/switch-sandbox`, the backend synchronizes the authenticating user against `liveDb.users` and returns the latest live `roles` and `groupIds`.
-4. **Multi-tenant middleware check** â€” requests dispatched with `x-sandbox-owner` continuously reconcile `userEntry.roles` with `liveUser.roles`, ensuring role amendments immediately grant or restrict module views across all sandboxes.
+4. **Multi-tenant middleware check** — requests dispatched with `x-sandbox-owner` continuously reconcile `userEntry.roles` with `liveUser.roles`, ensuring role amendments immediately grant or restrict module views across all sandboxes.
+
+### Multi-User Sandbox Collaboration & Membership
+
+Sandbox owners and administrators can invite other live users to collaborate directly inside an existing sandbox:
+
+1. **Invitation & Access Model**: Live users are invited by username into `db.sandbox.<owner>.json`'s `users[]` list. Their active roles from the Live environment are mirrored into the sandbox.
+2. **Access State**: `sandboxAccess: boolean` determines whether the invited user can currently access that sandbox. Inactive members can be re-enabled without losing identity history.
+3. **API Endpoints**:
+   - `GET /api/v1/sandbox/:owner/members` — lists all members and their access status.
+   - `POST /api/v1/sandbox/:owner/members` — invites a user (payload: `{ username, sandboxAccess }`).
+   - `PATCH /api/v1/sandbox/:owner/members/:username` — updates member status (e.g. toggles `sandboxAccess`).
+   - `DELETE /api/v1/sandbox/:owner/members/:username` — soft-revokes access (`sandboxAccess = false`).
+4. **Permissions Guard**: `assertCanManageSandbox(req, targetOwner)` ensures only the sandbox owner or an administrator can manage membership. The owner record itself cannot be modified or deleted.
+5. **UI Management**: Managed from `components/DataMaintenance.tsx` via the "Invite Sandbox Member" modal and member list.
+
+### Per-User Live Access Control (`liveAccess`)
+
+To safely allow external, junior, or training personnel to work in sandboxes without risking live production records, administrators can restrict access to the Live ERP environment:
+
+- **Flag**: `User.liveAccess?: boolean` (defaults to `true` or `undefined`).
+- **Enforcement**: In `POST /api/v1/login`, if the user attempts to log into the `'live'` environment and has `liveAccess === false`, the server responds with `403 Forbidden` (`Live login is disabled for this account. Please use a sandbox environment or contact your administrator.`).
+- **Sandbox Access Unaffected**: The user can still log into their personal sandbox (`env=self`) or any shared sandbox they have been granted access to (`env=<owner>`).
+- **Admin Protection**: Administrators cannot revoke their own `liveAccess` via the UI, and the root `admin` account is hard-coded to always retain Live access.
 
 ### Configuration
 

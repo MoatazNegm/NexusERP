@@ -104,7 +104,7 @@ const syncAuthoritativeUsersToSandboxes = (liveDb) => {
 
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 6; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 7; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -1055,6 +1055,15 @@ const migrations = [
         return settings;
     },
     // v5 → v6: Outsourcing No RFP by default & Running Contract status
+    (settings) => {
+        return settings;
+    },
+    // v6 → v7: Per-user Live Access toggle.
+    // Default `liveAccess` to true for every existing user so the new
+    // `liveAccess === false` check in /api/v1/login (live branch) only
+    // blocks users that an admin has explicitly disabled. Sandbox login
+    // and the middleware are unaffected — disabled users can still sign
+    // in to any personal or shared sandbox they have access to.
     (settings) => {
         return settings;
     },
@@ -2857,6 +2866,171 @@ app.post('/api/v1/sandbox/revert-login', (req, res) => {
     console.error("[Sandbox] Failed to revert to login snapshot:", err);
     res.status(500).json({ error: "Failed to revert to login state." });
   }
+});
+
+// --- SANDBOX MEMBERSHIP MANAGEMENT (multi-sandbox collaboration) ---
+// All four endpoints operate on `db.sandbox.<sanitized>.json` for the
+// target owner passed in `:owner`. Auth requires the caller to be the
+// target sandbox's owner OR an administrator in the LIVE database; the
+// caller's current environment (live, own sandbox, switched sandbox) is
+// irrelevant — these endpoints write to a different file than the one
+// the request was resolved against.
+//
+// The flow lets a sandbox owner (or admin) invite any live user into
+// their sandbox pre-emptively, so two users can collaborate in the same
+// sandbox with their own dedicated live roles. The middleware then
+// resolves tenancy for the invitee on their next login.
+const assertCanManageSandbox = (req, targetOwner) => {
+  const callerUsername = String(req.headers['x-user'] || req.user || '').trim();
+  if (!callerUsername) return { error: 'Unauthorized', status: 401 };
+  const liveDb = readDb(DB_PATH);
+  const callerUser = (liveDb.users || []).find(u => u.username.toLowerCase() === callerUsername.toLowerCase());
+  const isCallerAdmin = callerUser && (callerUser.roles || []).includes('admin');
+  const isCallerOwner = sanitizeUsername(callerUsername) === targetOwner;
+  if (!isCallerAdmin && !isCallerOwner) {
+    return { error: 'Only the sandbox owner or a live administrator can manage this sandbox.', status: 403 };
+  }
+  return { callerUser };
+};
+
+// GET /api/v1/sandbox/:owner/members — list all members of a sandbox
+app.get('/api/v1/sandbox/:owner/members', (req, res) => {
+  const targetOwner = sanitizeUsername(req.params.owner);
+  if (!targetOwner) return res.status(400).json({ error: 'Invalid sandbox owner.' });
+  const guard = assertCanManageSandbox(req, targetOwner);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+
+  const targetPath = getSandboxDbPath(targetOwner);
+  if (!fs.existsSync(targetPath)) return res.json({ members: [], owner: targetOwner, exists: false });
+
+  const sandboxDb = readDb(targetPath);
+  const liveDb = readDb(DB_PATH);
+  const sandboxUsers = sandboxDb.users || [];
+  const members = sandboxUsers.map(u => {
+    const liveMatch = (liveDb.users || []).find(lu => lu.username.toLowerCase() === u.username.toLowerCase());
+    const { password: _p, logs: _l, ...safe } = u;
+    return {
+      ...safe,
+      liveRoles: liveMatch?.roles || [],
+      liveAccess: liveMatch?.liveAccess !== false,
+      isOwner: sanitizeUsername(u.username) === targetOwner
+    };
+  });
+  res.json({ members, owner: targetOwner, exists: true });
+});
+
+// POST /api/v1/sandbox/:owner/members — invite a live user into the sandbox
+// Body: { username: string, sandboxAccess?: boolean }  (sandboxAccess defaults true)
+app.post('/api/v1/sandbox/:owner/members', (req, res) => {
+  const targetOwner = sanitizeUsername(req.params.owner);
+  if (!targetOwner) return res.status(400).json({ error: 'Invalid sandbox owner.' });
+  const guard = assertCanManageSandbox(req, targetOwner);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+
+  const inviteeUsername = String(req.body.username || '').trim();
+  if (!inviteeUsername) return res.status(400).json({ error: 'username is required.' });
+
+  const liveDb = readDb(DB_PATH);
+  const liveInvitee = (liveDb.users || []).find(u => u.username.toLowerCase() === inviteeUsername.toLowerCase());
+  if (!liveInvitee) return res.status(404).json({ error: `User "${inviteeUsername}" does not exist in the live database.` });
+
+  const targetPath = getSandboxDbPath(targetOwner);
+  if (!fs.existsSync(targetPath)) {
+    return res.status(404).json({ error: `Sandbox for "${targetOwner}" not found. The owner must sign in at least once to bootstrap their sandbox before members can be invited.` });
+  }
+
+  const sandboxDb = readDb(targetPath);
+  sandboxDb.users = sandboxDb.users || [];
+  const sanitizedInvitee = sanitizeUsername(inviteeUsername);
+  let memberEntry = sandboxDb.users.find(u => sanitizeUsername(u.username) === sanitizedInvitee);
+
+  // Default sandboxAccess to true on invite; allow override (admin can
+  // pre-add a member as inactive if they want).
+  const desiredAccess = req.body.sandboxAccess !== undefined ? !!req.body.sandboxAccess : true;
+
+  if (memberEntry) {
+    memberEntry.roles = liveInvitee.roles || [];
+    memberEntry.groupIds = liveInvitee.groupIds || [];
+    memberEntry.name = liveInvitee.name || memberEntry.name;
+    memberEntry.email = liveInvitee.email || memberEntry.email;
+    if (liveInvitee.password) memberEntry.password = liveInvitee.password;
+    memberEntry.sandboxAccess = desiredAccess;
+  } else {
+    memberEntry = {
+      id: liveInvitee.id || ('usr_' + Date.now()),
+      username: liveInvitee.username,
+      name: liveInvitee.name,
+      email: liveInvitee.email,
+      password: liveInvitee.password,
+      roles: liveInvitee.roles || [],
+      groupIds: liveInvitee.groupIds || [],
+      sandboxAccess: desiredAccess
+    };
+    sandboxDb.users.push(memberEntry);
+  }
+
+  if (!writeDb(sandboxDb, targetPath)) return res.status(500).json({ error: 'Failed to persist sandbox member change.' });
+  const { password: _, logs: __, ...safe } = memberEntry;
+  console.log(`[Sandbox] ${targetOwner}: invited "${inviteeUsername}" (sandboxAccess=${desiredAccess})`);
+  res.json({ success: true, member: safe });
+});
+
+// PATCH /api/v1/sandbox/:owner/members/:username — update sandboxAccess
+// Body: { sandboxAccess: boolean }
+app.patch('/api/v1/sandbox/:owner/members/:username', (req, res) => {
+  const targetOwner = sanitizeUsername(req.params.owner);
+  const memberUsername = sanitizeUsername(req.params.username);
+  if (!targetOwner || !memberUsername) return res.status(400).json({ error: 'Invalid owner or username.' });
+  const guard = assertCanManageSandbox(req, targetOwner);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+
+  if (memberUsername === targetOwner) {
+    return res.status(400).json({ error: 'The sandbox owner cannot be modified.' });
+  }
+
+  const targetPath = getSandboxDbPath(targetOwner);
+  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: `Sandbox for "${targetOwner}" not found.` });
+
+  const sandboxDb = readDb(targetPath);
+  const memberEntry = (sandboxDb.users || []).find(u => sanitizeUsername(u.username) === memberUsername);
+  if (!memberEntry) return res.status(404).json({ error: `User "${memberUsername}" is not a member of sandbox "${targetOwner}".` });
+
+  if (req.body.sandboxAccess !== undefined) {
+    memberEntry.sandboxAccess = !!req.body.sandboxAccess;
+  }
+
+  if (!writeDb(sandboxDb, targetPath)) return res.status(500).json({ error: 'Failed to persist sandbox member change.' });
+  const { password: _, logs: __, ...safe } = memberEntry;
+  console.log(`[Sandbox] ${targetOwner}: set "${memberUsername}" sandboxAccess=${memberEntry.sandboxAccess}`);
+  res.json({ success: true, member: safe });
+});
+
+// DELETE /api/v1/sandbox/:owner/members/:username — soft revoke (sandboxAccess: false)
+// Soft delete keeps the row so re-inviting later preserves identity history
+// (same convention as the sandbox middleware auto-provision flow).
+app.delete('/api/v1/sandbox/:owner/members/:username', (req, res) => {
+  const targetOwner = sanitizeUsername(req.params.owner);
+  const memberUsername = sanitizeUsername(req.params.username);
+  if (!targetOwner || !memberUsername) return res.status(400).json({ error: 'Invalid owner or username.' });
+  const guard = assertCanManageSandbox(req, targetOwner);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+
+  if (memberUsername === targetOwner) {
+    return res.status(400).json({ error: 'The sandbox owner cannot be removed.' });
+  }
+
+  const targetPath = getSandboxDbPath(targetOwner);
+  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: `Sandbox for "${targetOwner}" not found.` });
+
+  const sandboxDb = readDb(targetPath);
+  const memberEntry = (sandboxDb.users || []).find(u => sanitizeUsername(u.username) === memberUsername);
+  if (!memberEntry) return res.status(404).json({ error: `User "${memberUsername}" is not a member of sandbox "${targetOwner}".` });
+
+  memberEntry.sandboxAccess = false;
+
+  if (!writeDb(sandboxDb, targetPath)) return res.status(500).json({ error: 'Failed to persist sandbox member change.' });
+  console.log(`[Sandbox] ${targetOwner}: revoked "${memberUsername}"`);
+  res.json({ success: true });
 });
 
 
@@ -5053,6 +5227,10 @@ app.post('/api/v1/login', (req, res) => {
   if (targetEnv === 'live') {
     const user = (liveDb.users || []).find(u => u.username.toLowerCase() === (username || '').toLowerCase());
     if (!user || (!authedViaApiKey && user.password !== hashPassword(password))) return res.status(401).json({ error: "Invalid username or password" });
+    // Per-user Live Access toggle (Settings → Users, admin only).
+    // `liveAccess === false` explicitly disables live logins; sandbox
+    // logins remain allowed via the self / shared branches below.
+    if (user.liveAccess === false) return res.status(403).json({ error: "Live login is disabled for this account. Please use a sandbox environment or contact your administrator." });
     const { password: _, ...safe } = user;
     return res.json({ ...safe, authMethod: authedViaApiKey ? 'api-key' : 'password' });
   }

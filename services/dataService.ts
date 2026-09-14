@@ -19,7 +19,8 @@ import {
   LedgerEntry,
   AuthEnvironment,
   AdminSandboxInfo,
-  ApiKey
+  ApiKey,
+  SandboxMember
 } from '../types';
 import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
 
@@ -361,7 +362,7 @@ class DataService {
     return this.post<LedgerEntry>('ledger', entry);
   }
   async updateLedgerEntry(id: string, updates: Partial<LedgerEntry>) {
-    return this.patch<LedgerEntry>(`ledger/${id}`, updates);
+    return this.put<LedgerEntry>('ledger', id, updates);
   }
 
   async getInventory() { return this.get<InventoryItem>('inventory'); }
@@ -838,6 +839,64 @@ class DataService {
       throw new Error(err.error || "Failed to switch sandbox");
     }
     return await res.json() as User;
+  }
+
+  // --- SANDBOX MEMBERSHIP (multi-user, multi-sandbox collaboration) ---
+  // The endpoints below let a sandbox owner (or a live admin) invite any
+  // live user into their sandbox pre-emptively, so two users can
+  // collaborate in the same sandbox with their own dedicated live roles.
+  // Auth is enforced server-side; only the sandbox owner or an admin
+  // may manage membership.
+
+  async getSandboxMembers(sandboxOwner: string): Promise<{ members: SandboxMember[]; owner: string; exists: boolean }> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/sandbox/${encodeURIComponent(sandboxOwner)}/members`, {
+      method: 'GET',
+      headers: this.getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to load sandbox members.');
+    }
+    return await res.json();
+  }
+
+  async addSandboxMember(sandboxOwner: string, username: string, opts: { sandboxAccess?: boolean } = {}): Promise<SandboxMember> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/sandbox/${encodeURIComponent(sandboxOwner)}/members`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ username, sandboxAccess: opts.sandboxAccess })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to invite sandbox member.');
+    }
+    const data = await res.json();
+    return data.member as SandboxMember;
+  }
+
+  async updateSandboxMember(sandboxOwner: string, username: string, updates: { sandboxAccess?: boolean }): Promise<SandboxMember> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/sandbox/${encodeURIComponent(sandboxOwner)}/members/${encodeURIComponent(username)}`, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update sandbox member.');
+    }
+    const data = await res.json();
+    return data.member as SandboxMember;
+  }
+
+  async removeSandboxMember(sandboxOwner: string, username: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/sandbox/${encodeURIComponent(sandboxOwner)}/members/${encodeURIComponent(username)}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to revoke sandbox member.');
+    }
   }
 
   async init() {

@@ -62,6 +62,14 @@ export interface User {
   avatar?: string;
   logs?: LogEntry[];
   sandboxAccess?: boolean;
+  /**
+   * Controls whether the user can sign in to the Live ERP environment.
+   * `true` (default) or `undefined` = login allowed.
+   * `false` = login to Live is blocked; the user can still log in to
+   * any personal or shared sandbox they have been granted access to.
+   * Toggled in Settings → Users (admin only).
+   */
+  liveAccess?: boolean;
   sandbox?: boolean;
   sandboxOwner?: string;
   sandboxLabel?: string;
@@ -82,6 +90,25 @@ export interface AdminSandboxInfo {
   isCurrent: boolean;
   ordersCount?: number;
   usersCount?: number;
+}
+
+/**
+ * A user record as it exists inside one specific sandbox DB
+ * (`db.sandbox.<owner>.json` `users[]`). Mirrors the live `User`
+ * shape minus identity-only fields like `password` / `logs`, and
+ * exposes the sandbox-only `sandboxAccess` flag plus the live-role
+ * snapshot used to detect drift.
+ */
+export interface SandboxMember {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+  liveRoles: UserRole[];
+  liveGroups?: string[];
+  liveAccess?: boolean;
+  sandboxAccess: boolean;
+  isOwner: boolean;
 }
 
 export type AIProvider = 'gemini' | 'openai';
