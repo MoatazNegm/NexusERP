@@ -115,11 +115,12 @@ When asked to change a feature, land on the row below, not on the file. All line
 - **Module:** `components/OrderManagement.tsx` (top of file = "New Orders" tab + item form)
 - **Order details modal:** `components/OrderDetailsModal.tsx:1` (the longest single screen the user sees)
 - **Type:** `OrderStatus` enum + `CustomerOrder` interface in `types.ts`
-- **Server dispatch:** `server.js:2441` `POST /api/v1/orders/:id/dispatch-action` â€” every status change, BoM commit, blanket-order link, item qty alter goes through here
-- **Server switch (action cases):** `server.js:2500` `switch (action) { ... }` â€” add your new `case 'your_action':` here
+- **Server dispatch:** `server.js:2441` `POST /api/v1/orders/:id/dispatch-action` — every status change, BoM commit, blanket-order link, item qty alter goes through here
+- **Server switch (action cases):** `server.js:2500` `switch (action) { ... }` — add your new `case 'your_action':` here
 - **Effective qty helper (used everywhere revenue/BoM is computed):** `utils.ts` `getItemEffectiveQty`
 - **Contracts (Blanket Orders):** `server.js:2387` `COLLECTIONS` registry has `'contracts'`; `OrderManagement.tsx` 'Blanket Orders' tab; `FinanceModule.tsx` 'contracts' tab renders them via `SortableTable`
-- **Blanket classification rule:** `isOrderBlanket` evaluates only the explicit `blanketOrder: true` flag â€” outsourcing items or component contracts no longer classify as Blanket Orders. Procurement's "Blanket Orders" tab was renamed to "Outsourcing" to avoid confusion (see i18n keys).
+- **Blanket classification rule:** `isOrderBlanket` evaluates only the explicit `blanketOrder: true` flag — outsourcing items or component contracts no longer classify as Blanket Orders. Procurement's "Blanket Orders" tab was renamed to "Outsourcing" to avoid confusion (see i18n keys).
+- **Sortable columns & Last Edited:** Table supports sorting by `lastEdited` (computed via `getLastEditedInfo(order)` inspecting human user logs while excluding `System`), `dataEntryTimestamp`, `customer`, etc.
 
 ### Technical Review
 
@@ -129,11 +130,14 @@ When asked to change a feature, land on the row below, not on the file. All line
 
 ### Procurement
 
-- **Module:** `components/ProcurementModule.tsx` (largest module â€” uses `SortableTable` everywhere; both `purchases` and `outsourcing` views in one file)
+- **Module:** `components/ProcurementModule.tsx` (largest module — uses `SortableTable` everywhere; both `purchases` and `outsourcing` views in one file)
 - **Server:** `server.js:2280` `GET /api/v1/procurement/history` (cross-order procurement history)
 - **Type:** `ProcurementLine` in `types.ts`
 - **PO reference / project badges:** procurement headers always render the customer's PO ref + project/non-project indicator
 - **Cost sheet data population & per-project extraction:** For outsourcing orders, cost sheet metrics (working resource count and total real cost) are extracted per project from the uploaded cost sheet by matching the order's project name to its `"اجمالى <project>"` block (person count + right-most column sum). If an order specifies a project not present in the sheet, it displays 0/0 and warns the user with available sheet projects. Falls back to whole-sheet extraction if no project block is matched.
+- **Interactive Cost Sheet Cascading Formulas & Excel Baking:**
+  - In the interactive cost sheet editor, formulas are recomputed live via `computeResolvedCostSheetValues(cells, rowOffset, colOffset)` using a multi-pass (up to 6 passes) fixed-point engine. Formulas referencing other calculated cells dynamically update as editable green cells are typed into.
+  - On save, resolved formula values are written into each formula cell's cached value (`worksheetCell.v = val`), allowing downstream parsers using `XLSX.utils.sheet_to_json` to immediately reflect updated Working Resource counts, Real Costs, and invoice totals.
 - **Cost sheet history, latest active sheet & deletion rollback:**
   - `targetItem.costSheets[]` maintains full upload history. History chips are displayed in Outsourcing order cards whenever `costSheets.length >= 1`.
   - The latest uploaded sheet is highlighted (`★ Latest`, green border and ring).
@@ -177,9 +181,13 @@ When asked to change a feature, land on the row below, not on the file. All line
 
 ### Finance
 
-- **Module:** `components/FinanceModule.tsx` (huge â€” 196 KB)
-- **Collapsible order cards** (default closed) + Expand All/Collapse All toolbar control â€” preserve this UX
-- **Universal multi-query search** supports `project` / `non-project` keywords â€” preserve
+- **Module:** `components/FinanceModule.tsx` (huge — 196 KB)
+- **Collapsible order cards** (default closed) + Expand All/Collapse All toolbar control — preserve this UX
+- **Universal multi-query search** supports `project` / `non-project` keywords — preserve
+- **Blanket History Tab (`blanket_history`):** Dedicated monthly archive view grouping blanket orders by creation month (descending order) with search filtering and direct one-click download buttons for each order's latest uploaded cost sheet (`downloadCostSheetFile`).
+- **Blanket vs. Non-Blanket Indicators:**
+  - `showBlanketBadge` displays a teal **Blanket** badge only when the order is associated with a blanket contract (`blanketOrder || contractId || blanketContractId`) **and** Procurement has certified that "No RFP Needed" (`isOrderNoRfpNeeded(o)`).
+  - Otherwise, displays a **Non-Blanket** badge with tooltip explaining whether it is a standard order or awaiting Procurement's No RFP Needed clearance.
 - **Settle blanket order / financial request** action lives in the contracts table within this module
 - **Type:** `LedgerEntry` in `types.ts`
 - **Server:** generic `GET/POST/PUT/DELETE /api/v1/ledger`; supplier payments at `server.js:4904-4997`
@@ -684,6 +692,8 @@ To safely allow external, junior, or training personnel to work in sandboxes wit
 8. **Strict Blanket Order Classification & Procurement UI Clarity.** `isOrderBlanket` exclusively evaluates the explicit `blanketOrder: true` flag â€” outsourcing items or component contracts no longer classify as Blanket Orders. The "Blanket Orders" tab in `ProcurementModule.tsx` (and i18n keys) was renamed to "Outsourcing" / "Outsourcing Workflow" to eliminate confusion with true blanket orders.
 9. **Unified Strategic AI Engine & Sandbox Intelligence Digestion.** `AIAssistant.tsx` shares the same multi-model fallback engine, benchmarks (`nexus_ocr_model_benchmarks_v2`), and failover queue as Order Management OCR. In OpenRouter/OpenAI mode, requests sequence through `nvidia/nemotron-3-nano-omni-30b`, `dots-studio/dots-3-note-preview`, `google/gemma-4-26b`, `minimax/minimax-m3`, `openrouter/auto` with per-model timeouts and instant recovery. In Gemini mode, native Google GenAI is invoked. The assistant ingests `isSandbox` / `sandboxOwner` / `environmentName` and the full sandbox order ledger for targeted bottleneck analysis, Mermaid diagrams, and 8-stage operational guidance.
 10. **Finance View Project Tagging, Universal Project Search & Collapsible Cards.** Finance cells show project name (violet badge) or "Non-Project" indicator. The search filter supports project name substrings and explicit keywords `non-project` / `non project` / `nonproject` (isolates non-project orders) and `project` / `projects` (isolates project-linked orders). All order rows start collapsed by default; an "Expand All / Collapse All" toolbar toggle is available. Interactive buttons (Invoice, Payment, Void, Gov E-Invoice, Hold, Reject, Download) and numeric inputs (currency conversion, dispatch authorization) prevent event propagation, ensuring actions can be performed without toggling card expansion.
+11. **Finance Blanket Orders History & RFP Requirement Clearance.** The dedicated 'Blanket History' tab (`blanket_history`) groups blanket orders by calendar month in descending order, providing real-time multi-query search and instant direct downloads of each order's latest active cost sheet. In the main Finance view, the teal 'Blanket' indicator is strictly gated: an order displays 'Blanket' only when it has a blanket contract link AND Procurement has explicitly certified it as 'No RFP Needed' (`isOrderNoRfpNeeded`). Orders linked to blanket contracts that still require RFP work are rendered as 'Non-Blanket' with explanatory tooltips.
+12. **Procurement Live Cost Sheet Recalculation & Formula Cascade Engine.** The interactive cost sheet spreadsheet editor employs a fixed-point evaluation engine (`computeResolvedCostSheetValues`, up to 6 passes) to dynamically resolve cascading formula-of-formula references in real-time as users modify green editable cells. On saving, calculated formula outcomes are baked directly into the workbook cell values (`worksheetCell.v = val`) so downstream consumers reading through `sheet_to_json` immediately observe updated Working Resource counts and Real Costs without requiring an external spreadsheet recalculation.
 
 ---
 
