@@ -773,6 +773,17 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const COST_SHEET_FROZEN_INPUT_HEIGHT = COST_SHEET_FROZEN_ROW_HEIGHT - 4;
   const [noRfpOverrides, setNoRfpOverrides] = useState<Record<string, boolean>>({});
   const [eraseWrongDataByOrder, setEraseWrongDataByOrder] = useState<Record<string, boolean>>({});
+  const [expandedProjectHistoryIds, setExpandedProjectHistoryIds] = useState<Set<string>>(new Set());
+
+  const toggleProjectHistory = (groupId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setExpandedProjectHistoryIds(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
 
   const hasCostSheetUploaded = (o: CustomerOrder, item?: CustomerOrderItem) => {
     if (item) return Boolean(item.costSheetFile || item.costSheetText);
@@ -1213,9 +1224,29 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     setSuppliers(s.filter(supp => !supp.isDeletedSupplier && supp.name.trim().toLowerCase() !== 'deleted suppliers' && supp.name.trim().toLowerCase() !== 'deleted suppleirs'));
   };
 
+  const getOrderProjName = useCallback((ord: CustomerOrder): string => {
+    if (ord.projectName && ord.projectName.trim() !== '') return ord.projectName.trim();
+    if (ord.blanketContractId) {
+      const parent = allOrders.find(p => p.id === ord.blanketContractId || p.internalOrderNumber === ord.blanketContractId || p.customerReferenceNumber === ord.blanketContractId);
+      if (parent?.projectName && parent.projectName.trim() !== '') return parent.projectName.trim();
+    }
+    const legacy = (ord as any).project || (ord as any).project_name || (ord as any).projectName || '';
+    return typeof legacy === 'string' ? legacy.trim() : '';
+  }, [allOrders]);
+
+  type ProcurementOrderGroup = {
+    id: string;
+    order: CustomerOrder;
+    latestOrder: CustomerOrder;
+    orders: CustomerOrder[];
+    isProjectConsolidated?: boolean;
+    projectName?: string;
+    comps: { item: CustomerOrderItem; comp: ManufacturingComponent; order: CustomerOrder }[];
+  };
+
   // Group procurement components by order, split by productionType
-  const purchaseGroups = useMemo(() => {
-    const map = new Map<string, { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }>();
+  const purchaseGroups: ProcurementOrderGroup[] = useMemo(() => {
+    const map = new Map<string, ProcurementOrderGroup>();
     orders.forEach(o => {
       if (o.status === OrderStatus.LOGGED || o.status === OrderStatus.TECHNICAL_REVIEW) return;
       o.items.forEach((i, idx) => {
@@ -1236,8 +1267,16 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
         itemComps.forEach(c => {
           if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(c.status || '')) {
-            if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
-            map.get(o.id)!.comps.push({ item: i, comp: c });
+            if (!map.has(o.id)) {
+              map.set(o.id, {
+                id: o.id,
+                order: o,
+                latestOrder: o,
+                orders: [o],
+                comps: []
+              });
+            }
+            map.get(o.id)!.comps.push({ item: i, comp: c, order: o });
           }
         });
       });
@@ -1259,10 +1298,15 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     });
   }, [orders, sortConfig]);
 
-  const outsourcingGroups = useMemo(() => {
-    const map = new Map<string, { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }>();
+  const outsourcingGroups: ProcurementOrderGroup[] = useMemo(() => {
+    const map = new Map<string, ProcurementOrderGroup>();
     orders.forEach(o => {
       if (o.status === OrderStatus.LOGGED || o.status === OrderStatus.TECHNICAL_REVIEW) return;
+      const isBlanket = isOrderBlanketType(o);
+      const projName = getOrderProjName(o);
+      const isConsolidated = isBlanket && Boolean(projName);
+      const groupKey = isConsolidated ? `proj_blanket_${projName.toLowerCase().replace(/\s+/g, '_')}` : o.id;
+
       o.items.forEach((i, idx) => {
         if (i.productionType !== 'OUTSOURCING') return; // Skip in this tab
         const itemComps = (i.components && i.components.length > 0)
@@ -1292,8 +1336,30 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                 if (new Date() > oneMonthLater) return; // Skip old items
               }
             }
-            if (!map.has(o.id)) map.set(o.id, { order: o, comps: [] });
-            map.get(o.id)!.comps.push({ item: i, comp: c });
+            if (!map.has(groupKey)) {
+              map.set(groupKey, {
+                id: groupKey,
+                order: o,
+                latestOrder: o,
+                orders: [o],
+                isProjectConsolidated: isConsolidated,
+                projectName: projName || '',
+                comps: []
+              });
+            } else {
+              const existing = map.get(groupKey)!;
+              if (!existing.orders.some(ord => ord.id === o.id)) {
+                existing.orders.push(o);
+                existing.orders.sort((a, b) => {
+                  const tA = new Date(a.orderDate || a.dataEntryTimestamp || 0).getTime();
+                  const tB = new Date(b.orderDate || b.dataEntryTimestamp || 0).getTime();
+                  return tB - tA;
+                });
+                existing.latestOrder = existing.orders[0];
+                existing.order = existing.orders[0];
+              }
+            }
+            map.get(groupKey)!.comps.push({ item: i, comp: c, order: o });
           }
         });
       });
@@ -1313,65 +1379,56 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [orders, sortConfig]);
+  }, [orders, sortConfig, allOrders]);
 
-  const getOrderProjName = useCallback((ord: CustomerOrder): string => {
-    if (ord.projectName && ord.projectName.trim() !== '') return ord.projectName.trim();
-    if (ord.blanketContractId) {
-      const parent = allOrders.find(p => p.id === ord.blanketContractId || p.internalOrderNumber === ord.blanketContractId || p.customerReferenceNumber === ord.blanketContractId);
-      if (parent?.projectName && parent.projectName.trim() !== '') return parent.projectName.trim();
-    }
-    const legacy = (ord as any).project || (ord as any).project_name || (ord as any).projectName || '';
-    return typeof legacy === 'string' ? legacy.trim() : '';
-  }, [allOrders]);
-
-  const matchesSearch = (group: { order: CustomerOrder, comps: { item: CustomerOrderItem, comp: ManufacturingComponent }[] }, term: string): boolean => {
+  const matchesSearch = (group: ProcurementOrderGroup, term: string): boolean => {
     if (!term) return true;
     const q = term.trim().toLowerCase();
     if (!q) return true;
 
-    const o = group.order;
-    // 1. Order level fields
-    if (o.internalOrderNumber?.toLowerCase().includes(q)) return true;
-    if (o.customerReferenceNumber?.toLowerCase().includes(q)) return true;
-    if (o.customerName?.toLowerCase().includes(q)) return true;
+    const ordersToCheck = group.orders && group.orders.length > 0 ? group.orders : [group.order];
+    for (const o of ordersToCheck) {
+      if (o.internalOrderNumber?.toLowerCase().includes(q)) return true;
+      if (o.customerReferenceNumber?.toLowerCase().includes(q)) return true;
+      if (o.customerName?.toLowerCase().includes(q)) return true;
 
-    const proj = getOrderProjName(o).toLowerCase();
-    const hasProject = Boolean(proj);
-    if (hasProject) {
-      if (proj.includes(q)) return true;
-      if (`project: ${proj}`.includes(q)) return true;
-      if (`project ${proj}`.includes(q)) return true;
-      if (q === 'project' || q === 'projects' || (q.length >= 3 && 'project'.includes(q))) return true;
-      const tokens = q.split(/\s+/).filter(Boolean);
-      if (tokens.length > 1 && tokens.every(tok => proj.includes(tok))) return true;
-    } else {
-      if ('non-project non project nonproject non_project'.includes(q) || q === 'non' || q === 'non-project' || q === 'non project') return true;
+      const proj = getOrderProjName(o).toLowerCase();
+      const hasProject = Boolean(proj);
+      if (hasProject) {
+        if (proj.includes(q)) return true;
+        if (`project: ${proj}`.includes(q)) return true;
+        if (`project ${proj}`.includes(q)) return true;
+        if (q === 'project' || q === 'projects' || (q.length >= 3 && 'project'.includes(q))) return true;
+        const tokens = q.split(/\s+/).filter(Boolean);
+        if (tokens.length > 1 && tokens.every(tok => proj.includes(tok))) return true;
+      } else {
+        if ('non-project non project nonproject non_project'.includes(q) || q === 'non' || q === 'non-project' || q === 'non project') return true;
+      }
+
+      if (o.orderDate?.toLowerCase().includes(q)) return true;
+      if (o.dataEntryTimestamp?.toLowerCase().includes(q)) return true;
+      if (o.contractId?.toLowerCase().includes(q)) return true;
+      if (o.blanketContractId?.toLowerCase().includes(q)) return true;
+
+      // Blanket / Standard search keywords
+      if (q === 'blanket' || q === 'blanket order' || q === 'blanket orders') {
+        if (isOrderBlanketType(o)) return true;
+      } else if (q === 'standard' || q === 'normal' || q === 'non-blanket' || q === 'non blanket' || q === 'nonblanket') {
+        if (!isOrderBlanketType(o)) return true;
+      }
+
+      // Line Item level fields
+      for (const it of o.items || []) {
+        if (it.description?.toLowerCase().includes(q)) return true;
+        if (it.orderNumber?.toLowerCase().includes(q)) return true;
+        if (it.supplierPartNumber?.toLowerCase().includes(q)) return true;
+        if (it.unit?.toLowerCase().includes(q)) return true;
+        if (String(it.quantity).includes(q)) return true;
+        if (String(it.pricePerUnit).includes(q)) return true;
+      }
     }
 
-    if (o.orderDate?.toLowerCase().includes(q)) return true;
-    if (o.dataEntryTimestamp?.toLowerCase().includes(q)) return true;
-    if (o.contractId?.toLowerCase().includes(q)) return true;
-    if (o.blanketContractId?.toLowerCase().includes(q)) return true;
-
-    // Blanket / Standard search keywords
-    if (q === 'blanket' || q === 'blanket order' || q === 'blanket orders') {
-      if (o.blanketOrder) return true;
-    } else if (q === 'standard' || q === 'normal' || q === 'non-blanket' || q === 'non blanket' || q === 'nonblanket') {
-      if (!o.blanketOrder) return true;
-    }
-
-    // 2. Line Item level fields
-    for (const it of o.items || []) {
-      if (it.description?.toLowerCase().includes(q)) return true;
-      if (it.orderNumber?.toLowerCase().includes(q)) return true;
-      if (it.supplierPartNumber?.toLowerCase().includes(q)) return true;
-      if (it.unit?.toLowerCase().includes(q)) return true;
-      if (String(it.quantity).includes(q)) return true;
-      if (String(it.pricePerUnit).includes(q)) return true;
-    }
-
-    // 3. Component level fields
+    // Component level fields
     for (const { item: it, comp: c } of group.comps) {
       if (c.partNumber?.toLowerCase().includes(q)) return true;
       if (c.description?.toLowerCase().includes(q)) return true;
@@ -2728,13 +2785,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                 <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100 self-end sm:self-auto flex-wrap">
                   {(() => {
                     const currentGroups = activeTab === 'outsourcing' ? filteredOutsourcingGroups : filteredPurchaseGroups;
-                    const allCurrentExpanded = currentGroups.length > 0 && currentGroups.every(g => expandedOrderIds.has(g.order.id));
+                    const allCurrentExpanded = currentGroups.length > 0 && currentGroups.every(g => expandedOrderIds.has(g.id) || expandedOrderIds.has(g.order.id));
 
                     const toggleAllExpanded = () => {
                       if (allCurrentExpanded) {
                         setExpandedOrderIds(new Set());
                       } else {
-                        setExpandedOrderIds(new Set(currentGroups.map(g => g.order.id)));
+                        setExpandedOrderIds(new Set(currentGroups.map(g => g.id)));
                       }
                     };
 
@@ -2772,8 +2829,14 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
             </div>
 
             <div className="space-y-8">
-              {(activeTab === 'outsourcing' ? filteredOutsourcingGroups : filteredPurchaseGroups).map(({ order: o, comps }) => {
-                const isExpanded = expandedOrderIds.has(o.id);
+              {(activeTab === 'outsourcing' ? filteredOutsourcingGroups : filteredPurchaseGroups).map(group => {
+                const o = group.order;
+                const comps = group.comps;
+                const isExpanded = expandedOrderIds.has(group.id) || expandedOrderIds.has(o.id);
+                const isProjectConsolidated = Boolean(group.isProjectConsolidated);
+                const groupOrders = group.orders && group.orders.length > 0 ? group.orders : [o];
+                const latestOrder = group.latestOrder || groupOrders[0] || o;
+                const isHistoryExpanded = expandedProjectHistoryIds.has(group.id);
 
                 // Binary 0/1 PO-readiness gate:
                 // Each component is 1 if it has reached AWARDED or beyond, 0 if still pre-PO.
@@ -2784,17 +2847,29 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                 const allOrderedOrHigher = comps.every(({ comp: cc }) => hasReachedPoReadiness(cc.status) && cc.status !== 'AWARDED');
                 const readyForPo = anyReadyToOrder && allPoReady;
 
-                const orderProcurementComponents = o.items.flatMap(item => item.components || []).filter(comp => comp.source === 'PROCUREMENT');
+                const orderProcurementComponents = groupOrders.flatMap(ord => ord.items.flatMap(item => item.components || [])).filter(comp => comp.source === 'PROCUREMENT');
                 const allOrderProcurementAwarded = orderProcurementComponents.length > 0 && orderProcurementComponents.every(comp => hasReachedPoReadiness(comp.status || ''));
                 const anyOrderProcurementNotReady = orderProcurementComponents.some(comp => !hasReachedPoReadiness(comp.status || ''));
 
-                const itemsInFactoryCount = o.items.filter(i => {
+                const itemsInFactoryCount = groupOrders.flatMap(ord => ord.items).filter(i => {
                   const eff = getItemEffectiveStatus(i);
                   return ['WAITING_FACTORY', 'MANUFACTURING', 'MANUFACTURED'].includes(eff);
                 }).length;
-                const totalItems = o.items.length;
+                const totalItems = groupOrders.reduce((sum, ord) => sum + ord.items.length, 0);
 
-                const targetItem = o.items.find(item => item.costSheetFile) || o.items.find(item => item.productionType === 'OUTSOURCING') || o.items[0];
+                // For project-consolidated groups, search across all orders in group for the active cost sheet item
+                const targetItem = (() => {
+                  for (const ord of groupOrders) {
+                    const foundWithFile = ord.items.find(item => item.costSheetFile);
+                    if (foundWithFile) return foundWithFile;
+                  }
+                  for (const ord of groupOrders) {
+                    const foundOutsourcing = ord.items.find(item => item.productionType === 'OUTSOURCING');
+                    if (foundOutsourcing) return foundOutsourcing;
+                  }
+                  return latestOrder.items[0] || o.items[0];
+                })();
+
                 const outsourcingMetrics = (() => {
                   if (!targetItem) return { resourceCount: 0, realCost: 0, invoiceTotal: 0, sheetProjectName: '', projectMissing: false };
                   let count = targetItem.workingResourceCount || 0;
@@ -2807,7 +2882,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   // Per-project figures from the uploaded cost sheet take precedence:
                   // match this order's project name to its "اجمالى <project>" block in the
                   // sheet, then show that block's person count + sum of the right-most column.
-                  const projName = getOrderProjName(o);
+                  const projName = group.projectName || getOrderProjName(o);
                   if (projName && targetItem.costSheetFile) {
                     const projMetrics = extractCostSheetProjectMetrics(targetItem.costSheetFile, projName);
                     if (projMetrics) {
@@ -2834,10 +2909,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                 })();
 
                 return (
-                  <div key={o.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden transition-all shadow-sm">
+                  <div key={group.id} className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden transition-all shadow-sm">
                     {/* Order Header */}
                     <div 
-                      onClick={() => toggleOrderExpand(o.id)}
+                      onClick={() => toggleOrderExpand(group.id)}
                       className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 bg-slate-100/80 border-b border-slate-200 cursor-pointer hover:bg-slate-200/60 transition-all select-none group"
                     >
                       <div className="flex items-center gap-4">
@@ -2848,33 +2923,47 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         </div>
                         <div>
                           <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest flex items-center flex-nowrap gap-2 whitespace-nowrap">
-                            <span className="whitespace-nowrap shrink-0">{o.internalOrderNumber}</span>
-                            {o.customerReferenceNumber && (
-                              <span className="text-[10px] font-bold text-slate-600 bg-slate-200/80 px-2 py-0.5 rounded-lg border border-slate-300 font-mono tracking-normal whitespace-nowrap shrink-0" title="Customer PO Reference">
-                                PO: <span className="text-slate-900 font-black">{o.customerReferenceNumber}</span>
-                              </span>
-                            )}
-                            {isOrderBlanketType(o) ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
-                                <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
-                              </span>
+                            {isProjectConsolidated ? (
+                              <>
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-100 text-violet-800 border border-violet-300 font-sans text-xs font-black shadow-xs whitespace-nowrap shrink-0">
+                                  <i className="fa-solid fa-diagram-project text-violet-600"></i>
+                                  Project: <strong>{group.projectName}</strong>
+                                </span>
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Consolidated Blanket Project Orders">
+                                  <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket Project ({groupOrders.length} {groupOrders.length === 1 ? 'Order' : 'Orders'})
+                                </span>
+                              </>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Standard Order">
-                                Standard
-                              </span>
+                              <>
+                                <span className="whitespace-nowrap shrink-0">{o.internalOrderNumber}</span>
+                                {o.customerReferenceNumber && (
+                                  <span className="text-[10px] font-bold text-slate-600 bg-slate-200/80 px-2 py-0.5 rounded-lg border border-slate-300 font-mono tracking-normal whitespace-nowrap shrink-0" title="Customer PO Reference">
+                                    PO: <span className="text-slate-900 font-black">{o.customerReferenceNumber}</span>
+                                  </span>
+                                )}
+                                {isOrderBlanketType(o) ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
+                                    <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Standard Order">
+                                    Standard
+                                  </span>
+                                )}
+                                {(() => {
+                                  const pName = getOrderProjName(o);
+                                  return pName ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title={`Project Name: ${pName}`}>
+                                      <i className="fa-solid fa-diagram-project text-violet-500"></i> Project: <strong className="text-violet-700">{pName}</strong>
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Non-Project Order">
+                                      <i className="fa-solid fa-folder-minus text-slate-400"></i> Non-Project
+                                    </span>
+                                  );
+                                })()}
+                              </>
                             )}
-                            {(() => {
-                              const pName = getOrderProjName(o);
-                              return pName ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title={`Project Name: ${pName}`}>
-                                  <i className="fa-solid fa-diagram-project text-violet-500"></i> Project: <strong className="text-violet-700">{pName}</strong>
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Non-Project Order">
-                                  <i className="fa-solid fa-folder-minus text-slate-400"></i> Non-Project
-                                </span>
-                              );
-                            })()}
                             {itemsInFactoryCount > 0 && (
                               <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-sans text-[9px] uppercase tracking-normal border border-orange-200 whitespace-nowrap shrink-0" title={`${itemsInFactoryCount} of ${totalItems} line items are already in or ready for the factory.`}>
                                 <i className="fa-solid fa-bolt mr-1"></i>
@@ -2893,6 +2982,45 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               </span>
                             </span>
                           </div>
+
+                          {/* Quick info of latest order & dropdown link to show project orders history subcard */}
+                          {isProjectConsolidated && (
+                            <div className="mt-2.5 flex items-center gap-2.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                              <div className="inline-flex items-center gap-2 bg-white/90 border border-slate-200 px-3 py-1 rounded-xl text-[10px] shadow-2xs font-mono">
+                                <span className="text-[8px] font-black uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded tracking-wider font-sans">
+                                  ★ Latest PO
+                                </span>
+                                <span className="font-black text-slate-900" title="Customer PO Number">
+                                  {latestOrder.customerReferenceNumber || 'N/A'}
+                                </span>
+                                <span className="text-slate-300 font-sans">•</span>
+                                <span className="text-slate-600" title="Internal Order Number">
+                                  Int: <strong className="text-slate-800">{latestOrder.internalOrderNumber}</strong>
+                                </span>
+                                <span className="text-slate-300 font-sans">•</span>
+                                <span className="text-slate-600" title="PO Received Date">
+                                  Recv: <strong className="text-slate-800">
+                                    {latestOrder.orderDate ? new Date(latestOrder.orderDate).toLocaleDateString() : (latestOrder.dataEntryTimestamp ? new Date(latestOrder.dataEntryTimestamp).toLocaleDateString() : 'N/A')}
+                                  </strong>
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={(e) => toggleProjectHistory(group.id, e)}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs ${
+                                  isHistoryExpanded
+                                    ? 'bg-blue-600 text-white ring-2 ring-blue-200'
+                                    : 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-50'
+                                }`}
+                                title="Click to open/close project orders history subcard"
+                              >
+                                <i className="fa-solid fa-clock-rotate-left text-[9px]"></i>
+                                <span>Project Orders History ({groupOrders.length})</span>
+                                <i className={`fa-solid ${isHistoryExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px] ml-0.5`}></i>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3 flex-wrap" onClick={(e) => e.stopPropagation()}>
@@ -3060,90 +3188,102 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             </label>
 
 
-                            {/* Sheet History Chips */}
+                            {/* Sheet History Chips (Current Month Only) */}
                             {targetItem?.costSheets && targetItem.costSheets.length >= 1 && (() => {
-                              const sheets = targetItem.costSheets!;
-                              const latestIdx = sheets.length - 1;
-                              const isOnlySheet = sheets.length === 1;
+                              const allSheets = targetItem.costSheets!;
+                              const now = new Date();
+                              const curMonth = now.getMonth();
+                              const curYear = now.getFullYear();
+
+                              // Filter to show ONLY history of cost sheets uploaded/modified in the current calendar month
+                              const currentMonthSheets = allSheets.filter(rec => {
+                                if (!rec.uploadedAt) return false;
+                                const d = new Date(rec.uploadedAt);
+                                return !isNaN(d.getTime()) && d.getMonth() === curMonth && d.getFullYear() === curYear;
+                              });
+
+                              const curMonthLabel = now.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                              const latestCurrentMonthIdx = currentMonthSheets.length - 1;
+                              const isOnlyOverallSheet = allSheets.length === 1;
+
                               return (
                                 <div className="flex flex-col gap-1.5 bg-slate-50 px-2.5 py-2 rounded-xl border border-slate-200">
-                                  <span className="font-black text-[8px] text-slate-500 flex items-center gap-1.5 uppercase tracking-wider">
-                                    <i className="fa-solid fa-clock-rotate-left text-slate-400"></i>
-                                    {t('procurement.outsourcingCard.sheetHistory') || 'Cost Sheet History'}
-                                  </span>
-                                  <div className="flex items-start gap-1.5 flex-wrap">
-                                    {sheets.map((rec, rIdx) => {
-                                      const isLatest = rIdx === latestIdx;
-                                      return (
-                                        <div key={rec.id || rIdx} className="flex flex-col items-center gap-0.5">
-                                          {isLatest && (
-                                            <span className="text-[7px] font-black uppercase tracking-wider text-emerald-600 leading-none px-1">
-                                              ★ Latest
-                                            </span>
-                                          )}
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              if (!isLatest && rec.fileData) {
-                                                // Older sheets: download only
-                                                const link = document.createElement('a');
-                                                link.href = rec.fileData;
-                                                link.download = rec.fileName;
-                                                document.body.appendChild(link);
-                                                link.click();
-                                                document.body.removeChild(link);
-                                              } else if (isLatest && rec.fileData) {
-                                                // Latest sheet: download too (view is via the View Sheet button)
-                                                const link = document.createElement('a');
-                                                link.href = rec.fileData;
-                                                link.download = rec.fileName;
-                                                document.body.appendChild(link);
-                                                link.click();
-                                                document.body.removeChild(link);
-                                              }
-                                            }}
-                                            className={`px-2 py-1 rounded-lg font-mono text-[8px] transition-colors flex items-center gap-1 ${
-                                              isLatest
-                                                ? 'bg-emerald-50 border-2 border-emerald-400 text-emerald-800 ring-2 ring-emerald-200 shadow-sm hover:bg-emerald-100'
-                                                : 'bg-white border border-slate-200 hover:border-purple-300 text-purple-700 hover:bg-purple-50'
-                                            }`}
-                                            title={isLatest
-                                              ? `Latest sheet — Uploaded: ${new Date(rec.uploadedAt).toLocaleDateString()} | ${rec.workingResourceCount || 0} resources, ${rec.realCost || 0} LE. Click to download.`
-                                              : `Older version — Uploaded: ${new Date(rec.uploadedAt).toLocaleDateString()} | ${rec.workingResourceCount || 0} resources, ${rec.realCost || 0} LE. Click to download.`
-                                            }
-                                          >
-                                            {isLatest && <i className="fa-solid fa-file-excel text-emerald-600 text-[8px]"></i>}
-                                            {rec.fileName} ({new Date(rec.uploadedAt).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })})
-                                          </button>
-                                          {isLatest && (
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-black text-[8px] text-slate-500 flex items-center gap-1.5 uppercase tracking-wider">
+                                      <i className="fa-solid fa-clock-rotate-left text-slate-400"></i>
+                                      {t('procurement.outsourcingCard.sheetHistory') || 'Cost Sheet History'} ({curMonthLabel})
+                                    </span>
+                                    <span className="text-[7px] font-bold text-slate-400 uppercase tracking-widest">
+                                      Current Month Only
+                                    </span>
+                                  </div>
+                                  {currentMonthSheets.length > 0 ? (
+                                    <div className="flex items-start gap-1.5 flex-wrap">
+                                      {currentMonthSheets.map((rec, rIdx) => {
+                                        const isLatestInMonth = rIdx === latestCurrentMonthIdx;
+                                        return (
+                                          <div key={rec.id || rIdx} className="flex flex-col items-center gap-0.5">
+                                            {isLatestInMonth && (
+                                              <span className="text-[7px] font-black uppercase tracking-wider text-emerald-600 leading-none px-1">
+                                                ★ Latest
+                                              </span>
+                                            )}
                                             <button
-                                              disabled={isOnlySheet}
-                                              onClick={async (e) => {
+                                              onClick={(e) => {
                                                 e.stopPropagation();
-                                                if (isOnlySheet) return;
-                                                if (!confirm(`Delete this cost sheet record?\n"${rec.fileName}" (${new Date(rec.uploadedAt).toLocaleDateString()})\n\nThe previous sheet's costs will be restored.`)) return;
-                                                try {
-                                                  await dataService.deleteCostSheetRecord(o.id, targetItem.id, rec.id);
-                                                  await fetchData();
-                                                } catch (err: any) {
-                                                  alert(err.message || 'Failed to delete cost sheet record');
+                                                if (rec.fileData) {
+                                                  const link = document.createElement('a');
+                                                  link.href = rec.fileData;
+                                                  link.download = rec.fileName;
+                                                  document.body.appendChild(link);
+                                                  link.click();
+                                                  document.body.removeChild(link);
                                                 }
                                               }}
-                                              className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider transition-all flex items-center gap-0.5 ${
-                                                isOnlySheet
-                                                  ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed'
-                                                  : 'bg-rose-50 border border-rose-300 text-rose-600 hover:bg-rose-100 hover:text-rose-700 cursor-pointer'
+                                              className={`px-2 py-1 rounded-lg font-mono text-[8px] transition-colors flex items-center gap-1 ${
+                                                isLatestInMonth
+                                                  ? 'bg-emerald-50 border-2 border-emerald-400 text-emerald-800 ring-2 ring-emerald-200 shadow-sm hover:bg-emerald-100'
+                                                  : 'bg-white border border-slate-200 hover:border-purple-300 text-purple-700 hover:bg-purple-50'
                                               }`}
-                                              title={isOnlySheet ? 'Cannot delete the only cost sheet — at least one must remain.' : 'Delete this cost sheet record and restore the previous one'}
+                                              title={`Uploaded: ${new Date(rec.uploadedAt).toLocaleDateString()} | ${rec.workingResourceCount || 0} resources, ${rec.realCost || 0} LE. Click to download.`}
                                             >
-                                              <i className="fa-solid fa-trash-can text-[7px]"></i>
-                                              Delete
+                                              {isLatestInMonth && <i className="fa-solid fa-file-excel text-emerald-600 text-[8px]"></i>}
+                                              {rec.fileName} ({new Date(rec.uploadedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
                                             </button>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
+                                            {isLatestInMonth && (
+                                              <button
+                                                disabled={isOnlyOverallSheet}
+                                                onClick={async (e) => {
+                                                  e.stopPropagation();
+                                                  if (isOnlyOverallSheet) return;
+                                                  if (!confirm(`Delete this cost sheet record?\n"${rec.fileName}" (${new Date(rec.uploadedAt).toLocaleDateString()})\n\nThe previous sheet's costs will be restored.`)) return;
+                                                  try {
+                                                    await dataService.deleteCostSheetRecord(o.id, targetItem.id, rec.id);
+                                                    await fetchData();
+                                                  } catch (err: any) {
+                                                    alert(err.message || 'Failed to delete cost sheet record');
+                                                  }
+                                                }}
+                                                className={`px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider transition-all flex items-center gap-0.5 ${
+                                                  isOnlyOverallSheet
+                                                    ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed'
+                                                    : 'bg-rose-50 border border-rose-300 text-rose-600 hover:bg-rose-100 hover:text-rose-700 cursor-pointer'
+                                                }`}
+                                                title={isOnlyOverallSheet ? 'Cannot delete the only cost sheet — at least one must remain.' : 'Delete this cost sheet record and restore the previous one'}
+                                              >
+                                                <i className="fa-solid fa-trash-can text-[7px]"></i>
+                                                Delete
+                                              </button>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div className="text-[8px] text-slate-400 italic py-0.5">
+                                      No cost sheets uploaded/modified this month ({curMonthLabel})
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })()}
@@ -3260,10 +3400,146 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       </div>
                     </div>
 
+                    {/* ── PROJECT ORDERS HISTORY DROPDOWN SUBCARD ── */}
+                    {isProjectConsolidated && isHistoryExpanded && (() => {
+                      // Collect all cost sheets across all orders in this project
+                      const allProjectSheetsMap = new Map<string, CostSheetRecord>();
+                      groupOrders.forEach(ord => {
+                        (ord.items || []).forEach(it => {
+                          (it.costSheets || []).forEach(cs => {
+                            const key = cs.id || `${cs.fileName}_${cs.uploadedAt}`;
+                            if (!allProjectSheetsMap.has(key)) allProjectSheetsMap.set(key, cs);
+                          });
+                          if (it.costSheetFile && (!it.costSheets || it.costSheets.length === 0)) {
+                            const key = `${it.costSheetFileName || 'sheet'}_${ord.dataEntryTimestamp || ''}`;
+                            if (!allProjectSheetsMap.has(key)) {
+                              allProjectSheetsMap.set(key, {
+                                id: key,
+                                fileName: it.costSheetFileName || 'CostSheet.xlsx',
+                                uploadedAt: ord.dataEntryTimestamp || ord.orderDate || new Date().toISOString(),
+                                fileData: it.costSheetFile,
+                                workingResourceCount: it.workingResourceCount,
+                                realCost: it.realCost
+                              });
+                            }
+                          }
+                        });
+                      });
+                      const allProjectSheets = Array.from(allProjectSheetsMap.values());
+
+                      return (
+                        <div className="p-5 bg-slate-50/95 border-b border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
+                          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                            <div className="flex items-center gap-2">
+                              <i className="fa-solid fa-layer-group text-blue-600 text-xs"></i>
+                              <span className="text-[11px] font-black uppercase text-slate-800 tracking-wider">
+                                Project Orders History — {group.projectName} ({groupOrders.length} {groupOrders.length === 1 ? 'Order' : 'Orders'})
+                              </span>
+                            </div>
+                            <span className="text-[9px] text-slate-500 font-bold">
+                              Showing all orders in this project & cost sheets uploaded during each order's PO month
+                            </span>
+                          </div>
+
+                          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+                            <div className="grid grid-cols-12 gap-3 px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 text-[9px] font-black uppercase text-slate-600 tracking-wider">
+                              <div className="col-span-3">Customer PO Number</div>
+                              <div className="col-span-2">Internal Order #</div>
+                              <div className="col-span-2">Received Date</div>
+                              <div className="col-span-5">Cost Sheets Uploaded in PO Month</div>
+                            </div>
+
+                            <div className="divide-y divide-slate-100">
+                              {groupOrders.map(ord => {
+                                const isOrdLatest = ord.id === latestOrder.id;
+                                const poDateRaw = ord.orderDate || ord.dataEntryTimestamp;
+                                const poDate = poDateRaw ? new Date(poDateRaw) : null;
+                                const poValid = Boolean(poDate && !isNaN(poDate.getTime()));
+                                const poMonth = poValid && poDate ? poDate.getMonth() : -1;
+                                const poYear = poValid && poDate ? poDate.getFullYear() : -1;
+
+                                // Find cost sheets uploaded during the calendar month of this PO
+                                const monthSheets = poValid
+                                  ? allProjectSheets.filter(cs => {
+                                      if (!cs.uploadedAt) return false;
+                                      const d = new Date(cs.uploadedAt);
+                                      return !isNaN(d.getTime()) && d.getMonth() === poMonth && d.getFullYear() === poYear;
+                                    })
+                                  : [];
+
+                                return (
+                                  <div key={ord.id} className={`grid grid-cols-12 gap-3 px-4 py-3 items-center text-xs transition-all ${isOrdLatest ? 'bg-blue-50/40' : 'hover:bg-slate-50'}`}>
+                                    {/* PO Number */}
+                                    <div className="col-span-3 flex items-center gap-2 flex-wrap">
+                                      <span className="font-mono font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[11px]">
+                                        {ord.customerReferenceNumber || '—'}
+                                      </span>
+                                      {isOrdLatest && (
+                                        <span className="text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded leading-none">
+                                          ★ Latest
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Internal Order # */}
+                                    <div className="col-span-2 font-mono font-bold text-blue-700 text-[11px]">
+                                      {ord.internalOrderNumber || '—'}
+                                    </div>
+
+                                    {/* Received Date */}
+                                    <div className="col-span-2 text-[11px] font-medium text-slate-700">
+                                      {poValid && poDate ? poDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
+                                    </div>
+
+                                    {/* Cost Sheets Uploaded in PO Month */}
+                                    <div className="col-span-5 flex items-center gap-2 flex-wrap">
+                                      {monthSheets.length > 0 ? (
+                                        monthSheets.map((cs, csIdx) => (
+                                          <button
+                                            key={cs.id || csIdx}
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (cs.fileData) {
+                                                const link = document.createElement('a');
+                                                link.href = cs.fileData;
+                                                link.download = cs.fileName || `CostSheet-${ord.internalOrderNumber || ord.customerReferenceNumber}.xlsx`;
+                                                document.body.appendChild(link);
+                                                link.click();
+                                                document.body.removeChild(link);
+                                              }
+                                            }}
+                                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 text-[10px] font-black hover:bg-emerald-100 transition-all cursor-pointer shadow-2xs group/btn"
+                                            title={`Uploaded: ${new Date(cs.uploadedAt).toLocaleDateString()} | ${cs.workingResourceCount || 0} resources, ${cs.realCost || 0} LE. Click to download.`}
+                                          >
+                                            <i className="fa-solid fa-file-excel text-emerald-600 group-hover/btn:scale-110 transition-transform"></i>
+                                            <span className="truncate max-w-[140px]">{cs.fileName}</span>
+                                            <span className="text-[8px] text-emerald-700 opacity-80 font-mono">
+                                              ({new Date(cs.uploadedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
+                                            </span>
+                                            <i className="fa-solid fa-download text-[8px] text-emerald-600 ml-0.5"></i>
+                                          </button>
+                                        ))
+                                      ) : (
+                                        <span className="text-[10px] text-slate-400 italic">
+                                          No cost sheets uploaded in PO month {poValid && poDate ? `(${poDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })})` : ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* Components List */}
                     {isExpanded && (
                     <div className="divide-y divide-slate-100 animate-in fade-in duration-200">
-                      {comps.map(({ item: i, comp: c }) => {
+                      {comps.map(({ item: i, comp: c, order: compOrder }) => {
+                        const effectiveOrder = compOrder || o;
                         const isContractExpired = (() => {
                           if (activeTab !== 'outsourcing') return false;
                           if (!c.contractStartDate || !c.contractDuration) return false;
@@ -3273,10 +3549,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         })();
 
                         const dynamicStatus = (() => {
-                          if (isCompNoRfp(o, i, c)) {
+                          if (isCompNoRfp(effectiveOrder, i, c)) {
                             return 'RUNNING_OUTSOURCING_CONTRACT';
                           }
-                          if (c.status === 'RUNNING_OUTSOURCING_CONTRACT' && !isCompNoRfp(o, i, c)) {
+                          if (c.status === 'RUNNING_OUTSOURCING_CONTRACT' && !isCompNoRfp(effectiveOrder, i, c)) {
                             return 'PENDING_OFFER';
                           }
                           if (activeTab !== 'outsourcing' || !c.contractStartDate || !c.contractDuration) return c.status || '';
@@ -3314,6 +3590,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               <div>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-[10px] font-black text-blue-600 font-mono tracking-widest uppercase">{c.componentNumber}</span>
+                                  {isProjectConsolidated && groupOrders.length > 1 && (
+                                    <span className="text-[9px] font-black text-slate-700 bg-slate-200/80 px-2 py-0.5 rounded border border-slate-300 font-mono" title="Customer PO Reference">
+                                      PO: {effectiveOrder.customerReferenceNumber || effectiveOrder.internalOrderNumber}
+                                    </span>
+                                  )}
                                   {c.supplierPartNumber && <span className="text-[10px] font-black text-amber-600 font-mono tracking-widest uppercase border border-amber-200 bg-amber-50 px-1 rounded">MFR P/N: {c.supplierPartNumber}</span>}
                                   {dynamicStatus !== 'RUNNING_OUTSOURCING_CONTRACT' && (
                                     <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${
@@ -3340,11 +3621,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       REVERTED FROM PO {c.revertedPoNumber ? `(${c.revertedPoNumber})` : ''}
                                     </span>
                                   )}
-                                  {activeTab === 'outsourcing' && (c.status === 'PENDING_OFFER' || c.status === 'RUNNING_OUTSOURCING_CONTRACT' || isCompNoRfp(o, i, c)) && (
+                                  {activeTab === 'outsourcing' && (c.status === 'PENDING_OFFER' || c.status === 'RUNNING_OUTSOURCING_CONTRACT' || isCompNoRfp(effectiveOrder, i, c)) && (
                                     <label
                                       onClick={(e) => e.stopPropagation()}
                                       className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[8px] font-black uppercase cursor-pointer transition-all ${
-                                        isCompNoRfp(o, i, c)
+                                        isCompNoRfp(effectiveOrder, i, c)
                                           ? 'bg-amber-50 border-amber-200 text-amber-800'
                                           : 'bg-slate-50 border-slate-200 text-slate-400 hover:border-slate-300'
                                       }`}
@@ -3352,8 +3633,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                     >
                                       <input
                                         type="checkbox"
-                                        checked={isCompNoRfp(o, i, c)}
-                                        onChange={(e) => handleToggleCompNoRfp(o.id, i.id, c.id || '', e.target.checked)}
+                                        checked={isCompNoRfp(effectiveOrder, i, c)}
+                                        onChange={(e) => handleToggleCompNoRfp(effectiveOrder.id, i.id, c.id || '', e.target.checked)}
                                         className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 h-3 w-3 cursor-pointer"
                                       />
                                       <span>No RFP Needed</span>

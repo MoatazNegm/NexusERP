@@ -140,11 +140,15 @@ When asked to change a feature, land on the row below, not on the file. All line
   - In the interactive cost sheet editor, formulas are recomputed live via `computeResolvedCostSheetValues(cells, rowOffset, colOffset)` using a multi-pass (up to 6 passes) fixed-point engine. Formulas referencing other calculated cells dynamically update as editable green cells are typed into.
   - On save, resolved formula values are written into each formula cell's cached value (`worksheetCell.v = val`), allowing downstream parsers using `XLSX.utils.sheet_to_json` to immediately reflect updated Working Resource counts, Real Costs, and invoice totals.
 - **Cost sheet history, latest active sheet & deletion rollback:**
-  - `targetItem.costSheets[]` maintains full upload history. History chips are displayed in Outsourcing order cards whenever `costSheets.length >= 1`.
-  - The latest uploaded sheet is highlighted (`★ Latest`, green border and ring).
-  - "View Sheet" and "Real Cost to Company" always show and evaluate against the latest uploaded sheet only.
+  - `targetItem.costSheets[]` maintains full upload history. History chips displayed on Outsourcing order cards are filtered strictly to cost sheets uploaded/modified in the **current calendar month**, while the latest active sheet drives the card's main metrics (working resources and real cost).
+  - The latest uploaded sheet in the current month is highlighted (`★ Latest`, green border and ring).
+  - "View Sheet" and "Real Cost to Company" always show and evaluate against the latest active uploaded sheet.
   - Older historical sheets are download-only and cannot be opened in the interactive editor.
   - A small Delete button appears under the latest sheet chip. Clicking it triggers `delete-cost-sheet-record` (`server.js:3320`), which removes the record, promotes the previous record as active, restores previous `costSheetFile` and metrics (`workingResourceCount`, `realCost`, `invoiceTotal`), and syncs component costs. When only 1 sheet remains, the Delete button is disabled/dimmed to preserve the active cost sheet.
+- **Blanket Order Project Consolidation & Project Orders History:**
+  - In the Procurement Outsourcing tab (`components/ProcurementModule.tsx`), blanket orders (`isOrderBlanketType(order)`) sharing the same project name (`getOrderProjName(order)`) are consolidated into a single card ("as if they were one large order").
+  - The card header prominently displays quick info for the "latest" order in that project: Customer PO Number, Internal Order Number, and PO Received Date.
+  - A toggleable "Project Orders History" dropdown link in the header opens an embedded subcard showing all orders in the project row by row: Customer PO Number, Internal Order Number, Received Date, and download pills for all cost sheets uploaded during that order's PO calendar month.
 
 ### Inventory
 
