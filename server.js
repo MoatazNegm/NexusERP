@@ -1562,7 +1562,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
     });
 
     // 4. Force Status Evaluation
-    if (!skipStatusEval) {
+    if (!skipStatusEval && !order.rolledBackToLogged) {
         const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
         let minMargin = dbSettings.minimumMarginPct || 15;
 
@@ -2653,6 +2653,17 @@ const updateInCollection = (col) => (req, res) => {
             }
         }
 
+        // If order was rolled back to logged and is now updated by the Order Management / Logging team:
+        if (oldItem.rolledBackToLogged && (req.body.items || req.body.customerName || req.body.customerReferenceNumber || req.body.orderDate)) {
+            delete updated.rolledBackToLogged;
+            const nowIso = new Date().toISOString();
+            updated.technicalReviewStartedAt = nowIso;
+            updated.dataEntryTimestamp = nowIso;
+            updated.statusUpdatedAt = nowIso;
+            if (!updated.logs) updated.logs = [];
+            updated.logs.push(createAuditLog('Order updated by Order Management team after rollback. Technical Review unlocked with new SLA clock.', updated.status, user));
+        }
+
         updated = processedOrderInternal(updated, db, user, false, oldItem);
         reconcileInventory(oldItem, updated, db);
         if (!req.body.status) {
@@ -3184,6 +3195,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 delete order.statusEnteredAt;
                 delete order.lastStatusChange;
                 delete order.statusBeforeHold;
+                order.rolledBackToLogged = true;
 
                 // Set or preserve blanketOrder classification
                 if (payload && payload.isBlanket !== undefined) {

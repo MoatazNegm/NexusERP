@@ -411,6 +411,12 @@ export interface CustomerOrder {
   contractId?: string;
   technicalReviewStartedAt?: string;
   technicalReviewFinishedAt?: string;
+  /**
+   * Set when an order is rolled back to LOGGED from Technical Review (or later).
+   * While true, the order appears dimmed and read-only in Technical Review until
+   * the Order Management / Logging team updates it.
+   */
+  rolledBackToLogged?: boolean;
 }
 
 export interface Contract {

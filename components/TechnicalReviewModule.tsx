@@ -989,16 +989,30 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                 {queueOrders.map(o => {
                   const acceptedCount = o.items.filter(it => it.isAccepted).length;
                   const progress = (acceptedCount / o.items.length) * 100;
+                  const isRolledBack = Boolean(o.rolledBackToLogged);
 
                   return (
                     <tr
                       key={o.id}
                       onClick={() => { setSelectedOrder(o); if (o.items.length > 0) setSelectedItem(o.items[0]); }}
-                      className={`hover:bg-blue-50/40 cursor-pointer transition-all group ${o.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/30' : ''}`}
+                      className={`transition-all group ${
+                        isRolledBack
+                          ? 'opacity-60 bg-slate-100/80 hover:bg-slate-200/70 border-l-4 border-l-amber-500 cursor-pointer'
+                          : o.status === OrderStatus.NEGATIVE_MARGIN
+                          ? 'bg-rose-50/30 hover:bg-blue-50/40 cursor-pointer'
+                          : 'hover:bg-blue-50/40 cursor-pointer'
+                      }`}
                     >
                       <td className="px-8 py-6">
                         <div className="font-mono text-xs font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
                         <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Ref: {o.customerReferenceNumber || 'N/A'}</div>
+                        {isRolledBack && (
+                          <div className="mt-1.5 flex items-center gap-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 shadow-sm" title="Rolled back to Logged registry. Cannot be edited until the Order Management team updates it.">
+                              <i className="fa-solid fa-lock text-[8px] text-amber-600"></i> Rolled Back — Pending Logging Update
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-8 py-6">
                         <div className="text-xs font-black text-slate-700">{o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}</div>
@@ -1037,13 +1051,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                       </td>
                       <td className="px-8 py-6">
                         <div className="flex items-center gap-4 justify-end">
-                          {o.status === OrderStatus.NEGATIVE_MARGIN && !isOrderBlanket(o) && (
-                            <span className="px-2 py-0.5 bg-rose-600 text-white text-[8px] font-black uppercase rounded animate-pulse">Margin Breach</span>
+                          {isRolledBack ? (
+                            <span className="px-2.5 py-1 bg-amber-50 text-amber-700 text-[9px] font-black uppercase rounded-lg border border-amber-200 flex items-center gap-1.5">
+                              <i className="fa-solid fa-clock-rotate-left text-[8px]"></i> Pending Logging
+                            </span>
+                          ) : (
+                            <>
+                              {o.status === OrderStatus.NEGATIVE_MARGIN && !isOrderBlanket(o) && (
+                                <span className="px-2 py-0.5 bg-rose-600 text-white text-[8px] font-black uppercase rounded animate-pulse">Margin Breach</span>
+                              )}
+                              <div className="flex-1 max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div className={`h-full transition-all duration-700 ${progress === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${progress}%` }}></div>
+                              </div>
+                              <span className="text-[10px] font-black text-slate-400">{acceptedCount}/{o.items.length}</span>
+                            </>
                           )}
-                          <div className="flex-1 max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden">
-                            <div className={`h-full transition-all duration-700 ${progress === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${progress}%` }}></div>
-                          </div>
-                          <span className="text-[10px] font-black text-slate-400">{acceptedCount}/{o.items.length}</span>
                         </div>
                       </td>
                     </tr>
@@ -1090,12 +1112,14 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleInitiateRollback}
-                      className="px-4 py-2 bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-rose-700 transition-all flex items-center gap-2"
-                    >
-                      <i className="fa-solid fa-rotate-left"></i> Rollback to Logged Registry
-                    </button>
+                    {!selectedOrder.rolledBackToLogged && (
+                      <button
+                        onClick={handleInitiateRollback}
+                        className="px-4 py-2 bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-rose-700 transition-all flex items-center gap-2"
+                      >
+                        <i className="fa-solid fa-rotate-left"></i> Rollback to Logged Registry
+                      </button>
+                    )}
                     <button
                       onClick={() => { setSelectedOrder(null); setSelectedItem(null); }}
                       className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all text-white"
@@ -1104,6 +1128,23 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     </button>
                   </div>
                 </div>
+
+                {selectedOrder.rolledBackToLogged && (
+                  <div className="px-8 py-3.5 bg-amber-500 text-white flex items-center justify-between gap-4 shrink-0 shadow-md">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-amber-600/60 flex items-center justify-center text-base shrink-0">
+                        <i className="fa-solid fa-lock"></i>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-100">Order Locked After Rollback</div>
+                        <div className="text-xs font-bold">This PO was rolled back to Logged. It cannot be edited until the Order Management (Logging) team updates it.</div>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1 bg-amber-600 rounded-lg text-[9px] font-black uppercase tracking-wider text-amber-100 border border-amber-400 shrink-0">
+                      Read Only Mode
+                    </span>
+                  </div>
+                )}
 
                 <div className="flex-1 flex overflow-hidden">
                   <div className="w-80 bg-slate-50 border-r border-slate-100 flex flex-col overflow-hidden">
@@ -1197,7 +1238,19 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                           </div>
                         </div>
 
-                        {(!selectedItem.isAccepted || (selectedItem.productionType === 'MANUFACTURING' || selectedItem.productionType === 'OUTSOURCING')) && (
+                        {selectedOrder.rolledBackToLogged ? (
+                          <div className="bg-white p-8 rounded-[2.5rem] border border-amber-200 shadow-sm flex items-center gap-5">
+                            <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center text-2xl shrink-0">
+                              <i className="fa-solid fa-lock"></i>
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-black text-amber-950 uppercase tracking-wide">Technical Study Locked</h4>
+                              <p className="text-xs text-amber-700 font-medium mt-1">
+                                This order was rolled back to Logged registry. It cannot be edited until the Order Management (Logging) team updates it.
+                              </p>
+                            </div>
+                          </div>
+                        ) : (!selectedItem.isAccepted || (selectedItem.productionType === 'MANUFACTURING' || selectedItem.productionType === 'OUTSOURCING')) && (
 
                           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6">
                             <div className="flex justify-between items-center border-b border-slate-100 pb-4">
@@ -1605,20 +1658,22 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                   <td className="px-6 py-4 text-right font-black text-slate-500">{c.unitCost.toLocaleString()}</td>
                                   <td className="px-6 py-4 text-right font-black text-slate-900">{(c.quantity * c.unitCost).toLocaleString()}</td>
                                   <td className="px-6 py-4 text-right">
-                                    <div className="flex justify-end gap-2">
-                                      <button
-                                        onClick={() => startEditingComponent(c)}
-                                        className="p-2 text-slate-300 hover:text-blue-500 transition-colors"
-                                      >
-                                        <i className="fa-solid fa-pen-to-square"></i>
-                                      </button>
-                                      <button
-                                        onClick={() => dataService.removeComponent(selectedOrder.id, selectedItem.id, c.id).then(o => updateOrderInState(o))}
-                                        className="p-2 text-slate-300 hover:text-rose-500 transition-colors"
-                                      >
-                                        <i className="fa-solid fa-trash-can"></i>
-                                      </button>
-                                    </div>
+                                    {!selectedOrder.rolledBackToLogged && (
+                                      <div className="flex justify-end gap-2">
+                                        <button
+                                          onClick={() => startEditingComponent(c)}
+                                          className="p-2 text-slate-300 hover:text-blue-500 transition-colors"
+                                        >
+                                          <i className="fa-solid fa-pen-to-square"></i>
+                                        </button>
+                                        <button
+                                          onClick={() => dataService.removeComponent(selectedOrder.id, selectedItem.id, c.id).then(o => updateOrderInState(o))}
+                                          className="p-2 text-slate-300 hover:text-rose-500 transition-colors"
+                                        >
+                                          <i className="fa-solid fa-trash-can"></i>
+                                        </button>
+                                      </div>
+                                    )}
                                   </td>
                                 </tr>
                               ))}
@@ -1652,17 +1707,24 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               </div>
                             </div>
 
-                            <button
-                              disabled={isProcessing}
-                              onClick={() => handleToggleAcceptance(selectedItem)}
-                              className={`px-12 py-5 rounded-3xl font-black uppercase text-[10px] tracking-[0.2em] transition-all shadow-xl active:scale-95 flex items-center gap-3 ${selectedItem.isAccepted ? 'bg-rose-50 text-rose-600 border-2 border-rose-200' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
-                            >
-                              {isProcessing ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className={`fa-solid ${selectedItem.isAccepted ? 'fa-rotate-left' : 'fa-check'}`}></i>}
-                              {selectedItem.isAccepted ? 'Revoke Approval' : 'Approve Position'}
-                            </button>
+                            {selectedOrder.rolledBackToLogged ? (
+                              <div className="px-8 py-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-amber-800">
+                                <i className="fa-solid fa-lock text-amber-600"></i>
+                                <span className="text-[10px] font-black uppercase tracking-wider">Cannot be edited until logging team updates it</span>
+                              </div>
+                            ) : (
+                              <button
+                                disabled={isProcessing}
+                                onClick={() => handleToggleAcceptance(selectedItem)}
+                                className={`px-12 py-5 rounded-3xl font-black uppercase text-[10px] tracking-[0.2em] transition-all shadow-xl active:scale-95 flex items-center gap-3 ${selectedItem.isAccepted ? 'bg-rose-50 text-rose-600 border-2 border-rose-200' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+                              >
+                                {isProcessing ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className={`fa-solid ${selectedItem.isAccepted ? 'fa-rotate-left' : 'fa-check'}`}></i>}
+                                {selectedItem.isAccepted ? 'Revoke Approval' : 'Approve Position'}
+                              </button>
+                            )}
                           </div>
 
-                          {allItemsAccepted && (
+                          {allItemsAccepted && !selectedOrder.rolledBackToLogged && (
                             <div className={`w-full p-8 rounded-[2.5rem] shadow-2xl animate-in slide-in-from-bottom-4 duration-500 flex flex-col md:flex-row justify-between items-center gap-6 text-white ${orderFinancials.isViolated ? 'bg-rose-600' : 'bg-blue-600'}`}>
                               <div className="flex items-center gap-6">
                                 <div className="w-16 h-16 rounded-3xl bg-white/20 flex items-center justify-center text-3xl shrink-0">

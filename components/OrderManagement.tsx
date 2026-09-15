@@ -2201,6 +2201,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         {draft.projectName && (
                           <div className="text-[9px] text-slate-400 font-medium mt-0.5">Project: {draft.projectName}</div>
                         )}
+                        {draft.rolledBackToLogged && <div className="mt-1"><span className="text-[9px] font-black text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 uppercase tracking-wider flex items-center gap-1 w-fit"><i className="fa-solid fa-rotate-left text-[8px]"></i>Rolled Back — Update Required</span></div>}
                         {draft.loggingComplianceViolation && <div className="mt-1"><span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-200 uppercase tracking-wider">Logging Delay</span></div>}
                         {draft.status === OrderStatus.NEGATIVE_MARGIN && <div className="mt-1"><span className="text-[9px] font-black text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-300 uppercase tracking-wider">Negative Margin</span></div>}
                       </td>
@@ -2379,6 +2380,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         {draft.projectName && (
                           <div className="text-[9px] text-slate-400 font-medium mt-0.5">Project: {draft.projectName}</div>
                         )}
+                        {draft.rolledBackToLogged && <div className="mt-1"><span className="text-[9px] font-black text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 uppercase tracking-wider flex items-center gap-1 w-fit"><i className="fa-solid fa-rotate-left text-[8px]"></i>Rolled Back — Update Required</span></div>}
                         {draft.loggingComplianceViolation && <div className="mt-1"><span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-200 uppercase tracking-wider">Logging Delay</span></div>}
                         {draft.status === OrderStatus.NEGATIVE_MARGIN && <div className="mt-1"><span className="text-[9px] font-black text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-300 uppercase tracking-wider">Negative Margin</span></div>}
                       </td>
