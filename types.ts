@@ -161,6 +161,22 @@ export interface Customer {
   logs?: LogEntry[];
 }
 
+export interface ProjectWalletAllocation {
+  customerId: string;
+  customerName: string;
+  customerEmail?: string;
+  balance: number;
+}
+
+export interface ProjectWallet {
+  projectName: string;
+  balance: number;
+  customerName?: string;
+  customerId?: string;
+  ordersCount?: number;
+  allocations: ProjectWalletAllocation[];
+}
+
 export interface SupplierPart {
   id: string;
   partNumber: string;

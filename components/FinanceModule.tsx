@@ -48,7 +48,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'blanket_history';
+type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'project_wallets' | 'blanket_history';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   if (order.status === OrderStatus.DELIVERED) {
@@ -520,6 +520,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [blanketHistorySearch, setBlanketHistorySearch] = useState('');
   const [whtPeriod, setWhtPeriod] = useState<'this_year' | 'last_year'>('this_year');
   const [whtSearch, setWhtSearch] = useState('');
+  const [customerWalletSearch, setCustomerWalletSearch] = useState('');
+  const [projectWalletSearch, setProjectWalletSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'desc' });
   const [columnOrder, setColumnOrder] = useState<string[]>(['context', 'date', 'currency', 'revenue', 'markup', 'status', 'actions']);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
@@ -827,6 +829,108 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     }
     return null;
   }, []);
+
+  const getCustomerWalletBalance = useCallback((customerName?: string): number => {
+    if (!customerName) return 0;
+    const target = customerName.trim().toLowerCase();
+    const cust = customers.find(c => c.name.trim().toLowerCase() === target);
+    return Number(cust?.walletBalance || 0);
+  }, [customers]);
+
+  const getProjectWalletBalance = useCallback((projectName: string, customerName?: string): number => {
+    if (!projectName) return 0;
+    const targetProj = projectName.trim().toLowerCase();
+
+    // If customerName provided, prioritize that customer's project wallet balance
+    if (customerName) {
+      const cust = customers.find(c => c.name.trim().toLowerCase() === customerName.trim().toLowerCase());
+      if (cust?.walletBalances) {
+        for (const [pName, bal] of Object.entries(cust.walletBalances)) {
+          if (pName.trim().toLowerCase() === targetProj) {
+            return Number(bal) || 0;
+          }
+        }
+      }
+    }
+
+    // Aggregate across all customers for this project name
+    let totalProjBal = 0;
+    let matched = false;
+    for (const c of customers) {
+      if (c.walletBalances) {
+        for (const [pName, bal] of Object.entries(c.walletBalances)) {
+          if (pName.trim().toLowerCase() === targetProj) {
+            totalProjBal += Number(bal) || 0;
+            matched = true;
+          }
+        }
+      }
+    }
+    if (matched) return totalProjBal;
+    return 0;
+  }, [customers]);
+
+  const projectWallets = useMemo(() => {
+    const q = projectWalletSearch.trim().toLowerCase();
+    const map = new Map<string, {
+      projectName: string;
+      totalBalance: number;
+      allocations: { customer: Customer; balance: number }[];
+      orders: CustomerOrder[];
+    }>();
+
+    customers.forEach(c => {
+      const projMap = c.walletBalances || {};
+      Object.entries(projMap).forEach(([proj, bal]) => {
+        const pName = proj.trim();
+        if (!pName) return;
+        const b = Number(bal) || 0;
+        if (!map.has(pName)) {
+          const projOrders = orders.filter(o => getOrderProjectName(o) === pName && isOrderBlanket(o));
+          map.set(pName, {
+            projectName: pName,
+            totalBalance: 0,
+            allocations: [],
+            orders: projOrders
+          });
+        }
+        const entry = map.get(pName)!;
+        entry.totalBalance += b;
+        entry.allocations.push({ customer: c, balance: b });
+      });
+    });
+
+    // Also include any blanket project that has orders even if balance is currently 0
+    orders.forEach(o => {
+      if (isOrderBlanket(o)) {
+        const pName = getOrderProjectName(o);
+        if (pName && !map.has(pName)) {
+          const projOrders = orders.filter(ord => getOrderProjectName(ord) === pName && isOrderBlanket(ord));
+          map.set(pName, {
+            projectName: pName,
+            totalBalance: 0,
+            allocations: [],
+            orders: projOrders
+          });
+        }
+      }
+    });
+
+    return Array.from(map.values())
+      .filter(item => {
+        if (!q) return true;
+        return (
+          item.projectName.toLowerCase().includes(q) ||
+          item.allocations.some(a => a.customer.name.toLowerCase().includes(q)) ||
+          item.orders.some(o =>
+            (o.customerReferenceNumber || '').toLowerCase().includes(q) ||
+            (o.internalOrderNumber || '').toLowerCase().includes(q) ||
+            (o.customerName || '').toLowerCase().includes(q)
+          )
+        );
+      })
+      .sort((a, b) => a.projectName.localeCompare(b.projectName));
+  }, [customers, orders, projectWalletSearch, getOrderProjectName, isOrderBlanket]);
 
   const blanketOrdersByMonth = useMemo(() => {
     const q = blanketHistorySearch.trim().toLowerCase();
@@ -1666,7 +1770,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <div className="flex flex-col md:flex-row items-start md:items-center gap-4 w-full xl:w-auto overflow-hidden">
           <LanguageToggle />
           <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-full shadow-inner overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
-          {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets'] as const).map(tab => (
+          {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets', 'project_wallets'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1725,6 +1829,24 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               type="text" placeholder={t("finance.blanketHistory.searchPlaceholder") || "Search order #, customer, contract, project..."}
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
               value={blanketHistorySearch} onChange={e => setBlanketHistorySearch(e.target.value)}
+            />
+            <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+          </div>
+        ) : activeTab === 'customer_wallets' ? (
+          <div className="relative w-full xl:w-96">
+            <input
+              type="text" placeholder="Search customer, project..."
+              className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
+              value={customerWalletSearch} onChange={e => setCustomerWalletSearch(e.target.value)}
+            />
+            <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+          </div>
+        ) : activeTab === 'project_wallets' ? (
+          <div className="relative w-full xl:w-96">
+            <input
+              type="text" placeholder="Search project name, customer, order #..."
+              className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
+              value={projectWalletSearch} onChange={e => setProjectWalletSearch(e.target.value)}
             />
             <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
           </div>
@@ -1909,18 +2031,47 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       {/* Customer Wallets Tab — wallet balances moved from CRM to Finance Operations */}
       {activeTab === 'customer_wallets' && (
         <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
-          <div className="px-8 pt-8 pb-4 flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-              <i className="fa-solid fa-wallet text-xl"></i>
+          <div className="px-8 pt-8 pb-4 flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                <i className="fa-solid fa-wallet text-xl"></i>
+              </div>
+              <div>
+                <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Customer Wallets</div>
+                <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Wallet credit balances by customer from blanket contract settlements</div>
+              </div>
             </div>
-            <div>
-              <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Customer Wallets</div>
-              <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Wallet credit balances by project from blanket contract settlements</div>
+
+            {/* Quick Toggle between Customer Wallets and Project Wallets */}
+            <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+              <button
+                onClick={() => setActiveTab('customer_wallets')}
+                className="px-4 py-2 rounded-xl text-xs font-black uppercase transition-all bg-white text-emerald-700 shadow-xs flex items-center gap-1.5"
+              >
+                <i className="fa-solid fa-building text-xs"></i>
+                <span>By Customer</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('project_wallets')}
+                className="px-4 py-2 rounded-xl text-xs font-black uppercase transition-all text-slate-500 hover:text-slate-800 flex items-center gap-1.5"
+              >
+                <i className="fa-solid fa-diagram-project text-xs"></i>
+                <span>By Project</span>
+              </button>
             </div>
           </div>
 
           <div className="px-8 pb-8 space-y-4">
             {customers
+              .filter(c => {
+                if (!customerWalletSearch) return true;
+                const q = customerWalletSearch.toLowerCase().trim();
+                return (
+                  c.name.toLowerCase().includes(q) ||
+                  (c.email || '').toLowerCase().includes(q) ||
+                  Object.keys(c.walletBalances || {}).some(p => p.toLowerCase().includes(q))
+                );
+              })
               .map(c => {
                 const projectMap = c.walletBalances || {};
                 let projects = Object.entries(projectMap)
@@ -1960,7 +2111,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       </div>
                     </div>
                   </div>
-{/* Nested project rows */}
+                  {/* Nested project rows */}
                   {projects.length === 0 ? (
                     <div className="px-6 py-4 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
                       No project wallet allocations
@@ -2020,6 +2171,181 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               <div className="text-center py-16">
                 <i className="fa-solid fa-wallet text-4xl block mb-3 text-slate-200"></i>
                 <div className="text-slate-400 font-bold text-sm uppercase tracking-widest">No customer wallet balances found</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Project Wallets Tab — wallet balances grouped by project */}
+      {activeTab === 'project_wallets' && (
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+          <div className="px-8 pt-8 pb-4 flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-violet-100 text-violet-700 flex items-center justify-center">
+                <i className="fa-solid fa-diagram-project text-xl"></i>
+              </div>
+              <div>
+                <div className="font-black text-slate-800 uppercase tracking-widest text-lg">Project Wallets</div>
+                <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">Wallet credit and debt balances aggregated by project from blanket contract settlements</div>
+              </div>
+            </div>
+
+            {/* Quick Toggle between Customer Wallets and Project Wallets */}
+            <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+              <button
+                onClick={() => setActiveTab('customer_wallets')}
+                className="px-4 py-2 rounded-xl text-xs font-black uppercase transition-all text-slate-500 hover:text-slate-800 flex items-center gap-1.5"
+              >
+                <i className="fa-solid fa-building text-xs"></i>
+                <span>By Customer</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('project_wallets')}
+                className="px-4 py-2 rounded-xl text-xs font-black uppercase transition-all bg-white text-violet-700 shadow-xs flex items-center gap-1.5"
+              >
+                <i className="fa-solid fa-diagram-project text-xs"></i>
+                <span>By Project</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="px-8 pb-8 space-y-4">
+            {projectWallets.map(item => {
+              const isDebt = item.totalBalance < 0;
+              return (
+                <div key={item.projectName} className={`border rounded-3xl overflow-hidden ${isDebt ? 'border-rose-200' : 'border-slate-200'}`}>
+                  {/* Project Header */}
+                  <div className={`flex items-center justify-between gap-4 px-6 py-4 ${isDebt ? 'bg-rose-900' : 'bg-slate-900'}`}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isDebt ? 'bg-rose-500/20 text-rose-300' : 'bg-violet-500/20 text-violet-300'}`}>
+                        <i className="fa-solid fa-diagram-project"></i>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-black text-white text-base truncate flex items-center gap-2">
+                          <span>{item.projectName}</span>
+                          <span className="px-2 py-0.5 rounded-md bg-white/10 text-white/80 font-sans text-[10px] font-black uppercase tracking-wider">
+                            {item.orders.length} {item.orders.length === 1 ? 'Blanket Order' : 'Blanket Orders'}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-bold truncate mt-0.5">
+                          {item.allocations.length > 0 ? (
+                            <span>Customer(s): {item.allocations.map(a => a.customer.name).join(', ')}</span>
+                          ) : (
+                            <span>No customer allocations</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-end shrink-0">
+                      <div className="text-[9px] font-black uppercase text-slate-400 tracking-widest">
+                        {isDebt ? 'Total Project Debt' : 'Total Project Wallet'}
+                      </div>
+                      <div className={`text-lg font-black font-mono ${isDebt ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {item.totalBalance > 0 ? `+${item.totalBalance.toLocaleString()} L.E.` : item.totalBalance < 0 ? `-${Math.abs(item.totalBalance).toLocaleString()} L.E.` : '0.00 L.E.'}
+                        {isDebt && <span className="text-[9px] font-black ml-1.5 opacity-70 uppercase font-sans tracking-wider">(Debt)</span>}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Customer Allocations Table */}
+                  <div className="p-6 bg-slate-50/50 space-y-4">
+                    <div className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                      Customer Allocations & Project Blanket Orders
+                    </div>
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                      <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+                        <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest">
+                          <tr>
+                            <th className="px-6 py-3">Customer</th>
+                            <th className="px-6 py-3">Related Blanket Orders</th>
+                            <th className="px-6 py-3 text-end">Project Wallet Balance</th>
+                            <th className="px-6 py-3 text-end">Customer Total Wallet</th>
+                            <th className="px-6 py-3">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {item.allocations.length > 0 ? (
+                            item.allocations.map(({ customer, balance }) => {
+                              const custOrders = item.orders.filter(o => o.customerName === customer.name);
+                              const custTotal = customer.walletBalance || 0;
+                              return (
+                                <tr key={customer.id} className={`transition-colors ${balance < 0 ? 'bg-rose-50/30 hover:bg-rose-50/60' : 'hover:bg-slate-50/80'}`}>
+                                  <td className="px-6 py-4">
+                                    <div className="font-bold text-slate-800 text-xs">{customer.name}</div>
+                                    <div className="text-[10px] text-slate-400 font-medium">{customer.email || 'N/A'}</div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {custOrders.length > 0 ? (
+                                        custOrders.map(ord => (
+                                          <span
+                                            key={ord.id}
+                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[9px] font-mono font-bold text-slate-700"
+                                            title={`PO: ${ord.customerReferenceNumber || 'N/A'} | Status: ${ord.status}`}
+                                          >
+                                            <i className="fa-solid fa-file-lines text-[8px] text-slate-400"></i>
+                                            <span>{ord.internalOrderNumber}</span>
+                                            {ord.customerReferenceNumber && (
+                                              <span className="text-slate-400">({ord.customerReferenceNumber})</span>
+                                            )}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-[10px] text-slate-400 italic">No specific orders linked</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 text-end">
+                                    <span className={`inline-flex items-center gap-1.5 text-xs font-black px-3 py-1.5 rounded-xl border font-mono ${
+                                      balance > 0
+                                        ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                        : balance < 0
+                                        ? 'text-rose-700 bg-rose-50 border-rose-200'
+                                        : 'text-slate-500 bg-slate-50 border-slate-200'
+                                    }`}>
+                                      <i className={`fa-solid fa-wallet text-[10px] ${balance > 0 ? 'text-emerald-500' : balance < 0 ? 'text-rose-500' : 'text-slate-400'}`}></i>
+                                      {balance > 0 ? `+${balance.toLocaleString()} L.E.` : balance < 0 ? `-${Math.abs(balance).toLocaleString()} L.E.` : '0.00 L.E.'}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4 text-end">
+                                    <span className={`text-xs font-bold font-mono ${custTotal < 0 ? 'text-rose-600' : 'text-slate-700'}`}>
+                                      {custTotal > 0 ? `+${custTotal.toLocaleString()} L.E.` : custTotal < 0 ? `-${Math.abs(custTotal).toLocaleString()} L.E. (Debt)` : '0.00 L.E.'}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase border ${
+                                      balance > 0
+                                        ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                        : balance < 0
+                                        ? 'bg-rose-50 text-rose-600 border-rose-200'
+                                        : 'bg-slate-100 text-slate-500 border-slate-200'
+                                    }`}>
+                                      {balance > 0 ? 'Credit Available' : balance < 0 ? 'Debt / Uninvoiced' : 'Zero Balance'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          ) : (
+                            <tr>
+                              <td colSpan={5} className="px-6 py-6 text-center text-slate-400 font-bold text-xs uppercase tracking-wider">
+                                No customer allocations recorded for this project
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {projectWallets.length === 0 && (
+              <div className="text-center py-16">
+                <i className="fa-solid fa-diagram-project text-4xl block mb-3 text-slate-200"></i>
+                <div className="text-slate-400 font-bold text-sm uppercase tracking-widest">No project wallet allocations found</div>
               </div>
             )}
           </div>
@@ -2505,11 +2831,32 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                 );
                               })()}
                             </div>
-                            <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2">
-                              {o.customerName}
+                            <div className="font-bold text-slate-800 text-sm tracking-tight mt-0.5 flex items-center gap-2 flex-wrap">
+                              <span>{o.customerName}</span>
                               {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
                                 <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
                               )}
+                              {(() => {
+                                const custWallet = getCustomerWalletBalance(o.customerName);
+                                return (
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tight border shadow-2xs ${
+                                      custWallet > 0
+                                        ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                        : custWallet < 0
+                                        ? 'bg-rose-50 border-rose-200 text-rose-800'
+                                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                                    }`}
+                                    title={`Customer Wallet for ${o.customerName}: ${custWallet.toLocaleString()} L.E.`}
+                                  >
+                                    <i className={`fa-solid fa-user-tag text-[8px] ${custWallet > 0 ? 'text-teal-600' : custWallet < 0 ? 'text-rose-600' : 'text-slate-400'}`}></i>
+                                    <span>Customer Wallet:</span>
+                                    <span className="font-mono font-black">
+                                      {custWallet > 0 ? `+${custWallet.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.` : custWallet < 0 ? `-${Math.abs(custWallet).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E. (Debt)` : '0.00 L.E.'}
+                                    </span>
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <div className="text-[9px] text-slate-400 font-bold mt-1 uppercase tracking-tighter">{o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}</div>
                           </td>
@@ -2649,6 +2996,27 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                   <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
                                 </span>
                               </span>
+                              {!isBlanketOrder && (() => {
+                                const custWallet = getCustomerWalletBalance(o.customerName);
+                                return (
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tight border shadow-2xs ${
+                                      custWallet > 0
+                                        ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                        : custWallet < 0
+                                        ? 'bg-rose-50 border-rose-200 text-rose-800'
+                                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                                    }`}
+                                    title={`Customer Wallet for ${o.customerName}: ${custWallet.toLocaleString()} L.E.`}
+                                  >
+                                    <i className={`fa-solid fa-user-tag text-[8px] ${custWallet > 0 ? 'text-teal-600' : custWallet < 0 ? 'text-rose-600' : 'text-slate-400'}`}></i>
+                                    <span>Customer Wallet:</span>
+                                    <span className="font-mono font-black">
+                                      {custWallet > 0 ? `+${custWallet.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.` : custWallet < 0 ? `-${Math.abs(custWallet).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E. (Debt)` : '0.00 L.E.'}
+                                    </span>
+                                  </span>
+                                );
+                              })()}
                             </div>
                             {(o.isSettlingOrder || o.blanketContractId || o.invoiceNumber) && (
                               <div className="mt-1 flex items-center gap-2 flex-wrap text-[9px]">
@@ -3165,6 +3533,62 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                 </span>
                               </div>
                             </div>
+
+                            {/* Project Wallet */}
+                            {(() => {
+                              const projWalletBal = getProjectWalletBalance(projName, latestOrder.customerName);
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 border px-3 py-1.5 rounded-xl shadow-xs ${
+                                    projWalletBal > 0
+                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                                      : projWalletBal < 0
+                                      ? 'bg-rose-50 border-rose-200 text-rose-900'
+                                      : 'bg-slate-50 border-slate-200 text-slate-700'
+                                  }`}
+                                  title={`Wallet balance allocated for project "${projName}": ${projWalletBal.toLocaleString()} L.E.`}
+                                >
+                                  <i className={`fa-solid fa-wallet text-xs ${projWalletBal > 0 ? 'text-emerald-600' : projWalletBal < 0 ? 'text-rose-600' : 'text-slate-400'}`}></i>
+                                  <div className="flex flex-col">
+                                    <span className={`text-[8px] font-black uppercase tracking-wider leading-none ${projWalletBal > 0 ? 'text-emerald-700' : projWalletBal < 0 ? 'text-rose-700' : 'text-slate-400'}`}>
+                                      Project Wallet
+                                    </span>
+                                    <span className="text-[11px] font-black mt-0.5 font-mono">
+                                      {projWalletBal > 0 ? `+${projWalletBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.` : projWalletBal < 0 ? `-${Math.abs(projWalletBal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.` : '0.00 L.E.'}
+                                      {projWalletBal < 0 && <span className="text-[8px] font-black ml-1 text-rose-600 uppercase font-sans">(Debt)</span>}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Customer Wallet */}
+                            {(() => {
+                              const custWalletBal = getCustomerWalletBalance(latestOrder.customerName);
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 border px-3 py-1.5 rounded-xl shadow-xs ${
+                                    custWalletBal > 0
+                                      ? 'bg-teal-50 border-teal-200 text-teal-900'
+                                      : custWalletBal < 0
+                                      ? 'bg-rose-50 border-rose-200 text-rose-900'
+                                      : 'bg-slate-50 border-slate-200 text-slate-700'
+                                  }`}
+                                  title={`Total Customer Wallet balance for "${latestOrder.customerName}": ${custWalletBal.toLocaleString()} L.E.`}
+                                >
+                                  <i className={`fa-solid fa-user-tag text-xs ${custWalletBal > 0 ? 'text-teal-600' : custWalletBal < 0 ? 'text-rose-600' : 'text-slate-400'}`}></i>
+                                  <div className="flex flex-col">
+                                    <span className={`text-[8px] font-black uppercase tracking-wider leading-none ${custWalletBal > 0 ? 'text-teal-700' : custWalletBal < 0 ? 'text-rose-700' : 'text-slate-400'}`}>
+                                      Customer Wallet
+                                    </span>
+                                    <span className="text-[11px] font-black mt-0.5 font-mono">
+                                      {custWalletBal > 0 ? `+${custWalletBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.` : custWalletBal < 0 ? `-${Math.abs(custWalletBal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.` : '0.00 L.E.'}
+                                      {custWalletBal < 0 && <span className="text-[8px] font-black ml-1 text-rose-600 uppercase font-sans">(Debt)</span>}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })()}
 
                             {/* View & Download Sheet */}
                             <div className="flex items-center gap-1.5">

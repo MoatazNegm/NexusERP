@@ -20,7 +20,8 @@ import {
   AuthEnvironment,
   AdminSandboxInfo,
   ApiKey,
-  SandboxMember
+  SandboxMember,
+  ProjectWallet
 } from '../types';
 import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
 
@@ -145,6 +146,7 @@ class DataService {
   // --- ENTITY METHODS ---
 
   async getCustomers() { return this.get<Customer>('customers'); }
+  async getProjectWallets(): Promise<ProjectWallet[]> { return this.get<ProjectWallet>('project-wallets'); }
   async isCustomerOverdue(customerName: string): Promise<boolean> {
     const customers = await this.getCustomers();
     const cust = customers.find(c => c.name === customerName);

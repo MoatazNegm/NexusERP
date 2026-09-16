@@ -2369,7 +2369,12 @@ const computeCustomerWallet = (customer, orders = []) => {
         // When not invoiced or not fully paid, customer owes the unpaid amount (negative wallet / debt)
         if (commitment > 0) {
             const balanceDelta = paid - commitment; // Negative if paid < commitment (debt)
-            const projectKey = String((o.projectName || '').trim()) || '(No Project)';
+            let proj = String((o.projectName || '').trim());
+            if (!proj && o.blanketContractId) {
+                const parent = orders.find(p => p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId);
+                if (parent && parent.projectName) proj = String(parent.projectName).trim();
+            }
+            const projectKey = proj || '(No Project)';
             projectBalances[projectKey] = (projectBalances[projectKey] || 0) + balanceDelta;
         }
     });
@@ -2720,6 +2725,48 @@ const deleteFromCollection = (col) => (req, res) => {
 };
 
 // --- ROUTES ---
+app.get('/api/v1/project-wallets', (req, res) => {
+    const db = getDb(req);
+    const orders = db.orders || [];
+    const customers = (db.customers || []).map(c => computeCustomerWallet(c, orders));
+    const projectMap = new Map();
+
+    customers.forEach(c => {
+        Object.entries(c.walletBalances || {}).forEach(([pName, bal]) => {
+            const trimmed = pName.trim();
+            if (!trimmed) return;
+            const b = Number(bal) || 0;
+            if (!projectMap.has(trimmed)) {
+                const projOrders = orders.filter(o => {
+                    const isBlanket = Boolean(o.blanketOrder || o.contractId || o.blanketContractId);
+                    let ordProj = String((o.projectName || '').trim());
+                    if (!ordProj && o.blanketContractId) {
+                        const parent = orders.find(p => p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId);
+                        if (parent && parent.projectName) ordProj = String(parent.projectName).trim();
+                    }
+                    return isBlanket && ordProj === trimmed;
+                });
+                projectMap.set(trimmed, {
+                    projectName: trimmed,
+                    balance: 0,
+                    ordersCount: projOrders.length,
+                    allocations: []
+                });
+            }
+            const entry = projectMap.get(trimmed);
+            entry.balance += b;
+            entry.allocations.push({
+                customerId: c.id,
+                customerName: c.name,
+                customerEmail: c.email || '',
+                balance: b
+            });
+        });
+    });
+
+    res.json(Array.from(projectMap.values()).sort((a, b) => a.projectName.localeCompare(b.projectName)));
+});
+
 app.get('/api/v1/procurement/history', (req, res) => {
     const { description, partNumber } = req.query;
     if (!description && !partNumber) return res.status(400).json({ error: "Search criteria required" });
