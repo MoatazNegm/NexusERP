@@ -1277,8 +1277,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const getOrderProjName = useCallback((ord: CustomerOrder): string => {
     if (ord.projectName && ord.projectName.trim() !== '') return ord.projectName.trim();
     if (ord.blanketContractId) {
-      const parent = allOrders.find(p => p.id === ord.blanketContractId || p.internalOrderNumber === ord.blanketContractId || p.customerReferenceNumber === ord.blanketContractId);
-      if (parent?.projectName && parent.projectName.trim() !== '') return parent.projectName.trim();
+      const parent = allOrders.find(p => (p.id === ord.blanketContractId || p.internalOrderNumber === ord.blanketContractId || p.customerReferenceNumber === ord.blanketContractId) && p.status !== OrderStatus.REJECTED);
+      if (parent && parent.projectName && parent.projectName.trim() !== '') return parent.projectName.trim();
     }
     const legacy = (ord as any).project || (ord as any).project_name || (ord as any).projectName || '';
     return typeof legacy === 'string' ? legacy.trim() : '';
@@ -1298,7 +1298,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const purchaseGroups: ProcurementOrderGroup[] = useMemo(() => {
     const map = new Map<string, ProcurementOrderGroup>();
     orders.forEach(o => {
-      if (o.status === OrderStatus.LOGGED || o.status === OrderStatus.TECHNICAL_REVIEW) return;
+      if (o.status === OrderStatus.LOGGED || o.status === OrderStatus.TECHNICAL_REVIEW || o.status === OrderStatus.REJECTED || (o.status as string) === 'REJECTED') return;
       o.items.forEach((i, idx) => {
         if (i.productionType === 'OUTSOURCING') return; // Skip in this tab
         const itemComps = (i.components && i.components.length > 0)
@@ -1351,7 +1351,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const outsourcingGroups: ProcurementOrderGroup[] = useMemo(() => {
     const map = new Map<string, ProcurementOrderGroup>();
     orders.forEach(o => {
-      if (o.status === OrderStatus.LOGGED || o.status === OrderStatus.TECHNICAL_REVIEW) return;
+      if (o.status === OrderStatus.LOGGED || o.status === OrderStatus.TECHNICAL_REVIEW || o.status === OrderStatus.REJECTED || (o.status as string) === 'REJECTED') return;
       const isBlanket = isOrderBlanketType(o);
       const projName = getOrderProjName(o);
       const isConsolidated = isBlanket && Boolean(projName);
@@ -2367,7 +2367,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       </div>
 
       {activeTab === 'history' ? (
-        <PartHistory orders={allOrders} suppliers={suppliers} />
+        <PartHistory orders={allOrders.filter(o => o.status !== OrderStatus.REJECTED)} suppliers={suppliers} />
       ) : (
         <>
           {/* Hidden PDF Templates */}
@@ -2884,8 +2884,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                 const comps = group.comps;
                 const isExpanded = expandedOrderIds.has(group.id) || expandedOrderIds.has(o.id);
                 const isProjectConsolidated = Boolean(group.isProjectConsolidated);
-                const groupOrders = group.orders && group.orders.length > 0 ? group.orders : [o];
-                const latestOrder = group.latestOrder || groupOrders[0] || o;
+                const groupOrders = (group.orders && group.orders.length > 0 ? group.orders : [o])
+                  .filter(ord => ord.status !== OrderStatus.REJECTED && (ord.status as string) !== 'REJECTED');
+                if (groupOrders.length === 0) return null;
+                const latestOrder = groupOrders[0] || o;
                 const isHistoryExpanded = expandedProjectHistoryIds.has(group.id);
 
                 // Binary 0/1 PO-readiness gate:

@@ -1470,11 +1470,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       label: 'Settling Orders',
       sortable: true,
       sortValue: (c) => {
-        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id && o.status !== OrderStatus.REJECTED && (o.status as string) !== 'REJECTED');
         return linked.length;
       },
       render: (c) => {
-        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id && o.status !== OrderStatus.REJECTED && (o.status as string) !== 'REJECTED');
         return (
           <div className="space-y-1">
             {linked.length > 0 ? (
@@ -1513,7 +1513,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       label: 'Action',
       sortable: false,
       render: (c) => {
-        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linked = existingOrders.filter(o => o.blanketOrder && o.contractId === c.id && o.status !== OrderStatus.REJECTED && (o.status as string) !== 'REJECTED');
         const deleteDisabled = linked.length > 0;
         return (
           <div className="flex gap-2">

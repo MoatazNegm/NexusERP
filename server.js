@@ -2338,11 +2338,34 @@ const calculateOrderHealth = (order, settings) => {
 // Calculates customer wallet balances (per-project and aggregate total).
 // Blanket orders where the customer has not been invoiced or has not paid yet
 // generate a negative wallet balance (debt: paid - commitment) until paid/settled.
+// Rejected orders are strictly ignored and must never affect wallets.
 const computeCustomerWallet = (customer, orders = []) => {
     if (!customer) return customer;
-    const projectBalances = { ...(customer.walletBalances || {}) };
 
-    // Active blanket orders for this customer (not rejected)
+    // Collect all valid project names from non-rejected blanket orders across all orders
+    const validProjects = new Set();
+    orders.forEach(o => {
+        if (o.status === OrderStatus.REJECTED) return;
+        if (o.blanketOrder || o.contractId || o.blanketContractId) {
+            let proj = String((o.projectName || '').trim());
+            if (!proj && o.blanketContractId) {
+                const parent = orders.find(p => (p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId) && p.status !== OrderStatus.REJECTED);
+                if (parent && parent.projectName) proj = String(parent.projectName).trim();
+            }
+            if (proj) validProjects.add(proj);
+        }
+    });
+
+    const projectBalances = {};
+    if (customer.walletBalances) {
+        Object.entries(customer.walletBalances).forEach(([proj, bal]) => {
+            if (validProjects.has(proj.trim())) {
+                projectBalances[proj.trim()] = Number(bal) || 0;
+            }
+        });
+    }
+
+    // Active blanket orders for this customer (strictly not rejected)
     const custBlanketOrders = orders.filter(o => 
         o.customerName === customer.name && 
         Boolean(o.blanketOrder || o.contractId || o.blanketContractId) &&
@@ -2371,7 +2394,7 @@ const computeCustomerWallet = (customer, orders = []) => {
             const balanceDelta = paid - commitment; // Negative if paid < commitment (debt)
             let proj = String((o.projectName || '').trim());
             if (!proj && o.blanketContractId) {
-                const parent = orders.find(p => p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId);
+                const parent = orders.find(p => (p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId) && p.status !== OrderStatus.REJECTED);
                 if (parent && parent.projectName) proj = String(parent.projectName).trim();
             }
             const projectKey = proj || '(No Project)';
@@ -2738,10 +2761,11 @@ app.get('/api/v1/project-wallets', (req, res) => {
             const b = Number(bal) || 0;
             if (!projectMap.has(trimmed)) {
                 const projOrders = orders.filter(o => {
+                    if (o.status === OrderStatus.REJECTED) return false;
                     const isBlanket = Boolean(o.blanketOrder || o.contractId || o.blanketContractId);
                     let ordProj = String((o.projectName || '').trim());
                     if (!ordProj && o.blanketContractId) {
-                        const parent = orders.find(p => p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId);
+                        const parent = orders.find(p => (p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId) && p.status !== OrderStatus.REJECTED);
                         if (parent && parent.projectName) ordProj = String(parent.projectName).trim();
                     }
                     return isBlanket && ordProj === trimmed;
@@ -2764,7 +2788,11 @@ app.get('/api/v1/project-wallets', (req, res) => {
         });
     });
 
-    res.json(Array.from(projectMap.values()).sort((a, b) => a.projectName.localeCompare(b.projectName)));
+    const results = Array.from(projectMap.values())
+        .filter(item => item.ordersCount > 0 || item.balance !== 0)
+        .sort((a, b) => a.projectName.localeCompare(b.projectName));
+
+    res.json(results);
 });
 
 app.get('/api/v1/procurement/history', (req, res) => {
@@ -2777,6 +2805,7 @@ app.get('/api/v1/procurement/history', (req, res) => {
     const pnLower = (partNumber || '').trim().toLowerCase();
 
     (db.orders || []).forEach(order => {
+        if (order.status === OrderStatus.REJECTED) return;
         (order.items || []).forEach(item => {
             (item.components || []).forEach(comp => {
                 const compDesc = (comp.description || comp.componentName || '').toLowerCase();

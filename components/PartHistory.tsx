@@ -86,6 +86,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
     const allParts = useMemo<PartRow[]>(() => {
         const rows: PartRow[] = [];
         orders.forEach(order => {
+            if (order.status === OrderStatus.REJECTED || (order.status as string) === 'REJECTED') return;
             order.items.forEach(item => {
                 (item.components || []).forEach(comp => {
                     const supp = suppliers.find(s => s.id === comp.supplierId);

@@ -23,8 +23,8 @@ export const GovEInvoiceModule: React.FC<GovEInvoiceModuleProps> = ({ refreshKey
         setLoading(true);
         try {
             const allOrders = await dataService.getOrders();
-            // Filter only orders where e-invoice was requested
-            setOrders(allOrders.filter(o => o.einvoiceRequested));
+            // Filter only orders where e-invoice was requested and not rejected
+            setOrders(allOrders.filter(o => o.einvoiceRequested && o.status !== OrderStatus.REJECTED && (o.status as string) !== 'REJECTED'));
         } catch (e) {
             console.error("Failed to fetch orders:", e);
         } finally {

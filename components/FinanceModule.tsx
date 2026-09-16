@@ -782,7 +782,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       return order.projectName.trim();
     }
     if (order.blanketContractId) {
-      const parent = orders.find(p => p.id === order.blanketContractId || p.internalOrderNumber === order.blanketContractId || p.customerReferenceNumber === order.blanketContractId);
+      const parent = orders.find(p => (p.id === order.blanketContractId || p.internalOrderNumber === order.blanketContractId || p.customerReferenceNumber === order.blanketContractId) && p.status !== OrderStatus.REJECTED);
       if (parent?.projectName && parent.projectName.trim() !== '') {
         return parent.projectName.trim();
       }
@@ -886,7 +886,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         if (!pName) return;
         const b = Number(bal) || 0;
         if (!map.has(pName)) {
-          const projOrders = orders.filter(o => getOrderProjectName(o) === pName && isOrderBlanket(o));
+          const projOrders = orders.filter(o => o.status !== OrderStatus.REJECTED && getOrderProjectName(o) === pName && isOrderBlanket(o));
           map.set(pName, {
             projectName: pName,
             totalBalance: 0,
@@ -900,23 +900,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       });
     });
 
-    // Also include any blanket project that has orders even if balance is currently 0
+    // Also include any blanket project that has active non-rejected orders even if balance is currently 0
     orders.forEach(o => {
-      if (isOrderBlanket(o)) {
+      if (o.status !== OrderStatus.REJECTED && isOrderBlanket(o)) {
         const pName = getOrderProjectName(o);
         if (pName && !map.has(pName)) {
-          const projOrders = orders.filter(ord => getOrderProjectName(ord) === pName && isOrderBlanket(ord));
-          map.set(pName, {
-            projectName: pName,
-            totalBalance: 0,
-            allocations: [],
-            orders: projOrders
-          });
+          const projOrders = orders.filter(ord => ord.status !== OrderStatus.REJECTED && getOrderProjectName(ord) === pName && isOrderBlanket(ord));
+          if (projOrders.length > 0) {
+            map.set(pName, {
+              projectName: pName,
+              totalBalance: 0,
+              allocations: [],
+              orders: projOrders
+            });
+          }
         }
       }
     });
 
     return Array.from(map.values())
+      .filter(item => item.orders.length > 0 || item.totalBalance !== 0)
       .filter(item => {
         if (!q) return true;
         return (
@@ -934,7 +937,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const blanketOrdersByMonth = useMemo(() => {
     const q = blanketHistorySearch.trim().toLowerCase();
-    const filtered = orders.filter(isOrderBlanket).filter(o => {
+    const filtered = orders.filter(o => isOrderBlanket(o) && o.status !== OrderStatus.REJECTED).filter(o => {
       if (!q) return true;
       const proj = getOrderProjectName(o).toLowerCase();
       const contract = (o.contractId || o.blanketContractId || '').toLowerCase();
@@ -1425,11 +1428,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       label: 'Settling Orders',
       sortable: true,
       sortValue: (c) => {
-        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id && o.status !== OrderStatus.REJECTED);
         return linked.length;
       },
       render: (c) => {
-        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id && o.status !== OrderStatus.REJECTED);
         return (
           <div className="space-y-1">
             {linked.length > 0 ? (
@@ -1511,7 +1514,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     if (contractSearch.trim()) {
       const q = contractSearch.toLowerCase().trim();
       result = result.filter(c => {
-        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id);
+        const linked = orders.filter(o => o.blanketOrder && o.contractId === c.id && o.status !== OrderStatus.REJECTED);
         const linkedMatch = linked.some(bo => 
           bo.internalOrderNumber?.toLowerCase().includes(q) ||
           bo.customerReferenceNumber?.toLowerCase().includes(q)
@@ -2075,7 +2078,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               .map(c => {
                 const projectMap = c.walletBalances || {};
                 let projects = Object.entries(projectMap)
-                  .filter(([, bal]) => (Number(bal) || 0) !== 0)
+                  .filter(([project, bal]) => {
+                    const balance = Number(bal) || 0;
+                    if (balance === 0) return false;
+                    return orders.some(o =>
+                      o.status !== OrderStatus.REJECTED &&
+                      isOrderBlanket(o) &&
+                      getOrderProjectName(o).toLowerCase().trim() === project.toLowerCase().trim()
+                    );
+                  })
                   .map(([project, bal]) => ({ project, balance: Number(bal) || 0 }));
                 // Legacy fallback: if a customer only has an aggregate wallet-balance
                 // (pre-existing data), surface it under an unspecified bucket.
@@ -3295,8 +3306,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               };
 
               const renderBlanketCard = (group: { groupId: string; projectName: string; latestOrder: CustomerOrder; orders: CustomerOrder[]; isProjectConsolidated: boolean }) => {
-                const groupOrders = group.orders && group.orders.length > 0 ? group.orders : [group.latestOrder];
-                const latestOrder = group.latestOrder || groupOrders[0];
+                const groupOrders = (group.orders && group.orders.length > 0 ? group.orders : [group.latestOrder])
+                  .filter(o => o.status !== OrderStatus.REJECTED && (o.status as string) !== 'REJECTED');
+                if (groupOrders.length === 0) return null;
+                const latestOrder = groupOrders[0];
                 const isExpanded = Boolean(expandedOrderIds[group.groupId]);
                 const isHistoryExpanded = expandedProjectHistoryIds.has(group.groupId);
                 const projName = group.projectName || getOrderProjectName(latestOrder);
@@ -4050,6 +4063,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
                 // Collect order history entries (only financial transactions)
                 orders.forEach(o => {
+                  if (o.status === OrderStatus.REJECTED) return;
                   // Include custom history entries (only payment-related)
                   if (o.history && Array.isArray(o.history)) {
                     o.history.forEach(entry => {
