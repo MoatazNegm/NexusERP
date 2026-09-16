@@ -48,7 +48,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'billing_details' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'project_wallets' | 'blanket_history';
+type FinanceTab = 'orders' | 'billing_details' | 'stock_orders' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'project_wallets' | 'blanket_history';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   if (order.status === OrderStatus.DELIVERED) {
@@ -995,11 +995,76 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     });
   };
 
+  const stockOrders = useMemo(() => {
+    return orders.filter(o =>
+      o.status !== OrderStatus.REJECTED &&
+      (o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-')))
+    );
+  }, [orders]);
+
+  const filteredStockOrders = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return stockOrders.filter(o => {
+      if (!q) return true;
+      if ((o.internalOrderNumber || '').toLowerCase().includes(q)) return true;
+      if ((o.customerReferenceNumber || '').toLowerCase().includes(q)) return true;
+      if ((o.status || '').toLowerCase().includes(q)) return true;
+      for (const item of (o.items || [])) {
+        if ((item.description || '').toLowerCase().includes(q)) return true;
+        for (const comp of (item.components || [])) {
+          if ((comp.description || '').toLowerCase().includes(q)) return true;
+          if ((comp.componentNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierPartNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierName || '').toLowerCase().includes(q)) return true;
+        }
+      }
+      return false;
+    });
+  }, [stockOrders, search]);
+
+  const stockStats = useMemo(() => {
+    let totalCommittedSpend = 0;
+    let totalComponentsCount = 0;
+    let inStockCompsCount = 0;
+    let inTransitionCompsCount = 0;
+    let fulfilledOrdersCount = 0;
+    let activeOrdersCount = 0;
+
+    stockOrders.forEach(o => {
+      if (o.status === OrderStatus.REJECTED) return; // already filtered, extra guard
+      if (o.status === OrderStatus.FULFILLED) fulfilledOrdersCount++;
+      else activeOrdersCount++;
+
+      (o.items || []).forEach(it => {
+        (it.components || []).forEach(c => {
+          if (c.status === 'CANCELLED') return;
+          totalComponentsCount++;
+          const cost = (c.quantity || 0) * (c.unitCost || 0);
+          totalCommittedSpend += cost;
+          const isReceived = c.status === 'RECEIVED' || (c.receivedQty !== undefined && c.receivedQty >= c.quantity);
+          if (isReceived) inStockCompsCount++;
+          else inTransitionCompsCount++;
+        });
+      });
+    });
+
+    return {
+      totalOrders: stockOrders.length,
+      activeOrdersCount,
+      fulfilledOrdersCount,
+      totalCommittedSpend,
+      totalComponentsCount,
+      inStockCompsCount,
+      inTransitionCompsCount
+    };
+  }, [stockOrders]);
+
   const ordersWithPL = useMemo(() => orders.map(o => ({ ...o, pl: getPL(o) })), [orders]);
 
   const filteredOrders = useMemo(() => {
     const q = search.toLowerCase().trim();
     const filtered = ordersWithPL.filter(o => {
+      if (o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-'))) return false;
       if ([OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)) return false;
       if (!q) return true;
 
@@ -1151,7 +1216,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     const year = whtPeriod === 'this_year' ? now.getFullYear() : now.getFullYear() - 1;
 
     const filtered = orders.filter(o => {
-      if (!o.appliesWithholdingTax || o.status !== OrderStatus.FULFILLED) return false;
+      if (o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-')) || !o.appliesWithholdingTax || o.status !== OrderStatus.FULFILLED) return false;
       const orderYear = new Date(o.orderDate || o.dataEntryTimestamp).getFullYear();
       if (orderYear !== year) return false;
       if (!q) return true;
@@ -1773,7 +1838,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <div className="flex flex-col md:flex-row items-start md:items-center gap-4 w-full xl:w-auto overflow-hidden">
           <LanguageToggle />
           <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-full shadow-inner overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
-          {(['orders', 'billing_details', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets', 'project_wallets'] as const).map(tab => (
+          {(['orders', 'billing_details', 'stock_orders', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets', 'project_wallets'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1829,7 +1894,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         ) : activeTab === 'blanket_history' ? (
           <div className="relative w-full xl:w-96">
             <input
-              type="text" placeholder={t("finance.blanketHistory.searchPlaceholder") || "Search order #, customer, contract, project..."}
+              type="text" placeholder="Search blanket orders, contracts, projects..."
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
               value={blanketHistorySearch} onChange={e => setBlanketHistorySearch(e.target.value)}
             />
@@ -1838,7 +1903,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         ) : activeTab === 'customer_wallets' ? (
           <div className="relative w-full xl:w-96">
             <input
-              type="text" placeholder="Search customer, project..."
+              type="text" placeholder="Search customer, project name, email..."
               className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
               value={customerWalletSearch} onChange={e => setCustomerWalletSearch(e.target.value)}
             />
@@ -1867,7 +1932,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             )}
             <div className="relative w-full xl:w-96">
               <input
-                type="text" placeholder={t("finance.orders.searchOrders") || "Search ID, PO, customer, project (or 'non-project')..."}
+                type="text" placeholder={activeTab === 'stock_orders' ? "Search stock PO, component SKU, description..." : (t("finance.orders.searchOrders") || "Search ID, PO, customer, project (or 'non-project')...")}
                 className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
                 value={search} onChange={e => setSearch(e.target.value)}
               />
@@ -2691,7 +2756,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
           )}
         </div>
-      ) : activeTab !== 'ledger' && activeTab !== 'history' && activeTab !== 'contracts' && activeTab !== 'customer_wallets' && activeTab !== 'blanket_history' ? (
+      ) : activeTab !== 'ledger' && activeTab !== 'history' && activeTab !== 'contracts' && activeTab !== 'customer_wallets' && activeTab !== 'blanket_history' && activeTab !== 'stock_orders' ? (
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh]">
         <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
           <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
@@ -4063,7 +4128,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
                 // Collect order history entries (only financial transactions)
                 orders.forEach(o => {
-                  if (o.status === OrderStatus.REJECTED) return;
+                  if (o.status === OrderStatus.REJECTED || o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-'))) return;
                   // Include custom history entries (only payment-related)
                   if (o.history && Array.isArray(o.history)) {
                     o.history.forEach(entry => {
@@ -4294,6 +4359,300 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           </div>
         </div>
       ) : null}
+
+      {activeTab === 'stock_orders' && (
+        <div className="space-y-6">
+          {/* Header Notice Banner */}
+          <div className="bg-gradient-to-r from-emerald-900 to-slate-900 text-white p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden">
+            <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div>
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-widest mb-3 border border-emerald-500/30">
+                  <i className="fa-solid fa-boxes-stacked"></i> Internal Stock Replenishment Operations
+                </div>
+                <h3 className="text-2xl font-black tracking-tight">Non-Commercial Inventory Replenishment</h3>
+                <p className="text-xs text-slate-300 font-medium max-w-2xl mt-1 leading-relaxed">
+                  Stock orders are dedicated exclusively to warehouse buffer replenishment and internal stock sourcing.
+                  These orders carry <strong>0 customer revenue</strong>, are completely exempt from billing/tax invoicing, and do not impact customer receivables or wallet ledgers.
+                </p>
+              </div>
+              <div className="text-end">
+                <div className="text-[10px] font-black uppercase text-emerald-400 tracking-widest">Total Inventory Procurement Spend</div>
+                <div className="text-3xl font-black text-white mt-1">L.E. {stockStats.totalCommittedSpend.toLocaleString()}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* 4 Stat KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-2xl shrink-0">
+                <i className="fa-solid fa-clipboard-list"></i>
+              </div>
+              <div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Stock Orders</div>
+                <div className="text-2xl font-black text-slate-900">{stockStats.totalOrders}</div>
+                <div className="text-[10px] font-bold text-slate-500">{stockStats.activeOrdersCount} Active · {stockStats.fulfilledOrdersCount} Fulfilled</div>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl shrink-0">
+                <i className="fa-solid fa-coins"></i>
+              </div>
+              <div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Committed Spend</div>
+                <div className="text-2xl font-black text-slate-900">L.E. {stockStats.totalCommittedSpend.toLocaleString()}</div>
+                <div className="text-[10px] font-bold text-amber-600">{stockStats.totalComponentsCount} Total Components</div>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl shrink-0">
+                <i className="fa-solid fa-circle-check"></i>
+              </div>
+              <div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">In Stock Components</div>
+                <div className="text-2xl font-black text-emerald-600">{stockStats.inStockCompsCount}</div>
+                <div className="text-[10px] font-bold text-slate-500">Delivered & Ready in Hub</div>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-cyan-50 text-cyan-700 flex items-center justify-center text-2xl shrink-0">
+                <i className="fa-solid fa-truck-fast"></i>
+              </div>
+              <div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">In Transition</div>
+                <div className="text-2xl font-black text-cyan-700">{stockStats.inTransitionCompsCount}</div>
+                <div className="text-[10px] font-bold text-slate-500">Awaiting Supplier Delivery</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Stock Orders List */}
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <i className="fa-solid fa-layer-group text-emerald-400"></i>
+                <span className="text-xs font-black uppercase tracking-widest">
+                  Stock Replenishment Orders ({filteredStockOrders.length})
+                </span>
+              </div>
+              {filteredStockOrders.length > 0 && (
+                <button
+                  onClick={() => {
+                    const allExpanded = filteredStockOrders.every(o => expandedOrderIds[o.id]);
+                    filteredStockOrders.forEach(o => {
+                      setExpandedOrderIds(prev => ({ ...prev, [o.id]: !allExpanded }));
+                    });
+                  }}
+                  className="text-[10px] font-black uppercase text-slate-300 hover:text-white transition-colors"
+                >
+                  {filteredStockOrders.every(o => expandedOrderIds[o.id]) ? 'Collapse All' : 'Expand All'}
+                </button>
+              )}
+            </div>
+
+            {filteredStockOrders.length === 0 ? (
+              <div className="p-20 text-center">
+                <div className="w-16 h-16 rounded-3xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-4 text-2xl">
+                  <i className="fa-solid fa-box-open"></i>
+                </div>
+                <h4 className="text-sm font-black text-slate-700 uppercase tracking-wide">No Stock Orders Found</h4>
+                <p className="text-xs text-slate-400 font-medium mt-1">
+                  {search ? 'No stock orders match your current search query.' : 'Create stock orders under Order Management → Stock Orders tab.'}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {filteredStockOrders.map(order => {
+                  const isExpanded = !!expandedOrderIds[order.id];
+                  const allComps = (order.items || []).flatMap(it => it.components || []);
+                  const totalOrderCost = allComps.reduce((sum, c) => sum + ((c.quantity || 0) * (c.unitCost || 0)), 0);
+                  const receivedComps = allComps.filter(c => c.status === 'RECEIVED' || (c.receivedQty !== undefined && c.receivedQty >= c.quantity)).length;
+                  const isFulfilled = order.status === OrderStatus.FULFILLED;
+
+                  return (
+                    <div key={order.id} className="transition-colors hover:bg-slate-50/50">
+                      {/* Order Row Header */}
+                      <div
+                        onClick={() => toggleOrderExpand(order.id)}
+                        className="p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4 cursor-pointer select-none"
+                      >
+                        <div className="flex items-start lg:items-center gap-4">
+                          <button
+                            className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center text-xs shrink-0 transition-all"
+                            onClick={(e) => { e.stopPropagation(); toggleOrderExpand(order.id); }}
+                          >
+                            <i className={`fa-solid ${isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'}`}></i>
+                          </button>
+                          <div>
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <span className="font-mono font-black text-sm text-slate-900">
+                                {order.internalOrderNumber || order.customerReferenceNumber}
+                              </span>
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                PO: {order.customerReferenceNumber}
+                              </span>
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-600">
+                                Internal Stock
+                              </span>
+                              {order.orderDate && (
+                                <span className="text-[10px] font-bold text-slate-400">
+                                  <i className="fa-regular fa-calendar mr-1"></i>
+                                  {new Date(order.orderDate).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-500 font-medium mt-1">
+                              {order.items.length} Line Item{order.items.length !== 1 ? 's' : ''} · {allComps.length} Sourced Component{allComps.length !== 1 ? 's' : ''}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-6 self-end lg:self-center">
+                          {/* Progress Indicator */}
+                          <div className="text-right">
+                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                              Receiving Progress
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-black ${isFulfilled ? 'text-emerald-600' : 'text-blue-600'}`}>
+                                {receivedComps} / {allComps.length} Received
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${
+                                isFulfilled
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-blue-100 text-blue-700'
+                              }`}>
+                                {isFulfilled ? 'Fulfilled ✓' : 'In Progress'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Procurement Cost */}
+                          <div className="text-right min-w-32">
+                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                              Procurement Cost
+                            </div>
+                            <div className="text-sm font-black text-slate-900">
+                              L.E. {totalOrderCost.toLocaleString()}
+                            </div>
+                          </div>
+
+                          {/* Status Badge */}
+                          <div className="min-w-28 text-end">
+                            <span className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider inline-block ${
+                              order.status === OrderStatus.FULFILLED ? 'bg-emerald-600 text-white shadow-sm' :
+                              order.status === OrderStatus.WAITING_SUPPLIERS ? 'bg-amber-100 text-amber-800' :
+                              order.status === OrderStatus.TECHNICAL_REVIEW ? 'bg-indigo-100 text-indigo-800' :
+                              order.status === OrderStatus.LOGGED ? 'bg-slate-100 text-slate-700' :
+                              'bg-blue-100 text-blue-800'
+                            }`}>
+                              {order.status}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Expanded Line Items & Component Breakdown */}
+                      {isExpanded && (
+                        <div className="px-8 pb-8 pt-2 bg-slate-50/70 border-t border-slate-100">
+                          <div className="space-y-4">
+                            {order.items.map((item, itemIdx) => (
+                              <div key={item.id || itemIdx} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                                <div className="flex justify-between items-center mb-3">
+                                  <div>
+                                    <div className="text-xs font-black text-slate-800 uppercase flex items-center gap-2">
+                                      <span className="w-5 h-5 rounded-md bg-slate-100 text-slate-600 flex items-center justify-center text-[10px]">
+                                        {itemIdx + 1}
+                                      </span>
+                                      <span>{item.description}</span>
+                                    </div>
+                                    <div className="text-[10px] font-bold text-slate-400 mt-0.5 ml-7">
+                                      Requested: {item.quantity} {item.unit || 'pcs'} · Production: {item.productionType || 'MANUFACTURING'}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Components Table */}
+                                {item.components && item.components.length > 0 ? (
+                                  <div className="ml-7 overflow-x-auto">
+                                    <table className="w-full text-left text-xs">
+                                      <thead>
+                                        <tr className="border-b border-slate-100 text-[9px] font-black uppercase text-slate-400">
+                                          <th className="py-2">Component / SKU</th>
+                                          <th className="py-2">Status</th>
+                                          <th className="py-2">Supplier</th>
+                                          <th className="py-2 text-right">Qty</th>
+                                          <th className="py-2 text-right">Received Qty</th>
+                                          <th className="py-2 text-right">Unit Cost</th>
+                                          <th className="py-2 text-right">Total Cost</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-50 font-medium">
+                                        {item.components.map((comp, compIdx) => {
+                                          const isReceived = comp.status === 'RECEIVED' || (comp.receivedQty !== undefined && comp.receivedQty >= comp.quantity);
+                                          const partNum = comp.supplierPartNumber || comp.componentNumber || '—';
+                                          const compCost = (comp.quantity || 0) * (comp.unitCost || 0);
+
+                                          return (
+                                            <tr key={comp.id || compIdx} className="hover:bg-slate-50">
+                                              <td className="py-2.5 pr-4">
+                                                <div className="font-bold text-slate-800">{comp.description}</div>
+                                                <div className="text-[10px] font-mono text-slate-400">SKU: {partNum}</div>
+                                              </td>
+                                              <td className="py-2.5 pr-4">
+                                                <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase inline-flex items-center gap-1 ${
+                                                  isReceived
+                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                    : 'bg-cyan-100 text-cyan-800'
+                                                }`}>
+                                                  <i className={`fa-solid ${isReceived ? 'fa-circle-check text-emerald-600' : 'fa-truck-fast text-cyan-600'}`}></i>
+                                                  {isReceived ? 'In Stock' : 'In Transition'}
+                                                </span>
+                                              </td>
+                                              <td className="py-2.5 pr-4 text-slate-600 font-bold">
+                                                {comp.supplierName || '—'}
+                                              </td>
+                                              <td className="py-2.5 pr-4 text-right font-bold text-slate-700">
+                                                {comp.quantity} {comp.unit || 'pcs'}
+                                              </td>
+                                              <td className="py-2.5 pr-4 text-right font-black">
+                                                <span className={comp.receivedQty && comp.receivedQty >= comp.quantity ? 'text-emerald-600' : 'text-slate-500'}>
+                                                  {comp.receivedQty || 0}
+                                                </span>
+                                              </td>
+                                              <td className="py-2.5 pr-4 text-right text-slate-700">
+                                                L.E. {(comp.unitCost || 0).toLocaleString()}
+                                              </td>
+                                              <td className="py-2.5 text-right font-black text-slate-900">
+                                                L.E. {compCost.toLocaleString()}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                ) : (
+                                  <div className="ml-7 text-xs text-slate-400 italic py-2">
+                                    No components defined yet (pending Technical Review study).
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {decisionModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">

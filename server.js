@@ -11,6 +11,13 @@ import os from 'os';
 import AdmZip from 'adm-zip';
 import * as XLSX from 'xlsx';
 
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[Process] Unhandled Rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('[Process] Uncaught Exception:', err);
+});
+
 // Path sanitization with safe fallback
 const sanitizeUsername = (username) => {
   if (!username || typeof username !== 'string') return 'user';
@@ -1865,7 +1872,8 @@ const THRESHOLD_LABELS = {
 };
 
 const runThresholdAudit = async () => {
-    console.debug(`[Audit] Routine check started at ${new Date().toISOString()}`);
+    try {
+        console.debug(`[Audit] Routine check started at ${new Date().toISOString()}`);
     // Threshold audits intentionally run against the live DB only — sandbox DBs
     // are isolated training environments and must never trigger alerts to real
     // personnel. See plan §2 ("Background threshold audits remain strictly on the
@@ -1902,7 +1910,7 @@ const runThresholdAudit = async () => {
 
             const fullBody = body + contextBlock;
 
-            const result = await sendEmail(recipientEmails, subject, fullBody, settings.emailConfig, req);
+            const result = await sendEmail(recipientEmails, subject, fullBody, settings.emailConfig);
             if (result.success) {
                 notifications.push({ id: `nt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, journalKey, orderId: order.id, type: alertType, sentAt: new Date().toISOString(), recipients: recipientEmails });
                 recipients.forEach(r => {
@@ -2130,7 +2138,10 @@ const runThresholdAudit = async () => {
     if (dbChanged) {
         db.notifications = notifications;
         writeDb(db, DB_PATH);
-}
+    }
+    } catch (err) {
+        console.error('[Audit] Error in runThresholdAudit:', err);
+    }
 };
 
 // --- APP SETUP ---
@@ -2366,8 +2377,8 @@ const computeCustomerWallet = (customer, orders = []) => {
     }
 
     // Active blanket orders for this customer (strictly not rejected)
-    const custBlanketOrders = orders.filter(o => 
-        o.customerName === customer.name && 
+    const custBlanketOrders = orders.filter(o =>
+        o.customerName === customer.name &&
         Boolean(o.blanketOrder || o.contractId || o.blanketContractId) &&
         o.status !== OrderStatus.REJECTED
     );
@@ -2487,14 +2498,17 @@ const getItemFromCollection = (col) => (req, res) => {
     res.json(item);
 };
 
-const validateOrderItems = (items) => {
+const validateOrderItems = (items, customerName) => {
     if (!Array.isArray(items)) return 'Order items must be an array';
+    const isInternalStock = String(customerName || '').trim().toLowerCase() === 'internal stock';
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const qty = Number(item.quantity);
         if (!Number.isFinite(qty) || qty <= 0) return `Item ${i + 1} quantity must be a positive number`;
         const price = Number(item.pricePerUnit);
-        if (!Number.isFinite(price) || price <= 0) return `Item ${i + 1} unit price must be a positive number`;
+        if (!Number.isFinite(price) || (isInternalStock ? price < 0 : price <= 0)) {
+            return isInternalStock ? `Item ${i + 1} unit price cannot be negative` : `Item ${i + 1} unit price must be a positive number`;
+        }
         if (!item.unit || String(item.unit).trim() === '') return `Item ${i + 1} unit is required`;
         const components = item.components || [];
         for (let j = 0; j < components.length; j++) {
@@ -2517,7 +2531,7 @@ const addToCollection = (col) => (req, res) => {
     const user = req.headers['x-user'] || 'System';
 
     if (col === 'orders') {
-        const itemValidationError = validateOrderItems(req.body.items);
+        const itemValidationError = validateOrderItems(req.body.items, req.body.customerName);
         if (itemValidationError) {
             return res.status(400).json({ error: itemValidationError });
         }
@@ -3683,10 +3697,19 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     if (compToReceive.receivedQty >= totalOrdered) {
                         compToReceive.status = order.customerName === 'Internal Stock' ? 'RECEIVED' : 'RESERVED';
                     }
-                    order.logs.push(createAuditLog(`Component Receipt: ${qtyToProcess} ${compToReceive.unit} of ${compToReceive.description} (Total Received: ${compToReceive.receivedQty}/${totalOrdered})`, order.status, user));
+                    compToReceive.statusUpdatedAt = new Date().toISOString();
                 }
 
-                compToReceive.statusUpdatedAt = new Date().toISOString();
+                // Auto-fulfill Internal Stock orders when all components are delivered to stock
+                if (order.customerName === 'Internal Stock') {
+                    const allComps = (order.items || []).flatMap(it => it.components || []);
+                    const allCompsReceived = allComps.length > 0 && allComps.every(c => (c.receivedQty || 0) >= (c.quantity || 0));
+                    if (allCompsReceived && order.status !== OrderStatus.FULFILLED) {
+                        order.status = OrderStatus.FULFILLED;
+                        order.fulfilledAt = new Date().toISOString();
+                        order.logs.push(createAuditLog('All internal stock components received into inventory. Stock order auto-fulfilled.', order.status, user));
+                    }
+                }
                 break;
             }
 
@@ -6236,6 +6259,8 @@ setInterval(() => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Backend] Running exclusively on http://localhost:${PORT}`);
-    runThresholdAudit();
-    setInterval(runThresholdAudit, 60000);
+    runThresholdAudit().catch(err => console.error('[Audit] Unhandled error in initial audit:', err));
+    setInterval(() => {
+        runThresholdAudit().catch(err => console.error('[Audit] Unhandled error in interval audit:', err));
+    }, 60000);
 });

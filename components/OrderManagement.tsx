@@ -88,6 +88,27 @@ const hasStrongExtraction = (extracted: any): boolean => {
   return hasPoRef && hasUsefulItems && (hasCustomerName || hasDateSignal);
 };
 
+const isStockOrder = (order?: Partial<CustomerOrder> | null) => {
+  if (!order) return false;
+  const cust = order.customerName?.trim().toLowerCase();
+  const po = typeof order.customerReferenceNumber === 'string' ? order.customerReferenceNumber.trim().toUpperCase() : '';
+  return cust === 'internal stock' || po.startsWith('STOCK-');
+};
+
+const generateStockPoReference = (internalOrderNumber?: string): string => {
+  if (internalOrderNumber) {
+    const match = internalOrderNumber.match(/INT-(\d{4})-(\d+)/i);
+    if (match) {
+      return `STOCK-${match[1]}-${match[2]}`;
+    }
+    const numPart = internalOrderNumber.replace(/\D/g, '').slice(-4);
+    if (numPart) {
+      return `STOCK-${new Date().getFullYear()}-${numPart}`;
+    }
+  }
+  return `STOCK-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+};
+
 const mergeExtractionResults = (primary: any, fallback: any): any => {
   const merged = { ...(primary || {}) };
   const fallbackObj = fallback || {};
@@ -146,7 +167,7 @@ interface ItemWithTaxStatus extends Partial<CustomerOrderItem> {
   taxDetected?: boolean;
 }
 
-type ManagementTab = 'new' | 'logged' | 'blanket';
+type ManagementTab = 'new' | 'logged' | 'blanket' | 'stock';
 const DEFAULT_TAX_PERCENT = 14;
 
 export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refreshKey, currentUser }) => {
@@ -169,7 +190,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [contractSearch, setContractSearch] = useState('');
   const [blanketOrdersSearch, setBlanketOrdersSearch] = useState('');
   const [loggedOrdersSearch, setLoggedOrdersSearch] = useState('');
-  const [loggedFilterType, setLoggedFilterType] = useState<'all' | 'standard' | 'blanket'>('all');
+  const [loggedFilterType, setLoggedFilterType] = useState<'all' | 'standard' | 'blanket' | 'stock'>('all');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [existingOrders, setExistingOrders] = useState<CustomerOrder[]>([]);
   const [customerName, setCustomerName] = useState('');
@@ -298,8 +319,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const loggedStats = useMemo(() => {
     const total = loggedOrders.length;
     const blanket = loggedOrders.filter(o => isOrderBlanket(o)).length;
-    const standard = total - blanket;
-    return { total, blanket, standard };
+    const stock = loggedOrders.filter(o => isStockOrder(o)).length;
+    const standard = loggedOrders.filter(o => !isOrderBlanket(o) && !isStockOrder(o)).length;
+    return { total, blanket, stock, standard };
   }, [loggedOrders]);
 
   const loggedBlanketOrders = useMemo(() => {
@@ -326,15 +348,17 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const filteredLoggedOrders = useMemo(() => {
     let base = loggedOrders;
     if (loggedFilterType === 'standard') {
-      base = base.filter(o => !isOrderBlanket(o));
+      base = base.filter(o => !isOrderBlanket(o) && !isStockOrder(o));
     } else if (loggedFilterType === 'blanket') {
       base = base.filter(o => isOrderBlanket(o));
+    } else if (loggedFilterType === 'stock') {
+      base = base.filter(o => isStockOrder(o));
     }
 
     if (!loggedOrdersSearch.trim()) return base;
     const q = loggedOrdersSearch.toLowerCase().trim();
 
-    return loggedOrders.filter(order => {
+    return base.filter(order => {
       // 1. Internal reference & PO reference
       const internalRef = (order.internalOrderNumber || '').toLowerCase();
       const poRef = (order.customerReferenceNumber || '').toLowerCase();
@@ -393,7 +417,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       return false;
     });
-  }, [loggedOrders, loggedOrdersSearch]);
+  }, [loggedOrders, loggedOrdersSearch, loggedFilterType]);
 
   const requestSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
@@ -447,25 +471,29 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
     if (match) {
       const isBlanket = isOrderBlanket(match);
+      const isStock = isStockOrder(match);
       if (match.id === editingOrderId) {
-        // Ensure the active tab aligns with whether it is a blanket order or normal order
-        if (isBlanket && (activeTab !== 'blanket' || blanketSubTab !== 'new_blanket')) {
+        // Ensure the active tab aligns with whether it is a stock, blanket, or normal order
+        if (isStock && activeTab !== 'stock') {
+          setActiveTab('stock');
+          setBlanketOrder(false);
+        } else if (isBlanket && (activeTab !== 'blanket' || blanketSubTab !== 'new_blanket')) {
           setActiveTab('blanket');
           setBlanketSubTab('new_blanket');
           setBlanketOrder(true);
-        } else if (!isBlanket && activeTab !== 'new') {
+        } else if (!isBlanket && !isStock && activeTab !== 'new') {
           setActiveTab('new');
           setBlanketOrder(false);
         }
         return;
       }
 
-      console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber} (isBlanket: ${isBlanket})`);
+      console.debug(`[OrderManagement] Auto-detected existing PO: ${customerReferenceNumber} (isStock: ${isStock}, isBlanket: ${isBlanket})`);
       lastAutoLoadedRef.current = match.id;
       loadOrder(match);
       setMessage({
         type: 'info',
-        text: `Existing ${isBlanket ? 'Blanket Order' : 'Standard Order'} identified (${match.internalOrderNumber || match.customerReferenceNumber}). Switched to ${isBlanket ? 'Blanket Orders' : 'New Orders'} tab.`
+        text: `Existing ${isStock ? 'Stock Order' : isBlanket ? 'Blanket Order' : 'Standard Order'} identified (${match.internalOrderNumber || match.customerReferenceNumber}). Switched to ${isStock ? 'Stock Orders' : isBlanket ? 'Blanket Orders' : 'New Orders'} tab.`
       });
     }
   }, [customerReferenceNumber, existingOrders, editingOrderId, isScanning, activeTab, blanketSubTab, customerName]);
@@ -505,14 +533,21 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
   const loadOrder = (match: CustomerOrder) => {
     const isBlanket = isOrderBlanket(match);
+    const isStock = isStockOrder(match);
     const resolvedContractId = getOrderContractId(match);
 
-    setCustomerName(match.customerName || '');
-    setCustomerReferenceNumber(String(match.customerReferenceNumber || match.internalOrderNumber || ''));
+    setCustomerName(isStock ? 'Internal Stock' : (match.customerName || ''));
+
+    let poRef = String(match.customerReferenceNumber || '').trim();
+    if (isStock && (!poRef || !poRef.toUpperCase().startsWith('STOCK-'))) {
+      poRef = generateStockPoReference(match.internalOrderNumber);
+    }
+    setCustomerReferenceNumber(poRef || String(match.internalOrderNumber || ''));
+
     setOrderDate(match.orderDate || today);
-    setPaymentSlaDays(match.paymentSlaDays || config.settings.defaultPaymentSlaDays);
+    setPaymentSlaDays(match.paymentSlaDays || (isStock ? 0 : config.settings.defaultPaymentSlaDays));
     setAppliesWithholdingTax(match.appliesWithholdingTax || false);
-    setBlanketOrder(isBlanket);
+    setBlanketOrder(isStock ? false : isBlanket);
     setProjectName(match.projectName || '');
     setBlanketContractId(match.blanketContractId || resolvedContractId);
     setContractId(resolvedContractId);
@@ -524,10 +559,18 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCurrency(match.currency || DEFAULT_CURRENCY);
     setConversionRate(match.conversionRate || 1);
 
-    setItems((match.items || []).map(it => ({ ...it, taxDetected: true, quantity: normalizeQty(it.quantity) })));
+    setItems((match.items || []).map(it => ({
+      ...it,
+      taxDetected: true,
+      pricePerUnit: isStock ? 0 : (it.pricePerUnit || 0),
+      quantity: normalizeQty(it.quantity)
+    })));
 
     setEditingOrderId(match.id);
-    if (isBlanket) {
+    if (isStock) {
+      setActiveTab('stock');
+      setBlanketOrder(false);
+    } else if (isBlanket) {
       setActiveTab('blanket');
       setBlanketSubTab('new_blanket');
     } else {
@@ -979,11 +1022,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         console.log('[AI Scan] Merged extraction result:', extracted);
       }
 
-      if (!hasStrongExtraction(extracted) && !extracted.customer?.name && !extracted.poRef && (!extracted.items || extracted.items.length === 0)) {
+      const isStockScan = activeTab === 'stock' || customerName === 'Internal Stock';
+
+      if (!isStockScan && !hasStrongExtraction(extracted) && !extracted.customer?.name && !extracted.poRef && (!extracted.items || extracted.items.length === 0)) {
         throw new Error("AI did not detect any valid PO fields from this document. Please check AI settings or enter details manually.");
       }
 
-      if (extracted.customer?.name) {
+      if (isStockScan) {
+        setCustomerName('Internal Stock');
+      } else if (extracted.customer?.name) {
         console.log('[AI Scan] Found customer:', extracted.customer.name);
         const t_crm_start = performance.now();
         const existingCust = customers.find(c => c.name.toLowerCase() === extracted.customer.name.toLowerCase());
@@ -1015,7 +1062,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         console.log('[AI Scan] No customer name found in extraction');
       }
 
-      if (extracted.poRef) {
+      if (isStockScan) {
+        // Ensure auto-generated stock PO reference is never missed or blanked out
+        if (extracted.poRef && String(extracted.poRef).trim()) {
+          setCustomerReferenceNumber(String(extracted.poRef).trim());
+        } else if (!customerReferenceNumber || !customerReferenceNumber.trim()) {
+          setCustomerReferenceNumber(`STOCK-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+        }
+      } else if (extracted.poRef) {
         setCustomerReferenceNumber(String(extracted.poRef).trim());
       }
       if (extracted.date) {
@@ -1168,11 +1222,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
     // Validate: every line item must have positive quantity, price and unit; components are also checked for new orders
     const validationErrors: string[] = [];
+    const isInternalStock = customerName.trim().toLowerCase() === 'internal stock';
     items.forEach((item, idx) => {
       const qty = Number(item.quantity);
       if (!Number.isFinite(qty) || qty <= 0) validationErrors.push(`Item ${idx + 1}: quantity must be greater than 0.`);
       const price = Number(item.pricePerUnit);
-      if (!Number.isFinite(price) || price <= 0) validationErrors.push(`Item ${idx + 1}: unit price must be greater than 0.`);
+      if (!Number.isFinite(price) || (isInternalStock ? price < 0 : price <= 0)) {
+        validationErrors.push(`Item ${idx + 1}: unit price ${isInternalStock ? 'cannot be negative' : 'must be greater than 0'}.`);
+      }
       if (!item.unit || String(item.unit).trim() === '') validationErrors.push(`Item ${idx + 1}: unit is required.`);
       if (!editingOrderId) {
         (item.components || []).forEach((comp, cidx) => {
@@ -1405,17 +1462,18 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
   const startStockOrder = () => {
     resetForm();
-    setActiveTab('new');
+    setActiveTab('stock');
     setCustomerName('Internal Stock');
-    setCustomerReferenceNumber(`STOCK-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`);
+    setCustomerReferenceNumber(generateStockPoReference());
     setOrderDate(today);
     setPaymentSlaDays(0);
     setAppliesWithholdingTax(false);
+    setBlanketOrder(false);
     setTargetDeliveryDays(30);
     setTargetDeliveryDate(getDatePlusDays(today, 30));
     setOrderTaxPercent(DEFAULT_TAX_PERCENT);
     setItems([{ id: 'temp_1', description: 'Stock Replenishment', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, taxDetected: true, logs: [] }]);
-    setMessage({ type: 'info', text: 'Internal Stock Order template loaded.' });
+    setMessage({ type: 'info', text: 'Internal Stock Order initialized. PO Reference auto-generated.' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -1581,10 +1639,24 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           <i className="fa-solid fa-file-contract"></i> Blanket Orders
         </button>
         <button
-          onClick={startStockOrder}
-          className={`px-8 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap text-slate-500 hover:text-emerald-600 hover:bg-emerald-50`}
+          onClick={() => {
+            if (editingOrderId) {
+              const matchedOrder = existingOrders.find(o => o.id === editingOrderId);
+              setActiveTab('stock');
+              setCustomerName('Internal Stock');
+              if (!customerReferenceNumber || !customerReferenceNumber.trim().toUpperCase().startsWith('STOCK-')) {
+                setCustomerReferenceNumber(generateStockPoReference(matchedOrder?.internalOrderNumber));
+              }
+              setItems(prev => prev.map(it => ({ ...it, pricePerUnit: 0 })));
+              setBlanketOrder(false);
+              setMessage({ type: 'info', text: 'Switched order to Internal Stock mode. Customer set to "Internal Stock" and line item prices zeroed.' });
+            } else if (activeTab !== 'stock') {
+              startStockOrder();
+            }
+          }}
+          className={`px-8 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'stock' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-emerald-600 hover:bg-emerald-50'}`}
         >
-          <i className="fa-solid fa-boxes-stacked"></i> Order for Stock
+          <i className="fa-solid fa-boxes-stacked"></i> Stock Orders
         </button>
         <button
           onClick={() => setActiveTab('logged')}
@@ -1631,7 +1703,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         </div>
       )}
 
-      {activeTab === 'new' || (activeTab === 'blanket' && blanketSubTab === 'new_blanket') ? (
+      {activeTab === 'new' || activeTab === 'stock' || (activeTab === 'blanket' && blanketSubTab === 'new_blanket') ? (
         <div className="animate-in fade-in duration-500">
           {editStatus.type !== 'new' && (
             <div className={`mb-6 p-4 rounded-2xl border-l-[8px] flex items-center justify-between shadow-lg ${editStatus.type === 'frozen' ? 'bg-rose-50 border-rose-600 text-rose-800' : 'bg-amber-50 border-amber-400 text-amber-800'
@@ -1663,12 +1735,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           <div className={`bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden ${editStatus.isFrozen ? 'opacity-80' : ''}`}>
             <div className="p-6 bg-slate-50 border-b flex justify-between items-center">
               <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg transition-colors ${editingOrderId ? (editStatus.isFrozen ? 'bg-rose-600' : 'bg-amber-500') : 'bg-blue-600'}`}>
-                  <i className={`fa-solid ${editingOrderId ? 'fa-pen-to-square' : 'fa-clipboard-list'} text-xl`}></i>
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg transition-colors ${editingOrderId ? (editStatus.isFrozen ? 'bg-rose-600' : 'bg-amber-500') : (activeTab === 'stock' ? 'bg-emerald-600' : 'bg-blue-600')}`}>
+                  <i className={`fa-solid ${editingOrderId ? 'fa-pen-to-square' : (activeTab === 'stock' ? 'fa-boxes-stacked' : 'fa-clipboard-list')} text-xl`}></i>
                 </div>
                 <div>
-                  <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Order Management Terminal</h2>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{editingOrderId ? `Modifying Internal ID: ${customerReferenceNumber}` : 'Initialize New Transaction Entry'}</p>
+                  <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                    {activeTab === 'stock' ? 'Stock Order Terminal' : 'Order Management Terminal'}
+                  </h2>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                    {editingOrderId ? `Modifying Internal ID: ${customerReferenceNumber}` : (activeTab === 'stock' ? 'Initialize Internal Stock Replenishment' : 'Initialize New Transaction Entry')}
+                  </p>
                 </div>
               </div>
               {editingOrderId && !editStatus.isFrozen && (
@@ -1690,7 +1766,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
               <form onSubmit={handleSubmit} className="space-y-10">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                   <div className="space-y-2 relative">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">PO Reference Number</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between items-center">
+                      <span>PO Reference Number</span>
+                      {activeTab === 'stock' && (
+                        <span className="text-[8px] font-bold text-emerald-600 uppercase bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Auto-Generated</span>
+                      )}
+                    </label>
                     <input
                       disabled={editStatus.isFrozen}
                       className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
@@ -1702,7 +1783,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between items-center">
                       <span>Customer Entity Name</span>
-                      {customerName && (
+                      {activeTab === 'stock' || customerName === 'Internal Stock' ? (
+                        <span className="text-[8px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200">
+                          Special: Internal Stock
+                        </span>
+                      ) : customerName && (
                         <span className={`text-[8px] px-2 py-0.5 rounded-full border transition-all ${isNewCustomerCreated
                           ? 'bg-emerald-100 text-emerald-700 border-emerald-200 animate-pulse'
                           : (customers.some(c => c.name.toLowerCase() === customerName.toLowerCase())
@@ -1718,8 +1803,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       )}
                     </label>
                     <input
-                      disabled={editStatus.isFrozen}
-                      className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                      disabled={editStatus.isFrozen || activeTab === 'stock'}
+                      className={`w-full p-4 border-2 border-slate-100 rounded-2xl outline-none font-bold transition-all shadow-inner ${activeTab === 'stock' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-slate-50 focus:bg-white focus:border-blue-500'}`}
                       placeholder="Enter Legal Entity Name..."
                       value={customerName}
                       list="crm-customer-suggestions"
@@ -1727,9 +1812,19 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         const newName = e.target.value;
                         setCustomerName(newName);
                         setIsNewCustomerCreated(false);
-                        const matchCust = customers.find(c => c.name.toLowerCase() === newName.toLowerCase());
-                        if (matchCust && matchCust.appliesWithholdingTax !== undefined) {
-                          setAppliesWithholdingTax(matchCust.appliesWithholdingTax);
+                        if (newName.trim().toLowerCase() === 'internal stock') {
+                          setActiveTab('stock');
+                          if (!customerReferenceNumber || !customerReferenceNumber.trim().toUpperCase().startsWith('STOCK-')) {
+                            const matchedOrder = editingOrderId ? existingOrders.find(o => o.id === editingOrderId) : undefined;
+                            setCustomerReferenceNumber(generateStockPoReference(matchedOrder?.internalOrderNumber));
+                          }
+                          setItems(prev => prev.map(it => ({ ...it, pricePerUnit: 0 })));
+                          setBlanketOrder(false);
+                        } else {
+                          const matchCust = customers.find(c => c.name.toLowerCase() === newName.toLowerCase());
+                          if (matchCust && matchCust.appliesWithholdingTax !== undefined) {
+                            setAppliesWithholdingTax(matchCust.appliesWithholdingTax);
+                          }
                         }
                       }}
                       onBlur={handleCustomerBlur}
@@ -1990,10 +2085,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     type="submit"
                     className={`px-16 py-5 rounded-3xl font-black uppercase text-sm tracking-[0.2em] transition-all active:scale-95 shadow-xl relative z-10 ${editStatus.isFrozen || new Date(orderDate) > new Date(new Date().toISOString().split('T')[0])
                       ? 'bg-slate-700 text-slate-500 cursor-not-allowed opacity-50'
-                      : (editingOrderId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700')
+                      : (editingOrderId ? 'bg-amber-600 hover:bg-amber-700' : activeTab === 'stock' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-900/30' : 'bg-blue-600 hover:bg-blue-700')
                       }`}
                   >
-                    {editStatus.isFrozen ? 'LOCKED' : (editingOrderId ? 'Save Modification' : 'Commit Acquisition')}
+                    {editStatus.isFrozen ? 'LOCKED' : (editingOrderId ? 'Save Modification' : activeTab === 'stock' ? 'Commit Stock Order' : 'Commit Acquisition')}
                   </button>
                 </div>
               </form>
@@ -2305,6 +2400,18 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                     <i className="fa-solid fa-layer-group text-[9px]"></i>
                     Blanket ({loggedStats.blanket})
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoggedFilterType('stock')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                      loggedFilterType === 'stock'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <i className="fa-solid fa-boxes-stacked text-[9px]"></i>
+                    Stock ({loggedStats.stock})
+                  </button>
                 </div>
 
                 {/* Search Box */}
@@ -2363,7 +2470,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       <td className="px-8 py-6">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</span>
-                          {isOrderBlanket(draft) ? (
+                          {isStockOrder(draft) ? (
+                            <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 uppercase tracking-wider">
+                              <i className="fa-solid fa-boxes-stacked text-[8px] mr-1"></i>Stock
+                            </span>
+                          ) : isOrderBlanket(draft) ? (
                             <span className="text-[9px] font-black text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200 uppercase tracking-wider">
                               <i className="fa-solid fa-layer-group text-[8px] mr-1"></i>Blanket
                             </span>
@@ -2373,7 +2484,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                             </span>
                           )}
                         </div>
-                        <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">PO: {draft.customerReferenceNumber || 'N/A'}</div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">PO: {draft.customerReferenceNumber || (isStockOrder(draft) ? generateStockPoReference(draft.internalOrderNumber) : 'N/A')}</div>
                         {draft.contractId && (
                           <div className="text-[9px] text-teal-600 font-bold uppercase mt-0.5">Contract: {draft.contractId}</div>
                         )}

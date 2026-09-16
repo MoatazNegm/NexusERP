@@ -478,7 +478,17 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
   type RankedCatalogSuggestion =
     | { type: 'INVENTORY'; score: number; inventory: InventoryItem }
-    | { type: 'SUPPLIER'; score: number; supplier: Supplier; part: SupplierPart };
+    | { type: 'SUPPLIER'; score: number; supplier: Supplier; part: SupplierPart }
+    | {
+        type: 'STOCK_ORDER';
+        score: number;
+        order: CustomerOrder;
+        item: CustomerOrderItem;
+        comp: ManufacturingComponent;
+        isInStock: boolean;
+        availableQty: number;
+        purchaseDate: string;
+      };
 
   const rankedSuggestions = useMemo<RankedCatalogSuggestion[]>(() => {
     if (selectedItem?.productionType === 'OUTSOURCING') return [];
@@ -514,10 +524,74 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       });
     });
 
-    // Sort strictly descending by relevance score (Exact Part Number > Prefix Part Number > Prefix Description > etc.)
-    list.sort((a, b) => b.score - a.score);
+    // 3. Post-Review Stock Orders (Internal Stock orders where technical review is completed)
+    const stockOrders = (orders || []).filter(o =>
+      o.id !== selectedOrder?.id &&
+      (o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-'))) &&
+      (Boolean(o.technicalReviewFinishedAt) || (o.status && o.status !== OrderStatus.LOGGED && o.status !== OrderStatus.TECHNICAL_REVIEW))
+    );
+
+    const stockSuggestions: Extract<RankedCatalogSuggestion, { type: 'STOCK_ORDER' }>[] = [];
+
+    stockOrders.forEach(stockOrd => {
+      (stockOrd.items || []).forEach(it => {
+        (it.components || []).forEach(c => {
+          if (c.status === 'CANCELLED') return;
+          const sku = c.supplierPartNumber || c.componentNumber || '';
+          const scorePart = partQuery ? calculateCatalogMatchScore(sku, c.description, 'Internal Stock', partQuery) : 0;
+          const scoreDesc = descQuery ? calculateCatalogMatchScore(sku, c.description, 'Internal Stock', descQuery) : 0;
+          if (scorePart === 0 && scoreDesc === 0) return;
+
+          const totalScore = (scorePart > 0 && scoreDesc > 0)
+            ? (scorePart + scoreDesc + 500)
+            : Math.max(scorePart, scoreDesc) + 20;
+
+          const isInStock = c.status === 'RECEIVED' || (c.receivedQty !== undefined && c.receivedQty >= c.quantity);
+          const availableQty = isInStock
+            ? Math.max(0, (c.receivedQty || c.quantity) - (c.consumedQty || 0))
+            : Math.max(0, c.quantity - (c.consumedQty || 0));
+
+          const purchaseDate = c.statusUpdatedAt || c.procurementStartedAt || stockOrd.orderDate || '';
+
+          stockSuggestions.push({
+            type: 'STOCK_ORDER',
+            score: totalScore,
+            order: stockOrd,
+            item: it,
+            comp: c,
+            isInStock,
+            availableQty,
+            purchaseDate
+          });
+        });
+      });
+    });
+
+    // In-transition stock components sorted chronologically earliest to latest by purchaseDate
+    stockSuggestions.sort((a, b) => {
+      if (a.isInStock && !b.isInStock) return -1;
+      if (!a.isInStock && b.isInStock) return 1;
+      if (!a.isInStock && !b.isInStock) {
+        const dateA = a.purchaseDate ? new Date(a.purchaseDate).getTime() : Infinity;
+        const dateB = b.purchaseDate ? new Date(b.purchaseDate).getTime() : Infinity;
+        if (dateA !== dateB) return dateA - dateB;
+      }
+      return b.score - a.score;
+    });
+
+    list.push(...stockSuggestions);
+
+    // Sort strictly descending by relevance score, preserving chronological order for in-transition stock orders
+    list.sort((a, b) => {
+      if (a.type === 'STOCK_ORDER' && b.type === 'STOCK_ORDER' && !a.isInStock && !b.isInStock) {
+        const dateA = a.purchaseDate ? new Date(a.purchaseDate).getTime() : Infinity;
+        const dateB = b.purchaseDate ? new Date(b.purchaseDate).getTime() : Infinity;
+        if (dateA !== dateB) return dateA - dateB;
+      }
+      return b.score - a.score;
+    });
     return list;
-  }, [compSearch, partNumSearch, inventory, suppliers, selectedItem]);
+  }, [compSearch, partNumSearch, inventory, suppliers, selectedItem, orders, selectedOrder]);
 
   const generateContractNumber = (item?: CustomerOrderItem, comp?: ManufacturingComponent, hint?: string) => {
     if (hint && hint.trim()) return hint.trim();
@@ -658,6 +732,93 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setShowCompSuggestions(false);
     setSelectedCatalogMatch(null);
     fetchData();
+  };
+
+  const handleAddStockOrderComponent = async (stockComp: ManufacturingComponent, stockOrd: CustomerOrder, isInStock: boolean) => {
+    if (!selectedOrder || !selectedItem) return;
+    const matchedInv = inventory.find(i => (stockComp.inventoryItemId && i.id === stockComp.inventoryItemId) || (i.sku && i.sku === (stockComp.supplierPartNumber || stockComp.componentNumber)) || (i.description && i.description.toLowerCase() === stockComp.description.toLowerCase()));
+    const availableInv = matchedInv ? (matchedInv.quantityInStock - (matchedInv.quantityReserved || 0)) : 0;
+    
+    const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
+    const partNum = stockComp.supplierPartNumber || stockComp.componentNumber || '';
+
+    try {
+      if (isInStock && matchedInv && availableInv > 0) {
+        if (compQty <= availableInv) {
+          const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
+            description: stockComp.description,
+            quantity: compQty,
+            unit: stockComp.unit || 'pcs',
+            unitCost: stockComp.unitCost || matchedInv.lastCost || 0,
+            taxPercent: stockComp.taxPercent || 14,
+            source: 'STOCK',
+            inventoryItemId: matchedInv.id,
+            supplierPartNumber: partNum,
+            status: 'RESERVED'
+          });
+          updateOrderInState(updated);
+        } else {
+          // Partial stock + procurement remainder
+          let currentOrder = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
+            description: stockComp.description,
+            quantity: availableInv,
+            unit: stockComp.unit || 'pcs',
+            unitCost: stockComp.unitCost || matchedInv.lastCost || 0,
+            taxPercent: stockComp.taxPercent || 14,
+            source: 'STOCK',
+            inventoryItemId: matchedInv.id,
+            supplierPartNumber: partNum,
+            status: 'RESERVED'
+          });
+          const remainder = compQty - availableInv;
+          const finalOrder = await dataService.addComponentToItem(currentOrder.id, selectedItem.id, {
+            description: stockComp.description,
+            quantity: remainder,
+            unit: stockComp.unit || 'pcs',
+            unitCost: stockComp.unitCost || 0,
+            taxPercent: stockComp.taxPercent || 14,
+            source: 'PROCUREMENT',
+            supplierId: stockComp.supplierId,
+            supplierName: stockComp.supplierName,
+            supplierPartNumber: partNum,
+            contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, partNum) : undefined,
+            contractDuration: finalDuration,
+            scopeOfWork: compScope || stockComp.description,
+            status: 'PENDING_OFFER'
+          });
+          updateOrderInState(finalOrder);
+        }
+      } else {
+        // In transition or not in inv
+        const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
+          description: stockComp.description,
+          quantity: compQty,
+          unit: stockComp.unit || 'pcs',
+          unitCost: stockComp.unitCost || 0,
+          taxPercent: stockComp.taxPercent || 14,
+          source: 'PROCUREMENT',
+          supplierId: stockComp.supplierId,
+          supplierName: stockComp.supplierName,
+          supplierPartNumber: partNum,
+          contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, partNum) : undefined,
+          contractDuration: finalDuration,
+          scopeOfWork: compScope || stockComp.description,
+          status: 'PENDING_OFFER'
+        });
+        updateOrderInState(updated);
+      }
+
+      setCompSearch('');
+      setPartNumSearch('');
+      setCompDurationVal('');
+      setCompDurationUnit('Months');
+      setCompScope('');
+      setShowCompSuggestions(false);
+      setSelectedCatalogMatch(null);
+      fetchData();
+    } catch (e: any) {
+      alert(e.message || 'Failed to add stock order component');
+    }
   };
 
 
@@ -879,7 +1040,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     const costInOrderCurrency = totalCost * rate;
     const marginAmt = totalRevenue - costInOrderCurrency;
     const markupPct = costInOrderCurrency > 0 ? (marginAmt / costInOrderCurrency) * 100 : (totalRevenue > 0 ? 100 : 0);
-    const isViolated = !isOrderBlanket(selectedOrder) && isMarginBreach(costInOrderCurrency, markupPct, config.settings.minimumMarginPct, isOrderBlanket(selectedOrder));
+    const isInternalStock = selectedOrder.customerName === 'Internal Stock' || (typeof selectedOrder.customerReferenceNumber === 'string' && selectedOrder.customerReferenceNumber.startsWith('STOCK-'));
+    const isViolated = !isInternalStock && !isOrderBlanket(selectedOrder) && isMarginBreach(costInOrderCurrency, markupPct, config.settings.minimumMarginPct, isOrderBlanket(selectedOrder));
 
     return {
       revenue: totalRevenue,
@@ -1481,6 +1643,56 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                               </button>
                                             );
                                           }
+
+                                          if (suggestion.type === 'STOCK_ORDER') {
+                                            const { comp, order: stockOrd, isInStock, availableQty, purchaseDate } = suggestion;
+                                            const partNumber = comp.supplierPartNumber || comp.componentNumber || 'N/A';
+                                            return (
+                                              <button
+                                                key={`stock-comp-${comp.id || `${stockOrd.id}-${partNumber}`}`}
+                                                onMouseDown={() => handleAddStockOrderComponent(comp, stockOrd, isInStock)}
+                                                className="w-full text-left p-5 hover:bg-emerald-50/70 flex justify-between items-center group transition-colors"
+                                              >
+                                                <div>
+                                                  <div className="font-black text-slate-800 group-hover:text-emerald-700 text-xs flex items-center gap-2">
+                                                    <span>{comp.description}</span>
+                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                                                      Ref: {stockOrd.customerReferenceNumber || stockOrd.internalOrderNumber}
+                                                    </span>
+                                                  </div>
+                                                  <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4 flex-wrap items-center">
+                                                    <span className="text-emerald-800 font-mono font-bold">Part / SKU: {partNumber}</span>
+                                                    <span className={`font-black ${availableQty > 0 ? (isInStock ? 'text-emerald-600' : 'text-cyan-700') : 'text-slate-400'}`}>
+                                                      Available: {availableQty} {comp.unit || 'pcs'}
+                                                    </span>
+                                                    <span className="text-emerald-700 font-black">
+                                                      Procurement Cost: L.E. {(comp.unitCost || 0).toLocaleString()}
+                                                    </span>
+                                                    {purchaseDate && !isInStock && (
+                                                      <span className="text-cyan-700 font-bold flex items-center gap-1">
+                                                        <i className="fa-solid fa-clock text-[9px]"></i>
+                                                        Purchased: {new Date(purchaseDate).toLocaleDateString()}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                                <div className="flex flex-col items-end gap-1 shrink-0 ml-3">
+                                                  <span className={`text-[8px] font-black uppercase px-2.5 py-1 rounded-full flex items-center gap-1 ${
+                                                    isInStock
+                                                      ? 'bg-emerald-100 text-emerald-800'
+                                                      : 'bg-cyan-100 text-cyan-800'
+                                                  }`}>
+                                                    <i className={`fa-solid ${isInStock ? 'fa-circle-check text-emerald-600' : 'fa-truck-fast text-cyan-600'}`}></i>
+                                                    {isInStock ? 'In Stock' : 'In Transition'}
+                                                  </span>
+                                                  <div className="text-[9px] font-black text-slate-800">
+                                                    L.E. {(comp.unitCost || 0).toLocaleString()}
+                                                  </div>
+                                                </div>
+                                              </button>
+                                            );
+                                          }
+
                                           return null;
                                         })}
                                         <button
