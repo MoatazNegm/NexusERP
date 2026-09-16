@@ -227,22 +227,23 @@ const extractCostSheetMetrics = (base64Data) => {
         let invoiceTotalCol = -1;
         let nameCol = 0;
 
-        // Scan top 5 rows for column headers
-        for (let r = 0; r < Math.min(5, data.length); r++) {
+        // Scan top 10 rows for column headers
+        for (let r = 0; r < Math.min(10, data.length); r++) {
             const row = data[r] || [];
             for (let c = 0; c < row.length; c++) {
-                const val = String(row[c] || '').trim();
-                if ((val.includes('المرتب') || val.includes('مرتب')) && (val.includes('اجمال') || val.includes('إجمال') || val.includes('صافي') || val.includes('قيمه') || val.includes('قيمة'))) {
-                    if (salaryTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال')) {
+                const rawVal = String(row[c] || '').trim();
+                const val = rawVal.toLowerCase();
+                if ((val.includes('المرتب') || val.includes('مرتب') || val.includes('salary') || val.includes('cost')) && (val.includes('اجمال') || val.includes('إجمال') || val.includes('صافي') || val.includes('قيمه') || val.includes('قيمة') || val.includes('total'))) {
+                    if (salaryTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال') || val.includes('total')) {
                         salaryTotalCol = c;
                     }
                 }
-                if ((val.includes('الفاتور') || val.includes('فاتور')) && (val.includes('اجمال') || val.includes('إجمال') || val.includes('صافي') || val.includes('قيمه') || val.includes('قيمة'))) {
-                    if (invoiceTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال')) {
+                if (val.includes('الفاتور') || val.includes('فاتور') || val.includes('invoice')) {
+                    if (invoiceTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال') || val.includes('total') || val.includes('قيمه') || val.includes('قيمة')) {
                         invoiceTotalCol = c;
                     }
                 }
-                if (val === 'الاسم' || val === 'اسم' || val.toLowerCase() === 'name') {
+                if (val === 'الاسم' || val === 'اسم' || val === 'name') {
                     nameCol = c;
                 }
             }

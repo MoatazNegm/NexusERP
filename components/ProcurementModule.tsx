@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
+import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User, getItemEffectiveStatus, CostSheetRecord } from '../types';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
@@ -314,22 +314,23 @@ export const extractCostSheetMetrics = (base64Data: string): { resourceCount: nu
     let invoiceTotalCol = -1;
     let nameCol = 0;
 
-    // Scan top 5 rows for column headers
-    for (let r = 0; r < Math.min(5, data.length); r++) {
+    // Scan top 10 rows for column headers
+    for (let r = 0; r < Math.min(10, data.length); r++) {
       const row = data[r] || [];
       for (let c = 0; c < row.length; c++) {
-        const val = String(row[c] || '').trim();
-        if ((val.includes('المرتب') || val.includes('مرتب')) && (val.includes('اجمال') || val.includes('إجمال') || val.includes('صافي') || val.includes('قيمه') || val.includes('قيمة'))) {
-          if (salaryTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال')) {
+        const rawVal = String(row[c] || '').trim();
+        const val = rawVal.toLowerCase();
+        if ((val.includes('المرتب') || val.includes('مرتب') || val.includes('salary') || val.includes('cost')) && (val.includes('اجمال') || val.includes('إجمال') || val.includes('صافي') || val.includes('قيمه') || val.includes('قيمة') || val.includes('total'))) {
+          if (salaryTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال') || val.includes('total')) {
             salaryTotalCol = c;
           }
         }
-        if ((val.includes('الفاتور') || val.includes('فاتور')) && (val.includes('اجمال') || val.includes('إجمال') || val.includes('صافي') || val.includes('قيمه') || val.includes('قيمة'))) {
-          if (invoiceTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال')) {
+        if (val.includes('الفاتور') || val.includes('فاتور') || val.includes('invoice')) {
+          if (invoiceTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال') || val.includes('total') || val.includes('قيمه') || val.includes('قيمة')) {
             invoiceTotalCol = c;
           }
         }
-        if (val === 'الاسم' || val === 'اسم' || val.toLowerCase() === 'name') {
+        if (val === 'الاسم' || val === 'اسم' || val === 'name') {
           nameCol = c;
         }
       }
@@ -407,7 +408,7 @@ const normalizeProjectName = (raw: string): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
-type CostSheetProjectBlock = { name: string; resourceCount: number; realCost: number };
+type CostSheetProjectBlock = { name: string; resourceCount: number; realCost: number; invoiceTotal: number };
 
 const _costSheetBlocksCache = new Map<string, CostSheetProjectBlock[]>();
 
@@ -424,8 +425,10 @@ const _costSheetBlocksCache = new Map<string, CostSheetProjectBlock[]>();
  *   - resourceCount: number of person rows in the block — rows whose first column
  *                    holds a real name (non-empty, contains a letter). Blank spacer
  *                    rows between the last person and the اجمالى row are NOT counted.
- *   - realCost:      sum of those person rows in the sheet's right-most non-empty
- *                    (numeric) column
+ *   - realCost:      sum of those person rows in the sheet's cost column (or right-most
+ *                    numeric column)
+ *   - invoiceTotal:  sum of those person rows in the sheet's invoice total column
+ *                    (اجمالي الفاتورة / Invoice Total) or total row summary value
  */
 const parseCostSheetProjectBlocks = (base64Data: string): CostSheetProjectBlock[] => {
   if (!base64Data) return [];
@@ -453,6 +456,27 @@ const parseCostSheetProjectBlocks = (base64Data: string): CostSheetProjectBlock[
     let nameCol = 0;
     if (!data.some(r => cellText((r || [])[0]) !== '') && data.some(r => cellText((r || [])[1]) !== '')) {
       nameCol = 1;
+    }
+
+    let invoiceTotalCol = -1;
+    let salaryTotalCol = -1;
+    for (let r = 0; r < Math.min(10, data.length); r++) {
+      const row = data[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const rawVal = cellText(row[c]);
+        const val = rawVal.toLowerCase();
+        if (!val) continue;
+        if ((val.includes('المرتب') || val.includes('مرتب') || val.includes('salary') || val.includes('cost')) && (val.includes('اجمال') || val.includes('إجمال') || val.includes('صافي') || val.includes('قيمه') || val.includes('قيمة') || val.includes('total'))) {
+          if (salaryTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال') || val.includes('total')) {
+            salaryTotalCol = c;
+          }
+        }
+        if (val.includes('الفاتور') || val.includes('فاتور') || val.includes('invoice')) {
+          if (invoiceTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال') || val.includes('total') || val.includes('قيمه') || val.includes('قيمة')) {
+            invoiceTotalCol = c;
+          }
+        }
+      }
     }
 
     const isSubHeader = (label: string): boolean => {
@@ -484,23 +508,48 @@ const parseCostSheetProjectBlocks = (base64Data: string): CostSheetProjectBlock[
         if (cellText(row[c]) !== '') { if (c > lastCol) lastCol = c; break; }
       }
     }
+
+      const costCol = salaryTotalCol !== -1 ? salaryTotalCol : lastCol;
       let curCount = 0;
       let curSum = 0;
+      let curInvoiceSum = 0;
       for (const r of data) {
         const row = r || [];
         const label = cellText(row[nameCol]);
         if (label === '') continue;
         if (costSheetLabelIsTotal(label)) {
-          blocks.push({ name: stripTotalWord(label), resourceCount: curCount, realCost: curSum });
+          const summaryCost = costCol > nameCol ? toNumber(row[costCol]) : 0;
+          const finalCost = curSum > 0 ? curSum : summaryCost;
+
+          const summaryInv = invoiceTotalCol !== -1 ? toNumber(row[invoiceTotalCol]) : 0;
+          const finalInv = curInvoiceSum > 0 ? curInvoiceSum : summaryInv;
+
+          blocks.push({
+            name: stripTotalWord(label),
+            resourceCount: curCount,
+            realCost: finalCost,
+            invoiceTotal: finalInv
+          });
           curCount = 0;
           curSum = 0;
+          curInvoiceSum = 0;
           continue;
         }
         if (!isPersonRow(label)) continue;
         curCount += 1;
-        curSum += lastCol > nameCol ? toNumber(row[lastCol]) : 0;
+        curSum += costCol > nameCol ? toNumber(row[costCol]) : 0;
+        if (invoiceTotalCol !== -1 && invoiceTotalCol !== costCol) {
+          curInvoiceSum += toNumber(row[invoiceTotalCol]);
+        }
       }
-      if (curCount > 0) blocks.push({ name: '', resourceCount: curCount, realCost: curSum });
+      if (curCount > 0) {
+        blocks.push({
+          name: '',
+          resourceCount: curCount,
+          realCost: curSum,
+          invoiceTotal: curInvoiceSum
+        });
+      }
     }
   } catch (e) {
     console.error('[CostSheet] Block parse error:', e);
@@ -531,13 +580,14 @@ const findCostSheetProjectBlock = (blocks: CostSheetProjectBlock[], projectName:
 export const extractCostSheetProjectMetrics = (
   base64Data: string,
   projectName: string,
-): { resourceCount: number; realCost: number; projectName: string } | null => {
+): { resourceCount: number; realCost: number; invoiceTotal: number; projectName: string } | null => {
   if (!base64Data || !projectName || !projectName.trim()) return null;
   const match = findCostSheetProjectBlock(parseCostSheetProjectBlocks(base64Data), projectName);
   if (!match) return null;
   return {
     resourceCount: match.resourceCount,
     realCost: Math.round(match.realCost * 100) / 100,
+    invoiceTotal: Math.round((match.invoiceTotal || 0) * 100) / 100,
     projectName: match.name.trim(),
   };
 };
@@ -2888,6 +2938,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     if (projMetrics) {
                       count = projMetrics.resourceCount;
                       cost = projMetrics.realCost;
+                      inv = projMetrics.invoiceTotal;
                       sheetProjectName = projMetrics.projectName;
                       matchedProjectBlock = true;
                     } else {
@@ -2895,11 +2946,12 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       // it — show 0/0, never the whole-sheet all-projects totals.
                       count = 0;
                       cost = 0;
+                      inv = 0;
                       projectMissing = true;
                     }
                   }
 
-                  if (!matchedProjectBlock && !projectMissing && (!count || !cost) && targetItem.costSheetFile) {
+                  if (!matchedProjectBlock && !projectMissing && (!count || !cost || !inv) && targetItem.costSheetFile) {
                     const extracted = extractCostSheetMetrics(targetItem.costSheetFile);
                     if (!count) count = extracted.resourceCount;
                     if (!cost) cost = extracted.realCost;

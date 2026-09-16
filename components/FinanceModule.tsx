@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { dataService } from '../services/dataService';
-import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus } from '../types';
+import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus, CustomerOrderItem, ManufacturingComponent, CostSheetRecord } from '../types';
 import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
@@ -9,6 +10,7 @@ import html2canvas from 'html2canvas';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
 import { SortableTable, ColumnDef } from './SortableTable';
+import { extractCostSheetMetrics, extractCostSheetProjectMetrics } from './ProcurementModule';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -575,12 +577,25 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+  const [expandedProjectHistoryIds, setExpandedProjectHistoryIds] = useState<Set<string>>(new Set());
+  const [costSheetModalData, setCostSheetModalData] = useState<{ fileName: string; fileData: string; orderTitle: string } | null>(null);
+  const [costSheetActiveSheetIndex, setCostSheetActiveSheetIndex] = useState<number>(0);
 
   const toggleOrderExpand = (orderId: string) => {
     setExpandedOrderIds(prev => ({
       ...prev,
       [orderId]: !prev[orderId]
     }));
+  };
+
+  const toggleProjectHistory = (groupId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setExpandedProjectHistoryIds(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
   };
 
   const handleToggleExpandAll = () => {
@@ -590,6 +605,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     } else {
       const next: Record<string, boolean> = {};
       filteredOrders.forEach(o => { next[o.id] = true; });
+      groupedFinanceOrderItems.forEach(item => {
+        if (item.type === 'blanket_project_group') {
+          next[item.groupId] = true;
+        }
+      });
       setExpandedOrderIds(next);
     }
   };
@@ -858,6 +878,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     document.body.removeChild(link);
   };
 
+  const openCostSheetModal = (order: CustomerOrder, targetItem?: CustomerOrderItem | null) => {
+    const item = targetItem || (order.items || []).find(i => i.costSheetFile) || (order.items || [])[0];
+    if (!item?.costSheetFile) return;
+    setCostSheetModalData({
+      fileName: item.costSheetFileName || `CostSheet-${order.internalOrderNumber || order.customerReferenceNumber}.xlsx`,
+      fileData: item.costSheetFile,
+      orderTitle: `${order.internalOrderNumber || ''} ${order.customerReferenceNumber ? `(PO: ${order.customerReferenceNumber})` : ''}`
+    });
+  };
+
   const ordersWithPL = useMemo(() => orders.map(o => ({ ...o, pl: getPL(o) })), [orders]);
 
   const filteredOrders = useMemo(() => {
@@ -931,6 +961,82 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
     return sorted;
   }, [ordersWithPL, search, sortConfig, getOrderProjectName]);
+
+  type FinanceOrderDisplayItem =
+    | {
+        type: 'standard';
+        order: CustomerOrder;
+        orderIdx: number;
+      }
+    | {
+        type: 'blanket_project_group';
+        groupId: string;
+        projectName: string;
+        latestOrder: CustomerOrder;
+        orders: CustomerOrder[];
+        firstOrderIndex: number;
+      }
+    | {
+        type: 'blanket_single';
+        order: CustomerOrder;
+        orderIdx: number;
+      };
+
+  const groupedFinanceOrderItems = useMemo<FinanceOrderDisplayItem[]>(() => {
+    const items: FinanceOrderDisplayItem[] = [];
+    const processedProjects = new Set<string>();
+
+    filteredOrders.forEach((o, idx) => {
+      const isBlanket = isOrderBlanket(o);
+      const projName = getOrderProjectName(o);
+
+      if (isBlanket && projName) {
+        const normProj = projName.toLowerCase().trim();
+        if (processedProjects.has(normProj)) {
+          // Already grouped with the first sorted order of this project!
+          return;
+        }
+        processedProjects.add(normProj);
+
+        // Find all blanket orders matching this project name from filteredOrders
+        const matchingOrders = filteredOrders.filter(
+          other => isOrderBlanket(other) && getOrderProjectName(other).toLowerCase().trim() === normProj
+        );
+
+        // Sort matching orders by date descending so the latest order is at index 0
+        const sortedByDate = [...matchingOrders].sort((a, b) => {
+          const tA = new Date(a.orderDate || a.dataEntryTimestamp || 0).getTime();
+          const tB = new Date(b.orderDate || b.dataEntryTimestamp || 0).getTime();
+          return tB - tA;
+        });
+
+        const latestOrder = sortedByDate[0] || o;
+
+        items.push({
+          type: 'blanket_project_group',
+          groupId: `proj_blanket_${normProj.replace(/\s+/g, '_')}`,
+          projectName: projName,
+          latestOrder,
+          orders: sortedByDate,
+          firstOrderIndex: idx,
+        });
+      } else if (isBlanket && !projName) {
+        items.push({
+          type: 'blanket_single',
+          order: o,
+          orderIdx: idx,
+        });
+      } else {
+        items.push({
+          type: 'standard',
+          order: o,
+          orderIdx: idx,
+        });
+      }
+    });
+
+    return items;
+  }, [filteredOrders, isOrderBlanket, getOrderProjectName]);
 
   const whtOrders = useMemo(() => {
     const q = whtSearch.toLowerCase().trim();
@@ -2454,373 +2560,911 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   </tr>
                 )}
               </>
-            ) : filteredOrders.map((o, orderIdx) => {
-              const pl = (o as any).pl;
-              const isBlanketOrder = !!(o.blanketOrder || o.contractId || o.blanketContractId);
-              // The Blanket badge additionally requires "No RFP Needed" in Procurement —
-              // an order linked to a blanket contract still shows as Non-Blanket while
-              // procurement hasn't cleared it off the RFP requirement.
-              const showBlanketBadge = isBlanketOrder && isOrderNoRfpNeeded(o);
-              const isBreach = !isBlanketOrder && isMarginBreach(pl.costInOrderCurrency ?? pl.cost, pl.markupPct, config.settings.minimumMarginPct);
-              const currentTab = activeTab as string;
-              const showRow = currentTab === 'orders' ||
-                (currentTab === 'billing_details' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
-                (currentTab === 'orders' && o.status === OrderStatus.WAITING_GOVE);
+            ) : (() => {
+              const renderOrderRowContent = (o: CustomerOrder, orderIdx: number) => {
+                const pl = (o as any).pl || getPL(o);
+                const isBlanketOrder = !!(o.blanketOrder || o.contractId || o.blanketContractId);
+                const showBlanketBadge = isBlanketOrder && isOrderNoRfpNeeded(o);
+                const isBreach = !isBlanketOrder && isMarginBreach(pl.costInOrderCurrency ?? pl.cost, pl.markupPct, config.settings.minimumMarginPct);
+                const currentTab = activeTab as string;
+                const showRow = currentTab === 'orders' ||
+                  (currentTab === 'billing_details' && ([OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE].includes(o.status) || o.items.some(i => (i.hubReceivedQty || 0) > (i.approvedForDispatchQty || 0)))) ||
+                  (currentTab === 'orders' && o.status === OrderStatus.WAITING_GOVE);
 
-              if (!showRow) return null;
+                if (!showRow) return null;
 
-              const isInvoicedOrLater = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(o.status);
+                const isInvoicedOrLater = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(o.status);
 
-              let totalAuthorizedGross = 0;
-              let draftSum = 0;
-              o.items.forEach(it => {
-                totalAuthorizedGross += (it.approvedForDispatchQty || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
-                const draftQty = parseFloat(dispatchReceiptInputs[it.id]) || 0;
-                draftSum += draftQty * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
-              });
+                let totalAuthorizedGross = 0;
+                let draftSum = 0;
+                o.items.forEach(it => {
+                  totalAuthorizedGross += (it.approvedForDispatchQty || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
+                  const draftQty = parseFloat(dispatchReceiptInputs[it.id]) || 0;
+                  draftSum += draftQty * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
+                });
 
-              const isExpanded = Boolean(expandedOrderIds[o.id]);
-              const isEvenRow = orderIdx % 2 === 1;
-              const rowBg = o.status === OrderStatus.NEGATIVE_MARGIN
-                ? 'bg-rose-50/30'
-                : isExpanded
-                ? 'bg-blue-50/30'
-                : isEvenRow
-                ? 'bg-slate-100/60'
-                : 'bg-white';
+                const isExpanded = Boolean(expandedOrderIds[o.id]);
+                const isEvenRow = orderIdx % 2 === 1;
+                const rowBg = o.status === OrderStatus.NEGATIVE_MARGIN
+                  ? 'bg-rose-50/30'
+                  : isExpanded
+                  ? 'bg-blue-50/30'
+                  : isEvenRow
+                  ? 'bg-slate-100/60'
+                  : 'bg-white';
 
-              return (
-                <React.Fragment key={o.id}>
-                  <tr 
-                    onClick={() => toggleOrderExpand(o.id)}
-                    className={`${rowBg} hover:bg-blue-50/60 transition-colors cursor-pointer select-none border-b border-slate-100`}
-                  >
-                    {columnOrder.map(col => {
-                      if (col === 'context') return (
-                        <td key={col} className="px-4 py-3">
-                          <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-nowrap whitespace-nowrap">
-                            <span className="whitespace-nowrap shrink-0">{o.internalOrderNumber}</span>
-                            {o.customerReferenceNumber && (
-                              <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap shrink-0">
-                                PO: {o.customerReferenceNumber}
-                              </span>
-                            )}
-                            {(() => {
-                              const proj = getOrderProjectName(o);
-                              return proj ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0">
-                                  <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
-                                  Project: {proj}
+                return (
+                  <React.Fragment key={o.id}>
+                    <tr 
+                      onClick={() => toggleOrderExpand(o.id)}
+                      className={`${rowBg} hover:bg-blue-50/60 transition-colors cursor-pointer select-none border-b border-slate-100`}
+                    >
+                      {columnOrder.map(col => {
+                        if (col === 'context') return (
+                          <td key={col} className="px-4 py-3">
+                            <div className="font-mono text-[10px] font-black text-blue-600 uppercase flex items-center gap-2 flex-nowrap whitespace-nowrap">
+                              <span className="whitespace-nowrap shrink-0">{o.internalOrderNumber}</span>
+                              {o.customerReferenceNumber && (
+                                <span className="text-slate-500 font-bold normal-case text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap shrink-0">
+                                  PO: {o.customerReferenceNumber}
+                                </span>
+                              )}
+                              {(() => {
+                                const proj = getOrderProjectName(o);
+                                return proj ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0">
+                                    <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i>
+                                    Project: {proj}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0">
+                                    <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
+                                    Non-Project
+                                  </span>
+                                );
+                              })()}
+                              {showBlanketBadge ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
+                                  <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0">
-                                  <i className="fa-solid fa-folder-minus text-[9px] text-slate-400"></i>
-                                  Non-Project
-                                </span>
-                              );
-                            })()}
-                            {showBlanketBadge ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
-                                <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
-                              </span>
-                            ) : (
-                              <span
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0"
-                                title={isBlanketOrder ? 'Linked to a blanket contract, but Procurement has not marked this order as No RFP Needed' : 'Standard Order'}
-                              >
-                                Non-Blanket
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-bold text-slate-800 text-sm tracking-tight mt-1 flex items-center gap-2 flex-wrap">
-                            <span>{o.customerName}</span>
-                            {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
-                              <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
-                            )}
-                            <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200 whitespace-nowrap shrink-0">
-                              <span className="whitespace-nowrap">{o.items.length} {o.items.length === 1 ? 'item' : 'items'}</span>
-                              <span className="text-slate-300">•</span>
-                              <span className="text-blue-600 font-black inline-flex items-center gap-1 hover:text-blue-700 whitespace-nowrap">
-                                {isExpanded ? 'Click to collapse' : 'Expand to show components'}
-                                <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
-                              </span>
-                            </span>
-                          </div>
-                          {(o.isSettlingOrder || o.blanketContractId || o.invoiceNumber) && (
-                            <div className="mt-1 flex items-center gap-2 flex-wrap text-[9px]">
-                              {o.isSettlingOrder && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[8px] font-black uppercase">
-                                  <i className="fa-solid fa-link"></i> Blanket Settling
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0"
+                                  title={isBlanketOrder ? 'Linked to a blanket contract, but Procurement has not marked this order as No RFP Needed' : 'Standard Order'}
+                                >
+                                  Non-Blanket
                                 </span>
                               )}
-                              {o.blanketContractId && (
-                                <span className="font-mono font-black text-indigo-500 uppercase">Contract: {o.blanketContractId}</span>
-                              )}
-                              {o.invoiceNumber && (
-                                <span className="font-black text-emerald-600 uppercase">Tax Invoice: {o.invoiceNumber}</span>
-                              )}
                             </div>
-                          )}
-                        </td>
-                      );
-                      if (col === 'date') return (
-                        <td key={col} className="px-3 py-4">
-                          <div className="text-xs font-black text-slate-700 uppercase tracking-tighter">
-                            {o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}
-                          </div>
-                          <div className="text-[9px] text-slate-400 font-bold mt-1">{t("finance.tax.acquisitionDate") || "Acquisition Date"}</div>
-                        </td>
-                      );
-                      if (col === 'currency') return (
-                        <td key={col} className="px-2.5 py-4" onClick={e => e.stopPropagation()}>
-                          <div className="flex items-center gap-1">
-                            <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{pl.currency}</span>
-                            <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest leading-tight">
-                              <div>Conv.</div>
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                className="w-16 px-1 py-0.5 mt-0.5 border border-slate-200 rounded-md text-[9px] font-black text-slate-700 outline-none focus:border-blue-500"
-                                defaultValue={pl.conversionRate}
-                                title="Multiplier to bring PO cost into the order's revenue currency. Used only for the P/L threshold check. Default 1 = no conversion."
-                                onBlur={async (e) => {
-                                  const v = parseFloat(e.target.value);
-                                  const next = (!Number.isFinite(v) || v <= 0) ? 1 : v;
-                                  if (next === pl.conversionRate) return;
-                                  try {
-                                    await dataService.updateOrder(o.id, { conversionRate: next });
-                                    await fetchData();
-                                  } catch (err) {
-                                    // ignore — fetchData will reconcile on next render
-                                  }
-                                }}
-                              />
+                            <div className="font-bold text-slate-800 text-sm tracking-tight mt-1 flex items-center gap-2 flex-wrap">
+                              <span>{o.customerName}</span>
+                              {o.items.some(i => getItemEffectiveStatus(i) !== o.status && !['MIXED', 'NO_COMPONENTS'].includes(getItemEffectiveStatus(i))) && (
+                                <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] uppercase font-bold" title="Mixed Line-Item Statuses">Mixed</span>
+                              )}
+                              <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200 whitespace-nowrap shrink-0">
+                                <span className="whitespace-nowrap">{o.items.length} {o.items.length === 1 ? 'item' : 'items'}</span>
+                                <span className="text-slate-300">•</span>
+                                <span className="text-blue-600 font-black inline-flex items-center gap-1 hover:text-blue-700 whitespace-nowrap">
+                                  {isExpanded ? 'Click to collapse' : 'Expand to show components'}
+                                  <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
+                                </span>
+                              </span>
                             </div>
-                          </div>
-                        </td>
-                      );
-                      if (col === 'revenue') return (
-                        <td key={col} className="px-3.5 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} {pl.currency}</div>
-                          </div>
-                          <div className="text-[9px] text-slate-400 font-bold mt-1">
-                            Paid: {pl.paid.toLocaleString()} {pl.currency} • Bal: {pl.outstanding.toLocaleString()} {pl.currency}
-                          </div>
-                        </td>
-                      );
-                      if (col === 'markup') return (
-                        <td key={col} className="px-3 py-4">
-                          <div className={`px-2.5 py-1 rounded-xl border-2 text-[10px] font-black w-fit shadow-sm ${isBreach ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-emerald-50 border-emerald-100 text-emerald-600'}`}>
-                            {pl.markupPct.toFixed(1)}% Markup
-                          </div>
-                          <div className="text-[8px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Target: {config.settings.minimumMarginPct}% (in {pl.currency})</div>
-                        </td>
-                      );
-                      if (col === 'status') {
-                        const isExceedingPayment = (totalAuthorizedGross + draftSum) > pl.paid + 0.01; // small epsilon for float precision
-                        return (
-                          <td key={col} className="px-3 py-4">
-                            <div className="flex flex-col gap-1.5">
-                              <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
-                                {getDynamicOrderStatusStyle(o, config).label}
+                            {(o.isSettlingOrder || o.blanketContractId || o.invoiceNumber) && (
+                              <div className="mt-1 flex items-center gap-2 flex-wrap text-[9px]">
+                                {o.isSettlingOrder && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[8px] font-black uppercase">
+                                    <i className="fa-solid fa-link"></i> Blanket Settling
+                                  </span>
+                                )}
+                                {o.blanketContractId && (
+                                  <span className="font-mono font-black text-indigo-500 uppercase">Contract: {o.blanketContractId}</span>
+                                )}
+                                {o.invoiceNumber && (
+                                  <span className="font-black text-emerald-600 uppercase">Tax Invoice: {o.invoiceNumber}</span>
+                                )}
                               </div>
-                              {isExceedingPayment && (
-                                <div className="px-2 py-0.5 bg-rose-600 text-white text-[8px] font-black uppercase rounded animate-pulse flex items-center gap-1 shadow-sm shadow-rose-200">
-                                  <i className="fa-solid fa-triangle-exclamation"></i>
-                                  Dispatch Exceeds Payment
-                                </div>
-                              )}
-                              <ThresholdSentinel order={o} config={config} />
+                            )}
+                          </td>
+                        );
+                        if (col === 'date') return (
+                          <td key={col} className="px-3 py-4">
+                            <div className="text-xs font-black text-slate-700 uppercase tracking-tighter">
+                              {o.orderDate ? new Date(o.orderDate).toLocaleDateString() : 'N/A'}
+                            </div>
+                            <div className="text-[9px] text-slate-400 font-bold mt-1">{t("finance.tax.acquisitionDate") || "Acquisition Date"}</div>
+                          </td>
+                        );
+                        if (col === 'currency') return (
+                          <td key={col} className="px-2.5 py-4" onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center gap-1">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{pl.currency}</span>
+                              <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest leading-tight">
+                                <div>Conv.</div>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  className="w-16 px-1 py-0.5 mt-0.5 border border-slate-200 rounded-md text-[9px] font-black text-slate-700 outline-none focus:border-blue-500"
+                                  defaultValue={pl.conversionRate}
+                                  title="Multiplier to bring PO cost into the order's revenue currency. Used only for the P/L threshold check. Default 1 = no conversion."
+                                  onBlur={async (e) => {
+                                    const v = parseFloat(e.target.value);
+                                    const next = (!Number.isFinite(v) || v <= 0) ? 1 : v;
+                                    if (next === pl.conversionRate) return;
+                                    try {
+                                      await dataService.updateOrder(o.id, { conversionRate: next });
+                                      await fetchData();
+                                    } catch (err) {
+                                      // ignore
+                                    }
+                                  }}
+                                />
+                              </div>
                             </div>
                           </td>
                         );
-                      }
-                      if (col === 'actions') return (
-                        <td key={col} className="px-3 py-3 text-end" onClick={e => e.stopPropagation()}>
-                          <div className="flex justify-end gap-1.5 items-center flex-nowrap">
-                            {isInvoicedOrLater && (
-                              <>
-                                <button
-                                  onClick={() => handleDownloadInvoice(o)}
-                                  className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200 shrink-0"
-                                  title="Download Tax Invoice"
-                                >
-                                  {isDownloading && printOrder?.id === o.id ? <i className="fa-solid fa-circle-notch fa-spin text-xs"></i> : <i className="fa-solid fa-file-arrow-down text-xs"></i>}
-                                </button>
-                                <button
-                                  onClick={() => setDecisionModal({ type: 'cancelInvoice', entityId: o.id, entityName: o.internalOrderNumber })}
-                                  className="w-8 h-8 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[8px] font-black uppercase hover:bg-rose-100 transition-all flex flex-col items-center justify-center text-center leading-none shrink-0"
-                                  title="Void current invoice and return to Billing stage"
-                                >
-                                  <i className="fa-solid fa-file-circle-xmark text-[10px] mb-0.5"></i>
-                                  <span>Void</span>
-                                </button>
-                              </>
-                            )}
-                            {o.status === OrderStatus.NEGATIVE_MARGIN && (
-                              <button
-                                onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })}
-                                className="px-1.5 py-1 min-h-[32px] bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-rose-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight"
-                                title="Force Margin Authorization"
-                              >
-                                <span>Force</span>
-                                <span>Auth</span>
-                              </button>
-                            )}
-                            <button
-                              onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })}
-                              className="px-2 py-1 min-h-[32px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-blue-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all"
-                              title="Generate Tax Invoice"
-                            >
-                              <i className="fa-solid fa-file-invoice text-[9px]"></i>
-                              <span className="mt-0.5">Generate</span>
-                              <span>Invoice</span>
-                            </button>
-                            <button
-                              onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }}
-                              className="px-2 py-1 min-h-[32px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-emerald-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all"
-                              title="Record Payment"
-                            >
-                              <i className="fa-solid fa-money-bill-wave text-[9px]"></i>
-                              <span className="mt-0.5">Record</span>
-                              <span>Payment</span>
-                            </button>
-                            <div className="flex gap-1 items-center shrink-0">
-                              {!o.einvoiceRequested && (
-                                <button
-                                  onClick={async () => {
-                                    if (window.confirm(`Request official Gov. E-Invoice for ${o.internalOrderNumber}?`)) {
-                                      await dataService.requestEInvoice(o.id);
-                                      fetchData();
-                                    }
-                                  }}
-                                  className="w-8 h-8 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm transition-all shrink-0 flex flex-col items-center justify-center text-center leading-none"
-                                  title="Request Gov. E-Invoice"
-                                >
-                                  <i className="fa-solid fa-landmark text-[10px] mb-0.5"></i>
-                                  <span>Gov</span>
-                                </button>
-                              )}
-                              {o.einvoiceRequested && !o.einvoiceFile && (
-                                <span className="w-8 h-8 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center justify-center shrink-0" title="Gov Invoice Requested">
-                                  <i className="fa-solid fa-clock"></i>
-                                </span>
-                              )}
-                              <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-1 text-slate-300 hover:text-amber-500 transition-colors shrink-0" title="Toggle Hold"><i className="fa-solid fa-hand text-xs"></i></button>
-                              <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-1 text-slate-300 hover:text-rose-500 transition-colors shrink-0" title="Reject Order"><i className="fa-solid fa-ban text-xs"></i></button>
+                        if (col === 'revenue') return (
+                          <td key={col} className="px-3.5 py-4">
+                            <div className="flex items-center gap-2">
+                              <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} {pl.currency}</div>
                             </div>
-                          </div>
-                        </td>
-                      );
-                      return null;
-                    })}
-                  </tr>
+                            <div className="text-[9px] text-slate-400 font-bold mt-1">
+                              Paid: {pl.paid.toLocaleString()} {pl.currency} • Bal: {pl.outstanding.toLocaleString()} {pl.currency}
+                            </div>
+                          </td>
+                        );
+                        if (col === 'markup') return (
+                          <td key={col} className="px-3 py-4">
+                            <div className={`px-2.5 py-1 rounded-xl border-2 text-[10px] font-black w-fit shadow-sm ${isBreach ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-emerald-50 border-emerald-100 text-emerald-600'}`}>
+                              {pl.markupPct.toFixed(1)}% Markup
+                            </div>
+                            <div className="text-[8px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Target: {config.settings.minimumMarginPct}% (in {pl.currency})</div>
+                          </td>
+                        );
+                        if (col === 'status') {
+                          const isExceedingPayment = (totalAuthorizedGross + draftSum) > pl.paid + 0.01;
+                          return (
+                            <td key={col} className="px-3 py-4">
+                              <div className="flex flex-col gap-1.5">
+                                <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>
+                                  {getDynamicOrderStatusStyle(o, config).label}
+                                </div>
+                                {isExceedingPayment && (
+                                  <div className="px-2 py-0.5 bg-rose-600 text-white text-[8px] font-black uppercase rounded animate-pulse flex items-center gap-1 shadow-sm shadow-rose-200">
+                                    <i className="fa-solid fa-triangle-exclamation"></i>
+                                    Dispatch Exceeds Payment
+                                  </div>
+                                )}
+                                <ThresholdSentinel order={o} config={config} />
+                              </div>
+                            </td>
+                          );
+                        }
+                        if (col === 'actions') return (
+                          <td key={col} className="px-3 py-3 text-end" onClick={e => e.stopPropagation()}>
+                            <div className="flex justify-end gap-1.5 items-center flex-nowrap">
+                              {isInvoicedOrLater && (
+                                <>
+                                  <button
+                                    onClick={() => handleDownloadInvoice(o)}
+                                    className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-all border border-blue-200 shrink-0"
+                                    title="Download Tax Invoice"
+                                  >
+                                    {isDownloading && printOrder?.id === o.id ? <i className="fa-solid fa-circle-notch fa-spin text-xs"></i> : <i className="fa-solid fa-file-arrow-down text-xs"></i>}
+                                  </button>
+                                  <button
+                                    onClick={() => setDecisionModal({ type: 'cancelInvoice', entityId: o.id, entityName: o.internalOrderNumber })}
+                                    className="w-8 h-8 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[8px] font-black uppercase hover:bg-rose-100 transition-all flex flex-col items-center justify-center text-center leading-none shrink-0"
+                                    title="Void current invoice and return to Billing stage"
+                                  >
+                                    <i className="fa-solid fa-file-circle-xmark text-[10px] mb-0.5"></i>
+                                    <span>Void</span>
+                                  </button>
+                                </>
+                              )}
+                              {o.status === OrderStatus.NEGATIVE_MARGIN && (
+                                <button
+                                  onClick={() => setDecisionModal({ type: 'marginRelease', entityId: o.id, entityName: o.internalOrderNumber })}
+                                  className="px-1.5 py-1 min-h-[32px] bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-rose-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight"
+                                  title="Force Margin Authorization"
+                                >
+                                  <span>Force</span>
+                                  <span>Auth</span>
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setDecisionModal({ type: 'billing', entityId: o.id, entityName: o.internalOrderNumber })}
+                                className="px-2 py-1 min-h-[32px] bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-blue-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all"
+                                title="Generate Tax Invoice"
+                              >
+                                <i className="fa-solid fa-file-invoice text-[9px]"></i>
+                                <span className="mt-0.5">Generate</span>
+                                <span>Invoice</span>
+                              </button>
+                              <button
+                                onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }}
+                                className="px-2 py-1 min-h-[32px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-emerald-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all"
+                                title="Record Payment"
+                              >
+                                <i className="fa-solid fa-money-bill-wave text-[9px]"></i>
+                                <span className="mt-0.5">Record</span>
+                                <span>Payment</span>
+                              </button>
+                              <div className="flex gap-1 items-center shrink-0">
+                                {!o.einvoiceRequested && (
+                                  <button
+                                    onClick={async () => {
+                                      if (window.confirm(`Request official Gov. E-Invoice for ${o.internalOrderNumber}?`)) {
+                                        await dataService.requestEInvoice(o.id);
+                                        fetchData();
+                                      }
+                                    }}
+                                    className="w-8 h-8 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm transition-all shrink-0 flex flex-col items-center justify-center text-center leading-none"
+                                    title="Request Gov. E-Invoice"
+                                  >
+                                    <i className="fa-solid fa-landmark text-[10px] mb-0.5"></i>
+                                    <span>Gov</span>
+                                  </button>
+                                )}
+                                {o.einvoiceRequested && !o.einvoiceFile && (
+                                  <span className="w-8 h-8 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg text-[8px] font-black uppercase flex items-center justify-center shrink-0" title="Gov Invoice Requested">
+                                    <i className="fa-solid fa-clock"></i>
+                                  </span>
+                                )}
+                                <button onClick={() => setDecisionModal({ type: 'orderHold', entityId: o.id, entityName: o.internalOrderNumber, currentValue: o.status === OrderStatus.IN_HOLD })} className="p-1 text-slate-300 hover:text-amber-500 transition-colors shrink-0" title="Toggle Hold"><i className="fa-solid fa-hand text-xs"></i></button>
+                                <button onClick={() => setDecisionModal({ type: 'orderReject', entityId: o.id, entityName: o.internalOrderNumber })} className="p-1 text-slate-300 hover:text-rose-500 transition-colors shrink-0" title="Reject Order"><i className="fa-solid fa-ban text-xs"></i></button>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                        return null;
+                      })}
+                    </tr>
 
-                  {/* Inline Line Items for Authorization - collapsible */}
-                  {isExpanded && (
-                    <tr className="bg-slate-50/50 border-b-2 border-slate-100">
-                      <td colSpan={columnOrder.length} className="px-8 pb-6 bg-transparent" onClick={e => e.stopPropagation()}>
-                        <div className="bg-white rounded-2xl shadow-inner border border-slate-200 overflow-hidden divide-y divide-slate-100">
-                          <div className="px-4 py-2 bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest grid grid-cols-12 gap-4 items-center">
-                            <div className="col-span-5">{t("finance.poItemDefinition") || "PO Item Definition"}</div>
-                            <div className="col-span-1 text-center">{t("finance.orders.hubReady") || "Hub Rdy"}</div>
-                            <div className="col-span-2 text-center">{t("finance.orders.authorized") || "Authorized"}</div>
-                            <div className="col-span-1 text-center">{t("finance.orders.shipped") || "Shipped"}</div>
-                            <div className="col-span-3 text-end pr-2">{t("finance.orders.dispatchReceipt") || "Dispatch Autho. Receipt"}</div>
-                          </div>
-                          {o.items.map(it => {
-                            const inHub = it.hubReceivedQty || 0;
-                            const approved = it.approvedForDispatchQty || 0;
-                            const dispatched = it.dispatchedQty || 0;
-                            const maxAuth = Math.max(0, inHub - approved);
+                    {/* Inline Line Items for Authorization - collapsible */}
+                    {isExpanded && (
+                      <tr className="bg-slate-50/50 border-b-2 border-slate-100">
+                        <td colSpan={columnOrder.length} className="px-8 pb-6 bg-transparent" onClick={e => e.stopPropagation()}>
+                          <div className="bg-white rounded-2xl shadow-inner border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                            <div className="px-4 py-2 bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest grid grid-cols-12 gap-4 items-center">
+                              <div className="col-span-5">{t("finance.poItemDefinition") || "PO Item Definition"}</div>
+                              <div className="col-span-1 text-center">{t("finance.orders.hubReady") || "Hub Rdy"}</div>
+                              <div className="col-span-2 text-center">{t("finance.orders.authorized") || "Authorized"}</div>
+                              <div className="col-span-1 text-center">{t("finance.orders.shipped") || "Shipped"}</div>
+                              <div className="col-span-3 text-end pr-2">{t("finance.orders.dispatchReceipt") || "Dispatch Autho. Receipt"}</div>
+                            </div>
+                            {o.items.map(it => {
+                              const inHub = it.hubReceivedQty || 0;
+                              const approved = it.approvedForDispatchQty || 0;
+                              const dispatched = it.dispatchedQty || 0;
+                              const maxAuth = Math.max(0, inHub - approved);
 
-                            const itemGrossPerUnit = (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
-                            const draftSumFromOthers = draftSum - ((parseFloat(dispatchReceiptInputs[it.id]) || 0) * itemGrossPerUnit);
-                            const availableAmount = pl.paid - totalAuthorizedGross - draftSumFromOthers;
-                            const maxAffordablePieces = itemGrossPerUnit > 0 ? Math.max(0, Math.floor(availableAmount / itemGrossPerUnit)) : maxAuth;
-                            const finalMaxQty = Math.min(maxAffordablePieces, maxAuth);
+                              const itemGrossPerUnit = (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
+                              const draftSumFromOthers = draftSum - ((parseFloat(dispatchReceiptInputs[it.id]) || 0) * itemGrossPerUnit);
+                              const availableAmount = pl.paid - totalAuthorizedGross - draftSumFromOthers;
+                              const maxAffordablePieces = itemGrossPerUnit > 0 ? Math.max(0, Math.floor(availableAmount / itemGrossPerUnit)) : maxAuth;
+                              const finalMaxQty = Math.min(maxAffordablePieces, maxAuth);
 
-                            return (
-                              <div key={it.id} className="px-4 py-3 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors">
-                                <div className="col-span-5">
-                                  <div className="font-bold text-xs text-slate-800 line-clamp-1">{it.description}</div>
-                                  <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                                    Tgt: {getItemEffectiveQty(it)} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} {pl.currency}
+                              return (
+                                <div key={it.id} className="px-4 py-3 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors">
+                                  <div className="col-span-5">
+                                    <div className="font-bold text-xs text-slate-800 line-clamp-1">{it.description}</div>
+                                    <div className="text-[10px] text-slate-500 font-bold mt-0.5">
+                                      Tgt: {getItemEffectiveQty(it)} {it.unit} @ {it.pricePerUnit?.toLocaleString() || 'N/A'} {pl.currency}
+                                    </div>
+                                  </div>
+                                  <div className="col-span-1 text-center font-black text-sky-600 text-xs">{inHub}</div>
+                                  <div className="col-span-2 text-center text-[10px] font-bold">
+                                    {approved > 0 ? (
+                                      <span className={`px-2 py-0.5 rounded-full ${approved >= inHub ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                        {approved} Auth
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 opacity-50 block text-center">None</span>
+                                    )}
+                                  </div>
+                                  <div className="col-span-1 text-center font-black text-slate-400 text-xs">{dispatched}</div>
+                                  <div className="col-span-3 flex justify-end gap-2 items-center">
+                                    {maxAuth > 0 ? (
+                                      <>
+                                        <div className="flex flex-col items-end gap-1">
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            max={maxAuth}
+                                            placeholder={`Max: ${maxAuth}`}
+                                            value={dispatchReceiptInputs[it.id] !== undefined ? dispatchReceiptInputs[it.id] : ''}
+                                            onChange={(e) => {
+                                              const val = parseFloat(e.target.value);
+                                              if (e.target.value === '' || isNaN(val)) {
+                                                setDispatchReceiptInputs(p => ({ ...p, [it.id]: e.target.value }));
+                                              } else {
+                                                setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(Math.min(val, maxAuth)) }));
+                                              }
+                                            }}
+                                            className={`w-20 px-2 py-1.5 text-xs text-center font-bold border-2 rounded-lg outline-none transition-all ${
+                                              (parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 
+                                              ? 'border-rose-500 bg-rose-50 text-rose-600 animate-shake' 
+                                              : 'border-slate-200 focus:border-indigo-400'
+                                            }`}
+                                          />
+                                          {(parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 && (
+                                            <div className="text-[8px] font-black text-rose-500 uppercase tracking-tighter">
+                                              Excess: {((parseFloat(dispatchReceiptInputs[it.id]) || 0) - maxAffordablePieces).toLocaleString()} {it.unit}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <button
+                                          disabled={isProcessing}
+                                          onClick={() => handleInlineDispatchAuth(o.id, it.id)}
+                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-black uppercase shadow flex items-center gap-1 disabled:opacity-50"
+                                        >
+                                          <i className="fa-solid fa-file-signature"></i> Auth
+                                        </button>
+                                        <button
+                                          disabled={isProcessing || finalMaxQty <= 0}
+                                          onClick={() => setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(finalMaxQty) }))}
+                                          className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-lg text-[9px] font-black uppercase shadow-sm flex items-center gap-1 disabled:opacity-50 transition-all"
+                                          title="Set to max quantity affordable with current partial payment balance"
+                                        >
+                                          Max Paid
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <div className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">Fully Cleared</div>
+                                    )}
                                   </div>
                                 </div>
-                                <div className="col-span-1 text-center font-black text-sky-600 text-xs">{inHub}</div>
-                                <div className="col-span-2 text-center text-[10px] font-bold">
-                                  {approved > 0 ? (
-                                    <span className={`px-2 py-0.5 rounded-full ${approved >= inHub ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                      {approved} Auth
+                              );
+                            })}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              };
+
+              const renderBlanketCard = (group: { groupId: string; projectName: string; latestOrder: CustomerOrder; orders: CustomerOrder[]; isProjectConsolidated: boolean }) => {
+                const groupOrders = group.orders && group.orders.length > 0 ? group.orders : [group.latestOrder];
+                const latestOrder = group.latestOrder || groupOrders[0];
+                const isExpanded = Boolean(expandedOrderIds[group.groupId]);
+                const isHistoryExpanded = expandedProjectHistoryIds.has(group.groupId);
+                const projName = group.projectName || getOrderProjectName(latestOrder);
+
+                let targetItem: CustomerOrderItem | null = null;
+                for (const ord of groupOrders) {
+                  const f = (ord.items || []).find(it => it.costSheetFile);
+                  if (f) { targetItem = f; break; }
+                }
+                if (!targetItem) {
+                  for (const ord of groupOrders) {
+                    const f = (ord.items || []).find(it => it.productionType === 'OUTSOURCING');
+                    if (f) { targetItem = f; break; }
+                  }
+                }
+                if (!targetItem) {
+                  targetItem = latestOrder.items?.[0] || groupOrders[0]?.items?.[0] || null;
+                }
+
+                const outsourcingMetrics = (() => {
+                  if (!targetItem) return { resourceCount: 0, realCost: 0, invoiceTotal: 0, sheetProjectName: '', projectMissing: false };
+                  let count = targetItem.workingResourceCount || 0;
+                  let cost = targetItem.realCost || 0;
+                  let inv = targetItem.invoiceTotal || 0;
+                  let sheetProjectName = '';
+                  let matchedProjectBlock = false;
+                  let projectMissing = false;
+
+                  if (projName && targetItem.costSheetFile) {
+                    const projMetrics = extractCostSheetProjectMetrics(targetItem.costSheetFile, projName);
+                    if (projMetrics) {
+                      count = projMetrics.resourceCount;
+                      cost = projMetrics.realCost;
+                      inv = projMetrics.invoiceTotal;
+                      sheetProjectName = projMetrics.projectName;
+                      matchedProjectBlock = true;
+                    } else {
+                      count = 0;
+                      cost = 0;
+                      inv = 0;
+                      projectMissing = true;
+                    }
+                  }
+
+                  if (!matchedProjectBlock && !projectMissing && (!count || !cost || !inv) && targetItem.costSheetFile) {
+                    const extracted = extractCostSheetMetrics(targetItem.costSheetFile);
+                    if (!count) count = extracted.resourceCount;
+                    if (!cost) cost = extracted.realCost;
+                    if (!inv) inv = extracted.invoiceTotal;
+                  }
+
+                  return { resourceCount: count, realCost: cost, invoiceTotal: inv, sheetProjectName, projectMissing };
+                })();
+
+                return (
+                  <tr key={group.groupId} className="border-b border-slate-200 bg-slate-50/40">
+                    <td colSpan={columnOrder.length} className="p-4" onClick={(e) => e.stopPropagation()}>
+                      <div className="bg-gradient-to-b from-slate-50 to-white rounded-[2rem] border border-slate-200 overflow-hidden transition-all shadow-sm">
+                        {/* Order Header */}
+                        <div 
+                          onClick={() => toggleOrderExpand(group.groupId)}
+                          className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 bg-slate-100/80 border-b border-slate-200 cursor-pointer hover:bg-slate-200/60 transition-all select-none group"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg transition-all shadow-sm ${
+                              isExpanded ? 'bg-blue-600 text-white shadow-blue-200' : 'bg-white text-blue-600 group-hover:bg-blue-50'
+                            }`}>
+                              <i className={`fa-solid ${isExpanded ? 'fa-folder-open' : 'fa-folder'} text-base`}></i>
+                            </div>
+                            <div>
+                              <div className="font-mono text-[11px] font-black text-blue-600 tracking-widest flex items-center flex-nowrap gap-2 whitespace-nowrap">
+                                {group.isProjectConsolidated ? (
+                                  <>
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-100 text-violet-800 border border-violet-300 font-sans text-xs font-black shadow-xs whitespace-nowrap shrink-0">
+                                      <i className="fa-solid fa-diagram-project text-violet-600"></i>
+                                      Project: <strong>{projName}</strong>
                                     </span>
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Consolidated Blanket Project Orders">
+                                      <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket Project ({groupOrders.length} {groupOrders.length === 1 ? 'Order' : 'Orders'})
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="whitespace-nowrap shrink-0">{latestOrder.internalOrderNumber}</span>
+                                    {latestOrder.customerReferenceNumber && (
+                                      <span className="text-[10px] font-bold text-slate-600 bg-slate-200/80 px-2 py-0.5 rounded-lg border border-slate-300 font-mono tracking-normal whitespace-nowrap shrink-0" title="Customer PO Reference">
+                                        PO: <span className="text-slate-900 font-black">{latestOrder.customerReferenceNumber}</span>
+                                      </span>
+                                    )}
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
+                                      <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
+                                    </span>
+                                    {projName ? (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title={`Project Name: ${projName}`}>
+                                        <i className="fa-solid fa-diagram-project text-violet-500"></i> Project: <strong className="text-violet-700">{projName}</strong>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Non-Project Order">
+                                        <i className="fa-solid fa-folder-minus text-slate-400"></i> Non-Project
+                                      </span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                              <div className="font-black text-slate-800 text-sm mt-1 flex items-center gap-2 flex-wrap">
+                                <span>{latestOrder.customerName}</span>
+                                <span className="text-[9px] text-slate-500 font-bold uppercase inline-flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200 whitespace-nowrap shrink-0">
+                                  <span className="whitespace-nowrap">{groupOrders.length} {groupOrders.length === 1 ? 'Order' : 'Orders'}</span>
+                                  <span className="text-slate-300">•</span>
+                                  <span className="text-blue-600 font-black flex items-center gap-1 hover:text-blue-700 whitespace-nowrap">
+                                    {isExpanded ? 'Click to collapse' : 'Expand to show orders & financial details'}
+                                    <i className={`fa-solid ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px]`}></i>
+                                  </span>
+                                </span>
+                              </div>
+
+                              {/* Quick info of latest order & dropdown link to show project orders history subcard */}
+                              {group.isProjectConsolidated && (
+                                <div className="mt-2.5 flex items-center gap-2.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                                  <div className="inline-flex items-center gap-2 bg-white/90 border border-slate-200 px-3 py-1 rounded-xl text-[10px] shadow-2xs font-mono">
+                                    <span className="text-[8px] font-black uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded tracking-wider font-sans">
+                                      ★ Latest PO
+                                    </span>
+                                    <span className="font-black text-slate-900" title="Customer PO Number">
+                                      {latestOrder.customerReferenceNumber || 'N/A'}
+                                    </span>
+                                    <span className="text-slate-300 font-sans">•</span>
+                                    <span className="text-slate-600" title="Internal Order Number">
+                                      Int: <strong className="text-slate-800">{latestOrder.internalOrderNumber}</strong>
+                                    </span>
+                                    <span className="text-slate-300 font-sans">•</span>
+                                    <span className="text-slate-600" title="PO Received Date">
+                                      Recv: <strong className="text-slate-800">
+                                        {latestOrder.orderDate ? new Date(latestOrder.orderDate).toLocaleDateString() : (latestOrder.dataEntryTimestamp ? new Date(latestOrder.dataEntryTimestamp).toLocaleDateString() : 'N/A')}
+                                      </strong>
+                                    </span>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={(e) => toggleProjectHistory(group.groupId, e)}
+                                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs ${
+                                      isHistoryExpanded
+                                        ? 'bg-blue-600 text-white ring-2 ring-blue-200'
+                                        : 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-50'
+                                    }`}
+                                    title="Click to open/close project orders history subcard"
+                                  >
+                                    <i className="fa-solid fa-clock-rotate-left text-[9px]"></i>
+                                    <span>Project Orders History ({groupOrders.length})</span>
+                                    <i className={`fa-solid ${isHistoryExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} text-[8px] ml-0.5`}></i>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                            {/* PO Acquisition Date */}
+                            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-slate-700">
+                              <i className="fa-solid fa-calendar-day text-purple-600 text-xs"></i>
+                              <div className="flex flex-col">
+                                <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 leading-none">
+                                  PO Date
+                                </span>
+                                <span className="text-[11px] font-black mt-0.5">
+                                  {latestOrder.orderDate ? new Date(latestOrder.orderDate).toLocaleDateString() : (latestOrder.dataEntryTimestamp ? new Date(latestOrder.dataEntryTimestamp).toLocaleDateString() : 'N/A')}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Working Number of Resources */}
+                            <div
+                              className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl text-emerald-900 shadow-xs"
+                              title={
+                                outsourcingMetrics.projectMissing
+                                  ? `Project "${projName}" is not in the uploaded cost sheet.`
+                                  : outsourcingMetrics.sheetProjectName
+                                    ? `From cost sheet project "${outsourcingMetrics.sheetProjectName}" (اجمالى block)`
+                                    : undefined
+                              }
+                            >
+                              <i className="fa-solid fa-users text-emerald-600 text-xs"></i>
+                              <div className="flex flex-col">
+                                <span className="text-[8px] font-black uppercase tracking-wider text-emerald-700 leading-none">
+                                  Working Resources
+                                </span>
+                                <span className="text-[11px] font-black mt-0.5">
+                                  {outsourcingMetrics.resourceCount > 0 ? `${outsourcingMetrics.resourceCount} Persons` : '—'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Total Real Cost to Company */}
+                            <div
+                              className="flex items-center gap-2 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-xl text-blue-900 shadow-xs"
+                              title={
+                                outsourcingMetrics.projectMissing
+                                  ? `Project "${projName}" is not in the uploaded cost sheet.`
+                                  : outsourcingMetrics.sheetProjectName
+                                    ? `Sum of project "${outsourcingMetrics.sheetProjectName}" person rows (cost column)`
+                                    : undefined
+                              }
+                            >
+                              <i className="fa-solid fa-coins text-blue-600 text-xs"></i>
+                              <div className="flex flex-col">
+                                <span className="text-[8px] font-black uppercase tracking-wider text-blue-700 leading-none">
+                                  Real Cost
+                                </span>
+                                <span className="text-[11px] font-black mt-0.5">
+                                  {outsourcingMetrics.realCost > 0 ? `${outsourcingMetrics.realCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.` : '—'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Total Invoice (اجمالي الفاتورة) - EXTRA ADDITION */}
+                            <div
+                              className="flex items-center gap-2 bg-violet-50 border border-violet-200 px-3 py-1.5 rounded-xl text-violet-900 shadow-xs"
+                              title={
+                                outsourcingMetrics.projectMissing
+                                  ? `Project "${projName}" is not in the uploaded cost sheet.`
+                                  : outsourcingMetrics.sheetProjectName
+                                    ? `Total invoice from column "اجمالي الفاتورة" of project "${outsourcingMetrics.sheetProjectName}"`
+                                    : 'Total invoice from column "اجمالي الفاتورة"'
+                              }
+                            >
+                              <i className="fa-solid fa-file-invoice-dollar text-violet-600 text-xs"></i>
+                              <div className="flex flex-col">
+                                <span className="text-[8px] font-black uppercase tracking-wider text-violet-700 leading-none">
+                                  Total Invoice
+                                </span>
+                                <span className="text-[11px] font-black mt-0.5">
+                                  {outsourcingMetrics.invoiceTotal > 0 ? `${outsourcingMetrics.invoiceTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L.E.` : '—'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* View & Download Sheet */}
+                            <div className="flex items-center gap-1.5">
+                              {targetItem?.costSheetFile && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    downloadCostSheetFile(
+                                      targetItem.costSheetFile!,
+                                      targetItem.costSheetFileName || `CostSheet-${latestOrder.internalOrderNumber || latestOrder.customerReferenceNumber}.xlsx`
+                                    );
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                                  title="Download current Excel cost sheet"
+                                >
+                                  <i className="fa-solid fa-file-excel text-emerald-600"></i>
+                                  <span>Download</span>
+                                </button>
+                              )}
+
+                              {targetItem?.costSheetFile && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openCostSheetModal(latestOrder, targetItem);
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100 transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                                  title="Open interactive spreadsheet viewer"
+                                >
+                                  <i className="fa-solid fa-table-cells text-violet-600"></i>
+                                  <span>View Sheet</span>
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Sheet History Chips (Current Month Only) */}
+                            {targetItem?.costSheets && targetItem.costSheets.length >= 1 && (() => {
+                              const allSheets = targetItem.costSheets!;
+                              const now = new Date();
+                              const curMonth = now.getMonth();
+                              const curYear = now.getFullYear();
+
+                              // Filter to show ONLY history of cost sheets uploaded/modified in the current calendar month
+                              const currentMonthSheets = allSheets.filter(rec => {
+                                if (!rec.uploadedAt) return false;
+                                const d = new Date(rec.uploadedAt);
+                                return !isNaN(d.getTime()) && d.getMonth() === curMonth && d.getFullYear() === curYear;
+                              });
+
+                              const curMonthLabel = now.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+                              const latestCurrentMonthIdx = currentMonthSheets.length - 1;
+
+                              return (
+                                <div className="flex flex-col gap-1.5 bg-slate-50 px-2.5 py-2 rounded-xl border border-slate-200">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-black text-[8px] text-slate-500 flex items-center gap-1.5 uppercase tracking-wider">
+                                      <i className="fa-solid fa-clock-rotate-left text-slate-400"></i>
+                                      Cost Sheet History ({curMonthLabel})
+                                    </span>
+                                    <span className="text-[7px] font-bold text-slate-400 uppercase tracking-widest">
+                                      Current Month Only
+                                    </span>
+                                  </div>
+                                  {currentMonthSheets.length > 0 ? (
+                                    <div className="flex items-start gap-1.5 flex-wrap">
+                                      {currentMonthSheets.map((rec, rIdx) => {
+                                        const isLatestInMonth = rIdx === latestCurrentMonthIdx;
+                                        return (
+                                          <div key={rec.id || rIdx} className="flex flex-col items-center gap-0.5">
+                                            {isLatestInMonth && (
+                                              <span className="text-[7px] font-black uppercase tracking-wider text-emerald-600 leading-none px-1">
+                                                ★ Latest
+                                              </span>
+                                            )}
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (rec.fileData) {
+                                                  downloadCostSheetFile(rec.fileData, rec.fileName);
+                                                }
+                                              }}
+                                              className={`px-2 py-1 rounded-lg font-mono text-[8px] transition-colors flex items-center gap-1 ${
+                                                isLatestInMonth
+                                                  ? 'bg-emerald-50 border-2 border-emerald-400 text-emerald-800 ring-2 ring-emerald-200 shadow-sm hover:bg-emerald-100'
+                                                  : 'bg-white border border-slate-200 hover:border-purple-300 text-purple-700 hover:bg-purple-50'
+                                              }`}
+                                              title={`Uploaded: ${new Date(rec.uploadedAt).toLocaleDateString()} | ${rec.workingResourceCount || 0} resources, ${rec.realCost || 0} LE. Click to download.`}
+                                            >
+                                              {isLatestInMonth && <i className="fa-solid fa-file-excel text-emerald-600 text-[8px]"></i>}
+                                              {rec.fileName} ({new Date(rec.uploadedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
                                   ) : (
-                                    <span className="text-slate-400 opacity-50 block text-center">None</span>
+                                    <div className="text-[8px] text-slate-400 italic py-0.5">
+                                      No cost sheets uploaded/modified this month ({curMonthLabel})
+                                    </div>
                                   )}
                                 </div>
-                                <div className="col-span-1 text-center font-black text-slate-400 text-xs">{dispatched}</div>
-                                <div className="col-span-3 flex justify-end gap-2 items-center">
-                                  {maxAuth > 0 ? (
-                                    <>
-                                      <div className="flex flex-col items-end gap-1">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max={maxAuth}
-                                          placeholder={`Max: ${maxAuth}`}
-                                          value={dispatchReceiptInputs[it.id] !== undefined ? dispatchReceiptInputs[it.id] : ''}
-                                          onChange={(e) => {
-                                            const val = parseFloat(e.target.value);
-                                            if (e.target.value === '' || isNaN(val)) {
-                                              setDispatchReceiptInputs(p => ({ ...p, [it.id]: e.target.value }));
-                                            } else {
-                                              setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(Math.min(val, maxAuth)) }));
-                                            }
-                                          }}
-                                          className={`w-20 px-2 py-1.5 text-xs text-center font-bold border-2 rounded-lg outline-none transition-all ${
-                                            (parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 
-                                            ? 'border-rose-500 bg-rose-50 text-rose-600 animate-shake' 
-                                            : 'border-slate-200 focus:border-indigo-400'
-                                          }`}
-                                        />
-                                        {(parseFloat(dispatchReceiptInputs[it.id]) || 0) > maxAffordablePieces + 0.01 && (
-                                          <div className="text-[8px] font-black text-rose-500 uppercase tracking-tighter">
-                                            Excess: {((parseFloat(dispatchReceiptInputs[it.id]) || 0) - maxAffordablePieces).toLocaleString()} {it.unit}
-                                          </div>
-                                        )}
+                              );
+                            })()}
+                          </div>
+                        </div>
+
+                        {/* ── PROJECT ORDERS HISTORY DROPDOWN SUBCARD ── */}
+                        {group.isProjectConsolidated && isHistoryExpanded && (() => {
+                          const allProjectSheetsMap = new Map<string, CostSheetRecord>();
+                          groupOrders.forEach(ord => {
+                            (ord.items || []).forEach(it => {
+                              (it.costSheets || []).forEach(cs => {
+                                const key = cs.id || `${cs.fileName}_${cs.uploadedAt}`;
+                                if (!allProjectSheetsMap.has(key)) allProjectSheetsMap.set(key, cs);
+                              });
+                              if (it.costSheetFile && (!it.costSheets || it.costSheets.length === 0)) {
+                                const key = `${it.costSheetFileName || 'sheet'}_${ord.dataEntryTimestamp || ''}`;
+                                if (!allProjectSheetsMap.has(key)) {
+                                  allProjectSheetsMap.set(key, {
+                                    id: key,
+                                    fileName: it.costSheetFileName || 'CostSheet.xlsx',
+                                    uploadedAt: ord.dataEntryTimestamp || ord.orderDate || new Date().toISOString(),
+                                    fileData: it.costSheetFile,
+                                    workingResourceCount: it.workingResourceCount,
+                                    realCost: it.realCost
+                                  });
+                                }
+                              }
+                            });
+                          });
+                          const allProjectSheets = Array.from(allProjectSheetsMap.values());
+
+                          return (
+                            <div className="p-5 bg-slate-50/95 border-b border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
+                              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                                <div className="flex items-center gap-2">
+                                  <i className="fa-solid fa-layer-group text-blue-600 text-xs"></i>
+                                  <span className="text-[11px] font-black uppercase text-slate-800 tracking-wider">
+                                    Project Orders History — {projName} ({groupOrders.length} {groupOrders.length === 1 ? 'Order' : 'Orders'})
+                                  </span>
+                                </div>
+                                <span className="text-[9px] text-slate-500 font-bold">
+                                  Showing all orders in this project & cost sheets uploaded during each order's PO month
+                                </span>
+                              </div>
+
+                              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+                                <div className="grid grid-cols-12 gap-3 px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 text-[9px] font-black uppercase text-slate-600 tracking-wider">
+                                  <div className="col-span-3">Customer PO Number</div>
+                                  <div className="col-span-2">Internal Order #</div>
+                                  <div className="col-span-2">Received Date</div>
+                                  <div className="col-span-5">Cost Sheets Uploaded in PO Month</div>
+                                </div>
+
+                                <div className="divide-y divide-slate-100">
+                                  {groupOrders.map(ord => {
+                                    const isOrdLatest = ord.id === latestOrder.id;
+                                    const poDateRaw = ord.orderDate || ord.dataEntryTimestamp;
+                                    const poDate = poDateRaw ? new Date(poDateRaw) : null;
+                                    const poValid = Boolean(poDate && !isNaN(poDate.getTime()));
+                                    const poMonth = poValid && poDate ? poDate.getMonth() : -1;
+                                    const poYear = poValid && poDate ? poDate.getFullYear() : -1;
+
+                                    const monthSheets = poValid
+                                      ? allProjectSheets.filter(cs => {
+                                          if (!cs.uploadedAt) return false;
+                                          const d = new Date(cs.uploadedAt);
+                                          return !isNaN(d.getTime()) && d.getMonth() === poMonth && d.getFullYear() === poYear;
+                                        })
+                                      : [];
+
+                                    return (
+                                      <div key={ord.id} className={`grid grid-cols-12 gap-3 px-4 py-3 items-center text-xs transition-all ${isOrdLatest ? 'bg-blue-50/40' : 'hover:bg-slate-50'}`}>
+                                        {/* PO Number */}
+                                        <div className="col-span-3 flex items-center gap-2 flex-wrap">
+                                          <span className="font-mono font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[11px]">
+                                            {ord.customerReferenceNumber || '—'}
+                                          </span>
+                                          {isOrdLatest && (
+                                            <span className="text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded leading-none">
+                                              ★ Latest
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        {/* Internal Order # */}
+                                        <div className="col-span-2 font-mono font-bold text-blue-700 text-[11px]">
+                                          {ord.internalOrderNumber || '—'}
+                                        </div>
+
+                                        {/* Received Date */}
+                                        <div className="col-span-2 text-[11px] font-medium text-slate-700">
+                                          {poValid && poDate ? poDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
+                                        </div>
+
+                                        {/* Cost Sheets Uploaded in PO Month */}
+                                        <div className="col-span-5 flex items-center gap-2 flex-wrap">
+                                          {monthSheets.length > 0 ? (
+                                            monthSheets.map((cs, csIdx) => (
+                                              <button
+                                                key={cs.id || csIdx}
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (cs.fileData) {
+                                                    downloadCostSheetFile(cs.fileData, cs.fileName || `CostSheet-${ord.internalOrderNumber || ord.customerReferenceNumber}.xlsx`);
+                                                  }
+                                                }}
+                                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 text-[10px] font-black hover:bg-emerald-100 transition-all cursor-pointer shadow-2xs group/btn"
+                                                title={`Uploaded: ${new Date(cs.uploadedAt).toLocaleDateString()} | ${cs.workingResourceCount || 0} resources, ${cs.realCost || 0} LE. Click to download.`}
+                                              >
+                                                <i className="fa-solid fa-file-excel text-emerald-600 group-hover/btn:scale-110 transition-transform"></i>
+                                                <span className="truncate max-w-[140px]">{cs.fileName}</span>
+                                                <span className="text-[8px] text-emerald-700 opacity-80 font-mono">
+                                                  ({new Date(cs.uploadedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
+                                                </span>
+                                                <i className="fa-solid fa-download text-[8px] text-emerald-600 ml-0.5"></i>
+                                              </button>
+                                            ))
+                                          ) : (
+                                            <span className="text-[10px] text-slate-400 italic">No cost sheets in this month</span>
+                                          )}
+                                        </div>
                                       </div>
-                                      <button
-                                        disabled={isProcessing}
-                                        onClick={() => handleInlineDispatchAuth(o.id, it.id)}
-                                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-black uppercase shadow flex items-center gap-1 disabled:opacity-50"
-                                      >
-                                        <i className="fa-solid fa-file-signature"></i> Auth
-                                      </button>
-                                      <button
-                                        disabled={isProcessing || finalMaxQty <= 0}
-                                        onClick={() => setDispatchReceiptInputs(p => ({ ...p, [it.id]: String(finalMaxQty) }))}
-                                        className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-lg text-[9px] font-black uppercase shadow-sm flex items-center gap-1 disabled:opacity-50 transition-all"
-                                        title="Set to max quantity affordable with current partial payment balance"
-                                      >
-                                        Max Paid
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <div className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">Fully Cleared</div>
-                                  )}
+                                    );
+                                  })}
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              );
-            })}
+                            </div>
+                          );
+                        })()}
+
+                        {/* ── EXPANDED ORDERS & FINANCIAL DETAILS ── */}
+                        {isExpanded && (
+                          <div className="p-6 bg-slate-50/70 border-t border-slate-200 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div className="font-mono text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-2">
+                                <i className="fa-solid fa-list-check text-blue-600"></i>
+                                <span>Project Orders & Financial Authorizations ({groupOrders.length})</span>
+                              </div>
+                              <span className="text-[10px] text-slate-500 font-bold">
+                                Manage invoices, payments, and dispatch receipts for each order in this project
+                              </span>
+                            </div>
+
+                            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-xs">
+                              <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+                                <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
+                                  <tr>
+                                    {columnOrder.map(col => {
+                                      if (col === 'context') return <th key={col} className="px-4 py-3 text-white">Order Details</th>;
+                                      if (col === 'date') return <th key={col} className="px-3 py-3 text-white">PO Date</th>;
+                                      if (col === 'currency') return <th key={col} className="px-2.5 py-3 text-white">Currency</th>;
+                                      if (col === 'revenue') return <th key={col} className="px-3.5 py-3 text-white">Revenue Metrics</th>;
+                                      if (col === 'markup') return <th key={col} className="px-3 py-3 text-white">Markup</th>;
+                                      if (col === 'status') return <th key={col} className="px-3 py-3 text-white">Status</th>;
+                                      if (col === 'actions') return <th key={col} className="px-4 py-3 text-white text-end">Auth Actions</th>;
+                                      return null;
+                                    })}
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                  {groupOrders.map((ord, subIdx) => renderOrderRowContent(ord, subIdx))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              };
+
+              if (activeTab === 'orders') {
+                return groupedFinanceOrderItems.map((item, itemIdx) => {
+                  if (item.type === 'blanket_project_group') {
+                    return renderBlanketCard({
+                      groupId: item.groupId,
+                      projectName: item.projectName,
+                      latestOrder: item.latestOrder,
+                      orders: item.orders,
+                      isProjectConsolidated: true
+                    });
+                  }
+                  if (item.type === 'blanket_single') {
+                    return renderBlanketCard({
+                      groupId: item.order.id,
+                      projectName: getOrderProjectName(item.order),
+                      latestOrder: item.order,
+                      orders: [item.order],
+                      isProjectConsolidated: false
+                    });
+                  }
+                  return renderOrderRowContent(item.order, item.orderIdx);
+                });
+              }
+
+              return filteredOrders.map((o, orderIdx) => renderOrderRowContent(o, orderIdx));
+            })()}
           </tbody>
         </table>
         {
@@ -3330,7 +3974,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
                       return (
                         <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-5 font-mono text-xs font-black text-blue-600 uppercase">{p.receiptNumber || `RCV-${order.internalOrderNumber.replace(/[^\w]/g, '').slice(-6)}-${String(idx + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`}</td>
+                          <td className="px-4 py-5 font-mono text-xs font-black text-blue-600 uppercase">{p.receiptNumber || `RCV-${(viewPaymentsOrder.internalOrderNumber || '').replace(/[^\w]/g, '').slice(-6)}-${String(idx + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`}</td>
                           <td className="px-4 py-5 font-bold text-slate-500 text-xs">{new Date(p.date).toLocaleDateString()}</td>
                           <td className="px-4 py-5 font-black text-slate-800">{p.amount.toLocaleString()} {getOrderCurrency(viewPaymentsOrder)}</td>
                           <td className="px-4 py-5 text-end">
@@ -3470,6 +4114,176 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           </div>
         </div>
       )}
+
+      {/* Interactive Spreadsheet Viewer Modal */}
+      {costSheetModalData && (() => {
+        let sheetNames: string[] = [];
+        let sheetData: any[][] = [];
+        let parseError: string | null = null;
+
+        try {
+          const raw = costSheetModalData.fileData.includes(',')
+            ? costSheetModalData.fileData.split(',')[1]
+            : costSheetModalData.fileData;
+          const wb = XLSX.read(raw, { type: 'base64' });
+          sheetNames = wb.SheetNames || [];
+          const activeIndex = Math.min(costSheetActiveSheetIndex, Math.max(0, sheetNames.length - 1));
+          const activeName = sheetNames[activeIndex];
+          if (activeName && wb.Sheets[activeName]) {
+            sheetData = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[activeName], { header: 1, defval: '' });
+          }
+        } catch (err: any) {
+          parseError = err?.message || 'Failed to parse spreadsheet file.';
+        }
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+            <div className="bg-white w-full max-w-6xl max-h-[90vh] rounded-[2.5rem] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-scaleUp">
+              {/* Header */}
+              <div className="px-8 py-6 bg-slate-900 text-white flex items-center justify-between border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xl border border-emerald-500/30">
+                    <i className="fa-solid fa-file-excel"></i>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-lg font-black tracking-tight">{costSheetModalData.fileName}</h3>
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30">
+                        Spreadsheet Viewer
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 font-medium mt-0.5">
+                      {costSheetModalData.orderTitle}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => downloadCostSheetFile(costSheetModalData.fileData, costSheetModalData.fileName)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 shadow-lg shadow-emerald-900/20"
+                    title="Download Excel file"
+                  >
+                    <i className="fa-solid fa-download"></i>
+                    <span>Download</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCostSheetModalData(null);
+                      setCostSheetActiveSheetIndex(0);
+                    }}
+                    className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all"
+                    title="Close"
+                  >
+                    <i className="fa-solid fa-xmark text-lg"></i>
+                  </button>
+                </div>
+              </div>
+
+              {/* Sheet Tabs if multiple sheets */}
+              {sheetNames.length > 1 && (
+                <div className="px-8 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center gap-2 overflow-x-auto shrink-0">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider mr-2">Sheets:</span>
+                  {sheetNames.map((name, idx) => {
+                    const isActive = idx === costSheetActiveSheetIndex;
+                    return (
+                      <button
+                        key={name}
+                        onClick={() => setCostSheetActiveSheetIndex(idx)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wide transition-all ${
+                          isActive
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'bg-white text-slate-600 hover:bg-slate-200 border border-slate-300/60'
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Spreadsheet Content */}
+              <div className="flex-1 overflow-auto p-6 bg-slate-50 min-h-[300px]">
+                {parseError ? (
+                  <div className="h-full flex flex-col items-center justify-center p-12 text-center">
+                    <div className="w-16 h-16 rounded-3xl bg-rose-50 text-rose-500 flex items-center justify-center text-2xl mb-4 border border-rose-200">
+                      <i className="fa-solid fa-triangle-exclamation"></i>
+                    </div>
+                    <div className="text-sm font-black uppercase text-slate-800 tracking-wider">Failed to Load Spreadsheet</div>
+                    <div className="text-xs text-slate-500 mt-1 max-w-md">{parseError}</div>
+                  </div>
+                ) : sheetData.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center p-12 text-center">
+                    <div className="w-16 h-16 rounded-3xl bg-slate-100 text-slate-400 flex items-center justify-center text-2xl mb-4">
+                      <i className="fa-solid fa-table-cells-large"></i>
+                    </div>
+                    <div className="text-sm font-black uppercase text-slate-700 tracking-wider">Sheet is Empty</div>
+                    <div className="text-xs text-slate-400 mt-1">This sheet contains no visible rows or columns.</div>
+                  </div>
+                ) : (
+                  <div className="border border-slate-300 rounded-2xl overflow-hidden bg-white shadow-xs">
+                    <div className="overflow-x-auto max-h-[60vh]">
+                      <table className="w-full text-left border-collapse font-sans text-xs">
+                        <tbody>
+                          {sheetData.map((row, rIdx) => {
+                            const isHeaderRow = rIdx === 0;
+                            return (
+                              <tr
+                                key={rIdx}
+                                className={`border-b border-slate-200 transition-colors ${
+                                  isHeaderRow
+                                    ? 'bg-slate-900 text-white font-black sticky top-0 shadow-xs z-10'
+                                    : rIdx % 2 === 0
+                                      ? 'bg-white hover:bg-blue-50/40'
+                                      : 'bg-slate-50/70 hover:bg-blue-50/40'
+                                }`}
+                              >
+                                <td className={`px-3 py-2 text-center text-[10px] font-mono border-r select-none ${
+                                  isHeaderRow ? 'bg-slate-950 text-slate-400 border-slate-800' : 'bg-slate-100 text-slate-400 border-slate-200 font-bold'
+                                }`}>
+                                  {rIdx + 1}
+                                </td>
+                                {Array.isArray(row) && row.map((cell, cIdx) => (
+                                  <td
+                                    key={cIdx}
+                                    className={`px-3 py-2 border-r border-slate-200 text-slate-800 whitespace-nowrap ${
+                                      isHeaderRow ? 'text-white font-black tracking-wider border-slate-800' : ''
+                                    }`}
+                                  >
+                                    {cell !== null && cell !== undefined ? String(cell) : ''}
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-8 py-4 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
+                <div className="text-xs font-bold text-slate-400 flex items-center gap-2">
+                  <i className="fa-solid fa-info-circle text-blue-500"></i>
+                  <span>Showing {sheetData.length} row(s)</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setCostSheetModalData(null);
+                    setCostSheetActiveSheetIndex(0);
+                  }}
+                  className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black rounded-xl uppercase text-xs tracking-wider transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div >
   );
 };
