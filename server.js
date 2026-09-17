@@ -381,7 +381,14 @@ const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 
     }
 
     // Priority 3: Recovery from Negative Margin (sticky: only exit when costs are known and margin recovers, or components are removed)
-    if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || (totalCostInOrderCurrency > 0 && markupPct >= minMargin))) {
+    if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || markupPct >= minMargin || totalCostInOrderCurrency === 0)) {
+        // [FIX] Check if any components are actively in the procurement pipeline.
+        const hasProcurementActive = (items || []).some(it => 
+            (it.components || []).some(c => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'].includes(c.status))
+        );
+        if (hasProcurementActive) {
+            return OrderStatus.WAITING_SUPPLIERS;
+        }
         return (hasActiveTechReview || anyAccepted) ? OrderStatus.TECHNICAL_REVIEW : OrderStatus.LOGGED;
     }
 
