@@ -746,7 +746,8 @@ export const formatSupplierName = (s?: Supplier): string => {
 };
 
 const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refreshKey, currentUser }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const isAr = language === 'ar';
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [activeTab, setActiveTab] = useState<'purchases' | 'outsourcing' | 'history'>('purchases');
@@ -787,6 +788,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
   const [rfpSelection, setRfpSelection] = useState<string[]>([]);
   const [rfpCompSelection, setRfpCompSelection] = useState<string[]>([]); // For multi-component RFP PDF
+  const [rfpSupplierSearch, setRfpSupplierSearch] = useState<string>('');
+  const [awardSupplierSearch, setAwardSupplierSearch] = useState<string>('');
   const [rfpTemplateRef, rfpPrintData, setRfpPrintData] = [useRef<HTMLDivElement>(null), ...useState<{ order: CustomerOrder, comps: ManufacturingComponent[] } | null>(null)];
   const [isDownloadingRfp, setIsDownloadingRfp] = useState(false);
   const [costSheetModalOrder, setCostSheetModalOrder] = useState<CustomerOrder | null>(null);
@@ -2002,6 +2005,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     setReviveEndDate('');
     setReviveMode('EXTENSION');
     setRollbackIsBlanket(false);
+    setRfpSupplierSearch('');
+    setAwardSupplierSearch('');
   };
 
   const handleReplacementSubmit = async () => {
@@ -4074,36 +4079,45 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
           {
             activeAction && (
-              <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto">
-                <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-xl p-10 my-8 animate-in zoom-in-95 duration-300 border border-slate-100">
-                  <div className="flex items-center gap-6 mb-8">
-                    <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-inner ${activeAction.type === 'RFP' ? 'bg-blue-50 text-blue-600' :
-                      activeAction.type === 'AWARD' ? 'bg-amber-50 text-amber-600' :
-                        activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-50 text-rose-600' :
-                          activeAction.type === 'REVIVE_CONTRACT' ? 'bg-emerald-50 text-emerald-600' : 'bg-emerald-50 text-emerald-600'
-                      }`}>
-                      <i className={`fa-solid ${activeAction.type === 'RFP' ? 'fa-paper-plane' :
-                        activeAction.type === 'AWARD' ? 'fa-award' :
-                          activeAction.type === 'RESET' ? 'fa-rotate-left' :
-                            activeAction.type === 'ORDER_ROLLBACK' ? 'fa-file-export fa-flip-horizontal' :
-                              activeAction.type === 'REVIVE_CONTRACT' ? 'fa-heart-pulse' : 'fa-file-invoice'
-                        }`}></i>
+              <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] flex items-center justify-center p-3 sm:p-6 overflow-hidden">
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col border border-slate-100 animate-in zoom-in-95 duration-300 overflow-hidden">
+                  <div className="flex-shrink-0 flex items-center justify-between p-6 pb-4 border-b border-slate-100">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shadow-inner ${activeAction.type === 'RFP' ? 'bg-blue-50 text-blue-600' :
+                        activeAction.type === 'AWARD' ? 'bg-amber-50 text-amber-600' :
+                          activeAction.type === 'RESET' || activeAction.type === 'ORDER_ROLLBACK' ? 'bg-rose-50 text-rose-600' :
+                            activeAction.type === 'REVIVE_CONTRACT' ? 'bg-emerald-50 text-emerald-600' : 'bg-emerald-50 text-emerald-600'
+                        }`}>
+                        <i className={`fa-solid ${activeAction.type === 'RFP' ? 'fa-paper-plane' :
+                          activeAction.type === 'AWARD' ? 'fa-award' :
+                            activeAction.type === 'RESET' ? 'fa-rotate-left' :
+                              activeAction.type === 'ORDER_ROLLBACK' ? 'fa-file-export fa-flip-horizontal' :
+                                activeAction.type === 'REVIVE_CONTRACT' ? 'fa-heart-pulse' : 'fa-file-invoice'
+                          }`}></i>
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">
+                          {activeAction.type === 'RFP' ? 'Issue Request for Proposals' :
+                            activeAction.type === 'AWARD' ? 'Commercial Award Selection' :
+                              activeAction.type === 'RESET' ? 'Reset Sourcing Cycle' :
+                                activeAction.type === 'ORDER_ROLLBACK' ? 'Order Workflow Rollback' :
+                                  activeAction.type === 'REVIVE_CONTRACT' ? 'Revive Expired Contract' : 'Confirm Purchase Order'}
+                        </h3>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          {activeAction.type === 'ORDER_ROLLBACK' ? `${t('procurement.rollback.revertingToLogged')}: ${activeAction.order.internalOrderNumber}` : `${t('procurement.rfp.component')}: ${activeAction.comp?.description}`}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
-                        {activeAction.type === 'RFP' ? 'Issue Request for Proposals' :
-                          activeAction.type === 'AWARD' ? 'Commercial Award Selection' :
-                            activeAction.type === 'RESET' ? 'Reset Sourcing Cycle' :
-                              activeAction.type === 'ORDER_ROLLBACK' ? 'Order Workflow Rollback' :
-                                activeAction.type === 'REVIVE_CONTRACT' ? 'Revive Expired Contract' : 'Confirm Purchase Order'}
-                      </h3>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        {activeAction.type === 'ORDER_ROLLBACK' ? `${t('procurement.rollback.revertingToLogged')}: ${activeAction.order.internalOrderNumber}` : `${t('procurement.rfp.component')}: ${activeAction.comp?.description}`}
-                      </p>
-                    </div>
+                    <button
+                      onClick={closeModal}
+                      className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors shrink-0"
+                      title={t('common.close') || 'Close'}
+                    >
+                      <i className="fa-solid fa-xmark text-sm"></i>
+                    </button>
                   </div>
 
-                  <div className="space-y-6">
+                  <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 space-y-6">
                     {activeAction.type === 'RFP' && (
                       <>
                         <div className="space-y-3">
@@ -4161,41 +4175,75 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           {rfpCompSelection.length === 0 && <p className="text-center text-[9px] text-rose-500 font-bold uppercase mt-1">{t('procurement.rfp.selectAtLeastOne')}</p>}
                         </div>
 
-                        <div className="space-y-3 pt-4 border-t border-slate-100">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.rfp.selectTargetSuppliers')}</label>
-                          <p className="text-[9px] text-slate-400 font-bold uppercase ml-1 -mt-1 mb-2">{t('procurement.rfp.selectTargetSuppliersHint')}</p>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-60 overflow-y-auto p-1 custom-scrollbar">
-                            {suppliers.map(s => {
-                              const isSelected = rfpSelection.includes(s.id!);
-                              const contact = s.contactName && s.contactName.trim() !== s.name?.trim() ? s.contactName.trim() : '';
-                              const phone = s.contactPhone || s.phone;
-                              return (
-                                <button
-                                  type="button"
-                                  key={s.id}
-                                  onClick={() => setRfpSelection(prev => prev.includes(s.id!) ? prev.filter(x => x !== s.id) : [...prev, s.id!])}
-                                  className={`p-3 rounded-2xl border text-left transition-all flex items-start justify-between gap-2 ${isSelected ? 'bg-blue-600 text-white border-blue-700 shadow-lg' : 'bg-slate-50 text-slate-700 border-slate-100 hover:border-blue-200'}`}
-                                >
-                                  <div className="flex flex-col min-w-0">
-                                    <span className="text-xs font-black uppercase tracking-tight truncate">{s.name}</span>
-                                    {contact && (
-                                      <span className={`text-[11px] font-bold flex items-center gap-1 mt-0.5 ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>
-                                        <i className="fa-solid fa-user text-[10px] opacity-70"></i>
-                                        <span className="truncate">{contact}</span>
-                                      </span>
-                                    )}
-                                    {phone && (
-                                      <span className={`text-[10px] font-mono mt-0.5 ${isSelected ? 'text-blue-200' : 'text-slate-400'}`}>
-                                        <i className="fa-solid fa-phone text-[9px] mr-1 opacity-70"></i>{phone}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="pt-1 shrink-0">
-                                    {isSelected ? <i className="fa-solid fa-circle-check text-base"></i> : <i className="fa-regular fa-circle text-base opacity-30"></i>}
-                                  </div>
-                                </button>
-                              );
-                            })}
+                        <div className="space-y-2 pt-3 border-t border-slate-100">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.rfp.selectTargetSuppliers')}</label>
+                              <span className="text-[10px] font-bold text-blue-600 ml-2">({rfpSelection.length} {isAr ? 'محدد' : 'selected'})</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setRfpSelection(suppliers.map(s => s.id!).filter(Boolean))}
+                                className="text-[9px] font-bold text-blue-600 hover:text-blue-800 uppercase tracking-wider"
+                              >
+                                {isAr ? 'تحديد الكل' : 'Select All'}
+                              </button>
+                              <span className="text-slate-300 text-xs">|</span>
+                              <button
+                                type="button"
+                                onClick={() => setRfpSelection([])}
+                                className="text-[9px] font-bold text-slate-400 hover:text-slate-600 uppercase tracking-wider"
+                              >
+                                {isAr ? 'إلغاء التحديد' : 'Clear'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {suppliers.length > 5 && (
+                            <div className="relative">
+                              <i className="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                              <input
+                                type="text"
+                                placeholder={isAr ? 'بحث باسم المورد...' : 'Search supplier name...'}
+                                value={rfpSupplierSearch}
+                                onChange={e => setRfpSupplierSearch(e.target.value)}
+                                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:bg-white focus:border-blue-500 outline-none transition-all"
+                              />
+                            </div>
+                          )}
+
+                          <div className="border border-slate-200 rounded-xl max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white custom-scrollbar shadow-inner">
+                            {suppliers
+                              .filter(s => !rfpSupplierSearch.trim() || (s.name || '').toLowerCase().includes(rfpSupplierSearch.trim().toLowerCase()))
+                              .map(s => {
+                                const isSelected = rfpSelection.includes(s.id!);
+                                return (
+                                  <label
+                                    key={s.id}
+                                    className={`flex items-center gap-2.5 px-3.5 py-2 cursor-pointer transition-colors select-none ${
+                                      isSelected ? 'bg-blue-50/80 text-blue-900 font-bold' : 'hover:bg-slate-50 text-slate-700 font-medium'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => {
+                                        setRfpSelection(prev =>
+                                          prev.includes(s.id!) ? prev.filter(x => x !== s.id) : [...prev, s.id!]
+                                        );
+                                      }}
+                                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                    />
+                                    <span className="text-xs truncate flex-1">{formatSupplierName(s)}</span>
+                                  </label>
+                                );
+                              })}
+                            {suppliers.filter(s => !rfpSupplierSearch.trim() || (s.name || '').toLowerCase().includes(rfpSupplierSearch.trim().toLowerCase())).length === 0 && (
+                              <div className="p-4 text-center text-xs text-slate-400 font-medium">
+                                {t('procurement.award.noVendorsFound')}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </>
@@ -4274,65 +4322,57 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                               </span>
                             </div>
 
-                            {/* Vendor selection cards */}
-                            {awardSuppliersList.length > 0 ? (
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-56 overflow-y-auto p-1 custom-scrollbar">
-                                {awardSuppliersList.map(s => {
-                                  const isSelected = awardSupplierId === s.id;
-                                  const contact = s.contactName && s.contactName.trim() !== s.name?.trim() ? s.contactName.trim() : '';
-                                  const phone = s.contactPhone || s.phone;
-                                  const location = s.location || s.address;
-                                  return (
-                                    <button
-                                      type="button"
-                                      key={s.id}
-                                      onClick={() => setAwardSupplierId(s.id || '')}
-                                      className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 relative ${
-                                        isSelected
-                                          ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-md ring-2 ring-emerald-500/20'
-                                          : 'bg-slate-50 text-slate-700 border-slate-100 hover:border-blue-200 hover:bg-slate-50/80'
-                                      }`}
-                                    >
-                                      <div className="flex items-start justify-between w-full gap-2">
-                                        <div className="min-w-0 flex-1">
-                                          <div className="text-xs font-black uppercase tracking-tight truncate text-slate-900">
-                                            {s.name}
-                                          </div>
-                                          {contact && (
-                                            <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5 mt-1">
-                                              <i className="fa-solid fa-user-tie text-[10px] text-blue-600"></i>
-                                              <span className="truncate">{contact}</span>
-                                            </div>
-                                          )}
-                                        </div>
-                                        <div className="shrink-0 mt-0.5">
-                                          {isSelected ? (
-                                            <i className="fa-solid fa-circle-check text-emerald-600 text-lg"></i>
-                                          ) : (
-                                            <i className="fa-regular fa-circle text-slate-300 text-lg"></i>
-                                          )}
-                                        </div>
-                                      </div>
+                            {/* Vendor selection compact listbox */}
+                            {awardSuppliersList.length > 5 && (
+                              <div className="relative">
+                                <i className="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                                <input
+                                  type="text"
+                                  placeholder={isAr ? 'بحث باسم المورد...' : 'Search vendor name...'}
+                                  value={awardSupplierSearch}
+                                  onChange={e => setAwardSupplierSearch(e.target.value)}
+                                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:bg-white focus:border-blue-500 outline-none transition-all"
+                                />
+                              </div>
+                            )}
 
-                                      {(phone || location) && (
-                                        <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400 border-t border-slate-200/50 pt-1.5 font-medium">
-                                          {phone && (
-                                            <span className="flex items-center gap-1 font-mono text-slate-600">
-                                              <i className="fa-solid fa-phone text-[9px] text-slate-400"></i>
-                                              {phone}
-                                            </span>
-                                          )}
-                                          {location && (
-                                            <span className="flex items-center gap-1 truncate text-slate-500 max-w-[180px]">
-                                              <i className="fa-solid fa-location-dot text-[9px] text-slate-400"></i>
-                                              <span className="truncate">{location}</span>
-                                            </span>
-                                          )}
+                            {awardSuppliersList.length > 0 ? (
+                              <div className="border border-slate-200 rounded-xl max-h-40 overflow-y-auto divide-y divide-slate-100 bg-white custom-scrollbar shadow-inner">
+                                {awardSuppliersList
+                                  .filter(s => !awardSupplierSearch.trim() || (s.name || '').toLowerCase().includes(awardSupplierSearch.trim().toLowerCase()))
+                                  .map(s => {
+                                    const isSelected = awardSupplierId === s.id;
+                                    return (
+                                      <label
+                                        key={s.id}
+                                        onClick={() => setAwardSupplierId(s.id || '')}
+                                        className={`flex items-center justify-between px-3.5 py-2 cursor-pointer transition-colors select-none ${
+                                          isSelected
+                                            ? 'bg-emerald-50 text-emerald-950 font-bold'
+                                            : 'hover:bg-slate-50 text-slate-700 font-medium'
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                          <input
+                                            type="radio"
+                                            name="award_vendor_selection"
+                                            checked={isSelected}
+                                            onChange={() => setAwardSupplierId(s.id || '')}
+                                            className="w-4 h-4 text-emerald-600 border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                                          />
+                                          <span className="text-xs truncate">{formatSupplierName(s)}</span>
                                         </div>
-                                      )}
-                                    </button>
-                                  );
-                                })}
+                                        {isSelected && (
+                                          <i className="fa-solid fa-circle-check text-emerald-600 text-sm ml-2 shrink-0"></i>
+                                        )}
+                                      </label>
+                                    );
+                                  })}
+                                {awardSuppliersList.filter(s => !awardSupplierSearch.trim() || (s.name || '').toLowerCase().includes(awardSupplierSearch.trim().toLowerCase())).length === 0 && (
+                                  <div className="p-3 text-center text-xs text-slate-400 font-medium">
+                                    {t('procurement.award.noVendorsFound')}
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold text-center">
@@ -4343,7 +4383,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             {/* Dropdown for quick access / fallback */}
                             <div className="pt-1">
                               <select
-                                className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-xs text-slate-700 outline-none focus:border-blue-500 transition-all"
+                                className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold text-xs text-slate-700 outline-none focus:border-blue-500 transition-all"
                                 value={awardSupplierId}
                                 onChange={e => setAwardSupplierId(e.target.value)}
                               >
@@ -4760,12 +4800,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     )}
                   </div>
 
-                  <div className="mt-10 flex gap-3">
-                    <button onClick={closeModal} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">{t('procurement.abort')}</button>
+                  {/* Pinned Footer */}
+                  <div className="flex-shrink-0 p-5 pt-3 border-t border-slate-100 bg-slate-50/70 flex gap-3">
+                    <button onClick={closeModal} className="flex-1 py-3.5 bg-white border border-slate-200 text-slate-600 font-black rounded-xl uppercase text-[10px] tracking-widest hover:bg-slate-100 transition-all shadow-xs">{t('procurement.abort')}</button>
                     <button
                       disabled={isCommitProcurementDisabled}
                       onClick={handleExecuteAction}
-                      className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${isCommitProcurementDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : activeAction?.type === 'REVERT_PO' || activeAction?.type === 'REVERT_TO_PENDING' ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100' : activeAction?.type === 'REVIVE_CONTRACT' ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
+                      className={`flex-[2] py-3.5 rounded-xl font-black text-[10px] uppercase shadow-md transition-all flex items-center justify-center gap-2 ${isCommitProcurementDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : activeAction?.type === 'REVERT_PO' || activeAction?.type === 'REVERT_TO_PENDING' ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100' : activeAction?.type === 'REVIVE_CONTRACT' ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
                         }`}
                     >
                       {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
@@ -5243,25 +5284,35 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
           {/* --- Procurement Resolution Modal (in-transit components before rollback) --- */}
           {
             pendingResolutions && !activeAction && (
-              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto">
-                <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl p-10 my-8 animate-in zoom-in-95 duration-200 border border-slate-100">
-                  <div className="flex items-center gap-6 mb-8">
-                    <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center text-3xl shadow-inner">
-                      <i className="fa-solid fa-triangle-exclamation"></i>
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-3 sm:p-6 overflow-hidden">
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col border border-slate-100 animate-in zoom-in-95 duration-200 overflow-hidden">
+                  <div className="flex-shrink-0 flex items-center justify-between p-6 pb-4 border-b border-slate-100">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl shadow-inner">
+                        <i className="fa-solid fa-triangle-exclamation"></i>
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">{t('procurement.resolution.title')}</h3>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">
+                          {pendingResolutions.length} Component{pendingResolutions.length > 1 ? 's' : ''} in transit — Resolve before rollback
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">{t('procurement.resolution.title')}</h3>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
-                        {pendingResolutions.length} Component{pendingResolutions.length > 1 ? 's' : ''} in transit — Resolve before rollback
-                      </p>
-                    </div>
+                    <button
+                      onClick={closeModal}
+                      className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors shrink-0"
+                      title={t('common.close') || 'Close'}
+                    >
+                      <i className="fa-solid fa-xmark text-sm"></i>
+                    </button>
                   </div>
 
-                  <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6">
-                    {t('procurement.resolution.resolveMsg')}
-                  </p>
+                  <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 space-y-4">
+                    <p className="text-sm text-slate-500 font-medium leading-relaxed">
+                      {t('procurement.resolution.resolveMsg')}
+                    </p>
 
-                  <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-2">
+                    <div className="space-y-3 pr-1">
                     {pendingResolutions.map(rec => (
                       <div key={rec.compId} className="bg-slate-50 border border-slate-100 rounded-2xl p-5">
                         <div className="flex justify-between items-start mb-3">
@@ -5301,17 +5352,18 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       </div>
                     ))}
                   </div>
+                  </div>
 
-                  <div className="mt-8 flex gap-3">
+                  <div className="flex-shrink-0 p-5 pt-3 border-t border-slate-100 bg-slate-50/70 flex gap-3">
                     <button
                       onClick={closeModal}
-                      className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200"
+                      className="flex-1 py-3.5 bg-white border border-slate-200 text-slate-600 font-black rounded-xl uppercase text-[10px] tracking-widest hover:bg-slate-100 transition-all shadow-xs"
                     >
                       {t('procurement.abort')}
                     </button>
                     <button
                       onClick={handleConfirmResolutions}
-                      className="flex-[2] py-4 bg-amber-500 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-xl shadow-amber-200 hover:bg-amber-600 transition-all flex items-center justify-center gap-2"
+                      className="flex-[2] py-3.5 bg-amber-500 text-white font-black rounded-xl uppercase text-[10px] tracking-widest shadow-md hover:bg-amber-600 transition-all flex items-center justify-center gap-2"
                     >
                       <i className="fa-solid fa-arrow-right"></i>
                       Confirm Resolutions & Continue
