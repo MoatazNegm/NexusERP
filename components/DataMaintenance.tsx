@@ -38,6 +38,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [driveDraft, setDriveDraft] = useState<GoogleDriveConfig>(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
   const [driveStatus, setDriveStatus] = useState<{ configured: boolean; connected: boolean; connectedEmail?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
   const [localStorageDraft, setLocalStorageDraft] = useState<LocalStorageConfig>(config.settings.localStorageConfig || { enabled: true, autoUploadExternalSubmissions: true, storageIp: '', apiPort: 9000, consolePort: 9001, accessKey: '', secretKey: '', bucketName: '' });
+  const [tursoUrl, setTursoUrl] = useState(config.settings.tursoUrl || '');
+  const [tursoAuthToken, setTursoAuthToken] = useState(config.settings.tursoAuthToken || '');
+  const [useTurso, setUseTurso] = useState(config.settings.useTurso || false);
   const [localStorageStatus, setLocalStorageStatus] = useState<{ configured: boolean; reachable: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; storageIp: string; apiPort: number; consolePort: number; bucketName: string; buckets: string[] } | null>(null);
   const [isDriveBusy, setIsDriveBusy] = useState(false);
   const [driveDraftDirty, setDriveDraftDirty] = useState(false);
@@ -569,6 +572,22 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       setMessage({ type: 'success', text: `Bucket ${result.bucketName} created.` });
     } catch (error: any) {
       setMessage({ type: 'error', text: error?.message || 'Failed to create bucket.' });
+    } finally {
+      setIsDriveBusy(false);
+    }
+  };
+
+  const saveTursoConfig = async () => {
+    setIsDriveBusy(true);
+    try {
+      await persistSettings({
+        useTurso,
+        tursoUrl: (tursoUrl || '').trim(),
+        tursoAuthToken: (tursoAuthToken || '').trim()
+      });
+      setMessage({ type: 'success', text: 'Turso DB settings saved successfully. The server will sync in the background.' });
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to save Turso DB settings.' });
     } finally {
       setIsDriveBusy(false);
     }
@@ -1710,6 +1729,59 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   </div>
                 </div>
               )}
+              
+              <div className="p-8 bg-slate-50 border border-slate-200 rounded-3xl mt-8 space-y-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-8 text-slate-100"><i className="fa-solid fa-database text-9xl"></i></div>
+                <div className="relative z-10 flex items-center gap-4 border-b border-slate-200 pb-4">
+                  <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center text-lg"><i className="fa-solid fa-cloud"></i></div>
+                  <div>
+                    <h5 className="font-black text-slate-800 text-sm tracking-widest uppercase">Turso Cloud Database Sync</h5>
+                    <p className="text-[10px] text-slate-500 font-medium">Continuously sync your local flat-file database with a remote SQLite database for serverless persistence.</p>
+                  </div>
+                </div>
+                
+                <div className="relative z-10 space-y-4 max-w-2xl">
+                  <label className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 cursor-pointer">
+                    <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Turso Sync</span>
+                    <input type="checkbox" checked={useTurso} onChange={e => setUseTurso(e.target.checked)} />
+                  </label>
+                  
+                  {useTurso && (
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Turso Database URL</label>
+                        <input
+                          type="text"
+                          value={tursoUrl}
+                          onChange={e => setTursoUrl(e.target.value)}
+                          placeholder="libsql://your-db-url.turso.io"
+                          className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Auth Token</label>
+                        <input
+                          type="password"
+                          value={tursoAuthToken}
+                          onChange={e => setTursoAuthToken(e.target.value)}
+                          placeholder="ey..."
+                          className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                        />
+                      </div>
+                    </>
+                  )}
+                  
+                  <div className="pt-2">
+                    <button
+                      onClick={saveTursoConfig}
+                      disabled={isDriveBusy}
+                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isDriveBusy ? 'bg-slate-400 cursor-wait' : 'bg-purple-600 hover:bg-purple-700'}`}
+                    >
+                      Save Turso Settings
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

@@ -536,6 +536,9 @@ export interface AppConfig {
     storageBackend?: StorageBackend;
     googleDriveConfig: GoogleDriveConfig;
     localStorageConfig?: LocalStorageConfig;
+    useTurso?: boolean;
+    tursoUrl?: string;
+    tursoAuthToken?: string;
     emailConfig: EmailConfig;
     companyName: string;
     companyAddress: string;

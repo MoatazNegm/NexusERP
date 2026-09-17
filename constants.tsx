@@ -3,7 +3,7 @@ import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGr
 import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.000001 for every code update
-export const APP_VERSION = '1.0001046';
+export const APP_VERSION = '1.0001047';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
@@ -42,6 +42,9 @@ export const INITIAL_CONFIG: AppConfig = {
       secretKey: '',
       bucketName: ''
     },
+    useTurso: false,
+    tursoUrl: '',
+    tursoAuthToken: '',
     emailConfig: {
       smtpServer: 'mail.quickstor.net',
       smtpPort: 465,

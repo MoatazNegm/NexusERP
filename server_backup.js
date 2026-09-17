@@ -486,69 +486,6 @@ const readDb = (customPath = null) => {
   }
 };
 
-const { createClient } = require('@libsql/client/web');
-
-const pushToTursoAsync = async (data, dbPath) => {
-    try {
-        const isLive = (dbPath === DB_PATH);
-        const settingsList = data.settings || [];
-        const settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
-        
-        if (settings && settings.useTurso && settings.tursoUrl && settings.tursoAuthToken) {
-            const targetId = isLive ? 'live' : 'sandbox.' + path.basename(dbPath).replace('db.sandbox.', '').replace('.json', '');
-            
-            const dbUrl = settings.tursoUrl.startsWith('libsql://') 
-              ? settings.tursoUrl.replace(/^libsql:\/\//, 'https://') 
-              : settings.tursoUrl;
-              
-            const client = createClient({ url: dbUrl, authToken: settings.tursoAuthToken });
-            await client.execute({
-                sql: `INSERT INTO nexus_state (id, json_data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json_data=excluded.json_data, updated_at=CURRENT_TIMESTAMP`,
-                args: [targetId, JSON.stringify(data)]
-            });
-        }
-    } catch (e) {
-        console.error(`[Turso Sync Error on ${dbPath}]`, e.message);
-    }
-};
-
-const pullFromTursoOnStartup = async () => {
-    try {
-        if (!fs.existsSync(DB_PATH)) return;
-        const localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-        const settingsList = localDb.settings || [];
-        const settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
-        
-        if (settings && settings.useTurso && settings.tursoUrl && settings.tursoAuthToken) {
-            console.log("[Turso] Cloud Sync enabled. Pulling latest data on startup...");
-            const dbUrl = settings.tursoUrl.startsWith('libsql://') 
-              ? settings.tursoUrl.replace(/^libsql:\/\//, 'https://') 
-              : settings.tursoUrl;
-              
-            const client = createClient({ url: dbUrl, authToken: settings.tursoAuthToken });
-            await client.execute(`CREATE TABLE IF NOT EXISTS nexus_state (id TEXT PRIMARY KEY, json_data TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-            
-            const res = await client.execute({ sql: `SELECT json_data FROM nexus_state WHERE id = ?`, args: ['live'] });
-            if (res.rows.length > 0 && res.rows[0].json_data) {
-                fs.writeFileSync(DB_PATH, res.rows[0].json_data, 'utf8');
-                console.log("[Turso] Live database successfully restored from cloud.");
-            }
-            
-            const allRes = await client.execute(`SELECT id, json_data FROM nexus_state WHERE id LIKE 'sandbox.%'`);
-            for (const row of allRes.rows) {
-                if (row.id && row.json_data) {
-                    const sbOwner = row.id.replace('sandbox.', '');
-                    const sbPath = path.join(__dirname, `db.sandbox.${sbOwner}.json`);
-                    fs.writeFileSync(sbPath, row.json_data, 'utf8');
-                    console.log(`[Turso] Sandbox ${sbOwner} successfully restored from cloud.`);
-                }
-            }
-        }
-    } catch (e) {
-        console.error("[Turso] Startup pull failed:", e.message);
-    }
-};
-
 const writeDb = (data, customPath = null) => {
   const targetPath = customPath || DB_PATH;
   const bakPath = targetPath + '.local.bak';
@@ -563,10 +500,6 @@ const writeDb = (data, customPath = null) => {
       fs.writeFileSync(targetPath, content, 'utf8');
       try { fs.unlinkSync(tmpPath); } catch {}
     }
-    
-    // Trigger background sync to cloud
-    pushToTursoAsync(data, targetPath).catch(() => {});
-
     try { fs.copyFileSync(targetPath, bakPath); } catch {}
     return true;
   } catch (err) {
@@ -4845,7 +4778,7 @@ app.get('/api/v1/full-backup', (req, res) => {
         res.write(salt);
         res.write(iv);
 
-        const archive = new archiver.ZipArchive({ zlib: { level: 9 } });
+        const archive = archiver('zip', { zlib: { level: 9 } });
         archive.on('error', err => { 
             console.error("Archive error:", err);
             if (!res.headersSent) res.status(500).end();
@@ -6390,6 +6323,7 @@ const migrateAllSandboxesOnStartup = () => {
     }
     console.log(`[Migration] Sandbox startup sweep: ${migrated} migrated, ${skipped} already current, ${errored} errored (of ${sandboxFiles.length} total).`);
 };
+migrateAllSandboxesOnStartup();
 
 // Periodic eviction of expired discoveryCache entries (TTL is 30s inside the route;
 // we sweep every 60s to keep the Map bounded regardless of how many users log in).
@@ -6400,19 +6334,10 @@ setInterval(() => {
     }
 }, 60000).unref();
 
-(async () => {
-    // 1. Pull latest database state from Turso Cloud (if enabled in settings)
-    await pullFromTursoOnStartup();
-    
-    // 2. Perform DB schema migrations locally
-    migrateAllSandboxesOnStartup();
-    
-    // 3. Start Express server
-    app.listen(PORT, '0.0.0.0', () => {
-        console.log(`[Backend] Running exclusively on http://localhost:${PORT}`);
-        runThresholdAudit().catch(err => console.error('[Audit] Unhandled error in initial audit:', err));
-        setInterval(() => {
-            runThresholdAudit().catch(err => console.error('[Audit] Unhandled error in interval audit:', err));
-        }, 60000);
-    });
-})();
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Backend] Running exclusively on http://localhost:${PORT}`);
+    runThresholdAudit().catch(err => console.error('[Audit] Unhandled error in initial audit:', err));
+    setInterval(() => {
+        runThresholdAudit().catch(err => console.error('[Audit] Unhandled error in interval audit:', err));
+    }, 60000);
+});
