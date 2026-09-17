@@ -1513,20 +1513,15 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                         onChange={async (e) => {
                                           const file = e.target.files?.[0];
                                           if (!file || !selectedOrder || !selectedItem) return;
-                                          const reader = new FileReader();
-                                          reader.onload = async (evt) => {
-                                            const result = evt.target?.result as string;
-                                            try {
-                                              setIsProcessing(true);
-                                              const updated = await dataService.uploadCostSheet(selectedOrder.id, selectedItem.id, result, file.name);
-                                              updateOrderInState(updated);
-                                            } catch (err: any) {
-                                              alert(err.message || 'Failed to upload cost sheet');
-                                            } finally {
-                                              setIsProcessing(false);
-                                            }
-                                          };
-                                          reader.readAsDataURL(file);
+                                          try {
+                                            setIsProcessing(true);
+                                            const updated = await dataService.uploadCostSheet(selectedOrder.id, selectedItem.id, file, file.name);
+                                            updateOrderInState(updated);
+                                          } catch (err: any) {
+                                            alert(err.message || 'Failed to upload cost sheet');
+                                          } finally {
+                                            setIsProcessing(false);
+                                          }
                                         }}
                                       />
                                     </label>

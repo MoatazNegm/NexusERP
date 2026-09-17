@@ -9,6 +9,10 @@ import fs from 'fs';
 
 import os from 'os';
 import AdmZip from 'adm-zip';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const archiver = require('archiver');
+const unzipper = require('unzipper');
 import * as XLSX from 'xlsx';
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -111,7 +115,7 @@ const syncAuthoritativeUsersToSandboxes = (liveDb) => {
 
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 7; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 8; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -162,6 +166,18 @@ const whtStorage = multer.diskStorage({
     }
 });
 const uploadWht = multer({ storage: whtStorage });
+
+const costSheetStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, resolveUploadDir(req, 'cost_sheets'));
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'cost-sheet-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const uploadCostSheet = multer({ storage: costSheetStorage });
+
 const uploadGoogleDriveFile = multer({ storage: multer.memoryStorage() });
 
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
@@ -1067,14 +1083,13 @@ const migrations = [
         return settings;
     },
     // v6 → v7: Per-user Live Access toggle.
-    // Default `liveAccess` to true for every existing user so the new
-    // `liveAccess === false` check in /api/v1/login (live branch) only
-    // blocks users that an admin has explicitly disabled. Sandbox login
-    // and the middleware are unaffected — disabled users can still sign
-    // in to any personal or shared sandbox they have access to.
     (settings) => {
         return settings;
     },
+    // v7 → v8: Extract base64 cost sheets from DB to physical files
+    (settings) => {
+        return settings;
+    }
 ];
 
 const applySchemaMigrations = (db, targetPath = DB_PATH) => {
@@ -1156,6 +1171,44 @@ const applySchemaMigrations = (db, targetPath = DB_PATH) => {
                 }
             });
             if (migratedOrders > 0) console.log(`[System] v5→v6 migration: updated ${migratedOrders} outsourcing order(s) to RUNNING_OUTSOURCING_CONTRACT.`);
+        }
+        if (version === 8 && Array.isArray(db.orders)) {
+            let extractedFiles = 0;
+            const isLive = targetPath === DB_PATH;
+            const targetSandboxOwner = isLive ? null : path.basename(targetPath).replace('db.sandbox.', '').replace('.json', '');
+            const uploadDir = isLive ? path.join(UPLOADS_BASE, 'cost_sheets') : path.join(getSandboxUploadsPath(targetSandboxOwner), 'cost_sheets');
+            
+            db.orders.forEach(o => {
+                (o.items || []).forEach(it => {
+                    if (it.costSheetFile && it.costSheetFile.startsWith('data:')) {
+                        try {
+                            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+                            
+                            let ext = '.xlsx';
+                            const match = it.costSheetFile.match(/^data:([a-zA-Z0-9-+/.]+);base64,/);
+                            if (match) {
+                                const mime = match[1];
+                                if (mime.includes('pdf')) ext = '.pdf';
+                                else if (mime.includes('csv')) ext = '.csv';
+                                else if (mime.includes('word')) ext = '.docx';
+                            }
+                            
+                            const b64Data = it.costSheetFile.split(';base64,').pop();
+                            const fileName = `cost-sheet-${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
+                            const filePath = path.join(uploadDir, fileName);
+                            
+                            fs.writeFileSync(filePath, Buffer.from(b64Data, 'base64'));
+                            
+                            // Map path format to frontend expectations
+                            it.costSheetFile = isLive ? `uploads/cost_sheets/${fileName}` : `uploads/sandbox/${targetSandboxOwner}/cost_sheets/${fileName}`;
+                            extractedFiles++;
+                        } catch (e) {
+                            console.error(`Error extracting base64 cost sheet for order ${o.id}:`, e);
+                        }
+                    }
+                });
+            });
+            if (extractedFiles > 0) console.log(`[System] v7→v8 migration: Extracted ${extractedFiles} base64 cost sheet(s) to physical files in ${isLive ? 'Live' : targetSandboxOwner}.`);
         }
     }
 
@@ -4711,62 +4764,62 @@ app.get('/api/v1/full-backup', (req, res) => {
             return res.status(400).json({ error: "Password is required for secure system export." });
         }
 
-        const zip = new AdmZip();
+        const date = new Date().toISOString().slice(0, 10);
+        res.set('Content-Type', 'application/octet-stream');
+        res.set('Content-Disposition', `attachment; filename=nexus-full-archive-${date}.nxarchive`);
 
-        if (isSandbox(req)) {
-            // Backup ONLY this specific sandbox
-            const sandboxDb = getDb(req);
-            const filteredDbStr = JSON.stringify(sandboxDb, null, 2);
-            zip.addFile("db.json", Buffer.from(filteredDbStr, "utf8"));
-
-            const sandboxUploads = getSandboxUploadsPath(req.sandboxOwner);
-            if (fs.existsSync(sandboxUploads)) {
-                zip.addLocalFolder(sandboxUploads, 'uploads');
-            }
-        } else {
-            // LIVE FULL SYSTEM BACKUP:
-            // 1. Include full live db.json (preserving users, userGroups, settings, orders, customers, etc.)
-            const liveDb = readDb(DB_PATH);
-            zip.addFile("db.json", Buffer.from(JSON.stringify(liveDb, null, 2), "utf8"));
-
-            // 2. Include all sandbox databases on disk (including sandbox users, settings, and test orders)
-            try {
-                const files = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
-                for (const file of files) {
-                    const sandboxContent = fs.readFileSync(path.join(__dirname, file));
-                    zip.addFile(file, sandboxContent);
-                }
-            } catch (e) {
-                console.error("[Full Backup] Error bundling sandboxes:", e);
-            }
-
-            // 3. Include full uploads directory (live uploads and all uploads/sandbox/<owner>/...)
-            if (fs.existsSync(UPLOADS_BASE)) {
-                zip.addLocalFolder(UPLOADS_BASE, 'uploads');
-            }
-        }
-
-        const rawBuffer = zip.toBuffer();
-
-        // Encrypt the entire zip buffer with AES-256-GCM
         const salt = crypto.randomBytes(16);
         const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
         const iv = crypto.randomBytes(12);
         const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
 
-        const encrypted = Buffer.concat([cipher.update(rawBuffer), cipher.final()]);
-        const authTag = cipher.getAuthTag();
+        // Format v2 (Streaming): [16 bytes salt] [12 bytes IV] [Encrypted Payload] [16 bytes AuthTag]
+        // We write salt and iv immediately
+        res.write(salt);
+        res.write(iv);
 
-        // Format: [16 bytes salt] [12 bytes IV] [16 bytes AuthTag] [Encrypted Payload]
-        const finalBuffer = Buffer.concat([salt, iv, authTag, encrypted]);
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        archive.on('error', err => { 
+            console.error("Archive error:", err);
+            if (!res.headersSent) res.status(500).end();
+        });
 
-        const date = new Date().toISOString().slice(0, 10);
-        res.set('Content-Type', 'application/octet-stream');
-        res.set('Content-Disposition', `attachment; filename=nexus-full-archive-${date}.nxarchive`);
-        res.send(finalBuffer);
+        // We handle cipher data manually to append authTag at the exact end
+        cipher.on('data', chunk => res.write(chunk));
+        cipher.on('end', () => {
+            const authTag = cipher.getAuthTag();
+            res.end(authTag);
+        });
+
+        archive.pipe(cipher);
+
+        if (isSandbox(req)) {
+            const sandboxDb = getDb(req);
+            archive.append(JSON.stringify(sandboxDb, null, 2), { name: "db.json" });
+            const sandboxUploads = getSandboxUploadsPath(req.sandboxOwner);
+            if (fs.existsSync(sandboxUploads)) archive.directory(sandboxUploads, 'uploads');
+        } else {
+            const liveDb = readDb(DB_PATH);
+            archive.append(JSON.stringify(liveDb, null, 2), { name: "db.json" });
+
+            try {
+                const files = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
+                for (const file of files) {
+                    archive.file(path.join(__dirname, file), { name: file });
+                }
+            } catch (e) {
+                console.error("[Full Backup] Error bundling sandboxes:", e);
+            }
+
+            if (fs.existsSync(UPLOADS_BASE)) {
+                archive.directory(UPLOADS_BASE, 'uploads');
+            }
+        }
+
+        archive.finalize();
     } catch (err) {
         console.error("Full secure backup failed:", err);
-        res.status(500).json({ error: "Full secure backup failed" });
+        if (!res.headersSent) res.status(500).json({ error: "Full secure backup failed" });
     }
 });
 
@@ -4842,8 +4895,8 @@ app.post('/api/v1/restore', (req, res) => {
     }
 });
 
-const restoreUpload = multer({ storage: multer.memoryStorage() });
-app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => {
+const restoreDiskUpload = multer({ dest: os.tmpdir() });
+app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req, res) => {
   const tempDir = path.join(os.tmpdir(), `nexus-restore-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
   fs.mkdirSync(tempDir, { recursive: true });
   try {
@@ -4851,34 +4904,46 @@ app.post('/api/v1/full-restore', restoreUpload.single('archive'), (req, res) => 
 
     const password = req.body.password;
     if (!password) {
+      try { fs.unlinkSync(req.file.path); } catch {}
       return res.status(400).json({ error: "Password is required to restore secure archive." });
     }
 
-    const fileBuffer = req.file.buffer;
-
-    if (fileBuffer.length < 44) {
+    const fileSize = req.file.size;
+    if (fileSize < 44) {
+      try { fs.unlinkSync(req.file.path); } catch {}
       return res.status(400).json({ error: "Invalid archive format." });
     }
 
-    const salt = fileBuffer.subarray(0, 16);
-    const iv = fileBuffer.subarray(16, 28);
-    const authTag = fileBuffer.subarray(28, 44);
-    const encrypted = fileBuffer.subarray(44);
+    const fd = fs.openSync(req.file.path, 'r');
+    const salt = Buffer.alloc(16);
+    const iv = Buffer.alloc(12);
+    const authTag = Buffer.alloc(16);
+    
+    fs.readSync(fd, salt, 0, 16, 0);
+    fs.readSync(fd, iv, 0, 12, 16);
+    fs.readSync(fd, authTag, 0, 16, fileSize - 16);
 
     const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(authTag);
 
-    let rawBuffer;
+    const readStream = fs.createReadStream(req.file.path, { fd, start: 28, end: fileSize - 17, autoClose: true });
+    
     try {
-      rawBuffer = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-    } catch (decryptErr) {
-      console.error("Decryption failed:", decryptErr);
-      return res.status(401).json({ error: "Decryption failed. Incorrect password or corrupted archive." });
+      await new Promise((resolve, reject) => {
+        readStream.pipe(decipher)
+          .on('error', err => reject(new Error("Decryption failed. Incorrect password or corrupted archive.")))
+          .pipe(unzipper.Extract({ path: tempDir }))
+          .on('close', resolve)
+          .on('error', err => reject(new Error("Archive extraction failed: " + err.message)));
+      });
+    } catch (err) {
+      console.error("Restore stream extraction failed:", err);
+      try { fs.unlinkSync(req.file.path); } catch {}
+      return res.status(401).json({ error: err.message });
     }
-
-    const zip = new AdmZip(rawBuffer);
-    zip.extractAllTo(tempDir, true);
+    
+    try { fs.unlinkSync(req.file.path); } catch {}
 
     if (isSandbox(req)) {
       // Restoring inside a single sandbox
@@ -5022,16 +5087,18 @@ app.get('/api/v1/backup-users-groups', (req, res) => {
     }
 });
 
-app.post('/api/v1/restore-users-groups', restoreUpload.single('archive'), (req, res) => {
+app.post('/api/v1/restore-users-groups', restoreDiskUpload.single('archive'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
 
         const password = req.body.password;
         if (!password) {
+            try { fs.unlinkSync(req.file.path); } catch {}
             return res.status(400).json({ error: "Password is required to restore users/groups archive." });
         }
 
-        const fileBuffer = req.file.buffer;
+        const fileBuffer = fs.readFileSync(req.file.path);
+        try { fs.unlinkSync(req.file.path); } catch {}
 
         if (fileBuffer.length < 44) {
             return res.status(400).json({ error: "Invalid archive format." });
@@ -5577,6 +5644,16 @@ app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, re
 });
 
 app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, error: "No file" });
+        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        res.json({ success: true, filePath: relativePath });
+    } catch (err) {
+        res.status(500).json({ success: false, error: "Upload failed" });
+    }
+});
+
+app.post('/api/upload-cost-sheet', uploadCostSheet.single('costSheetFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');

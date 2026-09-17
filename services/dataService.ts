@@ -427,8 +427,25 @@ class DataService {
     return this.dispatchAction(orderId, 'set-production-type', { itemId, type });
   }
 
-  async uploadCostSheet(orderId: string, itemId: string, costSheetFile: string | null, costSheetFileName: string | null, costSheetEditableCells?: string[], costSheetCellColors?: Record<string, string>, replaceWrongData?: boolean) {
-    return this.dispatchAction(orderId, 'upload-cost-sheet', { itemId, costSheetFile, costSheetFileName, costSheetEditableCells, costSheetCellColors, replaceWrongData });
+  async uploadCostSheet(orderId: string, itemId: string, costSheetFile: string | File | null, costSheetFileName: string | null, costSheetEditableCells?: string[], costSheetCellColors?: Record<string, string>, replaceWrongData?: boolean) {
+    let finalPath = typeof costSheetFile === 'string' ? costSheetFile : null;
+    
+    if (costSheetFile instanceof File) {
+      const formData = new FormData();
+      formData.append('costSheetFile', costSheetFile);
+      const response = await fetch(`${BACKEND_URL}/api/upload-cost-sheet`, {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        body: formData
+      });
+      if (!response.ok) {
+        throw new Error("Cost sheet file upload failed");
+      }
+      const data = await response.json();
+      finalPath = data.filePath;
+    }
+
+    return this.dispatchAction(orderId, 'upload-cost-sheet', { itemId, costSheetFile: finalPath, costSheetFileName, costSheetEditableCells, costSheetCellColors, replaceWrongData });
   }
 
   async updateCostSheetText(orderId: string, itemId: string, costSheetText: string | null) {

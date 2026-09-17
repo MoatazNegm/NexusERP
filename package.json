@@ -13,6 +13,7 @@
     "@aws-sdk/client-s3": "^3.855.0",
     "@google/genai": "^1.39.0",
     "adm-zip": "^0.5.16",
+    "archiver": "^8.0.0",
     "body-parser": "^2.2.2",
     "cors": "^2.8.6",
     "dexie": "^4.0.11",
@@ -28,6 +29,7 @@
     "react-dom": "^19.2.4",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
+    "unzipper": "^0.12.5",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
