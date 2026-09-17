@@ -483,7 +483,7 @@ const readDb = (customPath = null) => {
   }
 
   try {
-    const raw = fs.readFileSync(targetPath, 'utf8').replace(/^\uFEFF/, '');
+    const raw = fs.readFileSync(targetPath, 'utf8');
     const db = JSON.parse(raw);
     if (db.settings?.[0]?.dbSchemaVersion < CURRENT_SCHEMA_VERSION) {
       applySchemaMigrations(db, targetPath);
@@ -492,7 +492,7 @@ const readDb = (customPath = null) => {
   } catch (err) {
     console.error(`[DB] Read error on ${targetPath}:`, err);
     if (fs.existsSync(bakPath)) {
-      try { return JSON.parse(fs.readFileSync(bakPath, 'utf8').replace(/^\uFEFF/, '')); } catch {}
+      try { return JSON.parse(fs.readFileSync(bakPath, 'utf8')); } catch {}
     }
     return {};
   }
@@ -527,7 +527,7 @@ const pushToTursoAsync = async (data, dbPath) => {
 const pullFromTursoOnStartup = async () => {
     try {
         if (!fs.existsSync(DB_PATH)) return;
-        const localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8').replace(/^\uFEFF/, ''));
+        const localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
         const settingsList = localDb.settings || [];
         const settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
         
@@ -5047,7 +5047,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       // Restoring inside a single sandbox
       const extractedDb = path.join(tempDir, 'db.json');
       if (fs.existsSync(extractedDb)) {
-        const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8').replace(/^\uFEFF/, ''));
+        const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
         const liveDb = readDb(DB_PATH);
         const ownerName = req.sandboxOwner;
         const existingSandboxDb = readDb(getDbPath(req));
@@ -5090,7 +5090,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       // LIVE RESTORE: Restore live db.json AND all db.sandbox.*.json files AND all uploads
       const extractedDb = path.join(tempDir, 'db.json');
       if (fs.existsSync(extractedDb)) {
-        const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8').replace(/^\uFEFF/, ''));
+        const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
         applySchemaMigrations(db, DB_PATH);
         if (!db.contracts) db.contracts = [];
         writeDb(db, DB_PATH);
@@ -5519,7 +5519,7 @@ app.post('/api/v1/login', (req, res) => {
     const sandboxPath = getSandboxDbPath(username);
     if (!fs.existsSync(sandboxPath)) {
       const stubPath = path.join(__dirname, 'db.stub.json');
-      const stubDb = fs.existsSync(stubPath) ? JSON.parse(fs.readFileSync(stubPath, 'utf8').replace(/^\uFEFF/, '')) : {};
+      const stubDb = fs.existsSync(stubPath) ? JSON.parse(fs.readFileSync(stubPath, 'utf8')) : {};
       const liveAi = getLiveAiSettings();
       stubDb.settings = [{
         id: 'system_settings',
@@ -6405,7 +6405,7 @@ const migrateAllSandboxesOnStartup = () => {
     for (const file of sandboxFiles) {
         const targetPath = path.join(__dirname, file);
         try {
-            const raw = fs.readFileSync(targetPath, 'utf8').replace(/^\uFEFF/, '');
+            const raw = fs.readFileSync(targetPath, 'utf8');
             const db = JSON.parse(raw);
             const currentVersion = db.settings?.[0]?.dbSchemaVersion || 0;
             if (currentVersion >= CURRENT_SCHEMA_VERSION) {
