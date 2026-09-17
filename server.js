@@ -382,18 +382,6 @@ const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 
 
     // Priority 3: Recovery from Negative Margin (sticky: only exit when costs are known and margin recovers, or components are removed)
     if (currentStatus === OrderStatus.NEGATIVE_MARGIN && (!hasComponents || (totalCostInOrderCurrency > 0 && markupPct >= minMargin))) {
-        // If ANY component is still in an active procurement step (PENDING_OFFER, RFP_SENT, AWARDED,
-        // ORDERED, WAITING_CONTRACT_START), the order must return to WAITING_SUPPLIERS — not to
-        // TECHNICAL_REVIEW. Returning to TECHNICAL_REVIEW would hide the order from the Procurement
-        // module (which filters out TECHNICAL_REVIEW orders), causing it to silently disappear
-        // after award prices cause or clear a margin breach.
-        const PROC_ACTIVE_STATUSES = ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'];
-        const anyInActiveProcurement = (items || []).some(it =>
-            (it.components || []).some(c =>
-                c.source === 'PROCUREMENT' && PROC_ACTIVE_STATUSES.includes(c.status)
-            )
-        );
-        if (anyInActiveProcurement) return OrderStatus.WAITING_SUPPLIERS;
         return (hasActiveTechReview || anyAccepted) ? OrderStatus.TECHNICAL_REVIEW : OrderStatus.LOGGED;
     }
 
@@ -1736,25 +1724,6 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
 
         if (nextStatus !== order.status) {
             const old = order.status || 'NEW';
-
-            // SECONDARY GUARD: If evaluateMarginStatus wants to send the order back to
-            // TECHNICAL_REVIEW, but the order already has components actively in procurement
-            // (PENDING_OFFER, RFP_SENT, AWARDED, ORDERED, WAITING_CONTRACT_START), the correct
-            // destination is WAITING_SUPPLIERS — not TECHNICAL_REVIEW. This prevents Non-Blanket
-            // TRADING/MANUFACTURING POs from disappearing from the Procurement module when award
-            // prices cause or clear a margin breach (e.g. cancel-award resets unitCost to 0).
-            if (nextStatus === OrderStatus.TECHNICAL_REVIEW) {
-                const PROC_ACTIVE_STATUSES = ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'];
-                const anyInActiveProcurement = (order.items || []).some(it =>
-                    (it.components || []).some(c =>
-                        c.source === 'PROCUREMENT' && PROC_ACTIVE_STATUSES.includes(c.status)
-                    )
-                );
-                if (anyInActiveProcurement) {
-                    nextStatus = OrderStatus.WAITING_SUPPLIERS;
-                }
-            }
-
             order.status = nextStatus;
             // Reset persistent violation flags on status transition
             order.loggingComplianceViolation = false;
