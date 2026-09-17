@@ -149,6 +149,11 @@ When asked to change a feature, land on the row below, not on the file. All line
   - In the Procurement Outsourcing tab (`components/ProcurementModule.tsx`), blanket orders (`isOrderBlanketType(order)`) sharing the same project name (`getOrderProjName(order)`) are consolidated into a single card ("as if they were one large order").
   - The card header prominently displays quick info for the "latest" order in that project: Customer PO Number, Internal Order Number, and PO Received Date.
   - A toggleable "Project Orders History" dropdown link in the header opens an embedded subcard showing all orders in the project row by row: Customer PO Number, Internal Order Number, Received Date, and download pills for all cost sheets uploaded during that order's PO calendar month.
+- **Action Modals UX (Send RFP & Award Tender):**
+  - Action popups (`activeAction`) use a viewport-constrained layout (`max-h-[88vh]` with pinned header, pinned footer, and scrollable middle container) so that submission/abort buttons are always visible without scrolling the browser window.
+  - In Send RFP, suppliers are selected via a compact multi-select list box with search filtering and Select All / Clear controls, replacing bulky card grids.
+  - In Award Tender, suppliers are selected via a matching compact single-select list box with search.
+  - i18n support in `ProcurementModule.tsx` leverages `const { t, language } = useLanguage(); const isAr = language === 'ar';`.
 
 ### Inventory
 
@@ -241,7 +246,7 @@ When asked to change a feature, land on the row below, not on the file. All line
 - **`/api/v1/wipe` (live only):** `server.js:2398`
 - **`/api/v1/sandbox/reset` (sandbox only):** `server.js:2406`
 - **`/api/v1/sandbox/revert-login`:** `server.js:2422`
-- **Admin sandbox list:** `server.js:4223`
+- **Admin sandbox list:** `server.js:4223`; client polling (`App.tsx`) is guarded by `currentUser.roles.includes('admin')` to avoid 403 Forbidden errors when non-admin users work in sandbox mode.
 - **Admin switch-sandbox:** `server.js:4290`
 - **Schema migration chain:** `server.js:784` `const migrations = [...]`; `CURRENT_SCHEMA_VERSION` at `server.js:106`
 - **Spec doc:** `C:\Users\moata\.local\share\kilo\plans\1786643099095-user-sandbox-plan.md` (Amendment v3.5.1 at the top)
@@ -260,7 +265,8 @@ When asked to change a feature, land on the row below, not on the file. All line
 1. **Module-per-feature.** One large file per business domain. Extract to `SortableTable` / `ModuleGate` / `DashboardCard` only when reused >1x.
 2. **Data service abstraction.** All server calls go through `services/dataService.ts`. `getAuthHeaders()` adds `x-user` (always) and `x-sandbox-owner` (in sandboxes). The header drives tenancy; the URL does not. Mutations use generic dispatch `{ orderId, action, payload }`. **Server-side collection safety:** `addToCollection` in `server.js` initializes `db[col] = []` before pushing, so missing collections are created on the fly. `updateInCollection` treats `settings` and `modules` as upserts (encrypts `settings` via `encryptSettings` on creation).
 3. **Quantity alteration.** When an item's qty is lowered post-creation, use `alteredQty` + `alterationComment`. Always compute revenue/fulfillment/BoM via `getItemEffectiveQty(item)`. Original `quantity` is never mutated. PO line items with `0`/blank qty are read-only `1`s via the same helper. `processedOrderInternal` does **not** write `quantity` back.
-4. **Margin protection.** `NEGATIVE_MARGIN` is sticky. `isMarginBreach(cost, markupPct, minMargin)` lives in `shared/margin.js` (shared client/server). The `NEGATIVE_MARGIN` block fires only when component costs are actually identified (`totalCost > 0`) **and** markup is below the configured minimum. Newly logged POs with no costs stay in `LOGGED`. The status only exits when costs appear, the markup recovers, or components are removed â€” preventing silent auto-regression while costs are still unknown.
+4. **Margin protection.** `NEGATIVE_MARGIN` is sticky. `isMarginBreach(cost, markupPct, minMargin)` lives in `shared/margin.js` (shared client/server). The `NEGATIVE_MARGIN` block fires only when component costs are actually identified (`totalCost > 0`) **and** markup is below the configured minimum. Newly logged POs with no costs stay in `LOGGED`. The status only exits when costs appear, the markup recovers, or components are removed — preventing silent auto-regression while costs are still unknown.
+   - **Procurement-safe NEGATIVE_MARGIN recovery (critical rule):** When recovering from `NEGATIVE_MARGIN`, `evaluateMarginStatus` MUST check if any component is still in an active procurement state (`PENDING_OFFER`, `RFP_SENT`, `AWARDED`, `ORDERED`, `WAITING_CONTRACT_START`). If yes, the order must recover to `WAITING_SUPPLIERS` — **not** `TECHNICAL_REVIEW`. Returning to `TECHNICAL_REVIEW` silently hides the order from the Procurement module (which filters out `TECHNICAL_REVIEW` orders at `purchaseGroups` line 1304). The primary fix is in `evaluateMarginStatus` Priority 3 (`server.js:~383`); a secondary belt-and-suspenders guard is in `processOrderInternal` after the `evaluateMarginStatus` call (`server.js:~1737`). This applies to Non-Blanket TRADING and MANUFACTURING POs only (blanket orders are exempt from margin checks entirely at Priority 0).
 5. **Modal action pattern.** User actions open a local modal with draft state â†’ validate â†’ call `dataService` â†’ parent refresh via callback â†’ modal cleans up.
 6. **Status-driven workflow.** `OrderStatus` enum in `types.ts`. Server `dispatchAction` enforces valid transitions. Frontend renders by `order.status`, never derived flags.
 7. **Role-based gating.** Every top-level module route checks `ModuleGate` against the user's role. The actual list of available roles and module mappings live in `db.json` (`settings.availableRoles`, `settings.roleMappings`); the frontend pulls them at runtime via API.
