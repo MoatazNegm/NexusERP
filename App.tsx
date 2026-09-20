@@ -120,12 +120,13 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (currentUser?.sandbox) {
+    const isAdmin = currentUser?.roles?.includes('admin');
+    if (currentUser?.sandbox && isAdmin) {
       dataService.getAdminSandboxes().then(setAdminSandboxes).catch(() => setAdminSandboxes([]));
     } else {
       setAdminSandboxes([]);
     }
-  }, [currentUser?.sandbox, currentUser?.sandboxOwner, refreshKey]);
+  }, [currentUser?.sandbox, currentUser?.sandboxOwner, currentUser?.roles, refreshKey]);
 
   useEffect(() => {
     if (currentUser) {

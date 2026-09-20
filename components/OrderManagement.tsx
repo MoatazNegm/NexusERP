@@ -499,7 +499,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   }, [customerReferenceNumber, existingOrders, editingOrderId, isScanning, activeTab, blanketSubTab, customerName]);
 
   const hasLoggingViolations = useMemo(() => {
-    return loggedOrders.some(o => o.loggingComplianceViolation);
+    return loggedOrders.some(o => o.loggingComplianceViolation && !isStockOrder(o));
   }, [loggedOrders]);
 
 
@@ -545,26 +545,30 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setCustomerReferenceNumber(poRef || String(match.internalOrderNumber || ''));
 
     setOrderDate(match.orderDate || today);
-    setPaymentSlaDays(match.paymentSlaDays || (isStock ? 0 : config.settings.defaultPaymentSlaDays));
-    setAppliesWithholdingTax(match.appliesWithholdingTax || false);
+    setPaymentSlaDays(isStock ? 0 : (match.paymentSlaDays || config.settings.defaultPaymentSlaDays));
+    setAppliesWithholdingTax(isStock ? false : (match.appliesWithholdingTax || false));
     setBlanketOrder(isStock ? false : isBlanket);
-    setProjectName(match.projectName || '');
-    setBlanketContractId(match.blanketContractId || resolvedContractId);
-    setContractId(resolvedContractId);
-    const loadedDeliveryDays = match.targetDeliveryDays || 30;
+    setProjectName(isStock ? '' : (match.projectName || ''));
+    setBlanketContractId(isStock ? '' : (match.blanketContractId || resolvedContractId));
+    setContractId(isStock ? '' : resolvedContractId);
+    const loadedDeliveryDays = isStock ? 0 : (match.targetDeliveryDays || 30);
     setTargetDeliveryDays(loadedDeliveryDays);
-    setTargetDeliveryDate(match.targetDeliveryDate || getDatePlusDays(match.orderDate || today, loadedDeliveryDays));
+    setTargetDeliveryDate(isStock ? '' : (match.targetDeliveryDate || getDatePlusDays(match.orderDate || today, loadedDeliveryDays)));
     // Multi-currency amendment: hydrate currency + conversionRate from the
     // existing record so editing a USD order does not silently reset it to L.E.
-    setCurrency(match.currency || DEFAULT_CURRENCY);
-    setConversionRate(match.conversionRate || 1);
+    setCurrency(isStock ? 'L.E.' : (match.currency || DEFAULT_CURRENCY));
+    setConversionRate(isStock ? 1 : (match.conversionRate || 1));
 
-    setItems((match.items || []).map(it => ({
-      ...it,
-      taxDetected: true,
-      pricePerUnit: isStock ? 0 : (it.pricePerUnit || 0),
-      quantity: normalizeQty(it.quantity)
-    })));
+    setItems((match.items || []).map(it => {
+      const rawPrice = it.pricePerUnit ?? (it as any).unitPrice ?? (it as any).price;
+      const parsedPrice = Number(rawPrice);
+      return {
+        ...it,
+        taxDetected: true,
+        pricePerUnit: Number.isFinite(parsedPrice) ? parsedPrice : 0,
+        quantity: normalizeQty(it.quantity)
+      };
+    }));
 
     setEditingOrderId(match.id);
     if (isStock) {
@@ -1222,11 +1226,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
     // Validate: every line item must have positive quantity, price and unit; components are also checked for new orders
     const validationErrors: string[] = [];
-    const isInternalStock = customerName.trim().toLowerCase() === 'internal stock';
+    const isInternalStock = isStockOrder({ customerName, customerReferenceNumber });
     items.forEach((item, idx) => {
       const qty = Number(item.quantity);
       if (!Number.isFinite(qty) || qty <= 0) validationErrors.push(`Item ${idx + 1}: quantity must be greater than 0.`);
-      const price = Number(item.pricePerUnit);
+      const rawPrice = item.pricePerUnit ?? (item as any).unitPrice ?? (item as any).price;
+      const price = Number(rawPrice);
       if (!Number.isFinite(price) || (isInternalStock ? price < 0 : price <= 0)) {
         validationErrors.push(`Item ${idx + 1}: unit price ${isInternalStock ? 'cannot be negative' : 'must be greater than 0'}.`);
       }
@@ -1246,8 +1251,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       return;
     }
 
-    // Normalize quantities before sending
-    const normalizedItems = items.map(item => ({ ...item, quantity: normalizeQty(item.quantity) }));
+    // Normalize quantities and prices before sending
+    const normalizedItems = items.map(item => {
+      const rawPrice = item.pricePerUnit ?? (item as any).unitPrice ?? (item as any).price;
+      const parsedPrice = Number(rawPrice);
+      return {
+        ...item,
+        quantity: normalizeQty(item.quantity),
+        pricePerUnit: Number.isFinite(parsedPrice) ? parsedPrice : 0
+      };
+    });
 
     try {
       const googleAutoUploadEnabled = !!config.settings.googleDriveConfig?.enabled && !!config.settings.googleDriveConfig?.autoUploadExternalSubmissions;
@@ -1313,8 +1326,37 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         };
       };
 
+      const isStock = activeTab === 'stock' || isInternalStock;
+      const finalCustomerName = isStock ? 'Internal Stock' : customerName;
+      const finalOrderDate = isStock ? (orderDate || today) : orderDate;
+      const finalPaymentSlaDays = isStock ? 0 : paymentSlaDays;
+      const finalAppliesWithholdingTax = isStock ? false : appliesWithholdingTax;
+      const finalTargetDeliveryDays = isStock ? 0 : (Number(targetDeliveryDays) || 0);
+      const finalTargetDeliveryDate = isStock ? '' : targetDeliveryDate;
+      const finalCurrency = isStock ? 'L.E.' : currency;
+      const finalConversionRate = isStock ? 1 : conversionRate;
+      const finalBlanketOrder = isStock ? false : blanketOrder;
+      const finalProjectName = isStock ? '' : projectName;
+      const finalBlanketContractId = isStock ? '' : blanketContractId;
+      const finalContractId = isStock ? '' : contractId;
+
       if (editingOrderId) {
-        const updatedOrder = await dataService.updateOrder(editingOrderId, { customerName, customerReferenceNumber, orderDate, paymentSlaDays, appliesWithholdingTax, blanketOrder, projectName, blanketContractId, contractId, currency, conversionRate, items: normalizedItems as any });
+        const updatedOrder = await dataService.updateOrder(editingOrderId, {
+          customerName: finalCustomerName,
+          customerReferenceNumber,
+          orderDate: finalOrderDate,
+          paymentSlaDays: finalPaymentSlaDays,
+          appliesWithholdingTax: finalAppliesWithholdingTax,
+          blanketOrder: finalBlanketOrder,
+          projectName: finalProjectName,
+          blanketContractId: finalBlanketContractId,
+          contractId: finalContractId,
+          currency: finalCurrency,
+          conversionRate: finalConversionRate,
+          targetDeliveryDays: finalTargetDeliveryDays,
+          targetDeliveryDate: finalTargetDeliveryDate,
+          items: normalizedItems as any
+        });
         try {
           const uploadResult = await tryStorageUpload(updatedOrder as any);
           if (uploadResult.googleDrive?.webViewLink) {
@@ -1348,27 +1390,27 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         const isDuplicate = existingOrders.some(o =>
           o.status !== 'REJECTED' &&
           o.customerReferenceNumber?.trim().toLowerCase() === customerReferenceNumber.trim().toLowerCase() &&
-          o.customerName?.trim().toLowerCase() === customerName.trim().toLowerCase()
+          o.customerName?.trim().toLowerCase() === finalCustomerName.trim().toLowerCase()
         );
         if (isDuplicate) {
-          setMessage({ type: 'error', text: `Duplicate PO reference ${customerReferenceNumber} already exists for customer ${customerName}.` });
+          setMessage({ type: 'error', text: `Duplicate PO reference ${customerReferenceNumber} already exists for customer ${finalCustomerName}.` });
           return;
         }
 
         const newOrder = await dataService.addOrder({
-          customerName,
+          customerName: finalCustomerName,
           customerReferenceNumber,
-          orderDate,
-          paymentSlaDays,
-          appliesWithholdingTax,
-          blanketOrder,
-          projectName,
-          blanketContractId,
-          contractId,
-          currency,
-          conversionRate,
-          targetDeliveryDays: Number(targetDeliveryDays) || 0,
-          targetDeliveryDate,
+          orderDate: finalOrderDate,
+          paymentSlaDays: finalPaymentSlaDays,
+          appliesWithholdingTax: finalAppliesWithholdingTax,
+          blanketOrder: finalBlanketOrder,
+          projectName: finalProjectName,
+          blanketContractId: finalBlanketContractId,
+          contractId: finalContractId,
+          currency: finalCurrency,
+          conversionRate: finalConversionRate,
+          targetDeliveryDays: finalTargetDeliveryDays,
+          targetDeliveryDate: finalTargetDeliveryDate,
           items: normalizedItems as any
         });
 
@@ -1469,10 +1511,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     setPaymentSlaDays(0);
     setAppliesWithholdingTax(false);
     setBlanketOrder(false);
-    setTargetDeliveryDays(30);
-    setTargetDeliveryDate(getDatePlusDays(today, 30));
-    setOrderTaxPercent(DEFAULT_TAX_PERCENT);
-    setItems([{ id: 'temp_1', description: 'Stock Replenishment', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, taxDetected: true, logs: [] }]);
+    setTargetDeliveryDays(0);
+    setTargetDeliveryDate('');
+    setOrderTaxPercent(0);
+    setCurrency('L.E.');
+    setConversionRate(1);
+    setItems([{ id: 'temp_1', description: 'Stock Replenishment', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: 0, taxDetected: true, logs: [] }]);
     setMessage({ type: 'info', text: 'Internal Stock Order initialized. PO Reference auto-generated.' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -1647,9 +1691,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
               if (!customerReferenceNumber || !customerReferenceNumber.trim().toUpperCase().startsWith('STOCK-')) {
                 setCustomerReferenceNumber(generateStockPoReference(matchedOrder?.internalOrderNumber));
               }
-              setItems(prev => prev.map(it => ({ ...it, pricePerUnit: 0 })));
               setBlanketOrder(false);
-              setMessage({ type: 'info', text: 'Switched order to Internal Stock mode. Customer set to "Internal Stock" and line item prices zeroed.' });
+              setMessage({ type: 'info', text: 'Switched order to Internal Stock mode. Customer set to "Internal Stock".' });
             } else if (activeTab !== 'stock') {
               startStockOrder();
             }
@@ -1780,255 +1823,277 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       onChange={e => setCustomerReferenceNumber(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between items-center">
-                      <span>Customer Entity Name</span>
-                      {activeTab === 'stock' || customerName === 'Internal Stock' ? (
-                        <span className="text-[8px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200">
-                          Special: Internal Stock
-                        </span>
-                      ) : customerName && (
-                        <span className={`text-[8px] px-2 py-0.5 rounded-full border transition-all ${isNewCustomerCreated
-                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200 animate-pulse'
-                          : (customers.some(c => c.name.toLowerCase() === customerName.toLowerCase())
-                            ? 'bg-blue-100 text-blue-700 border-blue-200'
-                            : 'bg-slate-100 text-slate-400 border-slate-200')
-                          }`}>
-                          {isNewCustomerCreated
-                            ? 'New Auto-Registered Entity'
-                            : (customers.some(c => c.name.toLowerCase() === customerName.toLowerCase())
-                              ? 'Matched with CRM Profile'
-                              : 'Manual/Unmapped Entity')}
-                        </span>
-                      )}
-                    </label>
-                    <input
-                      disabled={editStatus.isFrozen || activeTab === 'stock'}
-                      className={`w-full p-4 border-2 border-slate-100 rounded-2xl outline-none font-bold transition-all shadow-inner ${activeTab === 'stock' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-slate-50 focus:bg-white focus:border-blue-500'}`}
-                      placeholder="Enter Legal Entity Name..."
-                      value={customerName}
-                      list="crm-customer-suggestions"
-                      onChange={e => {
-                        const newName = e.target.value;
-                        setCustomerName(newName);
-                        setIsNewCustomerCreated(false);
-                        if (newName.trim().toLowerCase() === 'internal stock') {
-                          setActiveTab('stock');
-                          if (!customerReferenceNumber || !customerReferenceNumber.trim().toUpperCase().startsWith('STOCK-')) {
-                            const matchedOrder = editingOrderId ? existingOrders.find(o => o.id === editingOrderId) : undefined;
-                            setCustomerReferenceNumber(generateStockPoReference(matchedOrder?.internalOrderNumber));
-                          }
-                          setItems(prev => prev.map(it => ({ ...it, pricePerUnit: 0 })));
-                          setBlanketOrder(false);
-                        } else {
-                          const matchCust = customers.find(c => c.name.toLowerCase() === newName.toLowerCase());
-                          if (matchCust && matchCust.appliesWithholdingTax !== undefined) {
-                            setAppliesWithholdingTax(matchCust.appliesWithholdingTax);
-                          }
-                        }
-                      }}
-                      onBlur={handleCustomerBlur}
-                      required
-                    />
-                    <datalist id="crm-customer-suggestions">
-                      {customers.map(c => (
-                        <option key={c.id} value={c.name} />
-                      ))}
-                    </datalist>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">PO Received Date</label>
-                    <input
-                      disabled={editStatus.isFrozen}
-                      type="date"
-                      max={new Date().toISOString().split('T')[0]} // HTML5 constraint
-                      className={`w-full p-4 border-2 rounded-2xl outline-none font-bold transition-all shadow-inner ${new Date(orderDate) > new Date(new Date().toISOString().split('T')[0])
-                        ? 'bg-rose-50 border-rose-200 text-rose-600 focus:border-rose-400'
-                        : 'bg-slate-50 border-slate-100 focus:bg-white focus:border-blue-500'
-                        }`}
-                      value={orderDate}
-                      onChange={e => {
-                        const newPoDate = e.target.value;
-                        setOrderDate(newPoDate);
-                        if (deliveryInputMode === 'days') {
-                          const d = new Date(newPoDate);
-                          d.setDate(d.getDate() + (Number(targetDeliveryDays) || 0));
-                          setTargetDeliveryDate(d.toISOString().split('T')[0]);
-                        } else {
-                          const start = new Date(newPoDate);
-                          const end = new Date(targetDeliveryDate);
-                          const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-                          setTargetDeliveryDays(diff);
-                        }
-                      }}
-                      required
-                    />
-                    {new Date(orderDate) > new Date(new Date().toISOString().split('T')[0]) && (
-                      <div className="text-[9px] font-black text-rose-500 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse">
-                        <i className="fa-solid fa-circle-exclamation"></i> Future dates are not allowed
+                  {activeTab === 'stock' && (
+                    <div className="md:col-span-2 p-4 bg-emerald-50/70 border border-emerald-200/80 rounded-2xl flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-lg shrink-0">
+                        <i className="fa-solid fa-boxes-stacked"></i>
                       </div>
-                    )}
-                  </div>
-                  <div className="space-y-2 col-span-1 md:col-span-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between">
-                      <span>Target Delivery</span>
-                      <div className="flex bg-slate-200 rounded-lg p-0.5 gap-1">
-                        <button type="button" onClick={() => setDeliveryInputMode('days')} className={`px-2 py-0.5 rounded-md text-[8px] transition-all ${deliveryInputMode === 'days' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>DAYS</button>
-                        <button type="button" onClick={() => setDeliveryInputMode('date')} className={`px-2 py-0.5 rounded-md text-[8px] transition-all ${deliveryInputMode === 'date' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>DATE</button>
+                      <div>
+                        <div className="text-xs font-black text-emerald-900 uppercase tracking-tight">Internal Stock Replenishment Order</div>
+                        <div className="text-[11px] text-emerald-700 font-medium mt-0.5">
+                          Standard commercial customer fields (Entity Name, Payment SLA, Target Delivery, Currency L.E., 1% Tax) are omitted and pre-configured with internal stock defaults.
+                        </div>
                       </div>
-                    </label>
+                    </div>
+                  )}
 
-                    {deliveryInputMode === 'days' ? (
-                      <div className="relative">
+                  {activeTab !== 'stock' && (
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between items-center">
+                          <span>Customer Entity Name</span>
+                          {customerName === 'Internal Stock' ? (
+                            <span className="text-[8px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200">
+                              Special: Internal Stock
+                            </span>
+                          ) : customerName && (
+                            <span className={`text-[8px] px-2 py-0.5 rounded-full border transition-all ${isNewCustomerCreated
+                              ? 'bg-emerald-100 text-emerald-700 border-emerald-200 animate-pulse'
+                              : (customers.some(c => c.name.toLowerCase() === customerName.toLowerCase())
+                                ? 'bg-blue-100 text-blue-700 border-blue-200'
+                                : 'bg-slate-100 text-slate-400 border-slate-200')
+                              }`}>
+                              {isNewCustomerCreated
+                                ? 'New Auto-Registered Entity'
+                                : (customers.some(c => c.name.toLowerCase() === customerName.toLowerCase())
+                                  ? 'Matched with CRM Profile'
+                                  : 'Manual/Unmapped Entity')}
+                            </span>
+                          )}
+                        </label>
                         <input
                           disabled={editStatus.isFrozen}
-                          type="number"
-                          className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner pr-16"
-                          value={targetDeliveryDays}
+                          className="w-full p-4 border-2 border-slate-100 rounded-2xl outline-none font-bold transition-all shadow-inner bg-slate-50 focus:bg-white focus:border-blue-500"
+                          placeholder="Enter Legal Entity Name..."
+                          value={customerName}
+                          list="crm-customer-suggestions"
                           onChange={e => {
-                            const val = e.target.value === '' ? '' : parseInt(e.target.value);
-                            setTargetDeliveryDays(val);
-                            if (val !== '' && orderDate) {
-                              const d = new Date(orderDate);
-                              d.setDate(d.getDate() + val);
-                              setTargetDeliveryDate(d.toISOString().split('T')[0]);
+                            const newName = e.target.value;
+                            setCustomerName(newName);
+                            setIsNewCustomerCreated(false);
+                            if (newName.trim().toLowerCase() === 'internal stock') {
+                              setActiveTab('stock');
+                              if (!customerReferenceNumber || !customerReferenceNumber.trim().toUpperCase().startsWith('STOCK-')) {
+                                const matchedOrder = editingOrderId ? existingOrders.find(o => o.id === editingOrderId) : undefined;
+                                setCustomerReferenceNumber(generateStockPoReference(matchedOrder?.internalOrderNumber));
+                              }
+                              setBlanketOrder(false);
+                            } else {
+                              const matchCust = customers.find(c => c.name.toLowerCase() === newName.toLowerCase());
+                              if (matchCust && matchCust.appliesWithholdingTax !== undefined) {
+                                setAppliesWithholdingTax(matchCust.appliesWithholdingTax);
+                              }
                             }
                           }}
+                          onBlur={handleCustomerBlur}
+                          required
                         />
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-300 uppercase">Days</div>
+                        <datalist id="crm-customer-suggestions">
+                          {customers.map(c => (
+                            <option key={c.id} value={c.name} />
+                          ))}
+                        </datalist>
                       </div>
-                    ) : (
-                      <input
-                        disabled={editStatus.isFrozen}
-                        type="date"
-                        className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
-                        value={targetDeliveryDate}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setTargetDeliveryDate(val);
-                          if (val && orderDate) {
-                            const start = new Date(orderDate);
-                            const end = new Date(val);
-                            const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-                            setTargetDeliveryDays(diff);
-                          }
-                        }}
-                      />
-                    )}
 
-                    <div className="px-2 pt-1 flex justify-between items-center opacity-60">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase">
-                        {deliveryInputMode === 'days' ? `Scheduled: ${targetDeliveryDate}` : `Calculated: ${targetDeliveryDays} Days`}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Compact fields row: Payment SLA, Tax %, Currency (unchanged sizes/positions) */}
-                  <div className="flex flex-row gap-4 items-start">
-                    <div className="flex-2 space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment SLA (Days)</label>
-                      <input
-                        disabled={editStatus.isFrozen}
-                        type="number"
-                        className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
-                        placeholder="e.g. 30"
-                        value={paymentSlaDays}
-                        onChange={e => setPaymentSlaDays(parseInt(e.target.value) || 0)}
-                        required
-                      />
-                    </div>
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tax %</label>
-                      <input
-                        disabled={editStatus.isFrozen}
-                        type="number"
-                        step="any"
-                        className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner text-center"
-                        value={orderTaxPercent}
-                        onChange={e => setOrderTaxPercent(parseFloat(e.target.value) || 0)}
-                      />
-                    </div>
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Currency</label>
-                      <select
-                        disabled={editStatus.isFrozen}
-                        className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
-                        value={currency}
-                        onChange={e => setCurrency(e.target.value as Currency)}
-                        title="Order currency. Prices on this order are denominated in this currency. Defaults to L.E."
-                      >
-                        {SUPPORTED_CURRENCIES.map(c => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  {/* Blanket Contract ID select (rendered only inside blanket orders tab) */}
-                  {activeTab === 'blanket' && (
-                    <div className="flex flex-row gap-4 items-start">
-                      <div className="flex-2 space-y-1.5">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Project Name</label>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">PO Received Date</label>
                         <input
                           disabled={editStatus.isFrozen}
-                          className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
-                          placeholder="e.g. Project Alpha"
-                          value={projectName}
-                          onChange={e => setProjectName(e.target.value)}
+                          type="date"
+                          max={new Date().toISOString().split('T')[0]} // HTML5 constraint
+                          className={`w-full p-4 border-2 rounded-2xl outline-none font-bold transition-all shadow-inner ${new Date(orderDate) > new Date(new Date().toISOString().split('T')[0])
+                            ? 'bg-rose-50 border-rose-200 text-rose-600 focus:border-rose-400'
+                            : 'bg-slate-50 border-slate-100 focus:bg-white focus:border-blue-500'
+                            }`}
+                          value={orderDate}
+                          onChange={e => {
+                            const newPoDate = e.target.value;
+                            setOrderDate(newPoDate);
+                            if (deliveryInputMode === 'days') {
+                              const d = new Date(newPoDate);
+                              d.setDate(d.getDate() + (Number(targetDeliveryDays) || 0));
+                              setTargetDeliveryDate(d.toISOString().split('T')[0]);
+                            } else {
+                              const start = new Date(newPoDate);
+                              const end = new Date(targetDeliveryDate);
+                              const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                              setTargetDeliveryDays(diff);
+                            }
+                          }}
+                          required
                         />
-                      </div>
-                      <div className="flex-2 space-y-1.5">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Linked Contract Reference</label>
-                        <select
-                          disabled={editStatus.isFrozen}
-                          className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
-                          value={contractId}
-                          onChange={e => setContractId(e.target.value)}
-                        >
-                          <option value="">— None (No Contract Linked) —</option>
-                          {contracts
-                            .filter(c => c.customerName.trim().toLowerCase() === customerName.trim().toLowerCase())
-                            .map(c => (
-                              <option key={c.id} value={c.id}>{c.id} — {c.customerName}</option>
-                            ))}
-                        </select>
-                        {customerName.trim() === '' ? (
-                          <div className="text-[9px] font-black text-amber-600 uppercase tracking-widest ml-1 flex items-center gap-1 mt-1">
-                            <i className="fa-solid fa-triangle-exclamation"></i> Please enter/select a customer name to filter available contracts.
-                          </div>
-                        ) : contracts.filter(c => c.customerName.trim().toLowerCase() === customerName.trim().toLowerCase()).length === 0 ? (
-                          <div className="text-[9px] font-black text-rose-500 uppercase tracking-widest ml-1 flex items-center gap-1 mt-1">
-                            <i className="fa-solid fa-circle-xmark"></i> No logged contracts found for customer "{customerName}".
-                          </div>
-                        ) : null}
-                        {contractId && (
-                          <div className="text-[9px] font-black text-teal-600 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse mt-1">
-                            <i className="fa-solid fa-link"></i> Linked to contract reference {contractId}.
+                        {new Date(orderDate) > new Date(new Date().toISOString().split('T')[0]) && (
+                          <div className="text-[9px] font-black text-rose-500 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse">
+                            <i className="fa-solid fa-circle-exclamation"></i> Future dates are not allowed
                           </div>
                         )}
                       </div>
-                      <div className="flex-1"></div>
-                    </div>
+
+                      <div className="space-y-2 col-span-1 md:col-span-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex justify-between">
+                          <span>Target Delivery</span>
+                          <div className="flex bg-slate-200 rounded-lg p-0.5 gap-1">
+                            <button type="button" onClick={() => setDeliveryInputMode('days')} className={`px-2 py-0.5 rounded-md text-[8px] transition-all ${deliveryInputMode === 'days' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>DAYS</button>
+                            <button type="button" onClick={() => setDeliveryInputMode('date')} className={`px-2 py-0.5 rounded-md text-[8px] transition-all ${deliveryInputMode === 'date' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>DATE</button>
+                          </div>
+                        </label>
+
+                        {deliveryInputMode === 'days' ? (
+                          <div className="relative">
+                            <input
+                              disabled={editStatus.isFrozen}
+                              type="number"
+                              className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner pr-16"
+                              value={targetDeliveryDays}
+                              onChange={e => {
+                                const val = e.target.value === '' ? '' : parseInt(e.target.value);
+                                setTargetDeliveryDays(val);
+                                if (val !== '' && orderDate) {
+                                  const d = new Date(orderDate);
+                                  d.setDate(d.getDate() + val);
+                                  setTargetDeliveryDate(d.toISOString().split('T')[0]);
+                                }
+                              }}
+                            />
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-300 uppercase">Days</div>
+                          </div>
+                        ) : (
+                          <input
+                            disabled={editStatus.isFrozen}
+                            type="date"
+                            className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                            value={targetDeliveryDate}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setTargetDeliveryDate(val);
+                              if (val && orderDate) {
+                                const start = new Date(orderDate);
+                                const end = new Date(val);
+                                const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                                setTargetDeliveryDays(diff);
+                              }
+                            }}
+                          />
+                        )}
+
+                        <div className="px-2 pt-1 flex justify-between items-center opacity-60">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase">
+                            {deliveryInputMode === 'days' ? `Scheduled: ${targetDeliveryDate}` : `Calculated: ${targetDeliveryDays} Days`}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Compact fields row: Payment SLA, Tax %, Currency (unchanged sizes/positions) */}
+                      <div className="flex flex-row gap-4 items-start">
+                        <div className="flex-2 space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment SLA (Days)</label>
+                          <input
+                            disabled={editStatus.isFrozen}
+                            type="number"
+                            className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                            placeholder="e.g. 30"
+                            value={paymentSlaDays}
+                            onChange={e => setPaymentSlaDays(parseInt(e.target.value) || 0)}
+                            required
+                          />
+                        </div>
+                        <div className="flex-1 space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tax %</label>
+                          <input
+                            disabled={editStatus.isFrozen}
+                            type="number"
+                            step="any"
+                            className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner text-center"
+                            value={orderTaxPercent}
+                            onChange={e => setOrderTaxPercent(parseFloat(e.target.value) || 0)}
+                          />
+                        </div>
+                        <div className="flex-1 space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Currency</label>
+                          <select
+                            disabled={editStatus.isFrozen}
+                            className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-blue-500 font-bold transition-all shadow-inner"
+                            value={currency}
+                            onChange={e => setCurrency(e.target.value as Currency)}
+                            title="Order currency. Prices on this order are denominated in this currency. Defaults to L.E."
+                          >
+                            {SUPPORTED_CURRENCIES.map(c => (
+                              <option key={c} value={c}>{c}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Blanket Contract ID select (rendered only inside blanket orders tab) */}
+                      {activeTab === 'blanket' && (
+                        <div className="flex flex-row gap-4 items-start">
+                          <div className="flex-2 space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Project Name</label>
+                            <input
+                              disabled={editStatus.isFrozen}
+                              className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
+                              placeholder="e.g. Project Alpha"
+                              value={projectName}
+                              onChange={e => setProjectName(e.target.value)}
+                            />
+                          </div>
+                          <div className="flex-2 space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Linked Contract Reference</label>
+                            <select
+                              disabled={editStatus.isFrozen}
+                              className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 font-bold transition-all shadow-inner"
+                              value={contractId}
+                              onChange={e => setContractId(e.target.value)}
+                            >
+                              <option value="">— None (No Contract Linked) —</option>
+                              {contracts
+                                .filter(c => c.customerName.trim().toLowerCase() === customerName.trim().toLowerCase())
+                                .map(c => (
+                                  <option key={c.id} value={c.id}>{c.id} — {c.customerName}</option>
+                                ))}
+                            </select>
+                            {customerName.trim() === '' ? (
+                              <div className="text-[9px] font-black text-amber-600 uppercase tracking-widest ml-1 flex items-center gap-1 mt-1">
+                                <i className="fa-solid fa-triangle-exclamation"></i> Please enter/select a customer name to filter available contracts.
+                              </div>
+                            ) : contracts.filter(c => c.customerName.trim().toLowerCase() === customerName.trim().toLowerCase()).length === 0 ? (
+                              <div className="text-[9px] font-black text-rose-500 uppercase tracking-widest ml-1 flex items-center gap-1 mt-1">
+                                <i className="fa-solid fa-circle-xmark"></i> No logged contracts found for customer "{customerName}".
+                              </div>
+                            ) : null}
+                            {contractId && (
+                              <div className="text-[9px] font-black text-teal-600 uppercase tracking-widest ml-1 flex items-center gap-1 animate-pulse mt-1">
+                                <i className="fa-solid fa-link"></i> Linked to contract reference {contractId}.
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1"></div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 
-                <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-4">
-                  <div className="flex-1">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        disabled={editStatus.isFrozen}
-                        type="checkbox"
-                        className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500"
-                        checked={appliesWithholdingTax}
-                        onChange={e => setAppliesWithholdingTax(e.target.checked)}
-                      />
-                      <span className="text-sm font-bold text-slate-800">Apply 1% Withholding Tax Deduction for this Order</span>
-                    </label>
-                    <p className="text-xs text-slate-500 mt-1 pl-8 font-medium">If enabled, the customer is expected to pay exactly 99% of the PO value, plus provide a WHT certificate in the Finance module.</p>
+                {activeTab !== 'stock' && (
+                  <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-4">
+                    <div className="flex-1">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          disabled={editStatus.isFrozen}
+                          type="checkbox"
+                          className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500"
+                          checked={appliesWithholdingTax}
+                          onChange={e => setAppliesWithholdingTax(e.target.checked)}
+                        />
+                        <span className="text-sm font-bold text-slate-800">Apply 1% Withholding Tax Deduction for this Order</span>
+                      </label>
+                      <p className="text-xs text-slate-500 mt-1 pl-8 font-medium">If enabled, the customer is expected to pay exactly 99% of the PO value, plus provide a WHT certificate in the Finance module.</p>
+                    </div>
+                    <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-500 shrink-0">
+                      <i className="fa-solid fa-file-invoice-dollar"></i>
+                    </div>
                   </div>
-                  <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-500 shrink-0">
-                    <i className="fa-solid fa-file-invoice-dollar"></i>
-                  </div>
-                </div>
+                )}
 
                 <div className="space-y-6">
                   <div className="flex justify-between items-center border-b border-slate-100 pb-2">
@@ -2465,7 +2530,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                 <tbody className="divide-y divide-slate-50">
                   {filteredLoggedOrders.map(draft => (
 
-                    <tr key={draft.id} className={`hover:bg-slate-50/80 transition-all group ${draft.loggingComplianceViolation ? 'bg-rose-50 hover:!bg-rose-100 border-l-4 border-rose-500' : ''} ${draft.status === OrderStatus.NEGATIVE_MARGIN ? 'bg-rose-50/30 hover:!bg-rose-50 border-l-4 border-rose-400' : ''}`}>
+                    <tr key={draft.id} className={`hover:bg-slate-50/80 transition-all group ${draft.loggingComplianceViolation && !isStockOrder(draft) ? 'bg-rose-50 hover:!bg-rose-100 border-l-4 border-rose-500' : ''} ${draft.status === OrderStatus.NEGATIVE_MARGIN && !isStockOrder(draft) ? 'bg-rose-50/30 hover:!bg-rose-50 border-l-4 border-rose-400' : ''}`}>
 
                       <td className="px-8 py-6">
                         <div className="flex items-center gap-2">
@@ -2492,8 +2557,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                           <div className="text-[9px] text-slate-400 font-medium mt-0.5">Project: {draft.projectName}</div>
                         )}
                         {draft.rolledBackToLogged && <div className="mt-1"><span className="text-[9px] font-black text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 uppercase tracking-wider flex items-center gap-1 w-fit"><i className="fa-solid fa-rotate-left text-[8px]"></i>Rolled Back — Update Required</span></div>}
-                        {draft.loggingComplianceViolation && <div className="mt-1"><span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-200 uppercase tracking-wider">Logging Delay</span></div>}
-                        {draft.status === OrderStatus.NEGATIVE_MARGIN && <div className="mt-1"><span className="text-[9px] font-black text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-300 uppercase tracking-wider">Negative Margin</span></div>}
+                        {draft.loggingComplianceViolation && !isStockOrder(draft) && <div className="mt-1"><span className="text-[9px] font-black text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-200 uppercase tracking-wider">Logging Delay</span></div>}
+                        {draft.status === OrderStatus.NEGATIVE_MARGIN && !isStockOrder(draft) && <div className="mt-1"><span className="text-[9px] font-black text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded border border-rose-300 uppercase tracking-wider">Negative Margin</span></div>}
                       </td>
                       <td className="px-8 py-6 text-xs text-slate-700 font-black">
                         {draft.orderDate ? new Date(draft.orderDate).toLocaleDateString() : 'N/A'}

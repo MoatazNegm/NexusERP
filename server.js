@@ -123,6 +123,13 @@ const getItemEffectiveQty = (item) => {
     return qty || 1;
 };
 
+const isStockOrder = (order) => {
+    if (!order) return false;
+    const cust = String(order.customerName || '').trim().toLowerCase();
+    const po = typeof order.customerReferenceNumber === 'string' ? order.customerReferenceNumber.trim().toUpperCase() : '';
+    return cust === 'internal stock' || po.startsWith('STOCK-');
+};
+
 // --- MULTER CONFIG ---
 // Each storage is request-scoped: in sandbox mode (req.sandboxOwner set by
 // the multi-tenant middleware above), files land under
@@ -317,7 +324,7 @@ const extractCostSheetMetrics = (base64Data) => {
     }
 };
 
-const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1, isBlanketOrder = false) => {
+const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1, isBlanketOrder = false, isStock = false) => {
     let totalRevenue = 0;
     let totalCost = 0;
     let hasComponents = false;
@@ -348,15 +355,22 @@ const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 
     // Safeguard: Don't auto-transition terminal or manual statuses
     if ([OrderStatus.REJECTED, OrderStatus.IN_HOLD].includes(currentStatus)) return currentStatus;
 
-    // BLANKET ORDER EXEMPTION: Blanket orders skip all margin/status auto-transitions.
-    // They are allowed to proceed through procurement and delivery without margin checks.
-    if (isBlanketOrder) {
-        // Blanket orders still allow tech review transition if at least one item is accepted or in active tech review
+    // BLANKET ORDER & STOCK ORDER EXEMPTION: Blanket orders and internal stock orders
+    // skip all margin/status auto-transitions because they have no customer markup margin.
+    // They are allowed to proceed through technical review, procurement, and delivery without margin checks.
+    if (isBlanketOrder || isStock) {
+        // Still allow tech review transition if at least one item is accepted or in active tech review
         if ((hasActiveTechReview || anyAccepted) && currentStatus === OrderStatus.LOGGED) {
             return OrderStatus.TECHNICAL_REVIEW;
         }
-        // If a blanket order somehow had NEGATIVE_MARGIN (e.g. legacy data), auto-recover it!
+        // If an exempt order somehow had NEGATIVE_MARGIN (e.g. legacy data), auto-recover it!
         if (currentStatus === OrderStatus.NEGATIVE_MARGIN) {
+            const hasProcurementActive = (items || []).some(it => 
+                (it.components || []).some(c => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'].includes(c.status))
+            );
+            if (hasProcurementActive) {
+                return OrderStatus.WAITING_SUPPLIERS;
+            }
             return (hasActiveTechReview || anyAccepted) ? OrderStatus.TECHNICAL_REVIEW : OrderStatus.LOGGED;
         }
         return currentStatus;
@@ -413,7 +427,7 @@ const canIssuePoForOrder = (order, minMargin) => {
         return false;
     }
 
-    if (order.customerName === 'Internal Stock') return true;
+    if (isStockOrder(order)) return true;
     // Blanket orders are exempt from margin protection checks for PO issuance
     if (order.blanketOrder || order.contractId || order.blanketContractId) return true;
 
@@ -483,6 +497,7 @@ const readDb = (customPath = null) => {
     if (db.settings?.[0]?.dbSchemaVersion < CURRENT_SCHEMA_VERSION) {
       applySchemaMigrations(db, targetPath);
     }
+    reconcileStockAllocations(db, targetPath);
     return db;
   } catch (err) {
     console.error(`[DB] Read error on ${targetPath}:`, err);
@@ -1361,6 +1376,134 @@ const repairNegativeMarginOrders = (db, targetPath = DB_PATH) => {
     if (changed) writeDb(db, targetPath);
 };
 
+// Repair: ensure TRADING line items have their initial mirror component if missing and not rolled back
+const repairTradingMirrorOrders = (db, targetPath = DB_PATH) => {
+    if (!db.orders || db.orders.length === 0) return;
+    let changed = false;
+    db.orders.forEach(order => {
+        if (order.rolledBackToLogged) return;
+        (order.items || []).forEach((item, idx) => {
+            const pType = item.productionType || 'TRADING';
+            if (pType === 'TRADING' && (!item.components || item.components.length === 0)) {
+                item.productionType = 'TRADING';
+                const newComp = {
+                    id: `c_${Date.now()}_${idx}_0`,
+                    description: item.description,
+                    quantity: getItemEffectiveQty(item),
+                    unit: item.unit || 'pcs',
+                    unitCost: 0,
+                    taxPercent: 14,
+                    source: 'PROCUREMENT',
+                    status: 'PENDING_OFFER',
+                    componentNumber: `CMP-${order.internalOrderNumber}-${idx + 1}-1`
+                };
+                const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(item.description || '').trim().toLowerCase());
+                if (match) newComp.supplierPartNumber = match.partNumber;
+                item.components = [newComp];
+                changed = true;
+            }
+        });
+    });
+    if (changed) writeDb(db, targetPath);
+};
+
+// Repair / reconcile stock order allocations across any database (live or sandbox)
+const reconcileStockAllocations = (db, targetPath = null) => {
+    if (!db || !Array.isArray(db.orders) || db.orders.length === 0) return false;
+    let changed = false;
+
+    // 1. Collect all allocations from all active orders in this database
+    const allocationsByStockOrder = new Map();
+    db.orders.forEach(order => {
+        if (order.status === OrderStatus.REJECTED || order.status === 'REJECTED') return;
+        (order.items || []).forEach(item => {
+            (item.components || []).forEach(comp => {
+                if (comp.allocatedFromStockOrderId) {
+                    const sId = comp.allocatedFromStockOrderId;
+                    if (!allocationsByStockOrder.has(sId)) allocationsByStockOrder.set(sId, []);
+                    allocationsByStockOrder.get(sId).push({
+                        compId: comp.allocatedFromStockCompId,
+                        itemId: comp.allocatedFromStockItemId,
+                        description: String(comp.description || '').trim().toLowerCase(),
+                        quantity: Number(comp.quantity) || 0
+                    });
+                }
+            });
+        });
+    });
+
+    // 2. Reconcile stock orders
+    db.orders.forEach(order => {
+        const isStock = isStockOrder(order);
+        if (!isStock) return;
+
+        if (order.loggingComplianceViolation) {
+            order.loggingComplianceViolation = false;
+            changed = true;
+        }
+
+        const allocList = allocationsByStockOrder.get(order.id) || [];
+
+        (order.items || []).forEach(item => {
+            (item.components || []).forEach(comp => {
+                // Find matching allocations for this component
+                const matchingAllocs = allocList.filter(a =>
+                    (a.compId && comp.id && a.compId === comp.id) ||
+                    (a.itemId && item.id && a.itemId === item.id) ||
+                    (a.description && String(comp.description || '').trim().toLowerCase() === a.description)
+                );
+
+                const totalAllocated = matchingAllocs.reduce((sum, a) => sum + (Number(a.quantity) || 0), 0);
+
+                if (totalAllocated > 0) {
+                    // Determine base quantity
+                    const baseQty = comp.originalQuantity !== undefined
+                        ? comp.originalQuantity
+                        : (item.originalQuantity !== undefined
+                            ? item.originalQuantity
+                            : (((comp.allocatedQty || 0) > 0)
+                                ? ((comp.quantity || 0) + comp.allocatedQty)
+                                : (comp.quantity || 0)));
+
+                    const expectedRemaining = Math.max(0, Number((baseQty - totalAllocated).toFixed(3)));
+
+                    if (comp.originalQuantity !== baseQty ||
+                        item.originalQuantity !== baseQty ||
+                        comp.allocatedQty !== totalAllocated ||
+                        item.allocatedQty !== totalAllocated ||
+                        comp.quantity !== expectedRemaining ||
+                        item.quantity !== expectedRemaining) {
+
+                        comp.originalQuantity = baseQty;
+                        item.originalQuantity = baseQty;
+                        comp.allocatedQty = totalAllocated;
+                        item.allocatedQty = totalAllocated;
+                        comp.quantity = expectedRemaining;
+                        item.quantity = expectedRemaining;
+                        if (expectedRemaining <= 0) {
+                            comp.status = 'DEPLETED';
+                        }
+                        changed = true;
+                    }
+                } else if ((comp.allocatedQty || 0) > 0 || (item.allocatedQty || 0) > 0) {
+                    // All allocations removed
+                    const baseQty = comp.originalQuantity !== undefined ? comp.originalQuantity : (item.originalQuantity !== undefined ? item.originalQuantity : (comp.quantity || 0));
+                    comp.allocatedQty = 0;
+                    item.allocatedQty = 0;
+                    comp.quantity = baseQty;
+                    item.quantity = baseQty;
+                    changed = true;
+                }
+            });
+        });
+    });
+
+    if (changed && targetPath) {
+        writeDb(db, targetPath);
+    }
+    return changed;
+};
+
 const reconcileOrdersMarginOnThresholdChange = (db, oldMinMargin, newMinMargin, user) => {
     if (oldMinMargin === newMinMargin) return;
     if (!db.orders || db.orders.length === 0) return;
@@ -1381,19 +1524,8 @@ const reconcileOrdersMarginOnThresholdChange = (db, oldMinMargin, newMinMargin, 
         let nextStatus = oldStatus || OrderStatus.LOGGED;
 
         const isBlanket = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
-        if (order.customerName !== 'Internal Stock') {
-            nextStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate, isBlanket);
-        } else {
-            const calculatedStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate, isBlanket);
-            if (calculatedStatus === OrderStatus.NEGATIVE_MARGIN) {
-                const hasComponents = (order.items || []).some(i => i.components && i.components.length > 0);
-                if (hasComponents && oldStatus === OrderStatus.LOGGED) {
-                    nextStatus = OrderStatus.TECHNICAL_REVIEW;
-                }
-            } else {
-                nextStatus = calculatedStatus;
-            }
-        }
+        const isStock = isStockOrder(order);
+        nextStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate, isBlanket, isStock);
 
         if (nextStatus !== oldStatus) {
             order.status = nextStatus;
@@ -1489,7 +1621,7 @@ const reconcileInventory = (oldOrder, newOrder, db) => {
 
 // --- STOCK REPLENISHMENT LOGIC ---
 const handleStockReceipts = (oldOrder, newOrder, db) => {
-    if (newOrder.customerName !== 'Internal Stock' || !newOrder.items) return;
+    if (!isStockOrder(newOrder) || !newOrder.items) return;
 
     (newOrder.items || []).forEach(item => {
         (item.components || []).forEach(comp => {
@@ -1590,6 +1722,14 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             item.quantity = 1;
         }
 
+        // Normalize and preserve pricePerUnit across order processing
+        const rawPrice = item.pricePerUnit ?? item.unitPrice ?? item.price;
+        if (rawPrice !== undefined && rawPrice !== null && !isNaN(Number(rawPrice))) {
+            item.pricePerUnit = Number(rawPrice);
+        } else if (item.pricePerUnit === undefined) {
+            item.pricePerUnit = 0;
+        }
+
         // Automation: If BoM changed compared to old order, revoke approval
         if (oldOrder) {
             const oldItem = (oldOrder.items || []).find(i => i.id === item.id);
@@ -1609,11 +1749,14 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             item.productionType = 'TRADING';
         }
 
-        if (order.status !== OrderStatus.LOGGED) {
+        const isOrderApproved = Boolean(order.technicalReviewFinishedAt) || (order.status && ![OrderStatus.LOGGED, OrderStatus.TECHNICAL_REVIEW].includes(order.status));
+
+        if (!order.rolledBackToLogged) {
             if (item.productionType === 'TRADING') {
 
-                // Ensure exactly one component that mirrors the item
-                if (!item.components || item.components.length === 0) {
+                // Ensure exactly one component that mirrors the item (skip if fully depleted/allocated)
+                const isFullyDepleted = (item.allocatedQty || 0) >= getItemEffectiveQty(item) && (item.allocatedQty || 0) > 0;
+                if ((!item.components || item.components.length === 0) && !isFullyDepleted) {
                     const newComp = {
                         id: `c_${Date.now()}_${idx}_0`,
                         description: item.description,
@@ -1622,7 +1765,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                         unitCost: 0,
                         taxPercent: 14,
                         source: 'PROCUREMENT',
-                        status: 'PENDING_OFFER',
+                        status: isOrderApproved ? 'PENDING_OFFER' : 'NEW',
                         componentNumber: `CMP-${order.internalOrderNumber}-${idx + 1}-1`
                     };
                     
@@ -1631,21 +1774,51 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     if (match) newComp.supplierPartNumber = match.partNumber;
 
                     item.components = [newComp];
-                } else {
+                } else if (item.components && item.components.length > 0) {
                     // Mirror sync: Only the first component is active in TRADING
                     const comp = item.components[0];
-                    if (comp.description !== item.description || comp.quantity !== getItemEffectiveQty(item)) {
+                    if (comp.description !== item.description) {
                         comp.description = item.description;
-                        comp.quantity = getItemEffectiveQty(item);
-                        
-                        // Attempt to auto-populate part number if missing
-                        if (!comp.supplierPartNumber) {
-                            const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(comp.description || '').trim().toLowerCase());
-                            if (match) comp.supplierPartNumber = match.partNumber;
+                    }
+                    
+                    // Attempt to auto-populate part number if missing
+                    if (!comp.supplierPartNumber) {
+                        const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(comp.description || '').trim().toLowerCase());
+                        if (match) comp.supplierPartNumber = match.partNumber;
+                    }
+
+                    const isStock = isStockOrder(order);
+                    const hasAllocations = (item.allocatedQty || 0) > 0 || (comp.allocatedQty || 0) > 0;
+
+                    // Only sync comp.quantity directly from item.quantity for non-stock orders without allocations
+                    if (!isStock && !hasAllocations) {
+                        if (!comp.allocatedFromStockOrderId && comp.quantity !== getItemEffectiveQty(item)) {
+                            comp.quantity = getItemEffectiveQty(item);
+                        }
+                    } else if (hasAllocations) {
+                        const totalBase = (item.originalQuantity !== undefined ? item.originalQuantity : ((item.quantity || 0) + (item.allocatedQty || comp.allocatedQty || 0)));
+                        if (item.originalQuantity === undefined) item.originalQuantity = totalBase;
+                        const remaining = Math.max(0, totalBase - (item.allocatedQty || comp.allocatedQty || 0));
+                        comp.quantity = remaining;
+                        item.quantity = remaining;
+                        if (remaining <= 0) {
+                            comp.status = 'DEPLETED';
+                        }
+                    } else if (isStock && item.originalQuantity !== undefined) {
+                        // All allocations have been returned or restored back to stock order
+                        comp.quantity = item.originalQuantity;
+                        item.quantity = item.originalQuantity;
+                        if (comp.status === 'DEPLETED') {
+                            comp.status = isOrderApproved ? 'PENDING_OFFER' : 'NEW';
                         }
                     }
-                    // Cap at 1 component for TRADING to prevent BoM pollution
-                    if (item.components.length > 1) {
+
+                    if (!isOrderApproved && comp.status === 'PENDING_OFFER' && !comp.poNumber && !comp.rfpId && !comp.awardId && !comp.procurementStartedAt) {
+                        comp.status = 'NEW';
+                    }
+                    // Cap at 1 component for TRADING to prevent BoM pollution unless split into stock and procurement
+                    const hasStockAllocations = item.components.some(c => c.allocatedFromStockOrderId);
+                    if (!hasStockAllocations && item.components.length > 1) {
                         item.components = [item.components[0]];
                     }
                 }
@@ -1663,7 +1836,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                         unitCost: 0,
                         taxPercent: item.taxPercent || 14,
                         source: 'PROCUREMENT',
-                        status: 'RUNNING_OUTSOURCING_CONTRACT',
+                        status: isOrderApproved ? 'RUNNING_OUTSOURCING_CONTRACT' : 'NEW',
                         noRfpNeeded: true,
                         componentNumber: item.supplierPartNumber || `CMP-${order.internalOrderNumber || 'ORD'}-${idx + 1}-1`,
                         contractNumber: contractNum,
@@ -1673,7 +1846,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                 } else {
                     item.components.forEach(comp => {
                         if (comp.noRfpNeeded === undefined) comp.noRfpNeeded = true;
-                        if (comp.noRfpNeeded && (comp.status === 'PENDING_OFFER' || !comp.status)) {
+                        if (isOrderApproved && comp.noRfpNeeded && (comp.status === 'PENDING_OFFER' || !comp.status || comp.status === 'NEW')) {
                             comp.status = 'RUNNING_OUTSOURCING_CONTRACT';
                         }
                     });
@@ -1692,6 +1865,9 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                 }
             }
             if (!comp.status) comp.status = 'NEW';
+            if (!isOrderApproved && comp.status === 'PENDING_OFFER' && !comp.poNumber && !comp.rfpId && !comp.awardId && !comp.procurementStartedAt) {
+                comp.status = 'NEW';
+            }
             if (!comp.statusUpdatedAt) comp.statusUpdatedAt = new Date().toISOString();
         });
     });
@@ -1710,24 +1886,8 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         // Skip margin check for Internal Stock orders (they always have 0 revenue)
         let nextStatus = order.status || OrderStatus.LOGGED;
         const isBlanket = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
-        if (order.customerName !== 'Internal Stock') {
-            nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate, isBlanket);
-        } else {
-            // For Internal Stock, standard transitions apply (e.g. LOGGED -> TECH REVIEW if components exist)
-            // We reuse evaluateMarginStatus logic BUT purely for workflow transitions, ignoring negative margin return
-            // Actually, evaluateMarginStatus prioritizes margin check. Let's replicate strict workflow logic here or modify evaluateMarginStatus.
-            // Simpler: Just allow negative margin if it's internal stock.
-            const calculatedStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate, isBlanket);
-            if (calculatedStatus === OrderStatus.NEGATIVE_MARGIN) {
-                // Fallback: If it blocked on margin, check if it should proceed to Tech Review
-                const hasComponents = (order.items || []).some(i => i.components && i.components.length > 0);
-                if (hasComponents && order.status === OrderStatus.LOGGED) {
-                    nextStatus = OrderStatus.TECHNICAL_REVIEW;
-                }
-            } else {
-                nextStatus = calculatedStatus;
-            }
-        }
+        const isStock = isStockOrder(order);
+        nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate, isBlanket, isStock);
 
         if (nextStatus !== order.status) {
             const old = order.status || 'NEW';
@@ -2055,9 +2215,16 @@ const runThresholdAudit = async () => {
     // --- Process each order ---
     for (const order of orders) {
         if (order.status === 'FULFILLED' || order.status === 'REJECTED') continue;
+        const isStock = isStockOrder(order);
 
-        // A0. Gov. E-Invoice SLA (3-hr threshold)
-        if (order.einvoiceRequested && !order.einvoiceFile) {
+        // Clear any historical compliance violation on stock orders
+        if (isStock && order.loggingComplianceViolation) {
+            order.loggingComplianceViolation = false;
+            dbChanged = true;
+        }
+
+        // A0. Gov. E-Invoice SLA (3-hr threshold) - Not applicable for Stock Orders
+        if (!isStock && order.einvoiceRequested && !order.einvoiceFile) {
             const limitHrs = settings.govEInvoiceLimitHrs || 3;
             const requestLog = [...(order.logs || [])].reverse().find(l => l.message === 'Gov. E-Invoice requested');
             if (requestLog) {
@@ -2070,8 +2237,8 @@ const runThresholdAudit = async () => {
             }
         }
 
-        // A1. Logging Delay (PO date vs data entry date, in days) - Only for LOGGED orders
-        if (order.status === OrderStatus.LOGGED) {
+        // A1. Logging Delay (PO date vs data entry date, in days) - Only for non-stock LOGGED orders
+        if (!isStock && order.status === OrderStatus.LOGGED) {
             const delayThresholdDays = settings.loggingDelayThresholdDays || 1;
             const poDate = new Date(order.orderDate).getTime();
             const entryDate = new Date(order.dataEntryTimestamp).getTime();
@@ -2124,8 +2291,8 @@ const runThresholdAudit = async () => {
                 `Order ${order.internalOrderNumber} has been placed ON HOLD. Customer: ${order.customerName}.`);
         }
 
-        // A4. Negative Margin (status-based, not time-based - exempting blanket orders)
-        if (order.status === 'NEGATIVE_MARGIN' && !order.blanketOrder && !order.contractId && !order.blanketContractId) {
+        // A4. Negative Margin (status-based, not time-based - exempting blanket orders and stock orders)
+        if (!isStock && order.status === 'NEGATIVE_MARGIN' && !order.blanketOrder && !order.contractId && !order.blanketContractId) {
             let totalRevenue = 0, totalCost = 0;
             (order.items || []).forEach(it => {
                 totalRevenue += (getItemEffectiveQty(it) * it.pricePerUnit);
@@ -2144,8 +2311,8 @@ const runThresholdAudit = async () => {
                 `Order ${order.internalOrderNumber} has a margin of ${markupPct.toFixed(1)}%, below the minimum threshold of ${effectiveMin}%.`);
         }
 
-        // A5. Payment SLA Overdue (days since invoice)
-        if (order.status === 'INVOICED' || order.status === 'DELIVERED' || order.status === 'PARTIAL_PAYMENT') {
+        // A5. Payment SLA Overdue (days since invoice - not applicable to stock orders)
+        if (!isStock && (order.status === 'INVOICED' || order.status === 'DELIVERED' || order.status === 'PARTIAL_PAYMENT')) {
             const slaDays = order.paymentSlaDays || settings.defaultPaymentSlaDays || 30;
             const invoiceLog = [...(order.logs || [])].reverse().find(l => l.status === 'INVOICED' || l.status === 'DELIVERED');
             if (invoiceLog) {
@@ -2158,8 +2325,8 @@ const runThresholdAudit = async () => {
             }
         }
 
-        // A6. Delivery Deadline Check
-        if (settings.enableDeliveryAlerts && order.targetDeliveryDate && ![OrderStatus.DELIVERED, OrderStatus.FULFILLED, OrderStatus.WAITING_GOVE, OrderStatus.REJECTED].includes(order.status)) {
+        // A6. Delivery Deadline Check - not applicable to stock orders
+        if (!isStock && settings.enableDeliveryAlerts && order.targetDeliveryDate && ![OrderStatus.DELIVERED, OrderStatus.FULFILLED, OrderStatus.WAITING_GOVE, OrderStatus.REJECTED].includes(order.status)) {
             const warningDays = settings.deliveryWarningDays ?? 5;
             const targetTime = new Date(order.targetDeliveryDate).getTime();
 
@@ -2625,14 +2792,15 @@ const getItemFromCollection = (col) => (req, res) => {
     res.json(item);
 };
 
-const validateOrderItems = (items, customerName) => {
+const validateOrderItems = (items, customerName, customerPoNumber = '') => {
     if (!Array.isArray(items)) return 'Order items must be an array';
-    const isInternalStock = String(customerName || '').trim().toLowerCase() === 'internal stock';
+    const isInternalStock = isStockOrder({ customerName, customerReferenceNumber: customerPoNumber });
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const qty = Number(item.quantity);
         if (!Number.isFinite(qty) || qty <= 0) return `Item ${i + 1} quantity must be a positive number`;
-        const price = Number(item.pricePerUnit);
+        const rawPrice = item.pricePerUnit ?? item.unitPrice ?? item.price;
+        const price = Number(rawPrice);
         if (!Number.isFinite(price) || (isInternalStock ? price < 0 : price <= 0)) {
             return isInternalStock ? `Item ${i + 1} unit price cannot be negative` : `Item ${i + 1} unit price must be a positive number`;
         }
@@ -2658,7 +2826,7 @@ const addToCollection = (col) => (req, res) => {
     const user = req.headers['x-user'] || 'System';
 
     if (col === 'orders') {
-        const itemValidationError = validateOrderItems(req.body.items, req.body.customerName);
+        const itemValidationError = validateOrderItems(req.body.items, req.body.customerName, req.body.customerReferenceNumber || req.body.customerPoNumber);
         if (itemValidationError) {
             return res.status(400).json({ error: itemValidationError });
         }
@@ -2821,6 +2989,18 @@ const updateInCollection = (col) => (req, res) => {
             if (isDuplicateInternal) {
                 return res.status(400).json({ error: `Duplicate Internal PO reference "${updated.internalOrderNumber}" already exists.` });
             }
+        }
+
+        if (Array.isArray(req.body.items)) {
+            updated.items = req.body.items.map((it, idx) => {
+                const oldIt = (oldItem.items || []).find(oi => oi.id === it.id) || (oldItem.items || [])[idx];
+                const rawPrice = it.pricePerUnit ?? it.unitPrice ?? it.price ?? oldIt?.pricePerUnit ?? oldIt?.unitPrice ?? oldIt?.price;
+                const price = (rawPrice !== undefined && rawPrice !== null && !isNaN(Number(rawPrice))) ? Number(rawPrice) : 0;
+                return {
+                    ...it,
+                    pricePerUnit: price
+                };
+            });
         }
 
         // If order was rolled back to logged and is now updated by the Order Management / Logging team:
@@ -3422,8 +3602,67 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.blanketOrder = Boolean(order.contractId || order.blanketContractId || (order.items && order.items.some(i => i.productionType === 'OUTSOURCING')));
                 }
 
+                // Restore any stock-allocated components back to their source stock orders
+                (rollbackOld.items || []).forEach(oldIt => {
+                    (oldIt.components || []).forEach(oldComp => {
+                        if (oldComp.allocatedFromStockOrderId) {
+                            const stockOrderIdx = (db.orders || []).findIndex(o => o.id === oldComp.allocatedFromStockOrderId);
+                            if (stockOrderIdx !== -1) {
+                                let stockOrder = db.orders[stockOrderIdx];
+                                const oldStockOrder = JSON.parse(JSON.stringify(stockOrder));
+                                let stockItem = null;
+                                let stockComponent = null;
+
+                                for (const sItem of (stockOrder.items || [])) {
+                                    if (oldComp.allocatedFromStockItemId && sItem.id === oldComp.allocatedFromStockItemId) {
+                                        stockItem = sItem;
+                                    }
+                                    const match = (sItem.components || []).find(c =>
+                                        (oldComp.allocatedFromStockCompId && c.id === oldComp.allocatedFromStockCompId) ||
+                                        (c.description === oldComp.description)
+                                    );
+                                    if (match) {
+                                        if (!stockItem) stockItem = sItem;
+                                        stockComponent = match;
+                                        break;
+                                    }
+                                }
+
+                                if (stockComponent && stockItem) {
+                                    const returnQty = Number(oldComp.quantity) || 0;
+                                    stockComponent.allocatedQty = Math.max(0, (stockComponent.allocatedQty || 0) - returnQty);
+                                    stockItem.allocatedQty = Math.max(0, (stockItem.allocatedQty || 0) - returnQty);
+                                    stockComponent.quantity = Number(((stockComponent.quantity || 0) + returnQty).toFixed(3));
+                                    stockItem.quantity = Number(((stockItem.quantity || 0) + returnQty).toFixed(3));
+                                    if (stockComponent.status === 'DEPLETED') {
+                                        stockComponent.status = stockComponent.source === 'STOCK' ? 'AVAILABLE' : 'PENDING_OFFER';
+                                    }
+                                    stockComponent.statusUpdatedAt = new Date().toISOString();
+                                    if (!stockOrder.logs) stockOrder.logs = [];
+                                    stockOrder.logs.push(createAuditLog(
+                                        `Returned ${returnQty} ${stockComponent.unit || 'pcs'} of "${stockComponent.description}" back to Stock Order due to rollback of Order ${order.internalOrderNumber || order.customerReferenceNumber || order.id}. Remaining in Stock Order: ${stockComponent.quantity}`,
+                                        stockOrder.status,
+                                        user
+                                    ));
+                                    stockOrder.statusUpdatedAt = new Date().toISOString();
+                                    stockOrder = processedOrderInternal(stockOrder, db, user, false, oldStockOrder, false);
+                                    reconcileInventory(oldStockOrder, stockOrder, db);
+                                    db.orders[stockOrderIdx] = stockOrder;
+                                }
+                            }
+                        }
+                    });
+                });
+
                 // Clear all components added in technical review & reset item approvals
                 order.items.forEach(item => {
+                    // Preserve and recover line item price across rollback
+                    const oldItemMatch = rollbackOld?.items?.find(oi => oi.id === item.id);
+                    const rawPrice = item.pricePerUnit ?? item.unitPrice ?? item.price ?? oldItemMatch?.pricePerUnit ?? oldItemMatch?.unitPrice ?? oldItemMatch?.price;
+                    if (rawPrice !== undefined && rawPrice !== null && !isNaN(Number(rawPrice))) {
+                        item.pricePerUnit = Number(rawPrice);
+                    }
+
                     item.components = [];
                     item.isAccepted = false;
                     delete item.technicalReviewStatus;
@@ -3822,13 +4061,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 } else {
                     // Standard processing for manufacturing/outsourcing items
                     if (compToReceive.receivedQty >= totalOrdered) {
-                        compToReceive.status = order.customerName === 'Internal Stock' ? 'RECEIVED' : 'RESERVED';
+                        compToReceive.status = isStockOrder(order) ? 'RECEIVED' : 'RESERVED';
                     }
                     compToReceive.statusUpdatedAt = new Date().toISOString();
                 }
 
                 // Auto-fulfill Internal Stock orders when all components are delivered to stock
-                if (order.customerName === 'Internal Stock') {
+                if (isStockOrder(order)) {
                     const allComps = (order.items || []).flatMap(it => it.components || []);
                     const allCompsReceived = allComps.length > 0 && allComps.every(c => (c.receivedQty || 0) >= (c.quantity || 0));
                     if (allCompsReceived && order.status !== OrderStatus.FULFILLED) {
@@ -3935,6 +4174,54 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     if (invItem) {
                         invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - rcComp.quantity);
                         invItem.lastUpdated = new Date().toISOString();
+                    }
+                }
+
+                // Restore allocated quantity back to stock order if component was allocated from one
+                if (rcComp.allocatedFromStockOrderId) {
+                    const stockOrderIdx = (db.orders || []).findIndex(o => o.id === rcComp.allocatedFromStockOrderId);
+                    if (stockOrderIdx !== -1) {
+                        let stockOrder = db.orders[stockOrderIdx];
+                        const oldStockOrder = JSON.parse(JSON.stringify(stockOrder));
+                        let stockItem = null;
+                        let stockComponent = null;
+
+                        for (const sItem of (stockOrder.items || [])) {
+                            if (rcComp.allocatedFromStockItemId && sItem.id === rcComp.allocatedFromStockItemId) {
+                                stockItem = sItem;
+                            }
+                            const match = (sItem.components || []).find(c => 
+                                (rcComp.allocatedFromStockCompId && c.id === rcComp.allocatedFromStockCompId) ||
+                                (c.description === rcComp.description)
+                            );
+                            if (match) {
+                                if (!stockItem) stockItem = sItem;
+                                stockComponent = match;
+                                break;
+                            }
+                        }
+
+                        if (stockComponent && stockItem) {
+                            const returnQty = Number(rcComp.quantity) || 0;
+                            stockComponent.allocatedQty = Math.max(0, (stockComponent.allocatedQty || 0) - returnQty);
+                            stockItem.allocatedQty = Math.max(0, (stockItem.allocatedQty || 0) - returnQty);
+                            stockComponent.quantity = Number(((stockComponent.quantity || 0) + returnQty).toFixed(3));
+                            stockItem.quantity = Number(((stockItem.quantity || 0) + returnQty).toFixed(3));
+                            if (stockComponent.status === 'DEPLETED') {
+                                stockComponent.status = stockComponent.source === 'STOCK' ? 'AVAILABLE' : 'PENDING_OFFER';
+                            }
+                            stockComponent.statusUpdatedAt = new Date().toISOString();
+                            if (!stockOrder.logs) stockOrder.logs = [];
+                            stockOrder.logs.push(createAuditLog(
+                                `Returned ${returnQty} ${stockComponent.unit || 'pcs'} of "${stockComponent.description}" back to Stock Order due to component removal in Order ${order.internalOrderNumber || order.customerReferenceNumber || order.id}. Remaining in Stock Order: ${stockComponent.quantity}`,
+                                stockOrder.status,
+                                user
+                            ));
+                            stockOrder.statusUpdatedAt = new Date().toISOString();
+                            stockOrder = processedOrderInternal(stockOrder, db, user, false, oldStockOrder, false);
+                            reconcileInventory(oldStockOrder, stockOrder, db);
+                            db.orders[stockOrderIdx] = stockOrder;
+                        }
                     }
                 }
 
@@ -4781,6 +5068,168 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
                 break;
             }
+            case 'allocate-stock-component': {
+                if (!payload || !payload.itemId) throw new Error("Target line item ID is required");
+                if (!payload.stockOrderId) throw new Error("Stock order ID is required");
+                if (!payload.stockCompId) throw new Error("Stock component ID is required");
+
+                const targetItem = (order.items || []).find(i => i.id === payload.itemId);
+                if (!targetItem) throw new Error("Target item not found in order");
+
+                const stockOrderIdx = db.orders.findIndex(o => o.id === payload.stockOrderId);
+                if (stockOrderIdx === -1) throw new Error("Stock order not found");
+                let stockOrder = db.orders[stockOrderIdx];
+                const oldStockOrder = JSON.parse(JSON.stringify(stockOrder));
+
+                // Locate component in stock order
+                let foundStockItem = null;
+                let stockComp = null;
+                for (const item of (stockOrder.items || [])) {
+                    const match = (item.components || []).find(c => c.id === payload.stockCompId);
+                    if (match) {
+                        foundStockItem = item;
+                        stockComp = match;
+                        break;
+                    }
+                }
+
+                // Fallback by description or SKU if not found by exact ID
+                if (!stockComp) {
+                    for (const item of (stockOrder.items || [])) {
+                        const match = (item.components || []).find(c => 
+                            c.description === payload.description || 
+                            (payload.partNumber && (c.supplierPartNumber === payload.partNumber || c.componentNumber === payload.partNumber))
+                        );
+                        if (match) {
+                            foundStockItem = item;
+                            stockComp = match;
+                            break;
+                        }
+                    }
+                }
+
+                if (!stockComp || !foundStockItem) throw new Error("Component not found in stock order");
+
+                const stockQty = Number(stockComp.quantity) || 0;
+                const requestedQty = Number(payload.allocateQty) || 0;
+                if (requestedQty <= 0) throw new Error("Allocation quantity must be greater than zero");
+
+                const allocateQty = Math.min(requestedQty, stockQty);
+                const remainingStockQty = Number((stockQty - allocateQty).toFixed(3));
+
+                // 1. Update source stock order
+                if (foundStockItem.originalQuantity === undefined) {
+                    foundStockItem.originalQuantity = foundStockItem.quantity;
+                }
+                if (stockComp.originalQuantity === undefined) {
+                    stockComp.originalQuantity = stockQty;
+                }
+
+                stockComp.allocatedQty = (stockComp.allocatedQty || 0) + allocateQty;
+                foundStockItem.allocatedQty = (foundStockItem.allocatedQty || 0) + allocateQty;
+
+                foundStockItem.quantity = Math.max(0, Number(((foundStockItem.quantity || 0) - allocateQty).toFixed(3)));
+                stockComp.quantity = remainingStockQty;
+                stockComp.statusUpdatedAt = new Date().toISOString();
+
+                if (remainingStockQty <= 0.0001) {
+                    stockComp.quantity = 0;
+                    stockComp.status = 'DEPLETED';
+                }
+
+                if (!stockOrder.logs) stockOrder.logs = [];
+                stockOrder.logs.push(createAuditLog(
+                    `Allocated ${allocateQty} ${stockComp.unit || 'pcs'} of "${stockComp.description}" to Order ${order.internalOrderNumber || order.customerReferenceNumber || order.id}. Remaining in Stock Order: ${remainingStockQty}`,
+                    stockOrder.status,
+                    user
+                ));
+
+                stockOrder.statusUpdatedAt = new Date().toISOString();
+                stockOrder = processedOrderInternal(stockOrder, db, user, false, oldStockOrder, false);
+                reconcileInventory(oldStockOrder, stockOrder, db);
+                db.orders[stockOrderIdx] = stockOrder;
+
+                // 2. Prepare component on target order item
+                if (!targetItem.components) targetItem.components = [];
+
+                // If targetItem is TRADING and has only the initial empty mirror component, replace it
+                if (targetItem.productionType === 'TRADING' && targetItem.components.length === 1) {
+                    const firstComp = targetItem.components[0];
+                    if (!firstComp.allocatedFromStockOrderId && (!firstComp.unitCost || firstComp.unitCost === 0) && !firstComp.poNumber && !firstComp.rfpId && !firstComp.awardId) {
+                        targetItem.components = [];
+                    }
+                }
+
+                const isStockSource = stockComp.source === 'STOCK' || stockComp.status === 'RECEIVED' || stockComp.status === 'IN_STOCK';
+                const newCompId = `c_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                const newComp = {
+                    id: newCompId,
+                    description: stockComp.description,
+                    quantity: allocateQty,
+                    unit: stockComp.unit || 'pcs',
+                    unitCost: Number(stockComp.unitCost) || 0,
+                    taxPercent: stockComp.taxPercent !== undefined ? stockComp.taxPercent : 14,
+                    source: isStockSource ? 'STOCK' : (stockComp.source || 'PROCUREMENT'),
+                    status: isStockSource ? 'RESERVED' : (stockComp.status || 'PENDING_OFFER'),
+                    supplierId: stockComp.supplierId,
+                    supplierName: stockComp.supplierName,
+                    supplierPartNumber: stockComp.supplierPartNumber,
+                    componentNumber: stockComp.componentNumber || `CMP-${order.internalOrderNumber || 'ORD'}-${Date.now().toString().slice(-4)}`,
+                    poNumber: stockComp.poNumber,
+                    sendPoId: stockComp.sendPoId,
+                    rfpId: stockComp.rfpId,
+                    awardId: stockComp.awardId,
+                    inventoryItemId: stockComp.inventoryItemId,
+                    procurementStartedAt: stockComp.procurementStartedAt || new Date().toISOString(),
+                    statusUpdatedAt: new Date().toISOString(),
+                    contractNumber: payload.contractNumber || stockComp.contractNumber,
+                    contractDuration: payload.contractDuration || stockComp.contractDuration,
+                    scopeOfWork: payload.scopeOfWork || stockComp.scopeOfWork,
+                    allocatedFromStockOrderId: stockOrder.id,
+                    allocatedFromStockOrderRef: stockOrder.customerReferenceNumber || stockOrder.internalOrderNumber || stockOrder.id,
+                    allocatedFromStockCompId: stockComp.id,
+                    allocatedFromStockItemId: foundStockItem.id
+                };
+                targetItem.components.push(newComp);
+
+                // 3. If remainder requested beyond available stock, add remainder procurement component
+                const remainderQty = Number(payload.remainderQty) || 0;
+                if (remainderQty > 0) {
+                    const remainderComp = {
+                        id: `c_${Date.now() + 1}_${Math.random().toString(36).substr(2, 5)}`,
+                        description: stockComp.description,
+                        quantity: remainderQty,
+                        unit: stockComp.unit || 'pcs',
+                        unitCost: Number(stockComp.unitCost) || 0,
+                        taxPercent: stockComp.taxPercent !== undefined ? stockComp.taxPercent : 14,
+                        source: 'PROCUREMENT',
+                        status: 'PENDING_OFFER',
+                        supplierId: stockComp.supplierId,
+                        supplierName: stockComp.supplierName,
+                        supplierPartNumber: stockComp.supplierPartNumber,
+                        componentNumber: stockComp.componentNumber || `CMP-${order.internalOrderNumber || 'ORD'}-${Date.now().toString().slice(-4)}`,
+                        procurementStartedAt: new Date().toISOString(),
+                        statusUpdatedAt: new Date().toISOString(),
+                        contractNumber: payload.contractNumber,
+                        contractDuration: payload.contractDuration,
+                        scopeOfWork: payload.scopeOfWork
+                    };
+                    targetItem.components.push(remainderComp);
+                }
+
+                if (order.status === OrderStatus.LOGGED) {
+                    order.status = OrderStatus.TECHNICAL_REVIEW;
+                }
+
+                if (!order.logs) order.logs = [];
+                order.logs.push(createAuditLog(
+                    `Allocated ${allocateQty} ${newComp.unit} of "${newComp.description}" from Stock Order ${stockOrder.customerReferenceNumber || stockOrder.internalOrderNumber} (Status: ${newComp.status}, PO: ${newComp.poNumber || 'N/A'})${remainderQty > 0 ? ` + ${remainderQty} ${newComp.unit} requested via procurement` : ''}`,
+                    order.status,
+                    user
+                ));
+                break;
+            }
+
             case 'void-action':
                 // Generic audit logging without status change
                 if (payload.message) {
@@ -6358,6 +6807,8 @@ app.get('{*path}', (req, res) => {
 
 const startupDb = readDb();
 repairNegativeMarginOrders(startupDb);
+repairTradingMirrorOrders(startupDb);
+reconcileStockAllocations(startupDb, DB_PATH);
 syncAuthoritativeUsersToSandboxes(startupDb);
 
 // Sweep every db.sandbox.*.json in the project root, run applySchemaMigrations on
@@ -6384,12 +6835,13 @@ const migrateAllSandboxesOnStartup = () => {
             const raw = fs.readFileSync(targetPath, 'utf8');
             const db = JSON.parse(raw);
             const currentVersion = db.settings?.[0]?.dbSchemaVersion || 0;
-            if (currentVersion >= CURRENT_SCHEMA_VERSION) {
+            if (currentVersion < CURRENT_SCHEMA_VERSION) {
+                applySchemaMigrations(db, targetPath);
+                migrated++;
+            } else {
                 skipped++;
-                continue;
             }
-            applySchemaMigrations(db, targetPath);
-            migrated++;
+            reconcileStockAllocations(db, targetPath);
         } catch (err) {
             errored++;
             console.error(`[Migration] Failed to migrate ${file}:`, err.message);

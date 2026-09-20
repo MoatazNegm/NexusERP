@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
-import { CustomerOrder, ManufacturingComponent, Supplier, ReplacementRequest } from '../types';
+import { CustomerOrder, ManufacturingComponent, Supplier, ReplacementRequest, OrderStatus } from '../types';
 
 interface PartHistoryProps {
     orders: CustomerOrder[];
@@ -31,6 +31,8 @@ interface PartRow {
     procurementStartedAt: string;
     source: string;
     productionType: string;
+    isStockOrder?: boolean;
+    allocatedFromStockOrderRef?: string;
     orderLogs: { timestamp: string; message: string; status?: string; user?: string }[];
     replacementHistory?: ReplacementRequest[];
     contractNumber?: string;
@@ -45,9 +47,10 @@ interface PartRow {
     revertedPoNumber?: string;
 }
 
-type ColKey = keyof Pick<PartRow, 'internalPN' | 'mfrPN' | 'description' | 'qty' | 'purchaseDate' | 'usageDate' | 'price' | 'supplier'>;
+type ColKey = keyof Pick<PartRow, 'customerName' | 'internalPN' | 'mfrPN' | 'description' | 'qty' | 'purchaseDate' | 'usageDate' | 'price' | 'supplier'>;
 
 const DEFAULT_COLUMNS: { key: ColKey; label: string; contractLabel: string; labelAr: string }[] = [
+    { key: 'customerName', label: 'Customer', contractLabel: 'Client', labelAr: 'العميل' },
     { key: 'internalPN', label: 'Internal P#', contractLabel: 'Service ID', labelAr: 'الرقم الداخلي' },
     { key: 'mfrPN', label: 'Mfr/Supplier P#', contractLabel: 'Contract Ref', labelAr: 'رقم المصنع' },
     { key: 'description', label: 'Description', contractLabel: 'Scope of Work', labelAr: 'الوصف' },
@@ -59,16 +62,53 @@ const DEFAULT_COLUMNS: { key: ColKey; label: string; contractLabel: string; labe
 ];
 
 const STATUS_COLORS: Record<string, string> = {
-    'PENDING_OFFER': 'bg-slate-100 text-slate-600',
-    'RFP_SENT': 'bg-blue-100 text-blue-700',
-    'AWARDED': 'bg-amber-100 text-amber-700',
-    'ORDERED': 'bg-indigo-100 text-indigo-700',
-    'RECEIVED': 'bg-emerald-100 text-emerald-700',
-    'IN_MANUFACTURING': 'bg-purple-100 text-purple-700',
-    'MANUFACTURED': 'bg-teal-100 text-teal-700',
-    'RESERVED': 'bg-cyan-100 text-cyan-700',
-    'CANCELLED': 'bg-rose-100 text-rose-600',
+    'NEW': 'bg-blue-50 text-blue-700 border border-blue-200',
+    'IN_TECHNICAL_REVIEW': 'bg-blue-50 text-blue-700 border border-blue-200',
+    'PENDING_OFFER': 'bg-slate-100 text-slate-700 border border-slate-300',
+    'RFP_SENT': 'bg-blue-100 text-blue-800 border border-blue-300',
+    'AWARDED': 'bg-amber-100 text-amber-800 border border-amber-300',
+    'ORDERED': 'bg-indigo-100 text-indigo-800 border border-indigo-300',
+    'RECEIVED': 'bg-emerald-100 text-emerald-800 border border-emerald-300',
+    'IN_STOCK': 'bg-emerald-100 text-emerald-800 border border-emerald-300',
+    'IN_MANUFACTURING': 'bg-purple-100 text-purple-700 border border-purple-300',
+    'MANUFACTURED': 'bg-teal-100 text-teal-700 border border-teal-300',
+    'RESERVED': 'bg-cyan-100 text-cyan-800 border border-cyan-300',
+    'CANCELLED': 'bg-rose-100 text-rose-700 border border-rose-300',
     'REVERTED_TO_AWARD': 'bg-amber-100 text-amber-800 border border-amber-300 font-black',
+};
+
+const formatComponentStatus = (status: string, poNumber?: string, isAr: boolean = false) => {
+    switch (status) {
+        case 'NEW':
+        case 'IN_TECHNICAL_REVIEW':
+            return isAr ? 'قيد الدراسة الفنية' : 'In Technical Review';
+        case 'PENDING_OFFER':
+            return isAr ? 'في المشتريات (انتظار العروض)' : 'In Procurement (Pending Offer)';
+        case 'RFP_SENT':
+            return isAr ? 'في المشتريات (تم إرسال RFP)' : 'In Procurement (RFP Sent)';
+        case 'AWARDED':
+            return isAr ? 'في المشتريات (تمت الترسية)' : 'In Procurement (Awarded)';
+        case 'ORDERED':
+            return isAr
+                ? `قيد الشحن / تم إصدار أمر الشراء${poNumber ? ` (${poNumber})` : ''}`
+                : `In Transit / PO Issued${poNumber ? ` (${poNumber})` : ''}`;
+        case 'RECEIVED':
+            return isAr ? 'تم الاستلام في المخزن' : 'Received in Stock';
+        case 'IN_STOCK':
+            return isAr ? 'في المخزن' : 'In Stock';
+        case 'RESERVED':
+            return isAr ? 'محجوز للإنتاج' : 'Reserved';
+        case 'IN_MANUFACTURING':
+            return isAr ? 'قيد التصنيع' : 'In Manufacturing';
+        case 'MANUFACTURED':
+            return isAr ? 'تم التصنيع' : 'Manufactured';
+        case 'CANCELLED':
+            return isAr ? 'ملغي' : 'Cancelled';
+        case 'REVERTED_TO_AWARD':
+            return isAr ? 'مرتجع إلى الترسية' : 'Reverted to Award';
+        default:
+            return status ? status.replace(/_/g, ' ') : (isAr ? 'غير محدد' : 'N/A');
+    }
 };
 
 export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) => {
@@ -82,6 +122,26 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'parts' | 'contracts'>('parts');
 
+    // Map total allocated quantities from stock orders across all active orders
+    const stockAllocationMap = useMemo(() => {
+        const map = new Map<string, number>();
+        orders.forEach(order => {
+            if (order.status === OrderStatus.REJECTED || (order.status as string) === 'REJECTED') return;
+            (order.items || []).forEach(item => {
+                (item.components || []).forEach(comp => {
+                    if (comp.allocatedFromStockOrderId) {
+                        const qty = Number(comp.quantity) || 0;
+                        const sCompId = comp.allocatedFromStockCompId;
+                        const descKey = `${comp.allocatedFromStockOrderId}:::${String(comp.description || '').trim().toLowerCase()}`;
+                        if (sCompId) map.set(sCompId, (map.get(sCompId) || 0) + qty);
+                        map.set(descKey, (map.get(descKey) || 0) + qty);
+                    }
+                });
+            });
+        });
+        return map;
+    }, [orders]);
+
     // Flatten all components from all orders into PartRow[]
     const allParts = useMemo<PartRow[]>(() => {
         const rows: PartRow[] = [];
@@ -89,6 +149,25 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
             if (order.status === OrderStatus.REJECTED || (order.status as string) === 'REJECTED') return;
             order.items.forEach(item => {
                 (item.components || []).forEach(comp => {
+                    const isStockOrder = (order.customerName && order.customerName.trim().toLowerCase() === 'internal stock') ||
+                        (typeof order.customerReferenceNumber === 'string' && order.customerReferenceNumber.trim().toUpperCase().startsWith('STOCK-'));
+
+                    let compQty = Number(comp.quantity) || 0;
+                    if (isStockOrder) {
+                        const descKey = `${order.id}:::${String(comp.description || '').trim().toLowerCase()}`;
+                        const allocatedTotal = (comp.id && stockAllocationMap.get(comp.id)) || stockAllocationMap.get(descKey) || 0;
+                        if (allocatedTotal > 0) {
+                            const baseQty = comp.originalQuantity !== undefined
+                                ? comp.originalQuantity
+                                : (item.originalQuantity !== undefined
+                                    ? item.originalQuantity
+                                    : (((comp.allocatedQty || 0) > 0)
+                                        ? (comp.quantity + comp.allocatedQty)
+                                        : comp.quantity));
+                            compQty = Math.max(0, Number((baseQty - allocatedTotal).toFixed(3)));
+                        }
+                    }
+                    if (compQty <= 0) return;
                     const supp = suppliers.find(s => s.id === comp.supplierId);
 
                     // Purchase date: use procurementStartedAt, statusUpdatedAt, or order date as fallback
@@ -100,8 +179,11 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                         usageDate = comp.statusUpdatedAt || '';
                     }
 
-                    let partStatus = comp.status || '';
-                    if (comp.lastAction === 'CANCELLED' || (comp.cancellationReason && comp.status === 'PENDING_OFFER')) {
+                    let partStatus = comp.status || 'NEW';
+                    const isOrderUnderReview = (order.status === OrderStatus.LOGGED || order.status === OrderStatus.TECHNICAL_REVIEW) && !order.technicalReviewFinishedAt;
+                    if (isOrderUnderReview && (!comp.poNumber && !comp.rfpId && !comp.awardId && (!comp.status || comp.status === 'NEW' || comp.status === 'PENDING_OFFER'))) {
+                        partStatus = 'NEW';
+                    } else if (comp.lastAction === 'CANCELLED' || (comp.cancellationReason && comp.status === 'PENDING_OFFER')) {
                         partStatus = 'CANCELLED';
                     } else if (comp.lastAction === 'REVERTED_TO_AWARD' || (comp.revertReason && comp.status === 'AWARDED')) {
                         partStatus = 'REVERTED_TO_AWARD';
@@ -112,7 +194,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                         internalPN: comp.componentNumber || '',
                         mfrPN: comp.supplierPartNumber || '',
                         description: comp.description || '',
-                        qty: comp.quantity,
+                        qty: compQty,
                         unit: comp.unit,
                         purchaseDate,
                         usageDate,
@@ -120,7 +202,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                         supplier: supp?.name || '',
                         orderRef: order.internalOrderNumber || '',
                         // Detail fields
-                        customerName: order.customerName || '',
+                        customerName: isStockOrder ? (isAr ? 'طلب مخزن' : 'Internal Stock') : (order.customerName || ''),
                         poNumber: comp.poNumber || '',
                         status: partStatus,
                         cancellationReason: comp.cancellationReason,
@@ -137,6 +219,8 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                         procurementStartedAt: comp.procurementStartedAt || '',
                         source: comp.source || '',
                         productionType: item.productionType || 'MANUFACTURING',
+                        isStockOrder,
+                        allocatedFromStockOrderRef: comp.allocatedFromStockOrderRef,
                         orderLogs: (order.logs || []).filter(l =>
                             (l.message || '').toLowerCase().includes((comp.description || '').toLowerCase().substring(0, 15)) ||
                             (l.message || '').toLowerCase().includes((comp.componentNumber || '').toLowerCase()) ||
@@ -245,6 +329,18 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
 
     const renderCell = (row: PartRow, key: ColKey) => {
         switch (key) {
+            case 'customerName': return (
+                <div className="flex items-center gap-1.5">
+                    {row.isStockOrder ? (
+                        <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                            <i className="fa-solid fa-boxes-stacked text-[8px]"></i>
+                            {isAr ? 'طلب مخزن' : 'Internal Stock'}
+                        </span>
+                    ) : (
+                        <span className="font-bold text-slate-800 text-xs">{row.customerName || '-'}</span>
+                    )}
+                </div>
+            );
             case 'price': return <span className="font-mono">{row.price.toLocaleString()} <span className="text-[9px] text-slate-400">L.E.</span></span>;
             case 'qty': return <span>{row.qty} <span className="text-[9px] text-slate-400">{row.unit}</span></span>;
             case 'purchaseDate': return formatDate(row.purchaseDate);
@@ -256,7 +352,7 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                     <span className="font-bold text-slate-800">{row.description || '-'}</span>
                     {row.status && (
                         <span className={`w-fit mt-1 text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${STATUS_COLORS[row.status] || 'bg-slate-100 text-slate-600'}`}>
-                            {row.status.replace(/_/g, ' ')}
+                            {formatComponentStatus(row.status, row.poNumber, isAr)}
                         </span>
                     )}
                 </div>
@@ -351,7 +447,23 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                 {renderCell(row, key)}
                                             </td>
                                         ))}
-                                        <td className="px-4 py-3 text-[10px] font-mono font-black text-blue-600">{row.orderRef}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap">
+                                            <div className="flex flex-col">
+                                                <span className="text-[10px] font-mono font-black text-blue-600">{row.orderRef}</span>
+                                                {row.isStockOrder && (
+                                                    <span className="w-fit mt-0.5 text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                                        <i className="fa-solid fa-boxes-stacked text-[7px]"></i>
+                                                        {isAr ? 'طلب مخزن' : 'Stock Order'}
+                                                    </span>
+                                                )}
+                                                {row.allocatedFromStockOrderRef && (
+                                                    <span className="w-fit mt-0.5 text-[8px] font-bold text-slate-500 flex items-center gap-1" title={`Allocated from Stock Order ${row.allocatedFromStockOrderRef}`}>
+                                                        <i className="fa-solid fa-share-nodes text-[7px] text-blue-500"></i>
+                                                        {row.allocatedFromStockOrderRef}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
                                         <td className="px-4 py-3 text-center">
                                             <i className={`fa-solid ${expandedRowId === row.id ? 'fa-chevron-up text-blue-500' : 'fa-chevron-down text-slate-300'} text-[10px] transition-transform`}></i>
                                         </td>
@@ -363,14 +475,14 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                     <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
                                                         {/* Component Info */}
                                                         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                                                            <h4 className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4 flex items-center gap-2">
+                                                             <h4 className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4 flex items-center gap-2">
                                                                 <i className="fa-solid fa-microchip text-blue-500"></i> {isAr ? 'تفاصيل المكون' : 'Component Details'}
                                                             </h4>
                                                             <div className="space-y-3">
-                                                                <div className="flex justify-between">
+                                                                <div className="flex justify-between items-center">
                                                                     <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'الحالة' : 'Status'}</span>
                                                                     <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${STATUS_COLORS[row.status] || 'bg-slate-100 text-slate-600'}`}>
-                                                                        {row.status.replace(/_/g, ' ') || 'N/A'}
+                                                                        {formatComponentStatus(row.status, row.poNumber, isAr)}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex justify-between">
@@ -398,6 +510,16 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                                 <i className="fa-solid fa-file-invoice text-amber-500"></i> {isAr ? 'سياق الطلب' : 'Order Context'}
                                                             </h4>
                                                             <div className="space-y-3">
+                                                                <div className="flex justify-between items-center">
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'نوع الطلب' : 'Order Type'}</span>
+                                                                    {row.isStockOrder ? (
+                                                                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                                                            <i className="fa-solid fa-boxes-stacked mr-1"></i>Stock Order
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="text-[9px] font-bold uppercase text-slate-600">Customer PO</span>
+                                                                    )}
+                                                                </div>
                                                                 <div className="flex justify-between">
                                                                     <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'العميل' : 'Customer'}</span>
                                                                     <span className="text-xs font-black text-slate-700">{row.customerName}</span>
@@ -406,6 +528,12 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                                     <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'مرجع الطلب' : 'Order Ref'}</span>
                                                                     <span className="text-xs font-mono font-black text-blue-600">{row.orderRef}</span>
                                                                 </div>
+                                                                {row.allocatedFromStockOrderRef && (
+                                                                    <div className="flex justify-between">
+                                                                        <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'مخصص من' : 'Allocated From'}</span>
+                                                                        <span className="text-xs font-bold text-blue-600">Stock PO: {row.allocatedFromStockOrderRef}</span>
+                                                                    </div>
+                                                                )}
                                                                 <div className="flex justify-between">
                                                                     <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'بند الطلب' : 'Line Item'}</span>
                                                                     <span className="text-xs font-bold text-slate-600 truncate max-w-[150px]">{row.itemDescription}</span>

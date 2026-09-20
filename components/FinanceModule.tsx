@@ -1022,11 +1022,80 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     });
   }, [stockOrders, search]);
 
+  // Map total allocated quantities from stock orders across all active non-rejected orders
+  const stockAllocationMap = useMemo(() => {
+    const map = new Map<string, number>();
+    orders.forEach(order => {
+      if (order.status === OrderStatus.REJECTED || (order.status as string) === 'REJECTED') return;
+      (order.items || []).forEach(item => {
+        (item.components || []).forEach(comp => {
+          if (comp.allocatedFromStockOrderId) {
+            const qty = Number(comp.quantity) || 0;
+            const sCompId = comp.allocatedFromStockCompId;
+            const descKey = `${comp.allocatedFromStockOrderId}:::${String(comp.description || '').trim().toLowerCase()}`;
+            if (sCompId) map.set(sCompId, (map.get(sCompId) || 0) + qty);
+            map.set(descKey, (map.get(descKey) || 0) + qty);
+          }
+        });
+      });
+    });
+    return map;
+  }, [orders]);
+
+  const getStockCompRemainingQty = useCallback((orderId: string, item: any, comp: any): number => {
+    const descKey = `${orderId}:::${String(comp.description || '').trim().toLowerCase()}`;
+    const allocatedTotal = (comp.id && stockAllocationMap.get(comp.id)) || stockAllocationMap.get(descKey) || (comp.allocatedQty || 0);
+    if (allocatedTotal > 0) {
+      const baseQty = comp.originalQuantity !== undefined
+        ? comp.originalQuantity
+        : (item.originalQuantity !== undefined
+          ? item.originalQuantity
+          : (((comp.allocatedQty || 0) > 0)
+            ? ((Number(comp.quantity) || 0) + comp.allocatedQty)
+            : (Number(comp.quantity) || 0)));
+      return Math.max(0, Number((baseQty - allocatedTotal).toFixed(3)));
+    }
+    return Number(comp.quantity) || 0;
+  }, [stockAllocationMap]);
+
+  const getStockCompAllocatedQty = useCallback((orderId: string, item: any, comp: any): number => {
+    const descKey = `${orderId}:::${String(comp.description || '').trim().toLowerCase()}`;
+    return (comp.id && stockAllocationMap.get(comp.id)) || stockAllocationMap.get(descKey) || (comp.allocatedQty || 0);
+  }, [stockAllocationMap]);
+
+  const getStockCompCategory = useCallback((comp: any, remainingQty: number): 'inside_stock' | 'in_transition' | 'not_ordered' => {
+    const isReceived = comp.status === 'RECEIVED' || comp.status === 'IN_STOCK' || (comp.receivedQty !== undefined && comp.receivedQty >= remainingQty && remainingQty > 0);
+    if (isReceived) return 'inside_stock';
+    const isOrdered = comp.status === 'ORDERED' || Boolean(comp.poNumber) || Boolean(comp.sendPoId);
+    if (isOrdered) return 'in_transition';
+    return 'not_ordered';
+  }, []);
+
+  const getStockCompReceivedQty = useCallback((orderId: string, item: any, comp: any): number => {
+    const remainingQty = getStockCompRemainingQty(orderId, item, comp);
+    if (remainingQty <= 0) return 0;
+    const statusUpper = String(comp.status || '').toUpperCase();
+    if (statusUpper === 'RECEIVED' || statusUpper === 'IN_STOCK') {
+      const rec = comp.receivedQty !== undefined ? Number(comp.receivedQty) : remainingQty;
+      return Math.max(0, Math.min(remainingQty, rec));
+    }
+    if (comp.receivedQty !== undefined && Number(comp.receivedQty) > 0) {
+      return Math.max(0, Math.min(remainingQty, Number(comp.receivedQty)));
+    }
+    return 0;
+  }, [getStockCompRemainingQty]);
+
   const stockStats = useMemo(() => {
-    let totalCommittedSpend = 0;
+    let grandTotalInventoryValue = 0; // Physically received in inventory only!
+    let totalCommittedPipeline = 0;   // In inventory + in transit + pending
+    let insideStockValue = 0;
+    let inTransitionValue = 0;
+    let notOrderedValue = 0;
+
+    let insideStockCount = 0;
+    let inTransitionCount = 0;
+    let notOrderedCount = 0;
     let totalComponentsCount = 0;
-    let inStockCompsCount = 0;
-    let inTransitionCompsCount = 0;
     let fulfilledOrdersCount = 0;
     let activeOrdersCount = 0;
 
@@ -1038,12 +1107,38 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       (o.items || []).forEach(it => {
         (it.components || []).forEach(c => {
           if (c.status === 'CANCELLED') return;
+          const remainingQty = getStockCompRemainingQty(o.id, it, c);
+          const unitCost = Number(c.unitCost) || 0;
+          const receivedQty = getStockCompReceivedQty(o.id, it, c);
+          const receivedVal = receivedQty * unitCost;
+          const unreceivedQty = Math.max(0, remainingQty - receivedQty);
+          const unreceivedVal = unreceivedQty * unitCost;
+
           totalComponentsCount++;
-          const cost = (c.quantity || 0) * (c.unitCost || 0);
-          totalCommittedSpend += cost;
-          const isReceived = c.status === 'RECEIVED' || (c.receivedQty !== undefined && c.receivedQty >= c.quantity);
-          if (isReceived) inStockCompsCount++;
-          else inTransitionCompsCount++;
+
+          // DYNAMIC RULE: ONLY ADD TO GRAND TOTAL OF INVENTORY IF RECEIVED IN INVENTORY!
+          if (receivedQty > 0) {
+            grandTotalInventoryValue += receivedVal;
+            insideStockValue += receivedVal;
+            insideStockCount++;
+          }
+
+          const cat = getStockCompCategory(c, remainingQty);
+          if (cat === 'inside_stock') {
+            if (receivedQty === 0 && unreceivedQty > 0) {
+              grandTotalInventoryValue += unreceivedVal;
+              insideStockValue += unreceivedVal;
+              insideStockCount++;
+            }
+          } else if (cat === 'in_transition') {
+            inTransitionValue += unreceivedVal;
+            inTransitionCount++;
+          } else {
+            notOrderedValue += unreceivedVal;
+            notOrderedCount++;
+          }
+
+          totalCommittedPipeline += (remainingQty * unitCost);
         });
       });
     });
@@ -1052,12 +1147,18 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       totalOrders: stockOrders.length,
       activeOrdersCount,
       fulfilledOrdersCount,
-      totalCommittedSpend,
+      totalStockValue: grandTotalInventoryValue, // Strictly received inventory!
+      grandTotalInventoryValue,
+      totalCommittedPipeline,
       totalComponentsCount,
-      inStockCompsCount,
-      inTransitionCompsCount
+      insideStockValue,
+      insideStockCount,
+      inTransitionValue,
+      inTransitionCount,
+      notOrderedValue,
+      notOrderedCount
     };
-  }, [stockOrders]);
+  }, [stockOrders, getStockCompRemainingQty, getStockCompReceivedQty, getStockCompCategory]);
 
   const ordersWithPL = useMemo(() => orders.map(o => ({ ...o, pl: getPL(o) })), [orders]);
 
@@ -2132,6 +2233,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           <div className="px-8 pb-8 space-y-4">
             {customers
               .filter(c => {
+                if (c.name.trim().toLowerCase() === 'internal stock') return false;
                 if (!customerWalletSearch) return true;
                 const q = customerWalletSearch.toLowerCase().trim();
                 return (
@@ -2817,7 +2919,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           <tbody className="divide-y divide-slate-50">
             {activeTab === 'blacklist_hold' ? (
               <>
-                {[...customers].sort((a, b) => {
+                {[...customers].filter(c => c.name.trim().toLowerCase() !== 'internal stock').sort((a, b) => {
                   const valA = (a.name || '').toLowerCase();
                   const valB = (b.name || '').toLowerCase();
                   if (sortConfig.key !== 'name') return 0;
@@ -4362,75 +4464,114 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       {activeTab === 'stock_orders' && (
         <div className="space-y-6">
-          {/* Header Notice Banner */}
-          <div className="bg-gradient-to-r from-emerald-900 to-slate-900 text-white p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden">
+          {/* Header Notice Banner with Grand Total Stock Value */}
+          <div className="bg-gradient-to-r from-emerald-900 via-slate-900 to-slate-900 text-white p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden">
             <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
               <div>
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-widest mb-3 border border-emerald-500/30">
                   <i className="fa-solid fa-boxes-stacked"></i> Internal Stock Replenishment Operations
                 </div>
-                <h3 className="text-2xl font-black tracking-tight">Non-Commercial Inventory Replenishment</h3>
+                <h3 className="text-2xl font-black tracking-tight">Warehouse Inventory & Stock Valuation Ledger</h3>
                 <p className="text-xs text-slate-300 font-medium max-w-2xl mt-1 leading-relaxed">
                   Stock orders are dedicated exclusively to warehouse buffer replenishment and internal stock sourcing.
-                  These orders carry <strong>0 customer revenue</strong>, are completely exempt from billing/tax invoicing, and do not impact customer receivables or wallet ledgers.
+                  These orders carry <strong>0 customer revenue</strong>, are completely exempt from billing/tax invoicing, have no customer wallet, and dynamically reflect transferred component values.
                 </p>
               </div>
-              <div className="text-end">
-                <div className="text-[10px] font-black uppercase text-emerald-400 tracking-widest">Total Inventory Procurement Spend</div>
-                <div className="text-3xl font-black text-white mt-1">L.E. {stockStats.totalCommittedSpend.toLocaleString()}</div>
+              <div className="text-start md:text-end bg-white/5 backdrop-blur-sm px-6 py-4 rounded-3xl border border-white/10 shrink-0">
+                <div className="text-[10px] font-black uppercase text-emerald-400 tracking-widest flex items-center gap-1.5 md:justify-end">
+                  <i className="fa-solid fa-vault"></i> Grand Total Inventory Value
+                </div>
+                <div className="text-3xl font-black text-white mt-1 font-mono">
+                  L.E. {stockStats.grandTotalInventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] font-bold text-slate-300 mt-0.5">
+                  {stockStats.insideStockCount} received components in warehouse hub
+                  {stockStats.inTransitionValue > 0 && (
+                    <span className="text-cyan-300 ml-1">
+                      · L.E. {stockStats.inTransitionValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in transit
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* 4 Stat KPI Cards */}
+          {/* 3-Way Split Cards + Total Stock Orders */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 1. Inside Stock */}
+            <div className="bg-white p-6 rounded-[2rem] border-2 border-emerald-100 shadow-sm flex items-center gap-4 hover:border-emerald-200 transition-all">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl shrink-0">
+                <i className="fa-solid fa-circle-check"></i>
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-black text-emerald-700 uppercase tracking-widest flex items-center gap-1">
+                  <span>Inside Inventory (Stock)</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                </div>
+                <div className="text-xl font-black text-slate-900 font-mono mt-0.5 truncate">
+                  L.E. {stockStats.insideStockValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] font-bold text-slate-500 mt-0.5">
+                  {stockStats.insideStockCount} received components in warehouse
+                </div>
+              </div>
+            </div>
+
+            {/* 2. In Transition */}
+            <div className="bg-white p-6 rounded-[2rem] border-2 border-cyan-100 shadow-sm flex items-center gap-4 hover:border-cyan-200 transition-all">
+              <div className="w-14 h-14 rounded-2xl bg-cyan-50 text-cyan-700 flex items-center justify-center text-2xl shrink-0">
+                <i className="fa-solid fa-truck-fast"></i>
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-black text-cyan-700 uppercase tracking-widest flex items-center gap-1">
+                  <span>In Transition (On The Way)</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 inline-block"></span>
+                </div>
+                <div className="text-xl font-black text-slate-900 font-mono mt-0.5 truncate">
+                  L.E. {stockStats.inTransitionValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] font-bold text-slate-500 mt-0.5">
+                  {stockStats.inTransitionCount} ordered via PO, pending receipt
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Not Ordered Yet */}
+            <div className="bg-white p-6 rounded-[2rem] border-2 border-amber-100 shadow-sm flex items-center gap-4 hover:border-amber-200 transition-all">
+              <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl shrink-0">
+                <i className="fa-solid fa-clock-rotate-left"></i>
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-black text-amber-700 uppercase tracking-widest flex items-center gap-1">
+                  <span>Not Ordered Yet</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
+                </div>
+                <div className="text-xl font-black text-slate-900 font-mono mt-0.5 truncate">
+                  L.E. {stockStats.notOrderedValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] font-bold text-slate-500 mt-0.5">
+                  {stockStats.notOrderedCount} in study / RFP / award phase
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Total Stock Orders */}
             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
               <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-2xl shrink-0">
                 <i className="fa-solid fa-clipboard-list"></i>
               </div>
-              <div>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Stock Orders</div>
-                <div className="text-2xl font-black text-slate-900">{stockStats.totalOrders}</div>
-                <div className="text-[10px] font-bold text-slate-500">{stockStats.activeOrdersCount} Active · {stockStats.fulfilledOrdersCount} Fulfilled</div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl shrink-0">
-                <i className="fa-solid fa-coins"></i>
-              </div>
-              <div>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Committed Spend</div>
-                <div className="text-2xl font-black text-slate-900">L.E. {stockStats.totalCommittedSpend.toLocaleString()}</div>
-                <div className="text-[10px] font-bold text-amber-600">{stockStats.totalComponentsCount} Total Components</div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl shrink-0">
-                <i className="fa-solid fa-circle-check"></i>
-              </div>
-              <div>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">In Stock Components</div>
-                <div className="text-2xl font-black text-emerald-600">{stockStats.inStockCompsCount}</div>
-                <div className="text-[10px] font-bold text-slate-500">Delivered & Ready in Hub</div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-cyan-50 text-cyan-700 flex items-center justify-center text-2xl shrink-0">
-                <i className="fa-solid fa-truck-fast"></i>
-              </div>
-              <div>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">In Transition</div>
-                <div className="text-2xl font-black text-cyan-700">{stockStats.inTransitionCompsCount}</div>
-                <div className="text-[10px] font-bold text-slate-500">Awaiting Supplier Delivery</div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stock Orders</div>
+                <div className="text-xl font-black text-slate-900 font-mono mt-0.5">{stockStats.totalOrders}</div>
+                <div className="text-[10px] font-bold text-slate-500 mt-0.5">
+                  {stockStats.activeOrdersCount} Active · {stockStats.fulfilledOrdersCount} Fulfilled
+                </div>
               </div>
             </div>
           </div>
 
           {/* Stock Orders List */}
-          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
               <div className="flex items-center gap-3">
                 <i className="fa-solid fa-layer-group text-emerald-400"></i>
@@ -4467,10 +4608,35 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               <div className="divide-y divide-slate-100">
                 {filteredStockOrders.map(order => {
                   const isExpanded = !!expandedOrderIds[order.id];
-                  const allComps = (order.items || []).flatMap(it => it.components || []);
-                  const totalOrderCost = allComps.reduce((sum, c) => sum + ((c.quantity || 0) * (c.unitCost || 0)), 0);
-                  const receivedComps = allComps.filter(c => c.status === 'RECEIVED' || (c.receivedQty !== undefined && c.receivedQty >= c.quantity)).length;
+                  const allComps = (order.items || []).flatMap(it =>
+                    (it.components || []).map(c => {
+                      const remQty = getStockCompRemainingQty(order.id, it, c);
+                      const allocQty = getStockCompAllocatedQty(order.id, it, c);
+                      const recQty = getStockCompReceivedQty(order.id, it, c);
+                      const unitCost = Number(c.unitCost) || 0;
+                      const cat = getStockCompCategory(c, remQty);
+                      const unreceivedQty = Math.max(0, remQty - recQty);
+                      const inTransitVal = cat === 'in_transition' ? unreceivedQty * unitCost : 0;
+                      const notOrderedVal = cat === 'not_ordered' ? unreceivedQty * unitCost : 0;
+                      return {
+                        ...c,
+                        remainingQty: remQty,
+                        allocatedQty: allocQty,
+                        receivedQty: recQty,
+                        inventoryVal: recQty * unitCost,
+                        inTransitVal,
+                        notOrderedVal,
+                        category: cat
+                      };
+                    })
+                  );
+                  const totalOrderInventoryVal = allComps.reduce((sum, c) => sum + c.inventoryVal, 0);
+                  const totalOrderInTransitVal = allComps.reduce((sum, c) => sum + c.inTransitVal, 0);
+                  const totalOrderNotOrderedVal = allComps.reduce((sum, c) => sum + c.notOrderedVal, 0);
+                  const receivedComps = allComps.filter(c => c.receivedQty > 0 || c.category === 'inside_stock').length;
                   const isFulfilled = order.status === OrderStatus.FULFILLED;
+                  const hasReceived = receivedComps > 0;
+                  const hasInTransit = allComps.some(c => c.category === 'in_transition');
 
                   return (
                     <div key={order.id} className="transition-colors hover:bg-slate-50/50">
@@ -4518,26 +4684,46 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             </div>
                             <div className="flex items-center gap-2">
                               <span className={`text-xs font-black ${isFulfilled ? 'text-emerald-600' : 'text-blue-600'}`}>
-                                {receivedComps} / {allComps.length} Received
+                                {receivedComps} / {allComps.length} In Stock
                               </span>
                               <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${
                                 isFulfilled
                                   ? 'bg-emerald-100 text-emerald-800'
-                                  : 'bg-blue-100 text-blue-700'
+                                  : hasReceived
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : hasInTransit
+                                      ? 'bg-cyan-100 text-cyan-800'
+                                      : 'bg-amber-100 text-amber-800'
                               }`}>
-                                {isFulfilled ? 'Fulfilled ✓' : 'In Progress'}
+                                {isFulfilled
+                                  ? 'Fulfilled ✓'
+                                  : hasReceived
+                                    ? 'Partially In Stock'
+                                    : hasInTransit
+                                      ? 'In Transit (PO Issued)'
+                                      : 'Not Ordered Yet'}
                               </span>
                             </div>
                           </div>
 
-                          {/* Procurement Cost */}
-                          <div className="text-right min-w-32">
-                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
-                              Procurement Cost
+                          {/* Current Stock Inventory Value */}
+                          <div className="text-right min-w-36">
+                            <div className="text-[9px] font-black uppercase tracking-widest text-emerald-600 mb-1">
+                              Inventory Value
                             </div>
-                            <div className="text-sm font-black text-slate-900">
-                              L.E. {totalOrderCost.toLocaleString()}
+                            <div className="text-sm font-black text-slate-900 font-mono">
+                              L.E. {totalOrderInventoryVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
+                            {totalOrderInTransitVal > 0 && (
+                              <div className="text-[8px] font-bold text-cyan-600 mt-0.5">
+                                (+ L.E. {totalOrderInTransitVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in transit)
+                              </div>
+                            )}
+                            {totalOrderNotOrderedVal > 0 && (
+                              <div className="text-[8px] font-bold text-amber-600 mt-0.5">
+                                (+ L.E. {totalOrderNotOrderedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} not ordered yet)
+                              </div>
+                            )}
                           </div>
 
                           {/* Status Badge */}
@@ -4575,26 +4761,33 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                   </div>
                                 </div>
 
-                                {/* Components Table */}
+                                {/* Components Table with per-component Current Stock Value */}
                                 {item.components && item.components.length > 0 ? (
                                   <div className="ml-7 overflow-x-auto">
                                     <table className="w-full text-left text-xs">
                                       <thead>
                                         <tr className="border-b border-slate-100 text-[9px] font-black uppercase text-slate-400">
                                           <th className="py-2">Component / SKU</th>
-                                          <th className="py-2">Status</th>
+                                          <th className="py-2">Stock Category</th>
                                           <th className="py-2">Supplier</th>
-                                          <th className="py-2 text-right">Qty</th>
+                                          <th className="py-2 text-right">Remaining Qty</th>
                                           <th className="py-2 text-right">Received Qty</th>
                                           <th className="py-2 text-right">Unit Cost</th>
-                                          <th className="py-2 text-right">Total Cost</th>
+                                          <th className="py-2 text-right text-emerald-700">Current Stock Value</th>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-50 font-medium">
                                         {item.components.map((comp, compIdx) => {
-                                          const isReceived = comp.status === 'RECEIVED' || (comp.receivedQty !== undefined && comp.receivedQty >= comp.quantity);
+                                          const remainingQty = getStockCompRemainingQty(order.id, item, comp);
+                                          const allocatedQty = getStockCompAllocatedQty(order.id, item, comp);
+                                          const receivedInStockQty = getStockCompReceivedQty(order.id, item, comp);
+                                          const unitCost = Number(comp.unitCost) || 0;
+                                          const currentInventoryVal = receivedInStockQty * unitCost;
+                                          const cat = getStockCompCategory(comp, remainingQty);
+                                          const unreceivedQty = Math.max(0, remainingQty - receivedInStockQty);
+                                          const inTransitVal = cat === 'in_transition' ? unreceivedQty * unitCost : 0;
+                                          const notOrderedVal = cat === 'not_ordered' ? unreceivedQty * unitCost : 0;
                                           const partNum = comp.supplierPartNumber || comp.componentNumber || '—';
-                                          const compCost = (comp.quantity || 0) * (comp.unitCost || 0);
 
                                           return (
                                             <tr key={comp.id || compIdx} className="hover:bg-slate-50">
@@ -4603,31 +4796,70 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                                 <div className="text-[10px] font-mono text-slate-400">SKU: {partNum}</div>
                                               </td>
                                               <td className="py-2.5 pr-4">
-                                                <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase inline-flex items-center gap-1 ${
-                                                  isReceived
-                                                    ? 'bg-emerald-100 text-emerald-800'
-                                                    : 'bg-cyan-100 text-cyan-800'
-                                                }`}>
-                                                  <i className={`fa-solid ${isReceived ? 'fa-circle-check text-emerald-600' : 'fa-truck-fast text-cyan-600'}`}></i>
-                                                  {isReceived ? 'In Stock' : 'In Transition'}
-                                                </span>
+                                                {cat === 'inside_stock' ? (
+                                                  <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                                    <i className="fa-solid fa-circle-check text-emerald-600"></i> Inside Stock
+                                                  </span>
+                                                ) : cat === 'in_transition' ? (
+                                                  <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase inline-flex items-center gap-1 bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                                    <i className="fa-solid fa-truck-fast text-cyan-600"></i> In Transition {comp.poNumber ? `(${comp.poNumber})` : ''}
+                                                  </span>
+                                                ) : (
+                                                  <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-200">
+                                                    <i className="fa-solid fa-clock-rotate-left text-amber-600"></i> Not Ordered ({comp.status || 'NEW'})
+                                                  </span>
+                                                )}
                                               </td>
                                               <td className="py-2.5 pr-4 text-slate-600 font-bold">
                                                 {comp.supplierName || '—'}
                                               </td>
                                               <td className="py-2.5 pr-4 text-right font-bold text-slate-700">
-                                                {comp.quantity} {comp.unit || 'pcs'}
+                                                <div>{remainingQty} {comp.unit || 'pcs'}</div>
+                                                {allocatedQty > 0 && (
+                                                  <div className="text-[8px] text-teal-600 font-bold tracking-tight">
+                                                    ({allocatedQty} allocated to POs)
+                                                  </div>
+                                                )}
                                               </td>
                                               <td className="py-2.5 pr-4 text-right font-black">
-                                                <span className={comp.receivedQty && comp.receivedQty >= comp.quantity ? 'text-emerald-600' : 'text-slate-500'}>
-                                                  {comp.receivedQty || 0}
+                                                <span className={receivedInStockQty > 0 ? 'text-emerald-600 font-bold' : 'text-slate-400 font-medium'}>
+                                                  {receivedInStockQty}
                                                 </span>
                                               </td>
-                                              <td className="py-2.5 pr-4 text-right text-slate-700">
-                                                L.E. {(comp.unitCost || 0).toLocaleString()}
+                                              <td className="py-2.5 pr-4 text-right text-slate-700 font-mono">
+                                                L.E. {unitCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                               </td>
-                                              <td className="py-2.5 text-right font-black text-slate-900">
-                                                L.E. {compCost.toLocaleString()}
+                                              <td className="py-2.5 text-right font-black font-mono">
+                                                {receivedInStockQty > 0 ? (
+                                                  <>
+                                                    <div className="text-emerald-700">
+                                                      L.E. {currentInventoryVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </div>
+                                                    {inTransitVal > 0 && (
+                                                      <div className="text-[8px] font-bold text-cyan-600">
+                                                        (+ L.E. {inTransitVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in transit)
+                                                      </div>
+                                                    )}
+                                                    {notOrderedVal > 0 && (
+                                                      <div className="text-[8px] font-bold text-amber-600">
+                                                        (+ L.E. {notOrderedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} not ordered yet)
+                                                      </div>
+                                                    )}
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    <div className="text-slate-400 font-medium">L.E. 0.00</div>
+                                                    {cat === 'in_transition' ? (
+                                                      <div className="text-[8px] font-bold text-cyan-600 uppercase tracking-tight">
+                                                        In Transit (L.E. {inTransitVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                                      </div>
+                                                    ) : (
+                                                      <div className="text-[8px] font-bold text-amber-600 uppercase tracking-tight">
+                                                        Not Ordered ({comp.status || 'NEW'})
+                                                      </div>
+                                                    )}
+                                                  </>
+                                                )}
                                               </td>
                                             </tr>
                                           );

@@ -483,6 +483,31 @@ class DataService {
     return this.dispatchAction(orderId, 'finalize-study');
   }
 
+  async allocateStockComponent(
+    targetOrderId: string,
+    targetItemId: string,
+    stockOrderId: string,
+    stockCompId: string,
+    allocateQty: number,
+    remainderQty?: number,
+    metadata?: {
+      contractNumber?: string;
+      contractDuration?: string;
+      scopeOfWork?: string;
+      description?: string;
+      partNumber?: string;
+    }
+  ): Promise<CustomerOrder> {
+    return this.dispatchAction(targetOrderId, 'allocate-stock-component', {
+      itemId: targetItemId,
+      stockOrderId,
+      stockCompId,
+      allocateQty,
+      remainderQty,
+      ...(metadata || {})
+    });
+  }
+
   async rollbackOrderToLogged(orderId: string, reason: string, isBlanket?: boolean) {
     return this.dispatchAction(orderId, 'rollback-to-logged', { reason, isBlanket });
   }

@@ -97,6 +97,10 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
     );
   }, [items, searchQuery]);
 
+  const totalStockInventoryVal = useMemo(() => {
+    return items.reduce((sum, i) => sum + ((Number(i.quantityInStock) || 0) * (Number(i.lastCost) || 0)), 0);
+  }, [items]);
+
   const transitComponents = useMemo(() => {
     const list: { order: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent }[] = [];
     allOrders.forEach(order => {
@@ -354,6 +358,13 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({ config, refres
                     onChange={e => setSearchQuery(e.target.value)}
                   />
                   <i className="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 text-lg"></i>
+                </div>
+                <div className="hidden lg:flex items-center gap-2.5 px-4 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl">
+                  <i className="fa-solid fa-vault text-emerald-600 text-sm"></i>
+                  <div className="text-right">
+                    <div className="text-[8px] font-black uppercase tracking-wider text-emerald-600">Total In-Stock Value</div>
+                    <div className="text-xs font-black font-mono">L.E. {totalStockInventoryVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  </div>
                 </div>
                 <button onClick={() => setIsAdding(!isAdding)} className="px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase shadow-lg hover:bg-black transition-all">Add Item</button>
               </>

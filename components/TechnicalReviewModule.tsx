@@ -317,6 +317,15 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setIsPoPreviewExpanded(false);
   }, [selectedOrder?.id]);
 
+  useEffect(() => {
+    if (selectedOrder && selectedItem && !selectedOrder.rolledBackToLogged) {
+      const pType = selectedItem.productionType || 'TRADING';
+      if (pType === 'TRADING' && (!selectedItem.components || selectedItem.components.length === 0)) {
+        dataService.setProductionType(selectedOrder.id, selectedItem.id, 'TRADING').then(o => updateOrderInState(o));
+      }
+    }
+  }, [selectedOrder?.id, selectedItem?.id, selectedItem?.productionType, selectedItem?.components?.length]);
+
   const fetchData = async (keepSelection = true) => {
     const [o, i, s] = await Promise.all([
       dataService.getOrders(),
@@ -527,9 +536,26 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     // 3. Post-Review Stock Orders (Internal Stock orders where technical review is completed)
     const stockOrders = (orders || []).filter(o =>
       o.id !== selectedOrder?.id &&
-      (o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-'))) &&
+      ((o.customerName && o.customerName.trim().toLowerCase() === 'internal stock') || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.trim().toUpperCase().startsWith('STOCK-'))) &&
       (Boolean(o.technicalReviewFinishedAt) || (o.status && o.status !== OrderStatus.LOGGED && o.status !== OrderStatus.TECHNICAL_REVIEW))
     );
+
+    // Map total allocated quantities from stock orders across all active orders
+    const stockAllocationMap = new Map<string, number>();
+    (orders || []).forEach(o => {
+      if (o.status === OrderStatus.REJECTED || (o.status as string) === 'REJECTED') return;
+      (o.items || []).forEach(it => {
+        (it.components || []).forEach(comp => {
+          if (comp.allocatedFromStockOrderId) {
+            const qty = Number(comp.quantity) || 0;
+            const sCompId = comp.allocatedFromStockCompId;
+            const descKey = `${comp.allocatedFromStockOrderId}:::${String(comp.description || '').trim().toLowerCase()}`;
+            if (sCompId) stockAllocationMap.set(sCompId, (stockAllocationMap.get(sCompId) || 0) + qty);
+            stockAllocationMap.set(descKey, (stockAllocationMap.get(descKey) || 0) + qty);
+          }
+        });
+      });
+    });
 
     const stockSuggestions: Extract<RankedCatalogSuggestion, { type: 'STOCK_ORDER' }>[] = [];
 
@@ -546,10 +572,23 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
             ? (scorePart + scoreDesc + 500)
             : Math.max(scorePart, scoreDesc) + 20;
 
-          const isInStock = c.status === 'RECEIVED' || (c.receivedQty !== undefined && c.receivedQty >= c.quantity);
+          const descKey = `${stockOrd.id}:::${String(c.description || '').trim().toLowerCase()}`;
+          const allocatedTotal = (c.id && stockAllocationMap.get(c.id)) || stockAllocationMap.get(descKey) || 0;
+          const baseQty = c.originalQuantity !== undefined
+            ? c.originalQuantity
+            : (it.originalQuantity !== undefined
+              ? it.originalQuantity
+              : (((c.allocatedQty || 0) > 0)
+                ? (c.quantity + c.allocatedQty)
+                : c.quantity));
+          const effCompQty = allocatedTotal > 0 ? Math.max(0, Number((baseQty - allocatedTotal).toFixed(3))) : c.quantity;
+
+          const isInStock = c.status === 'RECEIVED' || (c.receivedQty !== undefined && c.receivedQty >= effCompQty);
           const availableQty = isInStock
-            ? Math.max(0, (c.receivedQty || c.quantity) - (c.consumedQty || 0))
-            : Math.max(0, c.quantity - (c.consumedQty || 0));
+            ? Math.max(0, (c.receivedQty || effCompQty) - (c.consumedQty || 0))
+            : Math.max(0, effCompQty - (c.consumedQty || 0));
+
+          if (availableQty <= 0) return; // Skip depleted stock order components
 
           const purchaseDate = c.statusUpdatedAt || c.procurementStartedAt || stockOrd.orderDate || '';
 
@@ -558,7 +597,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
             score: totalScore,
             order: stockOrd,
             item: it,
-            comp: c,
+            comp: { ...c, quantity: effCompQty },
             isInStock,
             availableQty,
             purchaseDate
@@ -672,7 +711,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
           unitCost: inv.lastCost,
           taxPercent: 14,
           source: 'PROCUREMENT',
-          status: 'PENDING_OFFER',
+          status: 'NEW',
           contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, partNumSearch.trim()) : undefined,
           contractDuration: finalDuration,
           scopeOfWork: compScope || inv.description
@@ -721,7 +760,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, part.partNumber) : undefined,
       contractDuration: finalDuration,
       scopeOfWork: compScope || part.description,
-      status: 'PENDING_OFFER'
+      status: 'NEW'
     });
     updateOrderInState(updated);
     setCompSearch('');
@@ -734,79 +773,46 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     fetchData();
   };
 
-  const handleAddStockOrderComponent = async (stockComp: ManufacturingComponent, stockOrd: CustomerOrder, isInStock: boolean) => {
+  const handleAddStockOrderComponent = async (stockComp: ManufacturingComponent, stockOrd: CustomerOrder, isInStock: boolean, availableQty: number = 0) => {
     if (!selectedOrder || !selectedItem) return;
-    const matchedInv = inventory.find(i => (stockComp.inventoryItemId && i.id === stockComp.inventoryItemId) || (i.sku && i.sku === (stockComp.supplierPartNumber || stockComp.componentNumber)) || (i.description && i.description.toLowerCase() === stockComp.description.toLowerCase()));
-    const availableInv = matchedInv ? (matchedInv.quantityInStock - (matchedInv.quantityReserved || 0)) : 0;
-    
+
+    const requestedQty = compQty > 0 ? compQty : 1;
+    let qtyToAllocate = requestedQty;
+    let remainderQty = 0;
+
+    const effAvailable = availableQty > 0 ? availableQty : (Number(stockComp.quantity) || 0);
+
+    if (requestedQty > effAvailable) {
+      const proceed = window.confirm(
+        `Only ${effAvailable} ${stockComp.unit || 'pcs'} are available from Stock Order ${stockOrd.customerReferenceNumber || stockOrd.internalOrderNumber}.\n\nDo you want to allocate all ${effAvailable} from the stock order, and request the remaining ${requestedQty - effAvailable} via procurement?`
+      );
+      if (!proceed) return;
+      qtyToAllocate = effAvailable;
+      remainderQty = requestedQty - effAvailable;
+    }
+
     const finalDuration = compDurationVal ? `${compDurationVal} ${compDurationUnit}` : '';
     const partNum = stockComp.supplierPartNumber || stockComp.componentNumber || '';
+    const contractNum = selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, partNum) : undefined;
 
     try {
-      if (isInStock && matchedInv && availableInv > 0) {
-        if (compQty <= availableInv) {
-          const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-            description: stockComp.description,
-            quantity: compQty,
-            unit: stockComp.unit || 'pcs',
-            unitCost: stockComp.unitCost || matchedInv.lastCost || 0,
-            taxPercent: stockComp.taxPercent || 14,
-            source: 'STOCK',
-            inventoryItemId: matchedInv.id,
-            supplierPartNumber: partNum,
-            status: 'RESERVED'
-          });
-          updateOrderInState(updated);
-        } else {
-          // Partial stock + procurement remainder
-          let currentOrder = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-            description: stockComp.description,
-            quantity: availableInv,
-            unit: stockComp.unit || 'pcs',
-            unitCost: stockComp.unitCost || matchedInv.lastCost || 0,
-            taxPercent: stockComp.taxPercent || 14,
-            source: 'STOCK',
-            inventoryItemId: matchedInv.id,
-            supplierPartNumber: partNum,
-            status: 'RESERVED'
-          });
-          const remainder = compQty - availableInv;
-          const finalOrder = await dataService.addComponentToItem(currentOrder.id, selectedItem.id, {
-            description: stockComp.description,
-            quantity: remainder,
-            unit: stockComp.unit || 'pcs',
-            unitCost: stockComp.unitCost || 0,
-            taxPercent: stockComp.taxPercent || 14,
-            source: 'PROCUREMENT',
-            supplierId: stockComp.supplierId,
-            supplierName: stockComp.supplierName,
-            supplierPartNumber: partNum,
-            contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, partNum) : undefined,
-            contractDuration: finalDuration,
-            scopeOfWork: compScope || stockComp.description,
-            status: 'PENDING_OFFER'
-          });
-          updateOrderInState(finalOrder);
-        }
-      } else {
-        // In transition or not in inv
-        const updated = await dataService.addComponentToItem(selectedOrder.id, selectedItem.id, {
-          description: stockComp.description,
-          quantity: compQty,
-          unit: stockComp.unit || 'pcs',
-          unitCost: stockComp.unitCost || 0,
-          taxPercent: stockComp.taxPercent || 14,
-          source: 'PROCUREMENT',
-          supplierId: stockComp.supplierId,
-          supplierName: stockComp.supplierName,
-          supplierPartNumber: partNum,
-          contractNumber: selectedItem.productionType === 'OUTSOURCING' ? generateContractNumber(selectedItem, undefined, partNum) : undefined,
+      setIsProcessing(true);
+      const updated = await dataService.allocateStockComponent(
+        selectedOrder.id,
+        selectedItem.id,
+        stockOrd.id,
+        stockComp.id,
+        qtyToAllocate,
+        remainderQty,
+        {
+          contractNumber: contractNum,
           contractDuration: finalDuration,
           scopeOfWork: compScope || stockComp.description,
-          status: 'PENDING_OFFER'
-        });
-        updateOrderInState(updated);
-      }
+          description: stockComp.description,
+          partNumber: partNum
+        }
+      );
+      updateOrderInState(updated);
 
       setCompSearch('');
       setPartNumSearch('');
@@ -815,9 +821,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       setCompScope('');
       setShowCompSuggestions(false);
       setSelectedCatalogMatch(null);
-      fetchData();
+      await fetchData();
     } catch (e: any) {
-      alert(e.message || 'Failed to add stock order component');
+      alert(e.message || 'Failed to allocate stock order component');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -841,7 +849,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       unitCost: 0,
       taxPercent: 14,
       source: 'PROCUREMENT',
-      status: 'PENDING_OFFER',
+      status: 'NEW',
       supplierPartNumber: partNumSearch.trim() || undefined,
       contractNumber: selectedItem.productionType === 'OUTSOURCING' ? contractIdVal : undefined,
       contractDuration: finalDuration,
@@ -1081,7 +1089,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       </div>
 
       {activeTab === 'history' ? (
-        <PartHistory orders={orders} suppliers={suppliers} />
+        <PartHistory orders={orders.filter(o => o.status !== OrderStatus.REJECTED)} suppliers={suppliers} />
       ) : activeTab === 'alter_items' ? (
         <AlterLineItemsView orders={orders} onRefresh={() => fetchData(true)} />
       ) : (
@@ -1642,43 +1650,85 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                           if (suggestion.type === 'STOCK_ORDER') {
                                             const { comp, order: stockOrd, isInStock, availableQty, purchaseDate } = suggestion;
                                             const partNumber = comp.supplierPartNumber || comp.componentNumber || 'N/A';
+
+                                            let statusLabel = 'In Transition';
+                                            let statusBadge = 'bg-slate-100 text-slate-700 border border-slate-300';
+                                            let statusIcon = 'fa-solid fa-clock text-slate-500';
+
+                                            if (isInStock || comp.status === 'RECEIVED' || comp.status === 'IN_STOCK') {
+                                              statusLabel = 'Received in Stock';
+                                              statusBadge = 'bg-emerald-100 text-emerald-800 border border-emerald-300';
+                                              statusIcon = 'fa-solid fa-circle-check text-emerald-600';
+                                            } else if (comp.status === 'ORDERED') {
+                                              statusLabel = comp.poNumber ? `In Transit / PO Issued (${comp.poNumber})` : 'In Transit / PO Issued';
+                                              statusBadge = 'bg-indigo-100 text-indigo-800 border border-indigo-300';
+                                              statusIcon = 'fa-solid fa-truck-fast text-indigo-600';
+                                            } else if (comp.status === 'AWARDED') {
+                                              statusLabel = 'In Procurement (Awarded)';
+                                              statusBadge = 'bg-amber-100 text-amber-800 border border-amber-300';
+                                              statusIcon = 'fa-solid fa-award text-amber-600';
+                                            } else if (comp.status === 'RFP_SENT') {
+                                              statusLabel = 'In Procurement (RFP Sent)';
+                                              statusBadge = 'bg-blue-100 text-blue-800 border border-blue-300';
+                                              statusIcon = 'fa-solid fa-paper-plane text-blue-600';
+                                            } else if (comp.status === 'PENDING_OFFER') {
+                                              statusLabel = 'In Procurement (Pending Offer)';
+                                              statusBadge = 'bg-slate-100 text-slate-700 border border-slate-300';
+                                              statusIcon = 'fa-solid fa-clock text-slate-500';
+                                            } else if (comp.status === 'NEW') {
+                                              statusLabel = 'In Technical Review';
+                                              statusBadge = 'bg-blue-50 text-blue-700 border border-blue-200';
+                                              statusIcon = 'fa-solid fa-microscope text-blue-500';
+                                            } else if (comp.status === 'RESERVED') {
+                                              statusLabel = 'Reserved';
+                                              statusBadge = 'bg-cyan-100 text-cyan-800 border border-cyan-300';
+                                              statusIcon = 'fa-solid fa-lock text-cyan-600';
+                                            }
+
                                             return (
                                               <button
                                                 key={`stock-comp-${comp.id || `${stockOrd.id}-${partNumber}`}`}
-                                                onMouseDown={() => handleAddStockOrderComponent(comp, stockOrd, isInStock)}
+                                                onMouseDown={() => handleAddStockOrderComponent(comp, stockOrd, isInStock, availableQty)}
                                                 className="w-full text-left p-5 hover:bg-emerald-50/70 flex justify-between items-center group transition-colors"
                                               >
                                                 <div>
                                                   <div className="font-black text-slate-800 group-hover:text-emerald-700 text-xs flex items-center gap-2">
                                                     <span>{comp.description}</span>
-                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                                                      Ref: {stockOrd.customerReferenceNumber || stockOrd.internalOrderNumber}
+                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                                      <i className="fa-solid fa-boxes-stacked text-[8px]"></i>
+                                                      Stock Order: {stockOrd.customerReferenceNumber || stockOrd.internalOrderNumber}
                                                     </span>
                                                   </div>
-                                                  <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-4 flex-wrap items-center">
+                                                  <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase flex gap-3 flex-wrap items-center">
                                                     <span className="text-emerald-800 font-mono font-bold">Part / SKU: {partNumber}</span>
-                                                    <span className={`font-black ${availableQty > 0 ? (isInStock ? 'text-emerald-600' : 'text-cyan-700') : 'text-slate-400'}`}>
+                                                    <span className="font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                                                       Available: {availableQty} {comp.unit || 'pcs'}
                                                     </span>
-                                                    <span className="text-emerald-700 font-black">
-                                                      Procurement Cost: L.E. {(comp.unitCost || 0).toLocaleString()}
+                                                    <span className="text-slate-600 font-bold">
+                                                      Cost: L.E. {(comp.unitCost || 0).toLocaleString()}
                                                     </span>
+                                                    {comp.poNumber && (
+                                                      <span className="text-indigo-700 font-mono font-black">
+                                                        PO#: {comp.poNumber}
+                                                      </span>
+                                                    )}
+                                                    {comp.supplierName && (
+                                                      <span className="text-slate-500">
+                                                        Supplier: {comp.supplierName}
+                                                      </span>
+                                                    )}
                                                     {purchaseDate && !isInStock && (
-                                                      <span className="text-cyan-700 font-bold flex items-center gap-1">
+                                                      <span className="text-slate-400 font-medium flex items-center gap-1">
                                                         <i className="fa-solid fa-clock text-[9px]"></i>
-                                                        Purchased: {new Date(purchaseDate).toLocaleDateString()}
+                                                        {new Date(purchaseDate).toLocaleDateString()}
                                                       </span>
                                                     )}
                                                   </div>
                                                 </div>
                                                 <div className="flex flex-col items-end gap-1 shrink-0 ml-3">
-                                                  <span className={`text-[8px] font-black uppercase px-2.5 py-1 rounded-full flex items-center gap-1 ${
-                                                    isInStock
-                                                      ? 'bg-emerald-100 text-emerald-800'
-                                                      : 'bg-cyan-100 text-cyan-800'
-                                                  }`}>
-                                                    <i className={`fa-solid ${isInStock ? 'fa-circle-check text-emerald-600' : 'fa-truck-fast text-cyan-600'}`}></i>
-                                                    {isInStock ? 'In Stock' : 'In Transition'}
+                                                  <span className={`text-[8px] font-black uppercase px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-sm ${statusBadge}`}>
+                                                    <i className={statusIcon}></i>
+                                                    {statusLabel}
                                                   </span>
                                                   <div className="text-[9px] font-black text-slate-800">
                                                     L.E. {(comp.unitCost || 0).toLocaleString()}

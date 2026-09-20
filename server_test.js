@@ -54,7 +54,7 @@ const OrderStatus = {
     FULFILLED: 'FULFILLED'
 };
 
-const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1, isBlanketOrder = false) => {
+const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1, isBlanketOrder = false, isStock = false) => {
     let totalRevenue = 0;
     let totalCost = 0;
     let hasComponents = false;
@@ -74,8 +74,8 @@ const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 
     // Safeguard: Don't auto-transition terminal or manual statuses
     if ([OrderStatus.REJECTED, OrderStatus.IN_HOLD].includes(currentStatus)) return currentStatus;
 
-    // BLANKET ORDER EXEMPTION: Blanket orders skip all margin/status auto-transitions
-    if (isBlanketOrder) {
+    // BLANKET ORDER & STOCK ORDER EXEMPTION: Blanket orders and stock orders skip all margin checks
+    if (isBlanketOrder || isStock) {
         if ((hasComponents || anyAccepted) && currentStatus === OrderStatus.LOGGED) {
             return OrderStatus.TECHNICAL_REVIEW;
         }
@@ -327,6 +327,8 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             }
         }
 
+        const isOrderApproved = Boolean(order.technicalReviewFinishedAt) || (order.status && ![OrderStatus.LOGGED, OrderStatus.TECHNICAL_REVIEW].includes(order.status));
+
         item.components.forEach((comp, cIdx) => {
             if (!comp.id) comp.id = `c_${Date.now()}_${idx}_${cIdx}`;
             if (!comp.componentNumber) {
@@ -334,6 +336,9 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                 comp.componentNumber = `CMP-${order.internalOrderNumber}-${(item.id || 'ITEM').split('_').pop()}-${cIdx + 1}`;
             }
             if (!comp.status) comp.status = 'NEW';
+            if (!isOrderApproved && comp.status === 'PENDING_OFFER' && !comp.poNumber && !comp.rfpId && !comp.awardId && !comp.procurementStartedAt) {
+                comp.status = 'NEW';
+            }
             if (!comp.statusUpdatedAt) comp.statusUpdatedAt = new Date().toISOString();
         });
     });
@@ -345,24 +350,9 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
 
         // Skip margin check for Internal Stock orders (they always have 0 revenue)
         let nextStatus = order.status || OrderStatus.LOGGED;
-        if (order.customerName !== 'Internal Stock') {
-            nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED);
-        } else {
-            // For Internal Stock, standard transitions apply (e.g. LOGGED -> TECH REVIEW if components exist)
-            // We reuse evaluateMarginStatus logic BUT purely for workflow transitions, ignoring negative margin return
-            // Actually, evaluateMarginStatus prioritizes margin check. Let's replicate strict workflow logic here or modify evaluateMarginStatus.
-            // Simpler: Just allow negative margin if it's internal stock. 
-            const calculatedStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED);
-            if (calculatedStatus === OrderStatus.NEGATIVE_MARGIN) {
-                // Fallback: If it blocked on margin, check if it should proceed to Tech Review
-                const hasComponents = (order.items || []).some(i => i.components && i.components.length > 0);
-                if (hasComponents && order.status === OrderStatus.LOGGED) {
-                    nextStatus = OrderStatus.TECHNICAL_REVIEW;
-                }
-            } else {
-                nextStatus = calculatedStatus;
-            }
-        }
+        const isBlanket = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
+        const isStock = isStockOrder(order);
+        nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, 1, isBlanket, isStock);
 
         if (nextStatus !== order.status) {
             const old = order.status || 'NEW';
@@ -1138,7 +1128,16 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         switch (action) {
             case 'finalize-study':
                 if (order.items.some(it => !it.isAccepted)) throw new Error("All items must be accepted before finalizing study");
+                order.items.forEach(item => {
+                    (item.components || []).forEach(comp => {
+                        if (comp.source === 'PROCUREMENT' && ['NEW', 'PENDING_OFFER'].includes(comp.status)) {
+                            comp.status = 'PENDING_OFFER';
+                            if (!comp.procurementStartedAt) comp.procurementStartedAt = new Date().toISOString();
+                        }
+                    });
+                });
                 order.status = OrderStatus.WAITING_SUPPLIERS;
+                order.technicalReviewFinishedAt = new Date().toISOString();
                 order.logs.push(createAuditLog('Technical study finalized and pushed to Procurement', order.status, user));
                 break;
 
@@ -1153,6 +1152,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
                 // Clear components and reset item approvals as requested
                 order.items.forEach(item => {
+                    const oldItemMatch = rollbackOld?.items?.find(oi => oi.id === item.id);
+                    const rawPrice = item.pricePerUnit ?? item.unitPrice ?? item.price ?? oldItemMatch?.pricePerUnit ?? oldItemMatch?.unitPrice ?? oldItemMatch?.price;
+                    if (rawPrice !== undefined && rawPrice !== null && !isNaN(Number(rawPrice))) {
+                        item.pricePerUnit = Number(rawPrice);
+                    }
                     item.components = [];
                     item.isAccepted = false;
                 });
