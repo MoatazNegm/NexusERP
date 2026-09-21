@@ -450,10 +450,25 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                         <td className="px-4 py-3 whitespace-nowrap">
                                             <div className="flex flex-col">
                                                 <span className="text-[10px] font-mono font-black text-blue-600">{row.orderRef}</span>
-                                                {row.isStockOrder && (
-                                                    <span className="w-fit mt-0.5 text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                                {row.isStockOrder ? (
+                                                    <span className="w-fit mt-0.5 text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
                                                         <i className="fa-solid fa-boxes-stacked text-[7px]"></i>
-                                                        {isAr ? 'طلب مخزن' : 'Stock Order'}
+                                                        {isAr ? 'طلب مخزن' : 'Stock'}
+                                                    </span>
+                                                ) : row.contractNumber ? (
+                                                    <span className="w-fit mt-0.5 text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200 flex items-center gap-1">
+                                                        <i className="fa-solid fa-layer-group text-[7px]"></i>
+                                                        {isAr ? 'عقد توريد' : 'Blanket'}
+                                                    </span>
+                                                ) : row.productionType === 'TRADING' ? (
+                                                    <span className="w-fit mt-0.5 text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-700 border border-cyan-200 flex items-center gap-1">
+                                                        <i className="fa-solid fa-cart-shopping text-[7px]"></i>
+                                                        {isAr ? 'تجارة' : 'Trade'}
+                                                    </span>
+                                                ) : (
+                                                    <span className="w-fit mt-0.5 text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center gap-1">
+                                                        <i className="fa-solid fa-industry text-[7px]"></i>
+                                                        {isAr ? 'تصنيع' : 'Manufacturing'}
                                                     </span>
                                                 )}
                                                 {row.allocatedFromStockOrderRef && (
@@ -513,11 +528,21 @@ export const PartHistory: React.FC<PartHistoryProps> = ({ orders, suppliers }) =
                                                                 <div className="flex justify-between items-center">
                                                                     <span className="text-[10px] font-bold text-slate-400 uppercase">{isAr ? 'نوع الطلب' : 'Order Type'}</span>
                                                                     {row.isStockOrder ? (
-                                                                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                                                            <i className="fa-solid fa-boxes-stacked mr-1"></i>Stock Order
+                                                                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                                                            <i className="fa-solid fa-boxes-stacked mr-1"></i>{isAr ? 'طلب مخزن' : 'Stock Order'}
+                                                                        </span>
+                                                                    ) : row.contractNumber ? (
+                                                                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                                                                            <i className="fa-solid fa-layer-group mr-1"></i>{isAr ? 'عقد توريد' : 'Blanket Order'}
+                                                                        </span>
+                                                                    ) : row.productionType === 'TRADING' ? (
+                                                                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-cyan-50 text-cyan-700 border border-cyan-200">
+                                                                            <i className="fa-solid fa-cart-shopping mr-1"></i>{isAr ? 'تجارة' : 'Trade Order'}
                                                                         </span>
                                                                     ) : (
-                                                                        <span className="text-[9px] font-bold uppercase text-slate-600">Customer PO</span>
+                                                                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                                                            <i className="fa-solid fa-industry mr-1"></i>{isAr ? 'تصنيع' : 'Manufacturing Order'}
+                                                                        </span>
                                                                     )}
                                                                 </div>
                                                                 <div className="flex justify-between">

@@ -11,6 +11,7 @@ import jsPDF from 'jspdf';
 
 import { AddCustomerModal } from './AddCustomerModal';
 import { SortableTable, ColumnDef } from './SortableTable';
+import { getOrderPoType, getPoTypeConfig } from '../utils';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -190,7 +191,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [contractSearch, setContractSearch] = useState('');
   const [blanketOrdersSearch, setBlanketOrdersSearch] = useState('');
   const [loggedOrdersSearch, setLoggedOrdersSearch] = useState('');
-  const [loggedFilterType, setLoggedFilterType] = useState<'all' | 'standard' | 'blanket' | 'stock'>('all');
+  const [loggedFilterType, setLoggedFilterType] = useState<'all' | 'trade' | 'manufacturing' | 'blanket' | 'stock' | 'standard'>('all');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [existingOrders, setExistingOrders] = useState<CustomerOrder[]>([]);
   const [customerName, setCustomerName] = useState('');
@@ -320,8 +321,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     const total = loggedOrders.length;
     const blanket = loggedOrders.filter(o => isOrderBlanket(o)).length;
     const stock = loggedOrders.filter(o => isStockOrder(o)).length;
-    const standard = loggedOrders.filter(o => !isOrderBlanket(o) && !isStockOrder(o)).length;
-    return { total, blanket, stock, standard };
+    const trade = loggedOrders.filter(o => !isOrderBlanket(o) && !isStockOrder(o) && getOrderPoType(o) === 'Trade').length;
+    const manufacturing = loggedOrders.filter(o => !isOrderBlanket(o) && !isStockOrder(o) && getOrderPoType(o) === 'Manufacturing').length;
+    return { total, blanket, stock, trade, manufacturing };
   }, [loggedOrders]);
 
   const loggedBlanketOrders = useMemo(() => {
@@ -347,12 +349,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
   const filteredLoggedOrders = useMemo(() => {
     let base = loggedOrders;
-    if (loggedFilterType === 'standard') {
-      base = base.filter(o => !isOrderBlanket(o) && !isStockOrder(o));
+    if (loggedFilterType === 'trade') {
+      base = base.filter(o => !isOrderBlanket(o) && !isStockOrder(o) && getOrderPoType(o) === 'Trade');
+    } else if (loggedFilterType === 'manufacturing') {
+      base = base.filter(o => !isOrderBlanket(o) && !isStockOrder(o) && getOrderPoType(o) === 'Manufacturing');
     } else if (loggedFilterType === 'blanket') {
       base = base.filter(o => isOrderBlanket(o));
     } else if (loggedFilterType === 'stock') {
       base = base.filter(o => isStockOrder(o));
+    } else if (loggedFilterType === 'standard') {
+      base = base.filter(o => !isOrderBlanket(o) && !isStockOrder(o));
     }
 
     if (!loggedOrdersSearch.trim()) return base;
@@ -385,8 +391,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       const lastEditedTimestamp = formatOrderTimestamp(lastEdited.timestamp).toLowerCase();
       if (lastEditedUser.includes(q) || lastEditedTimestamp.includes(q)) return true;
 
-      // 6. Blanket vs Non-Blanket keywords, contractId, blanketContractId, projectName
-      const isBlanketKeywords = order.blanketOrder ? 'blanket blanket order' : 'normal standard non-blanket non blanket';
+      // 6. Blanket vs Non-Blanket & PO Classification keywords, contractId, blanketContractId, projectName
+      const poType = getOrderPoType(order);
+      const poCfg = getPoTypeConfig(poType);
+      const isBlanketKeywords = `${poCfg.searchKeywords} normal standard non-blanket non blanket`;
       if (isBlanketKeywords.includes(q)) return true;
       if ((order.contractId || '').toLowerCase().includes(q)) return true;
       if ((order.blanketContractId || '').toLowerCase().includes(q)) return true;
@@ -493,7 +501,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       loadOrder(match);
       setMessage({
         type: 'info',
-        text: `Existing ${isStock ? 'Stock Order' : isBlanket ? 'Blanket Order' : 'Standard Order'} identified (${match.internalOrderNumber || match.customerReferenceNumber}). Switched to ${isStock ? 'Stock Orders' : isBlanket ? 'Blanket Orders' : 'New Orders'} tab.`
+        text: `Existing ${isStock ? 'Stock Order' : isBlanket ? 'Blanket Order' : getOrderPoType(match) === 'Trade' ? 'Trade Order' : 'Manufacturing Order'} identified (${match.internalOrderNumber || match.customerReferenceNumber}). Switched to ${isStock ? 'Stock Orders' : isBlanket ? 'Blanket Orders' : 'New Orders'} tab.`
       });
     }
   }, [customerReferenceNumber, existingOrders, editingOrderId, isScanning, activeTab, blanketSubTab, customerName]);
@@ -2443,15 +2451,27 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                   </button>
                   <button
                     type="button"
-                    onClick={() => setLoggedFilterType('standard')}
+                    onClick={() => setLoggedFilterType('trade')}
                     className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
-                      loggedFilterType === 'standard'
-                        ? 'bg-blue-600 text-white shadow-sm'
+                      loggedFilterType === 'trade'
+                        ? 'bg-cyan-600 text-white shadow-sm'
                         : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
-                    <i className="fa-solid fa-box text-[9px]"></i>
-                    Standard ({loggedStats.standard})
+                    <i className="fa-solid fa-cart-shopping text-[9px]"></i>
+                    Trade ({loggedStats.trade})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoggedFilterType('manufacturing')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                      loggedFilterType === 'manufacturing'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <i className="fa-solid fa-industry text-[9px]"></i>
+                    Manufacturing ({loggedStats.manufacturing})
                   </button>
                   <button
                     type="button"
@@ -2535,19 +2555,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                       <td className="px-8 py-6">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs font-black text-blue-600 uppercase">{draft.internalOrderNumber}</span>
-                          {isStockOrder(draft) ? (
-                            <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 uppercase tracking-wider">
-                              <i className="fa-solid fa-boxes-stacked text-[8px] mr-1"></i>Stock
-                            </span>
-                          ) : isOrderBlanket(draft) ? (
-                            <span className="text-[9px] font-black text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200 uppercase tracking-wider">
-                              <i className="fa-solid fa-layer-group text-[8px] mr-1"></i>Blanket
-                            </span>
-                          ) : (
-                            <span className="text-[9px] font-black text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 uppercase tracking-wider">
-                              Normal
-                            </span>
-                          )}
+                          {(() => {
+                            const poType = getOrderPoType(draft);
+                            const cfg = getPoTypeConfig(poType);
+                            return (
+                              <span className={`text-[9px] font-black ${cfg.badgeClass} px-1.5 py-0.5 rounded border uppercase tracking-wider`}>
+                                <i className={`fa-solid ${cfg.icon} text-[8px] mr-1`}></i>{cfg.shortLabel}
+                              </span>
+                            );
+                          })()}
                         </div>
                         <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">PO: {draft.customerReferenceNumber || (isStockOrder(draft) ? generateStockPoReference(draft.internalOrderNumber) : 'N/A')}</div>
                         {draft.contractId && (

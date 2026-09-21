@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
-import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, calculateCatalogMatchScore, getTechReviewStartTime } from '../utils';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, calculateCatalogMatchScore, getTechReviewStartTime, getOrderPoType, getPoTypeConfig } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { PartHistory } from './PartHistory';
 
@@ -373,8 +373,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       const matchCustomer = (o.customerName || '').toLowerCase().includes(q);
       const matchRef = (o.customerReferenceNumber || '').toLowerCase().includes(q);
       const matchItems = o.items.some(it => (it.description || '').toLowerCase().includes(q));
+      const poType = isOrderBlanket(o) ? 'Blanket' : getOrderPoType(o);
+      const poCfg = getPoTypeConfig(poType);
+      const matchType = `${poCfg.searchKeywords} normal standard`.includes(q);
 
-      return matchPO || matchCustomer || matchRef || matchItems;
+      return matchPO || matchCustomer || matchRef || matchItems || matchType;
     });
   }, [searchQuery, orders]);
 
@@ -1174,7 +1177,18 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                       }`}
                     >
                       <td className="px-8 py-6">
-                        <div className="font-mono text-xs font-black text-blue-600 uppercase">{o.internalOrderNumber}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-black text-blue-600 uppercase">{o.internalOrderNumber}</span>
+                          {(() => {
+                            const poType = isOrderBlanket(o) ? 'Blanket' : getOrderPoType(o);
+                            const cfg = getPoTypeConfig(poType);
+                            return (
+                              <span className={`text-[9px] font-black ${cfg.badgeClass} px-1.5 py-0.5 rounded border uppercase tracking-wider`}>
+                                <i className={`fa-solid ${cfg.icon} text-[8px] mr-1`}></i>{cfg.shortLabel}
+                              </span>
+                            );
+                          })()}
+                        </div>
                         <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Ref: {o.customerReferenceNumber || 'N/A'}</div>
                         {isRolledBack && (
                           <div className="mt-1.5 flex items-center gap-1">
@@ -1266,6 +1280,15 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                       <div className="text-[9px] font-bold text-slate-400 mt-0.5 uppercase flex items-center gap-2">
                         <span className="bg-slate-800 px-2 py-0.5 rounded leading-none">ID: {selectedOrder.internalOrderNumber}</span>
                         <span className="bg-slate-800 px-2 py-0.5 rounded leading-none">PO: {selectedOrder.customerReferenceNumber}</span>
+                        {(() => {
+                          const poType = isOrderBlanket(selectedOrder) ? 'Blanket' : getOrderPoType(selectedOrder);
+                          const cfg = getPoTypeConfig(poType);
+                          return (
+                            <span className={`px-2 py-0.5 rounded leading-none ${cfg.badgeClass} border text-[9px] font-black uppercase flex items-center gap-1`}>
+                              <i className={`fa-solid ${cfg.icon} text-[8px]`}></i> {cfg.shortLabel}
+                            </span>
+                          );
+                        })()}
                         <span className="bg-slate-800 px-2.5 py-0.5 rounded leading-none"><ThresholdDisplay order={selectedOrder} config={config} /></span>
                         {selectedOrder.googleDriveLink && (
                           <a

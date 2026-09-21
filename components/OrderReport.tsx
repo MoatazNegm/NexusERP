@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, getItemEffectiveStatus } from '../types';
-import { getStatusLimitHours, getTechReviewStartTime } from '../utils';
+import { getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig } from '../utils';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle, getPartialStateMetrics } from '../constants';
 import { OrderDetailsModal } from './OrderDetailsModal';
 
@@ -235,15 +235,15 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-mono text-[10px] text-blue-600 font-black uppercase whitespace-nowrap">{order.internalOrderNumber}</span>
-                      {order.blanketOrder ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200 text-[8px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap" title="Blanket Contract Order">
-                          <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200 text-[8px] font-bold uppercase tracking-tight whitespace-nowrap" title="Standard Order">
-                          Standard
-                        </span>
-                      )}
+                      {(() => {
+                        const poType = getOrderPoType(order);
+                        const cfg = getPoTypeConfig(poType);
+                        return (
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${cfg.badgeClass} border text-[8px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap`} title={cfg.label}>
+                            <i className={`fa-solid ${cfg.icon} text-[8px]`}></i> {cfg.shortLabel}
+                          </span>
+                        );
+                      })()}
                       {order.blanketOrder && order.projectName && order.projectName.trim() !== '' ? (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 text-[8px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap" title={`Project: ${order.projectName}`}>
                           <i className="fa-solid fa-diagram-project text-[8px] text-violet-500"></i> Project: {order.projectName}

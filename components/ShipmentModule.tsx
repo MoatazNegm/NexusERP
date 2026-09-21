@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, User, CustomerOrderItem } from '../types';
-import { getItemEffectiveQty } from '../utils';
+import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig } from '../utils';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
@@ -130,11 +130,19 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
         });
 
         return flat
-            .filter(h =>
-                h.order.internalOrderNumber?.toLowerCase().includes(historySearch.toLowerCase()) ||
-                h.order.customerName.toLowerCase().includes(historySearch.toLowerCase()) ||
-                h.item.description.toLowerCase().includes(historySearch.toLowerCase())
-            )
+            .filter(h => {
+                const term = historySearch.toLowerCase().trim();
+                const poCfg = getPoTypeConfig(getOrderPoType(h.order, h.item));
+                const matchKeywords = typeof poCfg.searchKeywords === 'string'
+                    ? poCfg.searchKeywords.toLowerCase().includes(term)
+                    : Array.isArray(poCfg.searchKeywords)
+                    ? (poCfg.searchKeywords as string[]).some(k => (k || '').toLowerCase().includes(term))
+                    : false;
+                return h.order.internalOrderNumber?.toLowerCase().includes(term) ||
+                    h.order.customerName.toLowerCase().includes(term) ||
+                    h.item.description.toLowerCase().includes(term) ||
+                    matchKeywords;
+            })
             .sort((a, b) => new Date(b.delivery.date).getTime() - new Date(a.delivery.date).getTime());
     }, [existingOrders, historySearch]);
 
@@ -260,10 +268,10 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                         <i className="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
                                         <input
                                             type="text"
-                                            placeholder="Search History..."
+                                            placeholder="Search History (Order/Type/Customer)..."
                                             value={historySearch}
                                             onChange={e => setHistorySearch(e.target.value)}
-                                            className="pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-[10px] font-bold uppercase tracking-wider focus:ring-4 focus:ring-slate-50 outline-none w-64 transition-all"
+                                            className="pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-[10px] font-bold uppercase tracking-wider focus:ring-4 focus:ring-slate-50 outline-none w-72 transition-all"
                                         />
                                     </div>
                                 )}
@@ -301,7 +309,19 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                                 <div className="text-[9px] font-bold text-slate-400 uppercase mt-1">{new Date(h.delivery.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                                             </td>
                                             <td className="px-8 py-6">
-                                                <div className="font-mono text-[10px] font-black text-blue-600 uppercase mb-1">{h.order.internalOrderNumber}</div>
+                                                <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                                    <span className="font-mono text-[10px] font-black text-blue-600 uppercase">{h.order.internalOrderNumber}</span>
+                                                    {(() => {
+                                                        const poType = getOrderPoType(h.order, h.item);
+                                                        const cfg = getPoTypeConfig(poType);
+                                                        return (
+                                                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black border uppercase tracking-wider ${cfg.badgeClass}`} title={cfg.tooltip}>
+                                                                <i className={`fa-solid ${cfg.icon} text-[7px]`}></i>
+                                                                {cfg.shortLabel}
+                                                            </span>
+                                                        );
+                                                    })()}
+                                                </div>
                                                 <div className="font-bold text-slate-800 text-xs">{h.order.customerName}</div>
                                             </td>
                                             <td className="px-8 py-6">
@@ -330,7 +350,19 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                     displayOrders.map(order => (
                                         <tr key={order.id} className="hover:bg-sky-50/40 transition-all group">
                                             <td className="px-8 py-6 font-mono text-xs font-black text-sky-600 uppercase">
-                                                <div>{order.internalOrderNumber}</div>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span>{order.internalOrderNumber}</span>
+                                                    {(() => {
+                                                        const poType = getOrderPoType(order);
+                                                        const cfg = getPoTypeConfig(poType);
+                                                        return (
+                                                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black border uppercase tracking-wider ${cfg.badgeClass}`} title={cfg.tooltip}>
+                                                                <i className={`fa-solid ${cfg.icon} text-[7px]`}></i>
+                                                                {cfg.shortLabel}
+                                                            </span>
+                                                        );
+                                                    })()}
+                                                </div>
                                                 <div className="flex flex-col gap-0.5 mt-1.5">
                                                     <div className="text-[9px] text-slate-500 font-black uppercase">PO: {order.customerReferenceNumber || 'UNMATCHED'}</div>
                                                     <div className="text-[9px] text-slate-400 font-bold uppercase">Inv: {order.invoiceNumber || 'NOT ISSUED'}</div>

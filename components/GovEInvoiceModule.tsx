@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, User } from '../types';
-import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate } from '../utils';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, getOrderPoType, getPoTypeConfig } from '../utils';
 
 interface GovEInvoiceModuleProps {
     refreshKey?: number;
@@ -102,7 +102,19 @@ export const GovEInvoiceModule: React.FC<GovEInvoiceModuleProps> = ({ refreshKey
                                             <div className="flex items-center gap-3">
                                                 <i className={`fa-solid fa-chevron-${expandedOrderId === order.id ? 'down' : 'right'} text-slate-400 text-xs transition-transform w-4 text-center`}></i>
                                                 <div>
-                                                    <div className="font-mono text-[10px] font-black text-blue-600 uppercase">{order.internalOrderNumber}</div>
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <span className="font-mono text-[10px] font-black text-blue-600 uppercase">{order.internalOrderNumber}</span>
+                                                        {(() => {
+                                                            const poType = getOrderPoType(order);
+                                                            const cfg = getPoTypeConfig(poType);
+                                                            return (
+                                                                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black border uppercase tracking-wider ${cfg.badgeClass}`} title={cfg.tooltip}>
+                                                                    <i className={`fa-solid ${cfg.icon} text-[7px]`}></i>
+                                                                    {cfg.shortLabel}
+                                                                </span>
+                                                            );
+                                                        })()}
+                                                    </div>
                                                     <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">PO: {order.customerReferenceNumber}</div>
                                                 </div>
                                             </div>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CustomerOrder, LogEntry, ManufacturingComponent, OrderStatus, AppConfig } from '../types';
-import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate } from '../utils';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, getOrderPoType, getPoTypeConfig } from '../utils';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 import { jsPDF } from 'jspdf';
@@ -331,15 +331,15 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                 <span className="px-3 py-1 bg-slate-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest" title="Order currency">
                   <i className="fa-solid fa-coins mr-1 opacity-60"></i>{orderCurrency}
                 </span>
-                {order.blanketOrder ? (
-                  <span className="px-3 py-1 bg-teal-50 text-teal-700 rounded-full text-[10px] font-black uppercase tracking-widest border border-teal-200 flex items-center gap-1.5 shadow-xs">
-                    <i className="fa-solid fa-layer-group text-[9px]"></i> Blanket
-                  </span>
-                ) : (
-                  <span className="px-3 py-1 bg-slate-100 text-slate-500 rounded-full text-[10px] font-bold uppercase tracking-widest border border-slate-200">
-                    Standard
-                  </span>
-                )}
+                {(() => {
+                  const poType = getOrderPoType(order);
+                  const cfg = getPoTypeConfig(poType);
+                  return (
+                    <span className={`px-3 py-1 ${cfg.badgeClass} rounded-full text-[10px] font-black uppercase tracking-widest border flex items-center gap-1.5 shadow-xs`} title={cfg.label}>
+                      <i className={`fa-solid ${cfg.icon} text-[9px]`}></i> {cfg.shortLabel}
+                    </span>
+                  );
+                })()}
                 {order.projectName && order.projectName.trim() !== '' && (
                   <span className="px-3 py-1 bg-violet-50 text-violet-700 rounded-full text-[10px] font-black uppercase tracking-widest border border-violet-200 flex items-center gap-1.5 shadow-xs">
                     <i className="fa-solid fa-diagram-project text-[9px] text-violet-500"></i> Project: {order.projectName}

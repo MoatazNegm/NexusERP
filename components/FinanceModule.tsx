@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus, CustomerOrderItem, ManufacturingComponent, CostSheetRecord } from '../types';
-import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime } from '../utils';
+import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { jsPDF } from 'jspdf';
@@ -3148,18 +3148,18 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                   </span>
                                 );
                               })()}
-                              {showBlanketBadge ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
-                                  <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
-                                </span>
-                              ) : (
-                                <span
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0"
-                                  title={isBlanketOrder ? 'Linked to a blanket contract, but Procurement has not marked this order as No RFP Needed' : 'Standard Order'}
-                                >
-                                  Non-Blanket
-                                </span>
-                              )}
+                              {(() => {
+                                const poType = showBlanketBadge ? 'Blanket' : getOrderPoType(o);
+                                const cfg = getPoTypeConfig(poType);
+                                return (
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md ${cfg.badgeClass} border text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0`}
+                                    title={cfg.label}
+                                  >
+                                    <i className={`fa-solid ${cfg.icon} text-[8px]`}></i> {cfg.shortLabel}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <div className="font-bold text-slate-800 text-sm tracking-tight mt-1 flex items-center gap-2 flex-wrap">
                               <span>{o.customerName}</span>

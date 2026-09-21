@@ -19,6 +19,7 @@ interface SortableTableProps<T> {
     emptyMessage?: string;
     emptyColSpan?: number;
     storageKey?: string; // localStorage key for persisting column order
+    onRowClick?: (row: T, index: number) => void;
 }
 
 export function SortableTable<T>({
@@ -30,6 +31,7 @@ export function SortableTable<T>({
     emptyMessage = 'No data.',
     emptyColSpan,
     storageKey,
+    onRowClick,
 }: SortableTableProps<T>) {
     // Column order
     const [columnOrder, setColumnOrder] = useState<string[]>(() => {
@@ -157,7 +159,11 @@ export function SortableTable<T>({
             </thead>
             <tbody className="divide-y divide-slate-50">
                 {sortedData.map((row, idx) => (
-                    <tr key={rowKey(row, idx)} className={getRowClass(row, idx)}>
+                    <tr
+                        key={rowKey(row, idx)}
+                        className={`${getRowClass(row, idx)} ${onRowClick ? 'cursor-pointer' : ''}`}
+                        onClick={() => onRowClick && onRowClick(row, idx)}
+                    >
                         {orderedColumns.map(col => (
                             <td key={col.key} className={col.cellClassName || 'px-8 py-6'}>
                                 {col.render(row, idx)}

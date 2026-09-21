@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import { PartHistory } from './PartHistory';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
-import { getItemEffectiveQty } from '../utils';
+import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig } from '../utils';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -1463,11 +1463,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       if (o.contractId?.toLowerCase().includes(q)) return true;
       if (o.blanketContractId?.toLowerCase().includes(q)) return true;
 
-      // Blanket / Standard search keywords
-      if (q === 'blanket' || q === 'blanket order' || q === 'blanket orders') {
-        if (isOrderBlanketType(o)) return true;
-      } else if (q === 'standard' || q === 'normal' || q === 'non-blanket' || q === 'non blanket' || q === 'nonblanket') {
-        if (!isOrderBlanketType(o)) return true;
+      // Order type / PO classification search keywords
+      const oPoType = isOrderBlanketType(o) ? 'Blanket' : getOrderPoType(o);
+      const oPoCfg = getPoTypeConfig(oPoType);
+      if (`${oPoCfg.searchKeywords} normal standard non-blanket non blanket`.includes(q)) {
+        return true;
       }
 
       // Line Item level fields
@@ -3000,15 +3000,15 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                     PO: <span className="text-slate-900 font-black">{o.customerReferenceNumber}</span>
                                   </span>
                                 )}
-                                {isOrderBlanketType(o) ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Blanket Contract Order">
-                                    <i className="fa-solid fa-layer-group text-[8px]"></i> Blanket
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 text-[9px] font-bold uppercase tracking-tight whitespace-nowrap shrink-0" title="Standard Order">
-                                    Standard
-                                  </span>
-                                )}
+                                {(() => {
+                                  const poType = isOrderBlanketType(o) ? 'Blanket' : getOrderPoType(o);
+                                  const cfg = getPoTypeConfig(poType);
+                                  return (
+                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md ${cfg.badgeClass} border text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0`} title={cfg.label}>
+                                      <i className={`fa-solid ${cfg.icon} text-[8px]`}></i> {cfg.shortLabel}
+                                    </span>
+                                  );
+                                })()}
                                 {(() => {
                                   const pName = getOrderProjName(o);
                                   return pName ? (

@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, User } from '../types';
+import { isStockOrder, getOrderPoType, getPoTypeConfig } from '../utils';
 
 interface ConfirmDialogState {
   isOpen: boolean;
@@ -19,6 +20,7 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
   const [allOrders, setAllOrders] = useState<CustomerOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -56,6 +58,7 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
   const transitComponents = useMemo(() => {
     const list: { order: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent }[] = [];
     allOrders.forEach(order => {
+      if (order.status === OrderStatus.REJECTED) return;
       order.items.forEach(item => {
         item.components?.forEach(comp => {
           if (comp.status === 'ORDERED' || comp.status === 'ORDERED_FOR_STOCK') {
@@ -68,6 +71,52 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
     });
     return list;
   }, [allOrders, selectedSupplierId]);
+
+  const filteredTransitComponents = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return transitComponents;
+
+    const terms = q.split(/\s+/).filter(Boolean);
+
+    return transitComponents.filter(r => {
+      const supplierName = (supplierMap.get(r.comp.supplierId || '') || r.comp.supplierName || '').toLowerCase();
+      const compDesc = (r.comp.description || '').toLowerCase();
+      const compNum = (r.comp.componentNumber || '').toLowerCase();
+      const supplierPartNum = (r.comp.supplierPartNumber || '').toLowerCase();
+      const itemDesc = (r.item?.description || '').toLowerCase();
+      const itemNum = (r.item?.orderNumber || '').toLowerCase();
+      const internalOrderNum = (r.order.internalOrderNumber || '').toLowerCase();
+      const customerPo = (r.order.customerReferenceNumber || '').toLowerCase();
+      const compPo = (r.comp.poNumber || '').toLowerCase();
+      const customerName = (r.order.customerName || '').toLowerCase();
+      const qtyStr = String(r.comp.quantity ?? '');
+      const unitStr = (r.comp.unit || '').toLowerCase();
+      const qtyWithUnit = `${qtyStr} ${unitStr}`.toLowerCase();
+
+      const poType = getOrderPoType(r.order, r.item, r.comp);
+      const poCfg = getPoTypeConfig(poType);
+      const orderTypeKeywords = `${poCfg.searchKeywords} normal standard`;
+
+      const searchCorpus = [
+        supplierName,
+        compDesc,
+        compNum,
+        supplierPartNum,
+        itemDesc,
+        itemNum,
+        internalOrderNum,
+        customerPo,
+        compPo,
+        customerName,
+        qtyStr,
+        unitStr,
+        qtyWithUnit,
+        orderTypeKeywords,
+      ].join(' ').toLowerCase();
+
+      return terms.every(term => searchCorpus.includes(term));
+    });
+  }, [transitComponents, searchQuery, supplierMap]);
 
   const initiateReceive = (order: CustomerOrder, item: CustomerOrderItem, comp: ManufacturingComponent) => {
     if (order.status === OrderStatus.IN_HOLD) {
@@ -124,16 +173,35 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
         </div>
 
         <div className="flex flex-col md:flex-row items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
-          <div className="flex items-center gap-2 text-slate-400">
+          <div className="flex-1 w-full relative">
+            <input
+              type="text"
+              placeholder="Search PO#, component, vendor, order type (trade/manufacturing/blanket/stock)..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+            />
+            <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
+                title="Clear search"
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-slate-400 whitespace-nowrap">
             <i className="fa-solid fa-building-shield"></i>
-            <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Active Vendor Filter</span>
+            <span className="text-[10px] font-black uppercase tracking-widest">Vendor Filter</span>
           </div>
           <select
             value={selectedSupplierId}
             onChange={(e) => setSelectedSupplierId(e.target.value)}
-            className="flex-1 max-w-md px-4 py-2 border rounded-lg bg-white text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all border-slate-200"
+            className="w-full md:w-auto min-w-[200px] px-4 py-2.5 border rounded-xl bg-white text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all border-slate-200"
           >
-            <option value="all">View All Pending Shipments (Global)</option>
+            <option value="all">View All Vendors (Global)</option>
             {suppliers.map(s => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
@@ -141,7 +209,7 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
           {selectedSupplierId !== 'all' && (
             <button
               onClick={() => setSelectedSupplierId('all')}
-              className="px-4 py-2 bg-white text-xs font-bold text-red-500 hover:bg-red-50 border border-red-100 rounded-lg transition-all flex items-center gap-2"
+              className="px-4 py-2.5 bg-white text-xs font-bold text-red-500 hover:bg-red-50 border border-red-100 rounded-xl transition-all flex items-center gap-2 whitespace-nowrap"
             >
               <i className="fa-solid fa-circle-xmark"></i>
               Reset Filter
@@ -153,9 +221,11 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest">
+            <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-wider">
               <tr>
-                <th className="px-6 py-4 text-white">Comp ID</th>
+                <th className="px-6 py-4 text-white">Item #</th>
+                <th className="px-6 py-4 text-white">PO / Ref Number</th>
+                <th className="px-6 py-4 text-white">Order Type</th>
                 <th className="px-6 py-4 text-white">Supplier (Click to filter)</th>
                 <th className="px-6 py-4 text-white">Incoming Component</th>
                 <th className="px-6 py-4 text-white">Target Order Line</th>
@@ -163,12 +233,31 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {transitComponents.map(({ order, item, comp }) => {
+              {filteredTransitComponents.map(({ order, item, comp }) => {
                 const orderLocked = order.status === OrderStatus.IN_HOLD;
+                const poType = getOrderPoType(order, item, comp);
+                const cfg = getPoTypeConfig(poType);
+                const isStock = isStockOrder(order) || comp.status === 'ORDERED_FOR_STOCK' || comp.source === 'STOCK';
+                const displayPo = comp.poNumber || order.customerReferenceNumber || 'N/A';
                 return (
                   <tr key={comp.id} className={`hover:bg-slate-50 transition-colors group ${orderLocked ? 'opacity-70 grayscale-[0.5]' : ''}`}>
                     <td className="px-6 py-4">
-                      <div className="font-mono text-[10px] text-blue-600 font-black">{comp.componentNumber}</div>
+                      <div className="font-mono text-[10px] text-blue-600 font-black">{comp.componentNumber || '-'}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="font-mono text-xs font-black text-blue-600">
+                        {displayPo !== 'N/A' ? `#${displayPo}` : 'N/A'}
+                      </div>
+                      {order.customerReferenceNumber && comp.poNumber && (
+                        <div className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">Cust PO: {order.customerReferenceNumber}</div>
+                      )}
+                      <div className="text-[9px] font-mono font-bold text-slate-400 mt-0.5">Ref: {order.internalOrderNumber}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 ${cfg.badgeClass} border rounded-lg text-[10px] font-black uppercase tracking-wider whitespace-nowrap`}>
+                        <i className={`fa-solid ${cfg.icon} text-[9px]`}></i>
+                        {cfg.label}
+                      </span>
                     </td>
                     <td className="px-6 py-4">
                       <button
@@ -190,15 +279,12 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
                     <td className="px-6 py-4">
                       <div className="font-black text-slate-800">{comp.description}</div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Quantity Expected: {comp.quantity} {comp.unit}</div>
-                      {comp.status === 'ORDERED_FOR_STOCK' && (
-                        <span className="inline-block mt-1 text-[8px] font-black uppercase px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Stock Replenishment</span>
-                      )}
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-xs font-bold text-slate-600 flex items-center gap-2">
                         {orderLocked && <i className="fa-solid fa-lock text-amber-600 text-[10px]"></i>}
-                        {comp.status === 'ORDERED_FOR_STOCK' ? (
-                          <span className="text-amber-600">Stock Order (Detached from PO)</span>
+                        {isStock ? (
+                          <span className="text-amber-600">Internal Stock</span>
                         ) : (
                           <>{order.customerName}</>
                         )}
@@ -209,11 +295,11 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
                       <button
                         disabled={orderLocked}
                         onClick={() => initiateReceive(order, item, comp)}
-                        className="px-4 py-2 bg-green-600 text-white font-black text-xs uppercase rounded-lg hover:bg-green-700 shadow-lg shadow-green-100 flex items-center gap-2 ml-auto transition-all active:scale-95 disabled:opacity-50"
+                        className="px-4 py-2 bg-green-600 text-white font-black text-xs uppercase rounded-lg hover:bg-green-700 shadow-lg shadow-green-100 flex items-center gap-2 ml-auto transition-all active:scale-95 disabled:opacity-50 whitespace-nowrap"
                       >
                         {orderLocked ? (
                           <><i className="fa-solid fa-lock"></i> Order on Hold</>
-                        ) : comp.status === 'ORDERED_FOR_STOCK' ? (
+                        ) : isStock ? (
                           <><i className="fa-solid fa-box-open"></i> Receive to Stock</>
                         ) : (
                           <><i className="fa-solid fa-check-double"></i> Receive & Reserve</>
@@ -223,11 +309,11 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
                   </tr>
                 );
               })}
-              {transitComponents.length === 0 && !loading && (
+              {filteredTransitComponents.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-24 text-center text-slate-300">
+                  <td colSpan={7} className="px-6 py-24 text-center text-slate-300">
                     <i className="fa-solid fa-clipboard-check text-4xl mb-4 opacity-20 block"></i>
-                    <div className="font-bold">No items currently in transit</div>
+                    <div className="font-bold">{searchQuery ? "No matching items found." : "No items currently in transit"}</div>
                   </td>
                 </tr>
               )}
@@ -249,6 +335,34 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Warehouse Audit Control</p>
               </div>
             </div>
+
+            {confirmDialog.order && (
+              <div className="flex items-center justify-between gap-3 p-3.5 bg-slate-50 rounded-2xl border border-slate-100 mb-4">
+                <div>
+                  <div className="text-[8px] font-black uppercase text-slate-400">PO Number</div>
+                  <div className="font-mono text-xs font-black text-blue-600">
+                    {confirmDialog.order.customerReferenceNumber ? `#${confirmDialog.order.customerReferenceNumber}` : 'N/A'}
+                  </div>
+                  {confirmDialog.order.internalOrderNumber && (
+                    <div className="text-[8px] font-mono text-slate-400 mt-0.5">Ref: {confirmDialog.order.internalOrderNumber}</div>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="text-[8px] font-black uppercase text-slate-400">Order Type</div>
+                  {(() => {
+                    const itm = confirmDialog.order?.items?.find(i => i.id === confirmDialog.itemId);
+                    const poType = getOrderPoType(confirmDialog.order, itm);
+                    const cfg = getPoTypeConfig(poType);
+                    return (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 ${cfg.badgeClass} border rounded text-[9px] font-black uppercase`}>
+                        <i className={`fa-solid ${cfg.icon} text-[8px]`}></i>
+                        {cfg.label}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
 
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 mb-8">
               <p className="text-sm text-slate-600 leading-relaxed">

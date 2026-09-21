@@ -1945,7 +1945,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                         if (statusDriver === 'manufacturing') {
                             order.status = OrderStatus.WAITING_FACTORY;
                             order.logs.push(createAuditLog(`[AUTO] Manufacturing procurement complete. Status moved from ${old} to ${order.status}`, order.status, 'System'));
-                        } else if (statusDriver === 'trading') {
+                        } else if (statusDriver === 'trading' && !isStockOrder(order)) {
                             // Trading items go directly to hub when components are received
                             order.status = OrderStatus.IN_PRODUCT_HUB;
 
@@ -3488,6 +3488,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             invItem.lastUpdated = new Date().toISOString();
             invItem.poNumber = comp.poNumber;
             invItem.orderRef = order.internalOrderNumber;
+            if (!invItem.logs) invItem.logs = [];
+            invItem.logs.push({
+                timestamp: new Date().toISOString(),
+                message: `Received ${qtyToIncr} ${comp.unit || invItem.unit || 'pcs'} from PO ${comp.poNumber || 'N/A'} (Order ${order.internalOrderNumber || order.customerReferenceNumber || 'N/A'})`,
+                status: 'RECEIVED',
+                user: 'System'
+            });
             console.log(`[Inventory] Received: ${invItem.description}. Incoming: ${qtyToIncr}. Stock: ${invItem.quantityInStock}, Rsrv: ${invItem.quantityReserved}`);
         } else if (action === 'RELEASE') {
             if (invItem && (invItem.quantityReserved || 0) > 0) {
@@ -4026,12 +4033,23 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (isNaN(qtyToProcess) || qtyToProcess <= 0) throw new Error("Invalid quantity received");
                 if (qtyToProcess > leftToReceive) throw new Error(`Cannot receive more than ordered (Left: ${leftToReceive})`);
 
-                updateInventoryItem(db, compToReceive, 'RECEIVE', order, qtyToProcess);
+                // Stock internal orders are ALWAYS components for warehouse stock, never customer trading products
+                const isTradingItem = !isStockOrder(order) && item.productionType === 'TRADING';
+                if (!isTradingItem) {
+                    updateInventoryItem(db, compToReceive, 'RECEIVE', order, qtyToProcess);
+                } else {
+                    if (compToReceive.inventoryItemId) {
+                        if (db.inventory) {
+                            db.inventory = db.inventory.filter(inv => inv.id !== compToReceive.inventoryItemId && inv.orderRef !== order.internalOrderNumber);
+                        }
+                        delete compToReceive.inventoryItemId;
+                    }
+                }
 
                 compToReceive.receivedQty = alreadyReceived + qtyToProcess;
 
-                // Special handling for trading items - move directly to hub
-                if (item.productionType === 'TRADING') {
+                // Special handling for external customer trading items - move directly to hub
+                if (!isStockOrder(order) && item.productionType === 'TRADING') {
                     // For trading items, automatically move received quantity to hub
                     item.hubReceivedQty = (item.hubReceivedQty || 0) + qtyToProcess;
 
@@ -4064,6 +4082,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         compToReceive.status = isStockOrder(order) ? 'RECEIVED' : 'RESERVED';
                     }
                     compToReceive.statusUpdatedAt = new Date().toISOString();
+                    const targetDest = isStockOrder(order) ? 'Warehouse Stock' : 'Reserved for Order';
+                    order.logs.push(createAuditLog(`Component Receipt: Received ${qtyToProcess} ${compToReceive.unit || 'pcs'} of ${compToReceive.description} into ${targetDest} (Total received: ${compToReceive.receivedQty}/${totalOrdered})`, order.status, user));
                 }
 
                 // Auto-fulfill Internal Stock orders when all components are delivered to stock

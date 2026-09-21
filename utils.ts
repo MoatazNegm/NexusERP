@@ -1,9 +1,97 @@
-import { CustomerOrder, CustomerOrderItem, DEFAULT_CURRENCY, OrderStatus } from './types';
+import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, DEFAULT_CURRENCY, OrderStatus } from './types';
 
 export const getItemEffectiveQty = (item: CustomerOrderItem): number => {
     const qty = item.alteredQty !== undefined && item.alteredQty !== null ? item.alteredQty : item.quantity;
     return qty || 1;
 };
+
+export const isStockOrder = (order?: Partial<CustomerOrder> | null): boolean => {
+    if (!order) return false;
+    const cust = order.customerName?.trim().toLowerCase();
+    const po = typeof order.customerReferenceNumber === 'string' ? order.customerReferenceNumber.trim().toUpperCase() : '';
+    return cust === 'internal stock' || po.startsWith('STOCK-');
+};
+
+export type PoClassification = 'Stock' | 'Blanket' | 'Trade' | 'Manufacturing';
+
+export const getOrderPoType = (
+    order?: Partial<CustomerOrder> | null,
+    item?: Partial<CustomerOrderItem> | null,
+    comp?: Partial<ManufacturingComponent> | null
+): PoClassification => {
+    if (isStockOrder(order) || comp?.status === 'ORDERED_FOR_STOCK' || comp?.source === 'STOCK') {
+        return 'Stock';
+    }
+    if (order?.blanketOrder || Boolean(order?.contractId) || Boolean(order?.blanketContractId)) {
+        return 'Blanket';
+    }
+    const itemType = (item?.productionType || '').toUpperCase().trim();
+    if (itemType === 'TRADING') return 'Trade';
+    if (itemType === 'MANUFACTURING' || itemType === 'OUTSOURCING') return 'Manufacturing';
+
+    if (order?.items && order.items.length > 0) {
+        const hasMfg = order.items.some(i => {
+            const pt = (i.productionType || '').toUpperCase().trim();
+            return pt === 'MANUFACTURING' || pt === 'OUTSOURCING';
+        });
+        if (hasMfg) return 'Manufacturing';
+
+        const hasTrading = order.items.some(i => (i.productionType || '').toUpperCase().trim() === 'TRADING');
+        if (hasTrading) return 'Trade';
+    }
+    return 'Manufacturing';
+};
+
+export const getPoTypeConfig = (poType: PoClassification) => {
+    switch (poType) {
+        case 'Stock':
+            return {
+                type: 'Stock' as const,
+                label: 'Stock Order',
+                shortLabel: 'Stock',
+                arLabel: 'طلب مخزن',
+                arShortLabel: 'مخزون',
+                badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
+                icon: 'fa-boxes-stacked',
+                searchKeywords: 'stock stock-order stock order internal-stock internal stock طلب مخزن'
+            };
+        case 'Blanket':
+            return {
+                type: 'Blanket' as const,
+                label: 'Blanket Order',
+                shortLabel: 'Blanket',
+                arLabel: 'عقد إطاري',
+                arShortLabel: 'إطاري',
+                badgeClass: 'bg-teal-50 text-teal-700 border-teal-200',
+                icon: 'fa-layer-group',
+                searchKeywords: 'blanket blanket-order blanket order contract عقود عقد عقد توريد'
+            };
+        case 'Trade':
+            return {
+                type: 'Trade' as const,
+                label: 'Trade Order',
+                shortLabel: 'Trade',
+                arLabel: 'طلب تجارة',
+                arShortLabel: 'تجارة',
+                badgeClass: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+                icon: 'fa-cart-shopping',
+                searchKeywords: 'trade trading trade-order trade order trading-order طلب تجارة تجارة'
+            };
+        case 'Manufacturing':
+        default:
+            return {
+                type: 'Manufacturing' as const,
+                label: 'Manufacturing Order',
+                shortLabel: 'Manufacturing',
+                arLabel: 'طلب تصنيع',
+                arShortLabel: 'تصنيع',
+                badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                icon: 'fa-industry',
+                searchKeywords: 'manufacturing mfg mfg-order manufacturing-order تصنيع طلب تصنيع'
+            };
+    }
+};
+
 
 /**
  * Returns the native currency for a customer order, defaulting to 'L.E.'
