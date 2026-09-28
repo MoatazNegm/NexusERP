@@ -1319,7 +1319,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
             } as ManufacturingComponent];
 
         itemComps.forEach(c => {
-          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(c.status || '')) {
+          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'RECEIVED', 'RESERVED'].includes(c.status || '')) {
             if (!map.has(o.id)) {
               map.set(o.id, {
                 id: o.id,
@@ -1884,10 +1884,18 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         if (!resetReason.trim()) throw new Error("Cancellation reason is required");
 
         setIsActionLoading('bulk-cancel');
-        await dataService.dispatchAction(order.id, 'cancel-po-batch', {
-          sendPoId: comp?.sendPoId,
-          reason: resetReason.trim()
-        });
+        if (comp?.sendPoId) {
+          await dataService.dispatchAction(order.id, 'cancel-po-batch', {
+            sendPoId: comp.sendPoId,
+            reason: resetReason.trim()
+          });
+        } else {
+          // Fallback if sendPoId is absent: cancel components via cancel-component-po
+          const targets = multiComps && multiComps.length > 0 ? multiComps : [{ item, comp }];
+          for (const m of targets) {
+            await dataService.cancelComponentPo(order.id, m.item.id, m.comp.id!);
+          }
+        }
       } else if (type === 'REVERT_PO') {
         if (!resetReason.trim()) throw new Error("Revert reason is required");
 
@@ -2262,7 +2270,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
   // Check for in-transit components before initiating a rollback
   const handleInitiateRollback = (order: CustomerOrder) => {
-    const IN_TRANSIT_STATUSES = ['ORDERED', 'AWARDED'];
+    const IN_TRANSIT_STATUSES = ['ORDERED', 'AWARDED', 'RECEIVED', 'RESERVED'];
     const found: InTransitCompRecord[] = [];
     order.items.forEach(item => {
       (item.components || []).forEach(comp => {
@@ -3942,24 +3950,26 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       )}
                                     </div>
                                   )}
-                                  {c.status === 'ORDERED' && (
-                                    <div className="flex items-center gap-3">
-                                      <button
-                                        onClick={() => handleDownloadPO(o, c)}
-                                        className="px-3 py-1.5 bg-white border border-blue-600 text-blue-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-1.5"
-                                      >
-                                        <i className="fa-solid fa-file-pdf"></i> {t('procurement.po.downloadPO')}
-                                      </button>
+                                  {['ORDERED', 'RECEIVED', 'RESERVED'].includes(c.status || '') && (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      {c.poNumber && (
+                                        <button
+                                          onClick={() => handleDownloadPO(o, c)}
+                                          className="px-3 py-1.5 bg-white border border-blue-600 text-blue-600 rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-blue-50 transition-all flex items-center gap-1.5"
+                                        >
+                                          <i className="fa-solid fa-file-pdf"></i> {t('procurement.po.downloadPO')}
+                                        </button>
+                                      )}
                                       <button
                                         onClick={() => {
                                           // Find all components sharing this PO number and sendPoId
                                           const samePoBatch = comps.filter(x =>
                                             x.comp.poNumber === c.poNumber &&
-                                            x.comp.status === 'ORDERED' &&
+                                            ['ORDERED', 'RECEIVED', 'RESERVED'].includes(x.comp.status || '') &&
                                             (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
                                           );
-                                          setMultiComps(samePoBatch);
-                                          setSelectedCompIds(samePoBatch.map(m => m.comp.id!));
+                                          setMultiComps(samePoBatch.length > 0 ? samePoBatch : [{ item: i, comp: c, order: o }]);
+                                          setSelectedCompIds(samePoBatch.length > 0 ? samePoBatch.map(m => m.comp.id!) : [c.id!]);
                                           setResetReason('');
                                           setActiveAction({ type: 'CANCEL_PO_BATCH', order: o, item: i, comp: c });
                                         }}
@@ -3979,9 +3989,21 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       >
                                         <i className="fa-solid fa-rotate-left"></i> {t('procurement.actions.revertToAward')}
                                       </button>
-                                      <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
-                                        <i className="fa-solid fa-truck-fast mr-1"></i>{t('procurement.component.inTransit')}
-                                      </span>
+                                      {c.status === 'ORDERED' && (
+                                        <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] px-2 animate-pulse">
+                                          <i className="fa-solid fa-truck-fast mr-1"></i>{t('procurement.component.inTransit')}
+                                        </span>
+                                      )}
+                                      {c.status === 'RECEIVED' && (
+                                        <span className="text-[10px] font-black text-emerald-700 uppercase tracking-[0.15em] px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-lg">
+                                          <i className="fa-solid fa-check-double mr-1"></i>{t('procurement.component.received', 'Received')}
+                                        </span>
+                                      )}
+                                      {c.status === 'RESERVED' && (
+                                        <span className="text-[10px] font-black text-purple-700 uppercase tracking-[0.15em] px-2.5 py-1 bg-purple-50 border border-purple-200 rounded-lg">
+                                          <i className="fa-solid fa-boxes-stacked mr-1"></i>{t('procurement.component.reserved', 'Reserved')}
+                                        </span>
+                                      )}
                                     </div>
                                   )}
                                   {c.status === 'WAITING_CONTRACT_START' && (
@@ -4522,6 +4544,23 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           </div>
                         </div>
 
+                        {/* If any component has received items, show stock release advisory */}
+                        {multiComps.some(m => (m.comp.receivedQty || 0) > 0 || ['RECEIVED', 'RESERVED'].includes(m.comp.status || '')) && (
+                          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
+                            <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 text-sm">
+                              <i className="fa-solid fa-warehouse"></i>
+                            </div>
+                            <div>
+                              <div className="text-[10px] font-black text-emerald-800 uppercase tracking-widest mb-1">
+                                {t('procurement.component.received', 'Received')} Stock Transfer
+                              </div>
+                              <p className="text-[11px] font-bold text-emerald-900 leading-relaxed">
+                                {t('procurement.cancelPO.stockReleaseNotice', 'Notice: Any items already received into inventory will automatically lose customer reservation and be transferred to general component stock for warehouse reuse.')}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="space-y-3">
                           <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.cancelPO.affectedComponents')}</label>
                           <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1 custom-scrollbar">
@@ -4570,6 +4609,23 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <div className="text-lg font-black text-amber-600">{activeAction.comp?.poNumber || 'N/A'}</div>
                           </div>
                         </div>
+
+                        {/* If component has received items, show stock release advisory */}
+                        {((activeAction.comp?.receivedQty || 0) > 0 || ['RECEIVED', 'RESERVED'].includes(activeAction.comp?.status || '')) && (
+                          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
+                            <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 text-sm">
+                              <i className="fa-solid fa-warehouse"></i>
+                            </div>
+                            <div>
+                              <div className="text-[10px] font-black text-emerald-800 uppercase tracking-widest mb-1">
+                                {t('procurement.component.received', 'Received')} Stock Transfer
+                              </div>
+                              <p className="text-[11px] font-bold text-emerald-900 leading-relaxed">
+                                {t('procurement.revertPO.stockReleaseNotice', 'Notice: Any items already received into inventory will lose customer reservation and be transferred to general component stock.')}
+                              </p>
+                            </div>
+                          </div>
+                        )}
 
                         <div className="p-6 bg-amber-50 rounded-3xl border border-amber-100 space-y-4">
                           <p className="text-[11px] text-amber-800 font-black leading-relaxed uppercase">

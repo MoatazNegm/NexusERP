@@ -4919,10 +4919,25 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   </p>
                 </div>
               )}
+              {decisionModal.type === 'orderReject' && (
+                <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 mb-2 space-y-2">
+                  <p className="text-xs font-bold text-rose-800 leading-relaxed">
+                    Warning: Rejecting this order will mark it as REJECTED.
+                  </p>
+                  <p className="text-xs font-bold text-rose-900 leading-relaxed bg-rose-100/60 p-2.5 rounded-xl border border-rose-200">
+                    <i className="fa-solid fa-boxes-stacked mr-1.5 text-rose-700"></i>
+                    {t('finance.orders.stockReleaseNotice', 'Notice: Received items (components or product stock) will lose customer reservation and be moved to general component stock.')}
+                  </p>
+                </div>
+              )}
               {decisionModal.type === 'revertToSourcing' && (
-                <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 mb-2">
+                <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 mb-2 space-y-2">
                   <p className="text-xs font-bold text-amber-800 leading-relaxed">
                     Warning: This action will <strong>void the existing invoice</strong> and return the order to Procurement. Components will be reset to "RFP Sent" status to allow re-awarding.
+                  </p>
+                  <p className="text-xs font-bold text-amber-900 leading-relaxed bg-amber-100/60 p-2.5 rounded-xl border border-amber-200">
+                    <i className="fa-solid fa-boxes-stacked mr-1.5 text-amber-700"></i>
+                    {t('finance.orders.stockReleaseNotice', 'Notice: Received items (components or product stock) will lose customer reservation and be moved to general component stock.')}
                   </p>
                 </div>
               )}

@@ -3505,6 +3505,106 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         }
     };
 
+    // --- RELEASES RECEIVED ITEMS FROM CUSTOMER RESERVATION TO GENERAL WAREHOUSE COMPONENT STOCK ---
+    const transferReceivedItemsToFreeStock = (order, db, reason, user, specificCompId = null) => {
+        if (!db.inventory) db.inventory = [];
+
+        (order.items || []).forEach(item => {
+            // 1. Customer Trading Items received to Product Hub (move from Product Stock to Component Stock)
+            const isTrading = item.productionType === 'TRADING';
+            const hubQty = Number(item.hubReceivedQty) || 0;
+            if (isTrading && hubQty > 0 && (!specificCompId || (item.components || []).some(c => c.id === specificCompId))) {
+                const sku = item.orderNumber || (item.components && item.components[0]?.componentNumber) || (item.components && item.components[0]?.supplierPartNumber) || `SKU-${Date.now()}`;
+                const desc = item.description || (item.components && item.components[0]?.description) || 'Trading Item';
+                const unit = item.unit || (item.components && item.components[0]?.unit) || 'pcs';
+                const cost = (item.components && item.components[0]?.unitCost) || item.realCost || item.pricePerUnit || 0;
+
+                let invItem = db.inventory.find(i => (i.sku && sku && i.sku.toLowerCase() === sku.toLowerCase()) || (i.description && desc && i.description.toLowerCase() === desc.toLowerCase()));
+                if (invItem) {
+                    invItem.quantityInStock = (Number(invItem.quantityInStock) || 0) + hubQty;
+                    invItem.lastCost = cost || invItem.lastCost || 0;
+                    invItem.lastUpdated = new Date().toISOString();
+                    delete invItem.orderRef;
+                    delete invItem.poNumber;
+                } else {
+                    invItem = {
+                        id: `inv_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                        sku: sku,
+                        description: desc,
+                        quantityInStock: hubQty,
+                        quantityReserved: 0,
+                        category: 'Mechanical',
+                        unit: unit,
+                        lastCost: cost,
+                        minStockLevel: 0,
+                        lastUpdated: new Date().toISOString()
+                    };
+                    db.inventory.push(invItem);
+                }
+
+                if (!invItem.logs) invItem.logs = [];
+                invItem.logs.push({
+                    timestamp: new Date().toISOString(),
+                    message: `Transferred ${hubQty} ${unit} from Product Hub (Customer Order ${order.internalOrderNumber || order.customerReferenceNumber || 'N/A'}) to General Component Stock due to ${reason}.`,
+                    status: 'RELEASED_TO_STOCK',
+                    user: user || 'System'
+                });
+
+                console.log(`[Inventory Transfer] Transferred Trading Product to Component Stock: ${desc} (${hubQty} ${unit}). New Stock: ${invItem.quantityInStock}`);
+                item.hubReceivedQty = 0;
+            }
+
+            // 2. Manufacturing / Standard Components
+            (item.components || []).forEach(comp => {
+                if (specificCompId && comp.id !== specificCompId) return;
+
+                const receivedQty = Number(comp.receivedQty) || (['RECEIVED', 'RESERVED'].includes(comp.status) ? Number(comp.quantity) || 0 : 0);
+                if (receivedQty > 0) {
+                    let invItem = db.inventory.find(i => i.id === comp.inventoryItemId);
+                    if (!invItem) {
+                        invItem = db.inventory.find(i => (i.sku && comp.componentNumber && i.sku.toLowerCase() === comp.componentNumber.toLowerCase()) || (i.description && comp.description && i.description.toLowerCase() === comp.description.toLowerCase()));
+                    }
+
+                    if (invItem) {
+                        // Release customer reservation
+                        invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - receivedQty);
+                        invItem.lastCost = comp.unitCost || invItem.lastCost || 0;
+                        invItem.lastUpdated = new Date().toISOString();
+                        // Unlink from customer order
+                        delete invItem.orderRef;
+                        delete invItem.poNumber;
+                    } else {
+                        invItem = {
+                            id: `inv_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                            sku: comp.componentNumber || comp.supplierPartNumber || `SKU-${Date.now()}`,
+                            description: comp.description,
+                            quantityInStock: receivedQty,
+                            quantityReserved: 0,
+                            category: 'Mechanical',
+                            unit: comp.unit || 'pcs',
+                            lastCost: comp.unitCost || 0,
+                            minStockLevel: 0,
+                            lastUpdated: new Date().toISOString()
+                        };
+                        db.inventory.push(invItem);
+                    }
+
+                    if (!invItem.logs) invItem.logs = [];
+                    invItem.logs.push({
+                        timestamp: new Date().toISOString(),
+                        message: `Released from Customer Order ${order.internalOrderNumber || order.customerReferenceNumber || 'N/A'} (PO: ${comp.poNumber || 'N/A'}) to General Component Stock (${receivedQty} ${comp.unit || invItem.unit || 'pcs'}) due to ${reason}.`,
+                        status: 'RELEASED_TO_STOCK',
+                        user: user || 'System'
+                    });
+
+                    console.log(`[Inventory Release] Released Component to Free Stock: ${comp.description} (${receivedQty} ${comp.unit}). Stock: ${invItem.quantityInStock}, Rsrv: ${invItem.quantityReserved}`);
+                    comp.receivedQty = 0;
+                    delete comp.inventoryItemId;
+                }
+            });
+        });
+    };
+
     try {
         // Save a copy of the order BEFORE any modifications for proper reconciliation
         const oldOrder = JSON.parse(JSON.stringify(order));
@@ -3661,6 +3761,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     });
                 });
 
+                // Release all received components and trading items in Hub to general warehouse component stock
+                transferReceivedItemsToFreeStock(order, db, `Rollback to Logged: ${payload?.reason || 'Manual rollback'}`, user);
+
                 // Clear all components added in technical review & reset item approvals
                 order.items.forEach(item => {
                     // Preserve and recover line item price across rollback
@@ -3812,7 +3915,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!order.technicalReviewFinishedAt && [OrderStatus.LOGGED, OrderStatus.TECHNICAL_REVIEW, OrderStatus.NEGATIVE_MARGIN].includes(oldStatus)) {
                     order.technicalReviewFinishedAt = new Date().toISOString();
                 }
-                // Release any reserved inventory back to free stock
+                // Release all received components and trading items in Hub to general warehouse component stock
+                transferReceivedItemsToFreeStock(order, db, `Order Rejection: ${payload?.reason || 'Business decision'}`, user);
+                // Release any remaining reserved inventory back to free stock
                 order.items.forEach(item => {
                     (item.components || []).forEach(comp => {
                         if (['RESERVED', 'RECEIVED'].includes(comp.status)) {
@@ -4314,6 +4419,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const oldPoNumber = ccComp.poNumber || 'N/A';
                 const oldSupplier = ccComp.supplierName || ccComp.supplierId || 'N/A';
                 const cancelReason = (payload.reason || '').trim() || 'PO cancelled by user';
+
+                // Release any received quantity to free warehouse stock
+                transferReceivedItemsToFreeStock(order, db, `Supplier PO Cancellation: ${cancelReason}`, user, ccComp.id);
+
                 ccComp.cancelledPoNumber = oldPoNumber;
                 ccComp.cancellationReason = cancelReason;
                 ccComp.lastAction = 'CANCELLED';
@@ -4336,7 +4445,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 ccComp.unitCost = 0;
                 order.logs.push(createAuditLog(`Supplier PO cancelled for: ${ccComp.description} (PO: ${oldPoNumber}, Supplier: ${oldSupplier}). Reason: ${cancelReason}. Component reset to PENDING_OFFER for re-procurement.`, 'CANCELLED', user));
                 // If order was past WAITING_SUPPLIERS, revert it since a component now needs procurement
-                if ([OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING].includes(order.status)) {
+                if ([OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING, OrderStatus.READY_FOR_PRODUCTION].includes(order.status)) {
                     const old = order.status;
                     order.status = OrderStatus.WAITING_SUPPLIERS;
                     order.logs.push(createAuditLog(`[AUTO] Order reverted from ${old} to WAITING_SUPPLIERS: component requires re-procurement.`, order.status, 'System'));
@@ -4456,7 +4565,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 let cancelledPoNum = '';
                 order.items.forEach(item => {
                     item.components?.forEach(comp => {
-                        if (comp.sendPoId === payload.sendPoId && (comp.status === 'ORDERED' || comp.status === 'WAITING_CONTRACT_START')) {
+                        if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                            // Release any received quantity to free warehouse stock
+                            transferReceivedItemsToFreeStock(order, db, `PO Batch Cancellation: ${cancelReason}`, user, comp.id);
+
                             cancelledPoNum = comp.poNumber || cancelledPoNum;
                             comp.cancelledPoNumber = comp.poNumber || '';
                             comp.cancellationReason = cancelReason;
@@ -4498,12 +4610,16 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (itemIdx === -1) throw new Error("Item not found");
                 const comp = order.items[itemIdx].components?.find(c => c.id === payload.componentId);
                 if (!comp) throw new Error("Component not found");
-                if (comp.status !== 'ORDERED' && comp.status !== 'WAITING_CONTRACT_START') {
-                    throw new Error("Component is not in a PO status");
+                if (!['ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                    throw new Error("Component is not in a PO or received status");
                 }
                 const oldStatus = comp.status;
                 const oldPoNumber = comp.poNumber || 'N/A';
                 const revertReason = (payload.reason || '').trim() || 'Reverted to award by user';
+
+                // Release any received quantity to free warehouse stock
+                transferReceivedItemsToFreeStock(order, db, `PO Revert to Award: ${revertReason}`, user, comp.id);
+
                 comp.status = 'AWARDED';
                 comp.statusUpdatedAt = new Date().toISOString();
                 comp.revertedPoNumber = oldPoNumber;
@@ -4516,6 +4632,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 delete comp.contractStartDate;
                 delete comp.contractNumber;
                 order.logs.push(createAuditLog(`Reverted PO for component ${comp.description} (PO: ${oldPoNumber}) from ${oldStatus} back to AWARDED. Reason: ${revertReason}.`, 'REVERTED_TO_AWARD', user));
+                if ([OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING, OrderStatus.READY_FOR_PRODUCTION].includes(order.status)) {
+                    const oldOrdStatus = order.status;
+                    order.status = OrderStatus.WAITING_SUPPLIERS;
+                    order.logs.push(createAuditLog(`[AUTO] Order reverted from ${oldOrdStatus} to WAITING_SUPPLIERS: component returned to AWARDED status.`, order.status, 'System'));
+                }
                 break;
             }
 

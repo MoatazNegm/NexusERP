@@ -8,6 +8,8 @@ import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
 
 type InventoryTab = 'inventory' | 'reception' | 'hub' | 'dispatch';
+type InventorySubTab = 'component-stock' | 'product-stock' | 'total-stock';
+type StockMetricFilter = 'total' | 'linked' | 'reserved' | 'stocked';
 
 interface ConfirmState {
   type: 'material' | 'hub' | 'dispatch';
@@ -899,6 +901,7 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
   const isAr = language === 'ar';
   const [activeTab, setActiveTab] = useState<InventoryTab>('inventory');
   const [inventorySubTab, setInventorySubTab] = useState<InventorySubTab>('component-stock');
+  const [stockMetricFilter, setStockMetricFilter] = useState<StockMetricFilter>('total');
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedStockCardItem, setSelectedStockCardItem] = useState<StockCardItemData | null>(null);
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -1132,6 +1135,10 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
     let poLinkedVal = 0;
     let reservedVal = 0;
     let stockedVal = 0;
+    let totalCount = 0;
+    let poLinkedCount = 0;
+    let reservedCount = 0;
+    let stockedCount = 0;
 
     componentStockItems.forEach(item => {
       const qty = Number(item.quantityInStock) || 0;
@@ -1141,16 +1148,23 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
       const itemRsrv = rsrv * cost;
 
       totalVal += itemVal;
-      reservedVal += itemRsrv;
+      totalCount++;
+
+      if (rsrv > 0) {
+        reservedVal += itemRsrv;
+        reservedCount++;
+      }
 
       if (isComponentPoLinked(item, allOrders)) {
         poLinkedVal += itemVal;
+        poLinkedCount++;
       } else {
         stockedVal += itemVal;
+        stockedCount++;
       }
     });
 
-    return { totalVal, poLinkedVal, reservedVal, stockedVal };
+    return { totalVal, poLinkedVal, reservedVal, stockedVal, totalCount, poLinkedCount, reservedCount, stockedCount };
   }, [componentStockItems, allOrders]);
 
   const productMetrics = useMemo(() => {
@@ -1158,6 +1172,10 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
     let poLinkedVal = 0;
     let reservedVal = 0;
     let stockedVal = 0;
+    let totalCount = 0;
+    let poLinkedCount = 0;
+    let reservedCount = 0;
+    let stockedCount = 0;
 
     hubStorageItems.forEach(p => {
       const qty = p.hubQty || 0;
@@ -1165,16 +1183,20 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
       const itemVal = qty * unitVal;
 
       totalVal += itemVal;
+      totalCount++;
 
       if (isProductPoLinked(p.order)) {
         poLinkedVal += itemVal;
+        poLinkedCount++;
         reservedVal += itemVal;
+        reservedCount++;
       } else {
         stockedVal += itemVal;
+        stockedCount++;
       }
     });
 
-    return { totalVal, poLinkedVal, reservedVal, stockedVal };
+    return { totalVal, poLinkedVal, reservedVal, stockedVal, totalCount, poLinkedCount, reservedCount, stockedCount };
   }, [hubStorageItems]);
 
   const totalStockMetrics = useMemo(() => {
@@ -1183,6 +1205,10 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
       poLinkedVal: componentMetrics.poLinkedVal + productMetrics.poLinkedVal,
       reservedVal: componentMetrics.reservedVal + productMetrics.reservedVal,
       stockedVal: componentMetrics.stockedVal + productMetrics.stockedVal,
+      totalCount: componentMetrics.totalCount + productMetrics.totalCount,
+      poLinkedCount: componentMetrics.poLinkedCount + productMetrics.poLinkedCount,
+      reservedCount: componentMetrics.reservedCount + productMetrics.reservedCount,
+      stockedCount: componentMetrics.stockedCount + productMetrics.stockedCount,
     };
   }, [componentMetrics, productMetrics]);
 
@@ -1193,9 +1219,18 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
   }, [inventorySubTab, componentMetrics, productMetrics, totalStockMetrics]);
 
   const filteredComponentItems = useMemo(() => {
+    let list = componentStockItems;
+    if (stockMetricFilter === 'linked') {
+      list = list.filter(i => isComponentPoLinked(i, allOrders));
+    } else if (stockMetricFilter === 'reserved') {
+      list = list.filter(i => (Number(i.quantityReserved) || 0) > 0);
+    } else if (stockMetricFilter === 'stocked') {
+      list = list.filter(i => !isComponentPoLinked(i, allOrders));
+    }
+
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return componentStockItems;
-    return componentStockItems.filter(i => {
+    if (!q) return list;
+    return list.filter(i => {
       const order = i.orderRef ? allOrders.find(o => o.internalOrderNumber === i.orderRef || o.customerReferenceNumber === i.orderRef) : undefined;
       const poType = order ? getOrderPoType(order) : 'Stock';
       const poCfg = getPoTypeConfig(poType);
@@ -1216,12 +1251,21 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
         matchKeywords
       );
     });
-  }, [componentStockItems, searchQuery, allOrders]);
+  }, [componentStockItems, stockMetricFilter, searchQuery, allOrders]);
 
   const filteredProductItems = useMemo(() => {
+    let list = hubStorageItems;
+    if (stockMetricFilter === 'linked') {
+      list = list.filter(p => isProductPoLinked(p.order));
+    } else if (stockMetricFilter === 'reserved') {
+      list = list.filter(p => isProductPoLinked(p.order) && (p.hubQty || 0) > 0);
+    } else if (stockMetricFilter === 'stocked') {
+      list = list.filter(p => !isProductPoLinked(p.order));
+    }
+
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return hubStorageItems;
-    return hubStorageItems.filter(p => {
+    if (!q) return list;
+    return list.filter(p => {
       const poType = getOrderPoType(p.order, p.item);
       const poCfg = getPoTypeConfig(poType);
       const isPoLinked = isProductPoLinked(p.order);
@@ -1240,12 +1284,21 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
         matchKeywords
       );
     });
-  }, [hubStorageItems, searchQuery]);
+  }, [hubStorageItems, stockMetricFilter, searchQuery]);
 
   const filteredTotalStockItems = useMemo(() => {
+    let list = totalStockItems;
+    if (stockMetricFilter === 'linked') {
+      list = list.filter(r => r.isPoLinked);
+    } else if (stockMetricFilter === 'reserved') {
+      list = list.filter(r => (r.quantityReserved || 0) > 0);
+    } else if (stockMetricFilter === 'stocked') {
+      list = list.filter(r => !r.isPoLinked);
+    }
+
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return totalStockItems;
-    return totalStockItems.filter(r => {
+    if (!q) return list;
+    return list.filter(r => {
       const poCfg = getPoTypeConfig(r.poClassification);
       const stockTypeStr = r.stockType.toLowerCase();
       const linkTypeStr = r.isPoLinked ? 'po linked customer' : 'stocked stock unlinked';
@@ -1265,7 +1318,7 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
         matchKeywords
       );
     });
-  }, [totalStockItems, searchQuery]);
+  }, [totalStockItems, stockMetricFilter, searchQuery]);
 
   // Flattened rows for Hub Intake table (no rowSpan needed)
   type HubIntakeRow = { order: CustomerOrder; item: CustomerOrderItem; mfd: number; hub: number; readyForIntake: number; isFallback: boolean };
@@ -1441,21 +1494,21 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
             <div className="flex items-center gap-3">
               <div className="flex gap-1 p-1 bg-slate-100 rounded-xl">
                 <button
-                  onClick={() => setInventorySubTab('component-stock')}
+                  onClick={() => { setInventorySubTab('component-stock'); setStockMetricFilter('total'); }}
                   className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${inventorySubTab === 'component-stock' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                 >
                   <i className={`fa-solid fa-boxes-stacked ${isAr ? 'ml-1.5' : 'mr-1.5'}`}></i>{t('inventory.subTabs.componentStock')}
                   {componentStockItems.length > 0 && <span className={`${isAr ? 'mr-1.5' : 'ml-1.5'} px-1.5 py-0.5 bg-blue-500 text-white rounded-full text-[8px]`}>{componentStockItems.length}</span>}
                 </button>
                 <button
-                  onClick={() => setInventorySubTab('product-stock')}
+                  onClick={() => { setInventorySubTab('product-stock'); setStockMetricFilter('total'); }}
                   className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${inventorySubTab === 'product-stock' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                 >
                   <i className={`fa-solid fa-warehouse ${isAr ? 'ml-1.5' : 'mr-1.5'}`}></i>{t('inventory.subTabs.productStock')}
                   {hubStorageItems.length > 0 && <span className={`${isAr ? 'mr-1.5' : 'ml-1.5'} px-1.5 py-0.5 bg-emerald-500 text-white rounded-full text-[8px]`}>{hubStorageItems.length}</span>}
                 </button>
                 <button
-                  onClick={() => setInventorySubTab('total-stock')}
+                  onClick={() => { setInventorySubTab('total-stock'); setStockMetricFilter('total'); }}
                   className={`px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${inventorySubTab === 'total-stock' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                 >
                   <i className={`fa-solid fa-layer-group ${isAr ? 'ml-1.5' : 'mr-1.5'}`}></i>{t('inventory.subTabs.totalStock')}
@@ -1521,60 +1574,240 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
           {/* 4 Universal Value Metrics for the Active Tab */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 p-6 bg-slate-50/70 border-b border-slate-100">
             {/* 1. Total Value */}
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shrink-0">
-                <i className="fa-solid fa-vault"></i>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setStockMetricFilter('total')}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStockMetricFilter('total'); } }}
+              title={stockMetricFilter === 'total' ? (isAr ? 'القائمة المعروضة حالياً: كافة البنود' : 'Currently displaying: All items') : (isAr ? 'انقر لعرض كافة البنود (القيمة الإجمالية)' : 'Click to display all items (Total Value)')}
+              className={`p-4 rounded-2xl cursor-pointer transition-all duration-200 select-none relative overflow-hidden flex flex-col justify-between gap-3 ${
+                stockMetricFilter === 'total'
+                  ? 'bg-blue-50/70 border-2 border-blue-600 shadow-md ring-4 ring-blue-500/20 -translate-y-0.5'
+                  : 'bg-white border border-slate-200 shadow-xs hover:border-blue-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0 transition-all ${
+                    stockMetricFilter === 'total' ? 'bg-blue-600 text-white shadow-xs' : 'bg-blue-50 text-blue-600'
+                  }`}>
+                    <i className="fa-solid fa-vault"></i>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-black uppercase tracking-wider text-slate-500">{t('inventory.metrics.totalValue')}</div>
+                    <span className="inline-flex items-center gap-1 text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                      {t('inventory.metrics.itemsCount', { count: activeMetrics.totalCount })}
+                    </span>
+                  </div>
+                </div>
+                {stockMetricFilter === 'total' ? (
+                  <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider bg-blue-600 text-white flex items-center gap-1 shadow-2xs shrink-0">
+                    <i className="fa-solid fa-circle-check text-[7px]"></i>
+                    <span>{t('inventory.metrics.activePill')}</span>
+                  </span>
+                ) : (
+                  <span className="text-[8px] font-bold text-slate-400 opacity-60 flex items-center gap-1 shrink-0">
+                    <i className="fa-solid fa-arrow-pointer text-[7px]"></i>
+                    <span className="hidden sm:inline">{isAr ? 'عرض' : 'Filter'}</span>
+                  </span>
+                )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[9px] font-black uppercase tracking-wider text-slate-400">{t('inventory.metrics.totalValue')}</div>
-                <div className="text-base font-black text-slate-900 font-mono truncate">
+
+              <div>
+                <div className={`text-base font-black font-mono truncate ${stockMetricFilter === 'total' ? 'text-blue-950' : 'text-slate-900'}`}>
                   {isAr ? '' : 'L.E. '}{activeMetrics.totalVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{isAr ? ' ج.م.' : ''}
                 </div>
-                <div className="text-[8px] font-bold text-slate-400 truncate">{t('inventory.metrics.totalValueHint')}</div>
+                <div className="text-[8px] font-bold text-slate-400 truncate mt-0.5">{t('inventory.metrics.totalValueHint')}</div>
               </div>
             </div>
 
             {/* 2. PO Linked Value */}
-            <div className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-xs flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl shrink-0">
-                <i className="fa-solid fa-link"></i>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setStockMetricFilter('linked')}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStockMetricFilter('linked'); } }}
+              title={stockMetricFilter === 'linked' ? (isAr ? 'القائمة المعروضة حالياً: البنود المرتبطة' : 'Currently displaying: PO Linked items') : (isAr ? 'انقر لعرض البنود المرتبطة بأمر شراء' : 'Click to display PO Linked items')}
+              className={`p-4 rounded-2xl cursor-pointer transition-all duration-200 select-none relative overflow-hidden flex flex-col justify-between gap-3 ${
+                stockMetricFilter === 'linked'
+                  ? 'bg-indigo-50/70 border-2 border-indigo-600 shadow-md ring-4 ring-indigo-500/20 -translate-y-0.5'
+                  : 'bg-white border border-slate-200 shadow-xs hover:border-indigo-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0 transition-all ${
+                    stockMetricFilter === 'linked' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-indigo-50 text-indigo-600'
+                  }`}>
+                    <i className="fa-solid fa-link"></i>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-black uppercase tracking-wider text-indigo-700">{t('inventory.metrics.poLinkedValue')}</div>
+                    <span className="inline-flex items-center gap-1 text-[8px] font-black text-indigo-400 uppercase tracking-widest">
+                      {t('inventory.metrics.itemsCount', { count: activeMetrics.poLinkedCount })}
+                    </span>
+                  </div>
+                </div>
+                {stockMetricFilter === 'linked' ? (
+                  <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider bg-indigo-600 text-white flex items-center gap-1 shadow-2xs shrink-0">
+                    <i className="fa-solid fa-circle-check text-[7px]"></i>
+                    <span>{t('inventory.metrics.activePill')}</span>
+                  </span>
+                ) : (
+                  <span className="text-[8px] font-bold text-slate-400 opacity-60 flex items-center gap-1 shrink-0">
+                    <i className="fa-solid fa-arrow-pointer text-[7px]"></i>
+                    <span className="hidden sm:inline">{isAr ? 'عرض' : 'Filter'}</span>
+                  </span>
+                )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[9px] font-black uppercase tracking-wider text-indigo-600">{t('inventory.metrics.poLinkedValue')}</div>
-                <div className="text-base font-black text-indigo-900 font-mono truncate">
+
+              <div>
+                <div className={`text-base font-black font-mono truncate ${stockMetricFilter === 'linked' ? 'text-indigo-950' : 'text-indigo-900'}`}>
                   {isAr ? '' : 'L.E. '}{activeMetrics.poLinkedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{isAr ? ' ج.م.' : ''}
                 </div>
-                <div className="text-[8px] font-bold text-indigo-400 truncate">{t('inventory.metrics.poLinkedValueHint')}</div>
+                <div className="text-[8px] font-bold text-indigo-400 truncate mt-0.5">{t('inventory.metrics.poLinkedValueHint')}</div>
               </div>
             </div>
 
             {/* 3. Reserved Value */}
-            <div className="bg-white p-4 rounded-2xl border border-amber-100 shadow-xs flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl shrink-0">
-                <i className="fa-solid fa-lock"></i>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setStockMetricFilter('reserved')}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStockMetricFilter('reserved'); } }}
+              title={stockMetricFilter === 'reserved' ? (isAr ? 'القائمة المعروضة حالياً: البنود المحجوزة' : 'Currently displaying: Reserved items') : (isAr ? 'انقر لعرض البنود المحجوزة' : 'Click to display Reserved items')}
+              className={`p-4 rounded-2xl cursor-pointer transition-all duration-200 select-none relative overflow-hidden flex flex-col justify-between gap-3 ${
+                stockMetricFilter === 'reserved'
+                  ? 'bg-amber-50/70 border-2 border-amber-500 shadow-md ring-4 ring-amber-500/20 -translate-y-0.5'
+                  : 'bg-white border border-slate-200 shadow-xs hover:border-amber-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0 transition-all ${
+                    stockMetricFilter === 'reserved' ? 'bg-amber-500 text-white shadow-xs' : 'bg-amber-50 text-amber-600'
+                  }`}>
+                    <i className="fa-solid fa-lock"></i>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-black uppercase tracking-wider text-amber-700">{t('inventory.metrics.reservedValue')}</div>
+                    <span className="inline-flex items-center gap-1 text-[8px] font-black text-amber-500 uppercase tracking-widest">
+                      {t('inventory.metrics.itemsCount', { count: activeMetrics.reservedCount })}
+                    </span>
+                  </div>
+                </div>
+                {stockMetricFilter === 'reserved' ? (
+                  <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider bg-amber-600 text-white flex items-center gap-1 shadow-2xs shrink-0">
+                    <i className="fa-solid fa-circle-check text-[7px]"></i>
+                    <span>{t('inventory.metrics.activePill')}</span>
+                  </span>
+                ) : (
+                  <span className="text-[8px] font-bold text-slate-400 opacity-60 flex items-center gap-1 shrink-0">
+                    <i className="fa-solid fa-arrow-pointer text-[7px]"></i>
+                    <span className="hidden sm:inline">{isAr ? 'عرض' : 'Filter'}</span>
+                  </span>
+                )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[9px] font-black uppercase tracking-wider text-amber-600">{t('inventory.metrics.reservedValue')}</div>
-                <div className="text-base font-black text-amber-900 font-mono truncate">
+
+              <div>
+                <div className={`text-base font-black font-mono truncate ${stockMetricFilter === 'reserved' ? 'text-amber-950' : 'text-amber-900'}`}>
                   {isAr ? '' : 'L.E. '}{activeMetrics.reservedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{isAr ? ' ج.م.' : ''}
                 </div>
-                <div className="text-[8px] font-bold text-amber-400 truncate">{t('inventory.metrics.reservedValueHint')}</div>
+                <div className="text-[8px] font-bold text-amber-400 truncate mt-0.5">{t('inventory.metrics.reservedValueHint')}</div>
               </div>
             </div>
 
             {/* 4. Stocked Value */}
-            <div className="bg-white p-4 rounded-2xl border border-emerald-100 shadow-xs flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shrink-0">
-                <i className="fa-solid fa-boxes-stacked"></i>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setStockMetricFilter('stocked')}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStockMetricFilter('stocked'); } }}
+              title={stockMetricFilter === 'stocked' ? (isAr ? 'القائمة المعروضة حالياً: بنود المخزون العام' : 'Currently displaying: Stocked items') : (isAr ? 'انقر لعرض بنود المخزون العام' : 'Click to display Stocked items')}
+              className={`p-4 rounded-2xl cursor-pointer transition-all duration-200 select-none relative overflow-hidden flex flex-col justify-between gap-3 ${
+                stockMetricFilter === 'stocked'
+                  ? 'bg-emerald-50/70 border-2 border-emerald-600 shadow-md ring-4 ring-emerald-500/20 -translate-y-0.5'
+                  : 'bg-white border border-slate-200 shadow-xs hover:border-emerald-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0 transition-all ${
+                    stockMetricFilter === 'stocked' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-emerald-50 text-emerald-600'
+                  }`}>
+                    <i className="fa-solid fa-boxes-stacked"></i>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-black uppercase tracking-wider text-emerald-700">{t('inventory.metrics.stockedValue')}</div>
+                    <span className="inline-flex items-center gap-1 text-[8px] font-black text-emerald-500 uppercase tracking-widest">
+                      {t('inventory.metrics.itemsCount', { count: activeMetrics.stockedCount })}
+                    </span>
+                  </div>
+                </div>
+                {stockMetricFilter === 'stocked' ? (
+                  <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider bg-emerald-600 text-white flex items-center gap-1 shadow-2xs shrink-0">
+                    <i className="fa-solid fa-circle-check text-[7px]"></i>
+                    <span>{t('inventory.metrics.activePill')}</span>
+                  </span>
+                ) : (
+                  <span className="text-[8px] font-bold text-slate-400 opacity-60 flex items-center gap-1 shrink-0">
+                    <i className="fa-solid fa-arrow-pointer text-[7px]"></i>
+                    <span className="hidden sm:inline">{isAr ? 'عرض' : 'Filter'}</span>
+                  </span>
+                )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[9px] font-black uppercase tracking-wider text-emerald-600">{t('inventory.metrics.stockedValue')}</div>
-                <div className="text-base font-black text-emerald-900 font-mono truncate">
+
+              <div>
+                <div className={`text-base font-black font-mono truncate ${stockMetricFilter === 'stocked' ? 'text-emerald-950' : 'text-emerald-900'}`}>
                   {isAr ? '' : 'L.E. '}{activeMetrics.stockedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{isAr ? ' ج.م.' : ''}
                 </div>
-                <div className="text-[8px] font-bold text-emerald-400 truncate">{t('inventory.metrics.stockedValueHint')}</div>
+                <div className="text-[8px] font-bold text-emerald-400 truncate mt-0.5">{t('inventory.metrics.stockedValueHint')}</div>
               </div>
             </div>
+          </div>
+
+          {/* Active Filter Indicator & Context Strip */}
+          <div className="px-6 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                <i className="fa-solid fa-filter text-[8px]"></i>
+                {t('inventory.metrics.showingList')}
+              </span>
+              <span className={`px-2.5 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+                stockMetricFilter === 'total' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                stockMetricFilter === 'linked' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' :
+                stockMetricFilter === 'reserved' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                'bg-emerald-100 text-emerald-800 border border-emerald-200'
+              }`}>
+                <i className={`fa-solid ${
+                  stockMetricFilter === 'total' ? 'fa-vault' :
+                  stockMetricFilter === 'linked' ? 'fa-link' :
+                  stockMetricFilter === 'reserved' ? 'fa-lock' :
+                  'fa-boxes-stacked'
+                } text-[8px]`}></i>
+                {stockMetricFilter === 'total' && t('inventory.metrics.allStockItems')}
+                {stockMetricFilter === 'linked' && t('inventory.metrics.poLinkedItems')}
+                {stockMetricFilter === 'reserved' && t('inventory.metrics.reservedItems')}
+                {stockMetricFilter === 'stocked' && t('inventory.metrics.stockedItems')}
+              </span>
+              <span className="text-[9px] font-bold text-slate-400">
+                ({t('inventory.metrics.itemsShown', {
+                  count: inventorySubTab === 'component-stock' ? filteredComponentItems.length :
+                         inventorySubTab === 'product-stock' ? filteredProductItems.length :
+                         filteredTotalStockItems.length
+                })})
+              </span>
+            </div>
+
+            {stockMetricFilter !== 'total' && (
+              <button
+                onClick={() => setStockMetricFilter('total')}
+                className="px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800 hover:bg-blue-100/60 rounded-lg transition-all flex items-center gap-1 border border-blue-200 bg-blue-50"
+              >
+                <i className="fa-solid fa-rotate-left text-[8px]"></i>
+                <span>{t('inventory.metrics.resetToTotal')}</span>
+              </button>
+            )}
           </div>
 
           {/* SubTab 1: Component Stock */}
@@ -1582,9 +1815,26 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
             viewMode === 'cards' ? (
               <div className="p-6">
                 {filteredComponentItems.length === 0 ? (
-                  <div className="p-16 text-center text-slate-300 italic text-xs font-black uppercase tracking-widest bg-slate-50/50 rounded-2xl border border-slate-100">
-                    <i className="fa-solid fa-boxes-stacked text-3xl mb-3 opacity-30 block"></i>
-                    {isAr ? 'لا توجد بنود في مخزون المكونات.' : 'No component stock items found.'}
+                  <div className="p-16 text-center text-slate-400 italic text-xs font-black uppercase tracking-widest bg-slate-50/50 rounded-2xl border border-slate-100 flex flex-col items-center justify-center gap-3">
+                    <i className="fa-solid fa-boxes-stacked text-3xl mb-1 opacity-30 block"></i>
+                    <span>
+                      {stockMetricFilter === 'linked'
+                        ? (isAr ? 'لا توجد بنود مرتبطة بأمر شراء في مخزون المكونات.' : 'No PO-linked items found in component stock.')
+                        : stockMetricFilter === 'reserved'
+                        ? (isAr ? 'لا توجد بنود محجوزة في مخزون المكونات.' : 'No reserved items found in component stock.')
+                        : stockMetricFilter === 'stocked'
+                        ? (isAr ? 'لا توجد بنود مخزون عام في مخزون المكونات.' : 'No stocked items found in component stock.')
+                        : (isAr ? 'لا توجد بنود في مخزون المكونات.' : 'No component stock items found.')}
+                    </span>
+                    {stockMetricFilter !== 'total' && (
+                      <button
+                        onClick={() => setStockMetricFilter('total')}
+                        className="not-italic px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-sm"
+                      >
+                        <i className={`fa-solid fa-vault ${isAr ? 'ml-1.5' : 'mr-1.5'}`}></i>
+                        {t('inventory.metrics.resetToTotal')}
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-3.5">
@@ -1706,7 +1956,15 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
                 data={filteredComponentItems}
                 rowKey={(r) => r.id}
                 onRowClick={(r) => openComponentStockCard(r)}
-                emptyMessage={isAr ? 'لا توجد بنود في مخزون المكونات.' : 'No component stock items.'}
+                emptyMessage={
+                  stockMetricFilter === 'linked'
+                    ? (isAr ? 'لا توجد بنود مرتبطة بأمر شراء في مخزون المكونات.' : 'No PO-linked items found in component stock.')
+                    : stockMetricFilter === 'reserved'
+                    ? (isAr ? 'لا توجد بنود محجوزة في مخزون المكونات.' : 'No reserved items found in component stock.')
+                    : stockMetricFilter === 'stocked'
+                    ? (isAr ? 'لا توجد بنود مخزون عام في مخزون المكونات.' : 'No stocked items found in component stock.')
+                    : (isAr ? 'لا توجد بنود في مخزون المكونات.' : 'No component stock items.')
+                }
                 columns={[
                   {
                     key: 'sku',
@@ -1785,9 +2043,26 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
             viewMode === 'cards' ? (
               <div className="p-6">
                 {filteredProductItems.length === 0 ? (
-                  <div className="p-16 text-center text-slate-300 italic text-xs font-black uppercase tracking-widest bg-slate-50/50 rounded-2xl border border-slate-100">
-                    <i className="fa-solid fa-warehouse text-3xl mb-3 opacity-30 block"></i>
-                    {isAr ? 'لا توجد سلع تامة الصنع في مخزون المنتجات حالياً.' : 'No finished goods currently in product stock.'}
+                  <div className="p-16 text-center text-slate-400 italic text-xs font-black uppercase tracking-widest bg-slate-50/50 rounded-2xl border border-slate-100 flex flex-col items-center justify-center gap-3">
+                    <i className="fa-solid fa-warehouse text-3xl mb-1 opacity-30 block"></i>
+                    <span>
+                      {stockMetricFilter === 'linked'
+                        ? (isAr ? 'لا توجد سلع تامة الصنع مرتبطة بأمر شراء في مخزون المنتجات.' : 'No PO-linked finished goods in product stock.')
+                        : stockMetricFilter === 'reserved'
+                        ? (isAr ? 'لا توجد سلع محجوزة في مخزون المنتجات.' : 'No reserved goods in product stock.')
+                        : stockMetricFilter === 'stocked'
+                        ? (isAr ? 'لا توجد سلع مخزون عام في مخزون المنتجات.' : 'No stocked goods in product stock.')
+                        : (isAr ? 'لا توجد سلع تامة الصنع في مخزون المنتجات حالياً.' : 'No finished goods currently in product stock.')}
+                    </span>
+                    {stockMetricFilter !== 'total' && (
+                      <button
+                        onClick={() => setStockMetricFilter('total')}
+                        className="not-italic px-4 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-sm"
+                      >
+                        <i className={`fa-solid fa-vault ${isAr ? 'ml-1.5' : 'mr-1.5'}`}></i>
+                        {t('inventory.metrics.resetToTotal')}
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-3.5">
@@ -1907,7 +2182,15 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
                 data={filteredProductItems}
                 rowKey={(r) => `${r.order.id}-${r.item.id}`}
                 onRowClick={(r) => openProductStockCard(r)}
-                emptyMessage={isAr ? 'لا توجد سلع تامة الصنع في مخزون المنتجات حالياً.' : 'No finished goods currently in product stock.'}
+                emptyMessage={
+                  stockMetricFilter === 'linked'
+                    ? (isAr ? 'لا توجد سلع تامة الصنع مرتبطة بأمر شراء في مخزون المنتجات.' : 'No PO-linked finished goods in product stock.')
+                    : stockMetricFilter === 'reserved'
+                    ? (isAr ? 'لا توجد سلع محجوزة في مخزون المنتجات.' : 'No reserved goods in product stock.')
+                    : stockMetricFilter === 'stocked'
+                    ? (isAr ? 'لا توجد سلع مخزون عام في مخزون المنتجات.' : 'No stocked goods in product stock.')
+                    : (isAr ? 'لا توجد سلع تامة الصنع في مخزون المنتجات حالياً.' : 'No finished goods currently in product stock.')
+                }
                 columns={[
                   {
                     key: 'poRef',
@@ -2024,9 +2307,26 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
             viewMode === 'cards' ? (
               <div className="p-6">
                 {filteredTotalStockItems.length === 0 ? (
-                  <div className="p-16 text-center text-slate-300 italic text-xs font-black uppercase tracking-widest bg-slate-50/50 rounded-2xl border border-slate-100">
-                    <i className="fa-solid fa-layer-group text-3xl mb-3 opacity-30 block"></i>
-                    {isAr ? 'لم يتم العثور على بنود مخزون.' : 'No stock items found.'}
+                  <div className="p-16 text-center text-slate-400 italic text-xs font-black uppercase tracking-widest bg-slate-50/50 rounded-2xl border border-slate-100 flex flex-col items-center justify-center gap-3">
+                    <i className="fa-solid fa-layer-group text-3xl mb-1 opacity-30 block"></i>
+                    <span>
+                      {stockMetricFilter === 'linked'
+                        ? (isAr ? 'لم يتم العثور على بنود مرتبطة بأمر شراء في إجمالي المخزون.' : 'No PO-linked stock items found in total stock.')
+                        : stockMetricFilter === 'reserved'
+                        ? (isAr ? 'لم يتم العثور على بنود محجوزة في إجمالي المخزون.' : 'No reserved stock items found in total stock.')
+                        : stockMetricFilter === 'stocked'
+                        ? (isAr ? 'لم يتم العثور على بنود مخزون عام في إجمالي المخزون.' : 'No stocked items found in total stock.')
+                        : (isAr ? 'لم يتم العثور على بنود مخزون.' : 'No stock items found.')}
+                    </span>
+                    {stockMetricFilter !== 'total' && (
+                      <button
+                        onClick={() => setStockMetricFilter('total')}
+                        className="not-italic px-4 py-2 bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition-all shadow-sm"
+                      >
+                        <i className={`fa-solid fa-vault ${isAr ? 'ml-1.5' : 'mr-1.5'}`}></i>
+                        {t('inventory.metrics.resetToTotal')}
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-3.5">
@@ -2143,7 +2443,15 @@ const InventoryModuleInner: React.FC<InventoryModuleProps> = ({ config, refreshK
                 data={filteredTotalStockItems}
                 rowKey={(r) => r.id}
                 onRowClick={(r) => openTotalStockCard(r)}
-                emptyMessage={isAr ? 'لم يتم العثور على بنود مخزون.' : 'No stock items found.'}
+                emptyMessage={
+                  stockMetricFilter === 'linked'
+                    ? (isAr ? 'لم يتم العثور على بنود مرتبطة بأمر شراء في إجمالي المخزون.' : 'No PO-linked stock items found in total stock.')
+                    : stockMetricFilter === 'reserved'
+                    ? (isAr ? 'لم يتم العثور على بنود محجوزة في إجمالي المخزون.' : 'No reserved stock items found in total stock.')
+                    : stockMetricFilter === 'stocked'
+                    ? (isAr ? 'لم يتم العثور على بنود مخزون عام في إجمالي المخزون.' : 'No stocked items found in total stock.')
+                    : (isAr ? 'لم يتم العثور على بنود مخزون.' : 'No stock items found.')
+                }
                 columns={[
                   {
                     key: 'stockType',
