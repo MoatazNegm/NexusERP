@@ -635,39 +635,54 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   };
 
   // Payment Invoice PDF state
-  // Function to generate receipt PDF for a specific payment from history
+  const [isDownloadingReceipt, setIsDownloadingReceipt] = useState(false);
+
+  // Function to generate receipt PDF for a specific payment from history or on demand
   const generateReceiptPDF = async (order: CustomerOrder, paymentEntry: any) => {
     try {
-      // Find the payment in the order's payments array
-      const payment = order.payments?.find(p => p.receiptNumber === paymentEntry.receiptNumber);
-      if (!payment) {
-        alert("Payment data not found");
+      // Find the payment in the order's payments array, or fallback to paymentEntry directly
+      const payment = (order.payments && Array.isArray(order.payments))
+        ? (order.payments.find(p => paymentEntry.receiptNumber && p.receiptNumber === paymentEntry.receiptNumber) ||
+           order.payments.find(p => p.amount === paymentEntry.amount && p.date === paymentEntry.date) ||
+           paymentEntry)
+        : paymentEntry;
+
+      if (!payment || typeof payment.amount !== 'number') {
+        alert("Payment data not found or invalid");
         return;
       }
 
       // Find previous payments (all payments before this one)
-      const paymentIndex = order.payments?.findIndex(p => p.receiptNumber === paymentEntry.receiptNumber) || 0;
-      const previousPayments = order.payments?.slice(0, paymentIndex) || [];
+      const paymentIndex = (order.payments && Array.isArray(order.payments))
+        ? order.payments.findIndex(p => (payment.receiptNumber && p.receiptNumber === payment.receiptNumber) || (p.amount === payment.amount && p.date === payment.date))
+        : -1;
+      const safeIndex = paymentIndex >= 0 ? paymentIndex : (order.payments?.length || 0);
+      const previousPayments = order.payments?.slice(0, safeIndex) || [];
 
       // Calculate if this is the final payment
       let grossRev = 0;
-      order.items.forEach(it => grossRev += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+      (order.items || []).forEach(it => grossRev += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
       const totalPaidIncludingThis = previousPayments.reduce((s, p) => s + p.amount, 0) + payment.amount;
       const isFinal = totalPaidIncludingThis >= grossRev;
+
+      const orderShortId = (order.internalOrderNumber || 'ORDER').replace(/[^\w]/g, '').slice(-6);
+      const safeReceiptNum = payment.receiptNumber || `RCV-${orderShortId}-${String(safeIndex + 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`;
 
       // Set up the PDF data
       const pdfData = {
         order: order,
         paymentAmount: payment.amount,
-        receiptNumber: payment.receiptNumber,
+        receiptNumber: safeReceiptNum,
         isFinal: isFinal,
         previousPayments: previousPayments
       };
 
       // Trigger PDF generation
+      setIsDownloadingReceipt(true);
       setPaymentInvoiceData(pdfData);
     } catch (e) {
       console.error('Failed to generate receipt PDF:', e);
+      setIsDownloadingReceipt(false);
       alert("Failed to generate receipt PDF. Please try again.");
     }
   };
@@ -1376,9 +1391,44 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     }
   };
 
+  const handleRecordAndGenerateReceipt = async () => {
+    if (!decisionModal || decisionModal.type !== 'payment') return;
+    const amt = parseFloat(paymentAmount) || 0;
+    if (amt <= 0) {
+      setErrorMsg("Amount must be greater than zero");
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const updatedOrder = await dataService.recordPayment(decisionModal.entityId, amt, comment.trim() || 'Payment received');
+      let grossRev = 0;
+      (updatedOrder.items || []).forEach((it: any) => grossRev += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
+      const totalPaidNow = (updatedOrder.payments || []).reduce((s: number, p: any) => s + p.amount, 0);
+      const lastPayment = updatedOrder.payments?.[updatedOrder.payments.length - 1];
+      const previousPayments = updatedOrder.payments?.slice(0, -1) || [];
+
+      setIsDownloadingReceipt(true);
+      setPaymentInvoiceData({
+        order: updatedOrder,
+        paymentAmount: amt,
+        receiptNumber: lastPayment?.receiptNumber || `RCV-${(updatedOrder.internalOrderNumber || '').replace(/[^\w]/g, '').slice(-6)}-${String(updatedOrder.payments?.length || 1).padStart(2, '0')}-${Date.now().toString().slice(-4)}`,
+        isFinal: totalPaidNow >= grossRev,
+        previousPayments
+      });
+
+      await fetchData();
+      closeModals();
+    } catch (e: any) {
+      setErrorMsg(e.message || "Action failed");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleExecuteDecision = async () => {
     if (!decisionModal) return;
-    if (!['billing'].includes(decisionModal.type) && !comment.trim()) { setErrorMsg("Audit memo is mandatory"); return; }
+    if (!['billing', 'payment'].includes(decisionModal.type) && !comment.trim()) { setErrorMsg("Audit memo is mandatory"); return; }
 
     setIsProcessing(true);
     try {
@@ -1395,20 +1445,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         case 'payment': {
           const amt = parseFloat(paymentAmount) || 0;
           if (amt <= 0) throw new Error("Amount must be greater than zero");
-          const updatedOrder = await dataService.recordPayment(decisionModal.entityId, amt, comment);
-          // Calculate if this is a final payment
-          let grossRev = 0;
-          updatedOrder.items.forEach((it: any) => grossRev += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
-          const totalPaidNow = (updatedOrder.payments || []).reduce((s: number, p: any) => s + p.amount, 0);
-          const lastPayment = updatedOrder.payments[updatedOrder.payments.length - 1];
-          const previousPayments = updatedOrder.payments.slice(0, -1);
-          setPaymentInvoiceData({
-            order: updatedOrder,
-            paymentAmount: amt,
-            receiptNumber: lastPayment?.receiptNumber || `RCV-${updatedOrder.internalOrderNumber.replace(/[^\w]/g, '').slice(-6)}-${String(updatedOrder.payments.length).padStart(2, '0')}-${Date.now().toString().slice(-4)}`,
-            isFinal: totalPaidNow >= grossRev,
-            previousPayments
-          });
+          await dataService.recordPayment(decisionModal.entityId, amt, comment.trim() || 'Payment received');
           break;
         }
         case 'cancelInvoice': await dataService.cancelInvoice(decisionModal.entityId, comment); break;
@@ -1507,13 +1544,113 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const printOrderRef = React.useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
 
+  // html2canvas v1 does not support modern CSS color functions (oklch/oklab/lch/lab/color)
+  // which Tailwind CSS 4 uses by default.
+  // safeHtml2Canvas wraps html2canvas:
+  // 1. Proxies window.getComputedStyle and the cloned iframe's getComputedStyle during capture
+  // 2. Converts any oklch(...) to valid rgba(...) via Canvas 2D 8-bit rasterization (getImageData)
+  // 3. Cleanly restores window.getComputedStyle in finally
+  const safeHtml2Canvas = async (
+    element: HTMLElement,
+    options: any = {}
+  ): Promise<HTMLCanvasElement> => {
+    let cvs: HTMLCanvasElement | null = null;
+    let ctx: CanvasRenderingContext2D | null = null;
+    try {
+      cvs = document.createElement('canvas');
+      cvs.width = 1;
+      cvs.height = 1;
+      ctx = cvs.getContext('2d', { willReadFrequently: true });
+    } catch {}
+
+    const oklchToRgb = (str: string): string => {
+      if (!str || typeof str !== 'string') return str;
+      if (!str.includes('oklch') && !str.includes('oklab') && !str.includes('lch') && !str.includes('lab') && !str.includes('color(')) {
+        return str;
+      }
+      return str.replace(
+        /oklch\([^)]+\)|oklab\([^)]+\)|lch\([^)]+\)|lab\([^)]+\)|color\([^)]+\)/gi,
+        (match) => {
+          try {
+            if (!ctx) return match;
+            ctx.clearRect(0, 0, 1, 1);
+            ctx.fillStyle = match;
+            ctx.fillRect(0, 0, 1, 1);
+            const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+            return `rgba(${r},${g},${b},${a / 255})`;
+          } catch {
+            return match;
+          }
+        }
+      );
+    };
+
+    const createStyleProxy = (origGetComputedStyle: typeof window.getComputedStyle, targetWindow: Window) => {
+      return function(el: Element, pseudo?: string | null) {
+        const cs = origGetComputedStyle.call(targetWindow, el, pseudo);
+        return new Proxy(cs, {
+          get(target: any, prop: string | symbol) {
+            // Never allow letter-spacing on Arabic text (prevents html2canvas from splitting cursive Arabic letters)
+            if (prop === 'letterSpacing') {
+              if (el && el.textContent && /[\u0600-\u06FF]/.test(el.textContent)) {
+                return '0px';
+              }
+            }
+            if (prop === 'getPropertyValue') {
+              return function(property: string) {
+                if (property === 'letter-spacing' && el && el.textContent && /[\u0600-\u06FF]/.test(el.textContent)) {
+                  return '0px';
+                }
+                const res = target.getPropertyValue(property);
+                return typeof res === 'string' ? oklchToRgb(res) : res;
+              };
+            }
+            const val = target[prop];
+            if (typeof val === 'string') {
+              return oklchToRgb(val);
+            }
+            if (typeof val === 'function') {
+              return val.bind(target);
+            }
+            return val;
+          }
+        });
+      };
+    };
+
+    const origWinGetComputedStyle = window.getComputedStyle;
+    window.getComputedStyle = createStyleProxy(origWinGetComputedStyle, window);
+
+    const userOnClone = options.onclone;
+
+    try {
+      return await html2canvas(element, {
+        ...options,
+        onclone: (clonedDoc: Document, el: HTMLElement) => {
+          try {
+            const clonedWin = clonedDoc.defaultView || window;
+            clonedWin.getComputedStyle = createStyleProxy(clonedWin.getComputedStyle, clonedWin);
+          } catch {}
+
+          if (typeof userOnClone === 'function') {
+            userOnClone(clonedDoc, el);
+          }
+        }
+      });
+    } finally {
+      window.getComputedStyle = origWinGetComputedStyle;
+    }
+  };
+
   const handleDownloadInvoice = async (order: CustomerOrder) => {
     setPrintOrder(order);
     setTimeout(async () => {
       if (!printOrderRef.current) return;
       setIsDownloading(true);
       try {
-        const canvas = await html2canvas(printOrderRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+        const canvas = await safeHtml2Canvas(printOrderRef.current, {
+          scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false,
+        });
         const imgData = canvas.toDataURL('image/png');
         const pdf = new jsPDF('p', 'mm', 'a4');
         const imgWidth = pdf.internal.pageSize.getWidth();
@@ -1535,13 +1672,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     return printOrder.items.reduce((sum, item) => sum + (getItemEffectiveQty(item) * item.pricePerUnit), 0);
   };
 
+
   // Auto-trigger payment invoice PDF download when paymentInvoiceData is set
   React.useEffect(() => {
     if (!paymentInvoiceData) return;
+    setIsDownloadingReceipt(true);
     const timer = setTimeout(async () => {
-      if (!paymentInvoiceRef.current) return;
+      const el = paymentInvoiceRef.current;
+      if (!el) {
+        console.warn('Payment invoice ref not found in DOM');
+        setIsDownloadingReceipt(false);
+        setPaymentInvoiceData(null);
+        return;
+      }
       try {
-        const canvas = await html2canvas(paymentInvoiceRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+        const canvas = await safeHtml2Canvas(el, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+        });
         const imgData = canvas.toDataURL('image/png');
         const pdf = new jsPDF('p', 'mm', 'a4');
         const imgWidth = pdf.internal.pageSize.getWidth();
@@ -1558,14 +1708,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         } else {
           pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
         }
-        pdf.save(`Receipt-${paymentInvoiceData.order.internalOrderNumber}-${paymentInvoiceData.receiptNumber}.pdf`);
+        const safeOrderNum = (paymentInvoiceData.order?.internalOrderNumber || 'Order').replace(/[^\w-]/g, '_');
+        const safeReceiptNum = (paymentInvoiceData.receiptNumber || 'Receipt').replace(/[^\w-]/g, '_');
+        pdf.save(`Receipt-${safeOrderNum}-${safeReceiptNum}.pdf`);
       } catch (e) {
         console.error('Payment Invoice PDF failed:', e);
         alert("Failed to generate Receipt PDF. Check console for details.");
       } finally {
+        setIsDownloadingReceipt(false);
         setPaymentInvoiceData(null);
       }
-    }, 600);
+    }, 800);
     return () => clearTimeout(timer);
   }, [paymentInvoiceData]);
 
@@ -1781,132 +1934,188 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       <div className="fixed -left-[3000px] top-0 overflow-visible">
         {paymentInvoiceData && (() => {
           const { order: pOrder, paymentAmount: pAmt, receiptNumber: pReceipt, isFinal, previousPayments: prevPay } = paymentInvoiceData;
-          // Calculate gross total for proration
+          // Calculate gross total
           let grossTotal = 0;
           pOrder.items.forEach((it: any) => grossTotal += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
-          const ratio = grossTotal > 0 ? pAmt / grossTotal : 0;
-          // Prorate each line item
-          const proratedItems = pOrder.items.map((it: any) => {
-            const lineGross = getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100));
-            const proratedGross = lineGross * ratio;
-            const proratedNet = proratedGross / (1 + (it.taxPercent / 100));
-            const proratedTax = proratedGross - proratedNet;
-            const proratedQty = getItemEffectiveQty(it) * ratio;
-            return { ...it, proratedQty, proratedNet, proratedTax, proratedGross };
-          });
-          const subtotal = proratedItems.reduce((s: number, it: any) => s + it.proratedNet, 0);
-          const totalTax = proratedItems.reduce((s: number, it: any) => s + it.proratedTax, 0);
           const totalPaidBefore = prevPay.reduce((s: number, p: any) => s + p.amount, 0);
-          // Multi-currency amendment: render all amounts on this receipt in the
-          // order's native currency.
+          const totalPaidOverall = totalPaidBefore + pAmt;
+          const remainingBalance = Math.max(0, grossTotal - totalPaidOverall);
           const pCurrency = getOrderCurrency(pOrder);
+          const isCustomerArabic = /[\u0600-\u06FF]/.test(pOrder.customerName || '');
 
           return (
-            <div ref={paymentInvoiceRef} className="p-12" style={{ width: '800px', minHeight: '1100px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a' }}>
-              {/* Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '40px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div ref={paymentInvoiceRef} className="p-10" style={{ width: '800px', minHeight: '750px', fontVariantLigatures: 'normal', direction: 'ltr', backgroundColor: '#ffffff', color: '#0f172a', fontFamily: "'Segoe UI', Tahoma, Arial, sans-serif" }}>
+              {/* Header: Left = Logo & Company Info, Right = Receipt Title Badge */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
                   {rasterizedLogo && (
                     <div style={{ height: '64px', display: 'flex', alignItems: 'flex-start' }}>
                       <img src={rasterizedLogo} alt="Company Logo" style={{ maxHeight: '100%', maxWidth: '200px', objectFit: 'contain' }} />
                     </div>
                   )}
-                  <div style={{ direction: 'rtl', textAlign: 'right', alignSelf: 'flex-start' }}>
-                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a' }}>{config.settings.companyName || 'Nexus ERP'}</div>
-                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', whiteSpace: 'pre-line', lineHeight: '1.6' }}>{config.settings.companyAddress || 'Cairo, Egypt'}</div>
+                  <div style={{ direction: 'ltr', textAlign: 'left', alignSelf: 'flex-start' }}>
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#0f172a', letterSpacing: 0 }}>{config.settings.companyName || 'Nexus ERP'}</div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', whiteSpace: 'pre-line', lineHeight: '1.6', letterSpacing: 0 }}>{config.settings.companyAddress || 'Cairo, Egypt'}</div>
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
+                  <div className="border-2 px-4 py-2.5 rounded-xl flex items-center justify-center" style={{ borderColor: isFinal ? '#34d399' : '#60a5fa', backgroundColor: isFinal ? '#ecfdf5' : '#eff6ff' }}>
+                    <h2 className="text-sm font-black flex items-center gap-2" style={{ color: isFinal ? '#065f46' : '#1e40af' }}>
+                      <span style={{ letterSpacing: '0.5px' }}>{isFinal ? 'FINAL PAYMENT RECEIPT' : 'PARTIAL PAYMENT RECEIPT'}</span>
+                      <span style={{ color: isFinal ? '#6ee7b7' : '#93c5fd', margin: '0 4px' }}>/</span>
+                      <span style={{ letterSpacing: 0 }}>{isFinal ? 'إيصال سداد نهائي' : 'إيصال سداد جزئي'}</span>
+                    </h2>
+                  </div>
                 </div>
-              </div>
-
-              {/* Title Bar */}
-              <div className="border-t-2 border-b-2 py-3 mb-8 flex justify-center items-center" style={{ borderColor: isFinal ? '#34d399' : '#60a5fa', backgroundColor: isFinal ? '#ecfdf5' : '#eff6ff' }}>
-                <h2 className="text-xl font-black uppercase flex items-center gap-6" style={{ color: isFinal ? '#065f46' : '#1e40af' }}>
-                  <span>{isFinal ? 'FINAL PAYMENT RECEIPT / إيصال سداد نهائي' : 'PARTIAL PAYMENT RECEIPT / إيصال سداد جزئي'}</span>
-                </h2>
               </div>
 
               {/* Info Grid */}
-              <div className="grid grid-cols-2 gap-8 mb-10">
+              <div className="grid grid-cols-2 gap-8 mb-6">
                 <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
                   <div className="grid grid-cols-3">
-                    <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-end" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Customer:</div>
-                    <div className="col-span-2 p-3 font-black text-sm uppercase" style={{ color: '#0f172a' }}>
-                    {pOrder.customerName}
-                    <span className="ml-2 px-2 py-0.5 rounded bg-slate-900 text-white text-[9px] font-black uppercase">{pCurrency}</span>
-                  </div>
-                  </div>
-                  <div className="grid grid-cols-3">
-                    <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-end" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Invoice No:</div>
-                    <div className="col-span-2 p-3 font-mono font-black text-xs" style={{ color: '#2563eb' }}>{pOrder.invoiceNumber || 'N/A'}</div>
+                    <div className="col-span-1 p-2.5 border-r-2 font-bold text-xs text-end" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a', letterSpacing: 0 }}>Customer:</div>
+                    <div className="col-span-2 p-2.5 font-black text-sm uppercase" style={{ color: '#0f172a' }}>
+                      {pOrder.customerName}
+                    </div>
                   </div>
                   <div className="grid grid-cols-3">
-                    <div className="col-span-1 p-3 border-r-2 font-bold text-xs text-end" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Receipt No:</div>
-                    <div className="col-span-2 p-3 font-mono font-black text-xs" style={{ color: '#059669' }}>{pReceipt}</div>
+                    <div className="col-span-1 p-2.5 border-r-2 font-bold text-xs text-end" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a', letterSpacing: 0 }}>Invoice No:</div>
+                    <div className="col-span-2 p-2.5 font-mono font-black text-xs" style={{ color: '#2563eb' }}>{pOrder.invoiceNumber || 'N/A'}</div>
+                  </div>
+                  <div className="grid grid-cols-3">
+                    <div className="col-span-1 p-2.5 border-r-2 font-bold text-xs text-end" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a', letterSpacing: 0 }}>Receipt No:</div>
+                    <div className="col-span-2 p-2.5 font-mono font-black text-xs" style={{ color: '#059669' }}>{pReceipt}</div>
                   </div>
                 </div>
                 <div className="border-2 divide-y-2" style={{ borderColor: '#0f172a' }}>
                   <div className="grid grid-cols-3">
-                    <div className="col-span-2 p-3 font-black text-sm text-center tracking-widest" style={{ color: '#0f172a' }}>{new Date().toLocaleDateString()}</div>
-                    <div className="col-span-1 p-3 border-l-2 font-bold text-xs" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Date:</div>
+                    <div className="col-span-2 p-2.5 font-black text-sm text-center" style={{ color: '#0f172a', letterSpacing: 0 }}>{new Date().toLocaleDateString()}</div>
+                    <div className="col-span-1 p-2.5 border-l-2 font-bold text-xs" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a', letterSpacing: 0 }}>Date:</div>
                   </div>
                   <div className="grid grid-cols-3">
-                    <div className="col-span-2 p-3 font-mono font-black text-xs text-center" style={{ color: '#0f172a' }}>{pOrder.internalOrderNumber}</div>
-                    <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Order Ref:</div>
+                    <div className="col-span-2 p-2.5 font-mono font-black text-xs text-center" style={{ color: '#0f172a' }}>{pOrder.internalOrderNumber}</div>
+                    <div className="col-span-1 p-2.5 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a', letterSpacing: 0 }}>Order Ref:</div>
                   </div>
                   <div className="grid grid-cols-3">
-                    <div className="col-span-2 p-3 font-mono font-black text-xs text-center tracking-widest" style={{ color: '#0f172a' }}>522 803 435</div>
-                    <div className="col-span-1 p-3 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Tax ID:</div>
+                    <div className="col-span-2 p-2.5 font-mono font-black text-xs text-center" style={{ color: '#0f172a', letterSpacing: '0.5px' }}>522 803 435</div>
+                    <div className="col-span-1 p-2.5 border-l-2 font-bold text-[9px]" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a', letterSpacing: 0 }}>Tax ID:</div>
                   </div>
                 </div>
               </div>
 
-              {/* Line Items Table */}
-              <div className="border-2 mb-8 flex flex-col" style={{ borderColor: '#0f172a' }}>
-                <div className="grid grid-cols-12 border-b-2 text-[11px] font-black uppercase text-center" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>
-                  <div className="col-span-5 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.description") || "Description"}</div>
-                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.unitPrice") || "Unit Price"}</div>
-                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.qtyProRata") || "Qty (Pro-Rata)"}</div>
-                  <div className="col-span-1 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.taxPercent") || "Tax %"}</div>
-                  <div className="col-span-2 p-3 border-r-2" style={{ borderColor: '#0f172a' }}>{t("finance.billing.taxAmount") || "Tax Amount"}</div>
-                  <div className="col-span-2 p-3">{t("finance.billing.lineTotal") || "Line Total"}</div>
-                </div>
-                {proratedItems.map((item: any) => (
-                  <div key={item.id} className="grid grid-cols-12 border-b text-center text-sm" style={{ borderColor: '#e2e8f0', color: '#0f172a' }}>
-                    <div className="col-span-5 p-3 border-r-2 text-start font-bold text-xs" style={{ borderColor: '#0f172a' }}>{item.description}</div>
-                    <div className="col-span-1 p-3 border-r-2 font-black" style={{ borderColor: '#0f172a' }}>{item.pricePerUnit.toLocaleString()}</div>
-                    <div className="col-span-1 p-3 border-r-2 font-black" style={{ borderColor: '#0f172a' }}>{item.proratedQty.toFixed(2)}</div>
-                    <div className="col-span-1 p-3 border-r-2 font-bold" style={{ borderColor: '#0f172a', color: '#64748b' }}>{item.taxPercent}%</div>
-                    <div className="col-span-2 p-3 border-r-2 font-black" style={{ borderColor: '#0f172a', color: '#b45309' }}>{item.proratedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                    <div className="col-span-2 p-3 font-black">{item.proratedGross.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              {/* Payment Announcement Statement: Side-by-Side English & Arabic */}
+              <div className="p-5 rounded-2xl mb-6 border-2" style={{ backgroundColor: isFinal ? '#f0fdf4' : '#f0f9ff', borderColor: isFinal ? '#86efac' : '#bae6fd' }}>
+                <div className="grid grid-cols-2 gap-6 divide-x" style={{ borderColor: isFinal ? '#bbf7d0' : '#bae6fd' }}>
+                  {/* English Column (Left) */}
+                  <div style={{ direction: 'ltr', textAlign: 'left' }} className="pr-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px]" style={{ backgroundColor: isFinal ? '#16a34a' : '#0284c7', color: '#ffffff' }}>✓</div>
+                      <span className="text-xs font-black uppercase" style={{ color: isFinal ? '#14532d' : '#0c4a6e' }}>Official Payment Statement</span>
+                    </div>
+                    <div className="text-xs font-bold text-slate-800 leading-relaxed">
+                      Received with thanks from <span className="font-black text-slate-900 underline" style={{ textDecorationColor: isFinal ? '#86efac' : '#7dd3fc', direction: isCustomerArabic ? 'rtl' : 'ltr', display: 'inline-block' }}>{pOrder.customerName}</span> the amount of <span className="font-black" style={{ color: isFinal ? '#15803d' : '#0369a1' }}>{pAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })} {pCurrency}</span> as payment for Order Ref: <span className="font-mono font-black text-slate-900">{pOrder.internalOrderNumber}</span>.
+                    </div>
                   </div>
-                ))}
+                  {/* Arabic Column (Right) */}
+                  <div dir="rtl" style={{ textAlign: 'right', letterSpacing: 0 }} className="pl-5">
+                    <div className="flex items-center gap-2 mb-2 justify-start">
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px]" style={{ backgroundColor: isFinal ? '#16a34a' : '#0284c7', color: '#ffffff' }}>✓</div>
+                      <span className="text-xs font-black" style={{ color: isFinal ? '#14532d' : '#0c4a6e', letterSpacing: 0 }}>إشعار استلام سداد معتمد</span>
+                    </div>
+                    <div className="text-xs font-bold text-slate-800 leading-relaxed space-y-1" style={{ letterSpacing: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-start', gap: '8px' }}>
+                        <span style={{ color: isFinal ? '#15803d' : '#0369a1', whiteSpace: 'nowrap', letterSpacing: 0 }}>وصلنا من السادة:</span>
+                        <span
+                          dir={isCustomerArabic ? 'rtl' : 'ltr'}
+                          className="font-black text-slate-900"
+                          style={{ display: 'inline-block', direction: isCustomerArabic ? 'rtl' : 'ltr' }}
+                        >
+                          {pOrder.customerName}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-start', gap: '8px' }}>
+                        <span style={{ color: isFinal ? '#15803d' : '#0369a1', whiteSpace: 'nowrap', letterSpacing: 0 }}>سداداً لأمر البيع:</span>
+                        <span className="font-mono font-black text-slate-900" style={{ direction: 'ltr' }}>{pOrder.internalOrderNumber}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-start', gap: '8px' }}>
+                        <span style={{ color: isFinal ? '#15803d' : '#0369a1', whiteSpace: 'nowrap', letterSpacing: 0 }}>مبلغ وقدره:</span>
+                        <span className="font-black" style={{ color: isFinal ? '#15803d' : '#0369a1', direction: 'ltr' }}>{pAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })} {pCurrency}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Totals */}
-              <div className="flex justify-end mb-8">
-                <div className="w-80 border-2 divide-y-2 font-black" style={{ borderColor: '#0f172a' }}>
-                  <div className="grid grid-cols-2">
-                    <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>Subtotal (Excl. Tax)</div>
-                    <div className="p-3 text-end text-sm" style={{ color: '#0f172a' }}>{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {pCurrency}</div>
+              {/* Financial Status Summary: Order Value, Total Paid, Remaining Left */}
+              <div className="border-2 rounded-2xl overflow-hidden mb-6" style={{ borderColor: '#0f172a' }}>
+                <div className="grid grid-cols-3 divide-x-2 text-center" style={{ borderColor: '#0f172a' }}>
+                  {/* Order Value */}
+                  <div className="p-4" style={{ backgroundColor: '#f8fafc' }}>
+                    <div className="text-[10px] font-black uppercase text-slate-500 mb-1" style={{ letterSpacing: '0.5px' }}>
+                      ORDER VALUE (INCL. TAXES)
+                    </div>
+                    <div className="text-[11px] font-bold text-slate-500 mb-1.5" style={{ letterSpacing: 0 }}>إجمالي قيمة الطلب شامل الضريبة</div>
+                    <div className="text-xl font-black" style={{ color: '#0f172a' }}>
+                      {grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-xs font-bold text-slate-500">{pCurrency}</span>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2">
-                    <div className="p-3 border-r-2 text-xs uppercase" style={{ backgroundColor: '#f8fafc', borderColor: '#0f172a', color: '#0f172a' }}>{t("finance.billing.taxTotal") || "Total Tax"}</div>
-                    <div className="p-3 text-end text-sm" style={{ color: '#b45309' }}>{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {pCurrency}</div>
+
+                  {/* Total Paid Overall */}
+                  <div className="p-4" style={{ backgroundColor: '#f8fafc' }}>
+                    <div className="text-[10px] font-black uppercase text-slate-500 mb-1" style={{ letterSpacing: '0.5px' }}>
+                      TOTAL PAID TO DATE
+                    </div>
+                    <div className="text-[11px] font-bold text-slate-500 mb-1.5" style={{ letterSpacing: 0 }}>إجمالي المسدد حتى تاريخه</div>
+                    <div className="text-xl font-black text-emerald-700">
+                      {totalPaidOverall.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-xs font-bold text-slate-500">{pCurrency}</span>
+                    </div>
+                    {totalPaidBefore > 0 && (
+                      <div className="text-[9px] font-bold text-slate-500 mt-0.5">
+                        (Previous: {totalPaidBefore.toLocaleString()} + Current: {pAmt.toLocaleString()})
+                      </div>
+                    )}
                   </div>
-                  <div className="grid grid-cols-2" style={{ backgroundColor: isFinal ? '#ecfdf5' : '#eff6ff' }}>
-                    <div className="p-3 border-r-2 text-sm uppercase" style={{ borderColor: '#0f172a', color: '#0f172a' }}>AMOUNT PAID</div>
-                    <div className="p-3 text-end text-xl" style={{ color: isFinal ? '#047857' : '#1d4ed8' }}>{pAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {pCurrency}</div>
+
+                  {/* Left / Remaining */}
+                  <div className="p-4" style={{ backgroundColor: isFinal || remainingBalance <= 0 ? '#ecfdf5' : '#fff7ed' }}>
+                    <div className="text-[10px] font-black uppercase mb-1" style={{ color: isFinal || remainingBalance <= 0 ? '#065f46' : '#9a3412', letterSpacing: '0.5px' }}>
+                      REMAINING BALANCE (LEFT)
+                    </div>
+                    <div className="text-[11px] font-bold mb-1.5" style={{ color: isFinal || remainingBalance <= 0 ? '#059669' : '#c2410c', letterSpacing: 0 }}>
+                      المبلغ المتبقي
+                    </div>
+                    <div className="text-xl font-black" style={{ color: isFinal || remainingBalance <= 0 ? '#059669' : '#ea580c' }}>
+                      {isFinal || remainingBalance <= 0 ? '0.00' : remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-xs font-bold text-slate-500">{pCurrency}</span>
+                    </div>
+                    {isFinal || remainingBalance <= 0 ? (
+                      <div className="text-[9px] font-black uppercase text-emerald-700 mt-0.5" style={{ letterSpacing: 0 }}>✓ FULLY SETTLED / مسدد بالكامل</div>
+                    ) : (
+                      <div className="text-[9px] font-bold text-amber-700 mt-0.5">Pending Balance</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Highlighted Current Payment Bar */}
+                <div className="flex justify-between items-center px-6 py-3.5 border-t-2" style={{ borderColor: '#0f172a', backgroundColor: isFinal ? '#dcfce7' : '#e0f2fe' }}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-black uppercase" style={{ color: isFinal ? '#166534' : '#075985' }}>
+                      <span style={{ letterSpacing: '0.5px' }}>THIS RECEIPT AMOUNT</span>
+                      <span style={{ color: isFinal ? '#86efac' : '#93c5fd', margin: '0 4px' }}>/</span>
+                      <span style={{ letterSpacing: 0 }}>قيمة هذا الإيصال</span>
+                    </span>
+                    <span className="font-mono text-xs font-bold text-slate-600">({pReceipt})</span>
+                  </div>
+                  <div className="text-2xl font-black" style={{ color: isFinal ? '#15803d' : '#0369a1' }}>
+                    {pAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })} {pCurrency}
                   </div>
                 </div>
               </div>
 
-              {/* Payment History */}
+              {/* Payment History (if any) */}
               {prevPay.length > 0 && (
-                <div className="border-t-2 pt-6 mb-6" style={{ borderColor: '#e2e8f0' }}>
-                  <div className="text-xs font-black uppercase tracking-widest mb-3" style={{ color: '#94a3b8' }}>Previous Payments on this Order</div>
-                  <div className="border rounded" style={{ borderColor: '#e2e8f0' }}>
+                <div className="border-t-2 pt-4 mb-4" style={{ borderColor: '#e2e8f0' }}>
+                  <div className="text-xs font-black uppercase mb-2" style={{ color: '#94a3b8', letterSpacing: '0.5px' }}>Previous Payments on this Order</div>
+                  <div className="border rounded-xl overflow-hidden" style={{ borderColor: '#e2e8f0' }}>
                     {prevPay.map((p: any, idx: number) => (
                       <div key={idx} className="flex justify-between px-4 py-2 text-xs font-bold border-b last:border-0" style={{ borderColor: '#f1f5f9' }}>
                         <span style={{ color: '#64748b' }}>{p.receiptNumber || `#${idx + 1}`} — {new Date(p.date).toLocaleDateString()}</span>
@@ -1921,16 +2130,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 </div>
               )}
 
-              {/* Balance Summary */}
-              <div className="flex justify-between items-center p-4 border-2 rounded mt-4" style={{ backgroundColor: '#f8fafc', borderColor: '#e2e8f0' }}>
-                <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>Order Total: {grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} {pCurrency}</div>
-                <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>Total Paid: {(totalPaidBefore + pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} {pCurrency}</div>
-                <div className="text-sm font-black uppercase" style={{ color: isFinal ? '#059669' : '#d97706' }}>
-                  {isFinal ? 'FULLY SETTLED ✓' : `Outstanding: ${Math.max(0, grossTotal - totalPaidBefore - pAmt).toLocaleString(undefined, { minimumFractionDigits: 2 })} ${pCurrency}`}
+              {/* Signatures & Stamp */}
+              <div className="grid grid-cols-2 gap-12 mt-10 pt-6 border-t-2" style={{ borderColor: '#e2e8f0' }}>
+                <div className="text-center space-y-10">
+                  <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>
+                    <span style={{ letterSpacing: '0.5px' }}>Accountant</span>
+                    <span style={{ margin: '0 4px', color: '#94a3b8' }}>/</span>
+                    <span style={{ letterSpacing: 0 }}>المحاسب المسؤول</span>
+                  </div>
+                  <div className="border-b-2 w-48 mx-auto" style={{ borderColor: '#94a3b8' }}></div>
+                </div>
+                <div className="text-center space-y-10">
+                  <div className="text-xs font-black uppercase" style={{ color: '#64748b' }}>
+                    <span style={{ letterSpacing: '0.5px' }}>Authorized Signature & Stamp</span>
+                    <span style={{ margin: '0 4px', color: '#94a3b8' }}>/</span>
+                    <span style={{ letterSpacing: 0 }}>الاعتماد والختم</span>
+                  </div>
+                  <div className="border-b-2 w-48 mx-auto" style={{ borderColor: '#94a3b8' }}></div>
                 </div>
               </div>
             </div>
-
           );
         })()}
       </div>
@@ -3255,8 +3474,25 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             <div className="flex items-center gap-2">
                               <div className="font-black text-slate-700 text-xs">Gross: {pl.grossRevenue.toLocaleString()} {pl.currency}</div>
                             </div>
-                            <div className="text-[9px] text-slate-400 font-bold mt-1">
-                              Paid: {pl.paid.toLocaleString()} {pl.currency} • Bal: {pl.outstanding.toLocaleString()} {pl.currency}
+                            <div className="text-[9px] text-slate-400 font-bold mt-1 flex items-center gap-1.5 flex-wrap">
+                              {pl.paid > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setViewPaymentsOrder(o);
+                                  }}
+                                  className="text-emerald-700 hover:text-emerald-900 font-black inline-flex items-center gap-1 hover:underline cursor-pointer bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60"
+                                  title="Click to view payment history & download receipts"
+                                >
+                                  <span>Paid: {pl.paid.toLocaleString()} {pl.currency}</span>
+                                  <i className="fa-solid fa-receipt text-[8px]"></i>
+                                </button>
+                              ) : (
+                                <span>Paid: 0 {pl.currency}</span>
+                              )}
+                              <span>•</span>
+                              <span>Bal: {pl.outstanding.toLocaleString()} {pl.currency}</span>
                             </div>
                           </td>
                         );
@@ -3329,12 +3565,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                 <span>Invoice</span>
                               </button>
                               <button
-                                onClick={() => { setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber }); setPaymentAmount(pl.outstanding.toFixed(2)); }}
-                                className="px-2 py-1 min-h-[32px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-emerald-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all"
-                                title="Record Payment"
+                                onClick={() => {
+                                  setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber });
+                                  setPaymentAmount(pl.outstanding > 0 ? pl.outstanding.toFixed(2) : '');
+                                }}
+                                className="px-2 py-1 min-h-[32px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-emerald-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all cursor-pointer"
+                                title={t("finance.orders.receivePayment") || "Receive Payment"}
                               >
                                 <i className="fa-solid fa-money-bill-wave text-[9px]"></i>
-                                <span className="mt-0.5">Record</span>
+                                <span className="mt-0.5">Receive</span>
                                 <span>Payment</span>
                               </button>
                               <div className="flex gap-1 items-center shrink-0">
@@ -4888,12 +5127,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       {decisionModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg p-10 animate-in zoom-in-95 border border-slate-100">
+          <div className={`bg-white rounded-[2.5rem] shadow-2xl w-full p-8 md:p-10 animate-in zoom-in-95 border border-slate-100 max-h-[92vh] overflow-y-auto ${decisionModal.type === 'payment' ? 'max-w-2xl' : 'max-w-lg'}`}>
             <div className="flex items-center gap-6 mb-8">
-              <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-inner ${decisionModal.type === 'cancelInvoice' || decisionModal.type === 'revertToSourcing' ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
+              <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-3xl shadow-inner ${
+                decisionModal.type === 'payment' ? 'bg-emerald-50 text-emerald-600' :
+                decisionModal.type === 'cancelInvoice' || decisionModal.type === 'revertToSourcing' ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
                 }`}>
-                <i className={`fa-solid ${decisionModal.type === 'billing' ? 'fa-file-invoice-dollar' :
-                  decisionModal.type === 'payment' ? 'fa-money-bill-transfer' :
+                <i className={`fa-solid ${
+                  decisionModal.type === 'billing' ? 'fa-file-invoice-dollar' :
+                  decisionModal.type === 'payment' ? 'fa-receipt' :
                     decisionModal.type === 'marginRelease' ? 'fa-chart-line-down' :
                       decisionModal.type === 'cancelInvoice' ? 'fa-file-circle-xmark' :
                         decisionModal.type === 'revertToSourcing' ? 'fa-rotate-left' : 'fa-shield-halved'
@@ -4901,7 +5143,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </div>
               <div>
                 <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">
-                  {decisionModal.type === 'cancelInvoice' ? 'Void Official Invoice' :
+                  {decisionModal.type === 'payment' ? (t("finance.orders.receivePayment") || "Receive Payment") :
+                    decisionModal.type === 'cancelInvoice' ? 'Void Official Invoice' :
                     decisionModal.type === 'revertToSourcing' ? 'Strategic Lifecycle Revert' :
                       decisionModal.type.replace(/([A-Z])/g, ' $1') + ' Task'}
                 </h3>
@@ -4911,70 +5154,265 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
             {errorMsg && <div className="mb-6 p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3 animate-pulse"><i className="fa-solid fa-circle-exclamation"></i>{errorMsg}</div>}
 
-            <div className="space-y-6">
-              {decisionModal.type === 'cancelInvoice' && (
-                <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 mb-2">
-                  <p className="text-xs font-bold text-rose-800 leading-relaxed">
-                    Critical: Voiding this invoice will remove the Tax Invoice number and return the order to the <strong>Issue Invoice</strong> stage. This action is permanent and recorded for audit purposes.
-                  </p>
-                </div>
-              )}
-              {decisionModal.type === 'orderReject' && (
-                <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 mb-2 space-y-2">
-                  <p className="text-xs font-bold text-rose-800 leading-relaxed">
-                    Warning: Rejecting this order will mark it as REJECTED.
-                  </p>
-                  <p className="text-xs font-bold text-rose-900 leading-relaxed bg-rose-100/60 p-2.5 rounded-xl border border-rose-200">
-                    <i className="fa-solid fa-boxes-stacked mr-1.5 text-rose-700"></i>
-                    {t('finance.orders.stockReleaseNotice', 'Notice: Received items (components or product stock) will lose customer reservation and be moved to general component stock.')}
-                  </p>
-                </div>
-              )}
-              {decisionModal.type === 'revertToSourcing' && (
-                <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 mb-2 space-y-2">
-                  <p className="text-xs font-bold text-amber-800 leading-relaxed">
-                    Warning: This action will <strong>void the existing invoice</strong> and return the order to Procurement. Components will be reset to "RFP Sent" status to allow re-awarding.
-                  </p>
-                  <p className="text-xs font-bold text-amber-900 leading-relaxed bg-amber-100/60 p-2.5 rounded-xl border border-amber-200">
-                    <i className="fa-solid fa-boxes-stacked mr-1.5 text-amber-700"></i>
-                    {t('finance.orders.stockReleaseNotice', 'Notice: Received items (components or product stock) will lose customer reservation and be moved to general component stock.')}
-                  </p>
-                </div>
-              )}
-              {decisionModal.type === 'payment' && (
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t("finance.orders.recordPayment")} (L.E.)</label>
-                  <input
-                    type="number" step="any" autoFocus
-                    className="w-full p-4 border rounded-2xl bg-slate-50 font-black text-2xl outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
-                    value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)}
-                  />
-                </div>
-              )}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t("finance.orders.paymentMemo")}</label>
-                <textarea
-                  placeholder={t("finance.ledger.whatIsThisFor")}
-                  className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white h-24"
-                  value={comment} onChange={e => setComment(e.target.value)}
-                />
-              </div>
-            </div>
+            {decisionModal.type === 'payment' ? (() => {
+              const paymentOrder = orders.find(o => o.id === decisionModal.entityId);
+              let grossSum = 0;
+              ((paymentOrder?.items) || []).forEach(it => grossSum += (getItemEffectiveQty(it) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100))));
+              const totalPaid = ((paymentOrder?.payments) || []).reduce((s: number, p: any) => s + (p.amount || 0), 0);
+              const outstanding = Math.max(0, grossSum - totalPaid);
+              const pCurr = paymentOrder ? getOrderCurrency(paymentOrder) : 'L.E.';
+              const prevPayments = paymentOrder?.payments || [];
+              const isFullySettled = outstanding <= 0.01;
 
-            <div className="mt-10 flex gap-3">
-              <button onClick={closeModals} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200">{t("common.cancel")}</button>
-              <button
-                onClick={handleExecuteDecision} disabled={isProcessing}
-                className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${decisionModal.type === 'cancelInvoice' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' :
-                  decisionModal.type === 'revertToSourcing' ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-100' :
-                    'bg-slate-900 text-white hover:bg-black'
-                  }`}
-              >
-                {isProcessing ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
-                {decisionModal.type === 'cancelInvoice' ? t('finance.orders.cancelInvoice') :
-                  decisionModal.type === 'revertToSourcing' ? t('finance.orders.revertToSourcing') : t('finance.orders.authActions')}
-              </button>
-            </div>
+              return (
+                <div className="space-y-6">
+                  {/* Order Context Details */}
+                  {paymentOrder && (
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col gap-2">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-black px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
+                            {paymentOrder.internalOrderNumber}
+                          </span>
+                          {paymentOrder.customerReferenceNumber && (
+                            <span className="font-mono text-[10px] text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
+                              PO: {paymentOrder.customerReferenceNumber}
+                            </span>
+                          )}
+                        </div>
+                        <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full border ${isFullySettled ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
+                          {isFullySettled ? 'Fully Settled ✓' : 'Payment Due'}
+                        </span>
+                      </div>
+                      <div className="text-sm font-black text-slate-800">
+                        {paymentOrder.customerName}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Financial Metrics Cards */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+                      <div className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Total Gross</div>
+                      <div className="text-sm font-black text-slate-800 mt-1 font-mono">
+                        {grossSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-[8px] font-bold text-slate-400 mt-0.5">{pCurr}</div>
+                    </div>
+
+                    <div className="p-3.5 bg-emerald-50/60 rounded-2xl border border-emerald-200/80">
+                      <div className="text-[9px] font-black uppercase text-emerald-700 tracking-wider">Total Paid</div>
+                      <div className="text-sm font-black text-emerald-800 mt-1 font-mono">
+                        {totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-[8px] font-bold text-emerald-600 mt-0.5">{pCurr}</div>
+                    </div>
+
+                    <div className={`p-3.5 rounded-2xl border ${outstanding > 0 ? 'bg-amber-50/70 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                      <div className={`text-[9px] font-black uppercase tracking-wider ${outstanding > 0 ? 'text-amber-800' : 'text-slate-400'}`}>Outstanding</div>
+                      <div className={`text-sm font-black mt-1 font-mono ${outstanding > 0 ? 'text-amber-900' : 'text-slate-700'}`}>
+                        {outstanding.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className={`text-[8px] font-bold mt-0.5 ${outstanding > 0 ? 'text-amber-700' : 'text-slate-400'}`}>{pCurr}</div>
+                    </div>
+                  </div>
+
+                  {/* Previous Payments & Receipts List */}
+                  {prevPayments.length > 0 && (
+                    <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                      <div className="px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 flex justify-between items-center">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                          <i className="fa-solid fa-clock-rotate-left text-blue-600"></i>
+                          <span>{t("finance.orders.paymentHistoryReceipts") || "Payment History / Receipts"} ({prevPayments.length})</span>
+                        </span>
+                        <span className="text-[9px] text-slate-500 font-bold">
+                          {t("finance.orders.regenerateReceiptHint") || "Click below to regenerate receipt PDF"}
+                        </span>
+                      </div>
+                      <div className="max-h-44 overflow-y-auto divide-y divide-slate-100">
+                        {prevPayments.map((p: any, pIdx: number) => {
+                          const rcvNum = p.receiptNumber || `RCV-${(paymentOrder?.internalOrderNumber || '').replace(/[^\w]/g, '').slice(-6)}-${String(pIdx + 1).padStart(2, '0')}`;
+                          return (
+                            <div key={pIdx} className="px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors">
+                              <div className="flex flex-col">
+                                <span className="font-mono text-xs font-black text-blue-700">{rcvNum}</span>
+                                <span className="text-[9px] font-bold text-slate-400">
+                                  {p.date ? new Date(p.date).toLocaleDateString() : 'N/A'} {p.memo ? `• ${p.memo}` : ''}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="font-black text-slate-800 text-xs font-mono">
+                                  {(Number(p.amount) || 0).toLocaleString()} {pCurr}
+                                </span>
+                                {paymentOrder && (
+                                  <button
+                                    type="button"
+                                    disabled={isDownloadingReceipt}
+                                    onClick={() => generateReceiptPDF(paymentOrder, p)}
+                                    className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white rounded-lg text-[9px] font-black uppercase transition-all border border-blue-200 flex items-center gap-1 cursor-pointer"
+                                    title="Download PDF Receipt for this payment"
+                                  >
+                                    {isDownloadingReceipt ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-solid fa-file-pdf"></i>}
+                                    <span>{t("finance.orders.generateReceipt") || "Generate Receipt"}</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Receive New Payment Form */}
+                  <div className="space-y-4 pt-2 border-t border-slate-100">
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-1">
+                          {t("finance.orders.receivePayment") || "Receive Payment Amount"} ({pCurr})
+                        </label>
+                        {outstanding > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setPaymentAmount(outstanding.toFixed(2))}
+                            className="text-[9px] font-black text-blue-600 hover:text-blue-800 uppercase tracking-wider hover:underline cursor-pointer"
+                          >
+                            Set Full Balance ({outstanding.toLocaleString()} {pCurr})
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="number" step="any" min="0" autoFocus
+                        className="w-full p-3.5 border-2 rounded-2xl bg-slate-50 font-black text-xl outline-none focus:ring-4 focus:ring-emerald-50 focus:border-emerald-500 focus:bg-white transition-all font-mono"
+                        placeholder="0.00"
+                        value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-1">
+                        {t("finance.orders.paymentMemo") || "Payment Memo / Reference"}
+                      </label>
+                      <input
+                        type="text"
+                        placeholder={t("finance.ledger.whatIsThisFor") || "Bank transfer ref, check #, cash receipt..."}
+                        className="w-full p-3.5 border-2 rounded-2xl bg-slate-50 text-xs font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:border-blue-500 focus:bg-white transition-all"
+                        value={comment} onChange={e => setComment(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Action Buttons inside Payment Modal */}
+                  <div className="mt-8 flex gap-2.5 flex-wrap items-center">
+                    <button
+                      type="button"
+                      onClick={closeModals}
+                      className="px-5 py-3.5 bg-slate-100 text-slate-500 hover:bg-slate-200 font-black rounded-2xl uppercase text-[10px] tracking-widest transition-all cursor-pointer"
+                    >
+                      {t("common.cancel") || "Cancel"}
+                    </button>
+
+                    <div className="flex-1 flex gap-2 justify-end items-center flex-wrap">
+                      {prevPayments.length > 0 && paymentOrder && (
+                        <button
+                          type="button"
+                          disabled={isDownloadingReceipt}
+                          onClick={() => generateReceiptPDF(paymentOrder, prevPayments[prevPayments.length - 1])}
+                          className="px-4 py-3.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-black rounded-2xl uppercase text-[10px] tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
+                          title="Generate receipt for latest payment"
+                        >
+                          {isDownloadingReceipt ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-solid fa-file-pdf"></i>}
+                          <span>{t("finance.orders.latestReceipt") || "Latest Receipt"}</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleExecuteDecision}
+                        disabled={isProcessing || isDownloadingReceipt || !paymentAmount || parseFloat(paymentAmount) <= 0}
+                        className="px-4 py-3.5 bg-slate-800 hover:bg-slate-900 text-white font-black rounded-2xl uppercase text-[10px] tracking-wider transition-all disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
+                        title="Save payment without downloading PDF receipt"
+                      >
+                        {isProcessing ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check"></i>}
+                        <span>{t("finance.orders.recordOnly") || "Record Only"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleRecordAndGenerateReceipt}
+                        disabled={isProcessing || isDownloadingReceipt || !paymentAmount || parseFloat(paymentAmount) <= 0}
+                        className="py-3.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl uppercase text-[10px] tracking-wider shadow-lg shadow-emerald-200 transition-all disabled:opacity-40 flex items-center justify-center gap-2 cursor-pointer"
+                        title="Record payment and generate the official PDF receipt"
+                      >
+                        {isProcessing || isDownloadingReceipt ? (
+                          <i className="fa-solid fa-circle-notch fa-spin"></i>
+                        ) : (
+                          <i className="fa-solid fa-file-invoice-dollar text-sm"></i>
+                        )}
+                        <span>{t("finance.orders.generateReceipt") || "Generate Receipt"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })() : (
+              <>
+                <div className="space-y-6">
+                  {decisionModal.type === 'cancelInvoice' && (
+                    <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 mb-2">
+                      <p className="text-xs font-bold text-rose-800 leading-relaxed">
+                        Critical: Voiding this invoice will remove the Tax Invoice number and return the order to the <strong>Issue Invoice</strong> stage. This action is permanent and recorded for audit purposes.
+                      </p>
+                    </div>
+                  )}
+                  {decisionModal.type === 'orderReject' && (
+                    <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 mb-2 space-y-2">
+                      <p className="text-xs font-bold text-rose-800 leading-relaxed">
+                        Warning: Rejecting this order will mark it as REJECTED.
+                      </p>
+                      <p className="text-xs font-bold text-rose-900 leading-relaxed bg-rose-100/60 p-2.5 rounded-xl border border-rose-200">
+                        <i className="fa-solid fa-boxes-stacked mr-1.5 text-rose-700"></i>
+                        {t('finance.orders.stockReleaseNotice', 'Notice: Received items (components or product stock) will lose customer reservation and be moved to general component stock.')}
+                      </p>
+                    </div>
+                  )}
+                  {decisionModal.type === 'revertToSourcing' && (
+                    <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 mb-2 space-y-2">
+                      <p className="text-xs font-bold text-amber-800 leading-relaxed">
+                        Warning: This action will <strong>void the existing invoice</strong> and return the order to Procurement. Components will be reset to "RFP Sent" status to allow re-awarding.
+                      </p>
+                      <p className="text-xs font-bold text-amber-900 leading-relaxed bg-amber-100/60 p-2.5 rounded-xl border border-amber-200">
+                        <i className="fa-solid fa-boxes-stacked mr-1.5 text-amber-700"></i>
+                        {t('finance.orders.stockReleaseNotice', 'Notice: Received items (components or product stock) will lose customer reservation and be moved to general component stock.')}
+                      </p>
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t("finance.orders.paymentMemo")}</label>
+                    <textarea
+                      placeholder={t("finance.ledger.whatIsThisFor")}
+                      className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white h-24"
+                      value={comment} onChange={e => setComment(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-10 flex gap-3">
+                  <button onClick={closeModals} className="flex-1 py-4 bg-slate-100 text-slate-500 font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-slate-200">{t("common.cancel")}</button>
+                  <button
+                    onClick={handleExecuteDecision} disabled={isProcessing}
+                    className={`flex-[2] py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all flex items-center justify-center gap-2 ${decisionModal.type === 'cancelInvoice' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' :
+                      decisionModal.type === 'revertToSourcing' ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-100' :
+                        'bg-slate-900 text-white hover:bg-black'
+                      }`}
+                  >
+                    {isProcessing ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
+                    {decisionModal.type === 'cancelInvoice' ? t('finance.orders.cancelInvoice') :
+                      decisionModal.type === 'revertToSourcing' ? t('finance.orders.revertToSourcing') : t('finance.orders.authActions')}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -5024,18 +5462,14 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           <td className="px-4 py-5 text-end">
                             <button
                               onClick={() => {
-                                setPaymentInvoiceData({
-                                  order: viewPaymentsOrder,
-                                  paymentAmount: p.amount,
-                                  receiptNumber: p.receiptNumber || `RCV-${String(idx + 1).padStart(3, '0')}`,
-                                  isFinal: isClosingPayment,
-                                  previousPayments: viewPaymentsOrder.payments?.slice(0, idx) || []
-                                });
+                                generateReceiptPDF(viewPaymentsOrder, p);
                               }}
-                              className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 inline-flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all border border-blue-100"
-                              title={t("finance.history.downloadReceipt")}
+                              disabled={isDownloadingReceipt}
+                              className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] uppercase shadow-sm inline-flex items-center gap-1.5 transition-all cursor-pointer"
+                              title={t("finance.orders.generateReceipt") || "Generate Receipt"}
                             >
-                              <i className="fa-solid fa-file-arrow-down text-xs"></i>
+                              {isDownloadingReceipt ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-solid fa-file-pdf"></i>}
+                              <span>{t("finance.orders.generateReceipt") || "Generate Receipt"}</span>
                             </button>
                           </td>
                         </tr>

@@ -56,6 +56,9 @@ export const translations: Record<string, any> = {
       orders: {
         authActions: 'Auth Actions', slaStatus: 'SLA / Status', markupAnalysis: 'Markup Analysis', revenueMetrics: 'Revenue Metrics', orderDate: 'Order Date', taxPoDetails: 'Tax PO Details', targetRevenue: 'Target Revenue (99%)', whtValue: 'WHT Value (1%)', clearanceStatus: 'Clearance Status',
         recordPayment: 'Record Payment', void: 'Void', markUp: 'Mark Up',
+        receivePayment: 'Receive Payment', generateReceipt: 'Generate Receipt', recordAndGenerateReceipt: 'Record & Generate Receipt',
+        paymentDetails: 'Payment Details', latestReceipt: 'Latest Receipt', recordOnly: 'Record Only',
+        paymentHistoryReceipts: 'Payment History / Receipts', regenerateReceiptHint: 'Click below to regenerate receipt PDF',
         gross: 'Gross', outstanding: 'Outstanding', paid: 'Paid', total: 'Total',
         operationalContext: 'Operational Context', accountStatus: 'Account Status',
         creditAction: 'Credit Action', customerAccount: 'Customer Account',
@@ -586,6 +589,9 @@ export const translations: Record<string, any> = {
       orders: {
         authActions: 'إجراءات الاعتماد', slaStatus: 'الحالة / مستوى الخدمة', markupAnalysis: 'تحليل الهامش', revenueMetrics: 'مقاييس الإيرادات', orderDate: 'تاريخ الطلب', taxPoDetails: 'تفاصيل الشراء الضريبي', targetRevenue: 'الإيراد المستهدف (99%)', whtValue: 'قيمة ضريبة الاستقطاع (1%)', clearanceStatus: 'حالة التخليص',
         recordPayment: 'تسجيل دفعة', void: 'إلغاء', markUp: 'هامش الربح',
+        receivePayment: 'استلام دفعة', generateReceipt: 'توليد الإيصال', recordAndGenerateReceipt: 'تسجيل الدفعة وتوليد الإيصال',
+        paymentDetails: 'تفاصيل الدفعة', latestReceipt: 'آخر إيصال', recordOnly: 'تسجيل فقط',
+        paymentHistoryReceipts: 'سجل الدفعات والإيصالات', regenerateReceiptHint: 'اضغط أدناه لإعادة تنزيل إيصال PDF',
         gross: 'إجمالي', outstanding: 'مستحق', paid: 'مدفوع', total: 'المجموع',
         operationalContext: 'السياق التشغيلي', accountStatus: 'حالة الحساب',
         creditAction: 'إجراء ائتماني', customerAccount: 'حساب العميل',
