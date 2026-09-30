@@ -1013,7 +1013,7 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
                           {co.order.appliesWithholdingTax ? (
                             co.order.whtCertificateFile ? (
                               <a
-                                href={`http://localhost:3005/${co.order.whtCertificateFile}`}
+                                href={`${import.meta.env.VITE_BACKEND_URL || ''}/${co.order.whtCertificateFile.replace(/^[\/\\]+/, '')}`}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[9px] font-black uppercase hover:bg-emerald-100 transition-all cursor-pointer"

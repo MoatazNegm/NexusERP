@@ -185,6 +185,17 @@ const costSheetStorage = multer.diskStorage({
 });
 const uploadCostSheet = multer({ storage: costSheetStorage });
 
+const supplierReceiptStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, resolveUploadDir(req, 'supplier_receipts'));
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'supplier-receipt-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const uploadSupplierReceipt = multer({ storage: supplierReceiptStorage });
+
 const uploadGoogleDriveFile = multer({ storage: multer.memoryStorage() });
 
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
@@ -2571,6 +2582,7 @@ app.get('/api/log-crash', (req, res) => {
     console.log('\n\nðŸš¨ FRONTEND CRASH ðŸš¨\n', req.query.err, '\n\n');
     res.send('ok');
 });
+app.use('/uploads', express.static(UPLOADS_BASE));
 
 app.use(express.static(path.join(__dirname, 'dist'), {
     setHeaders: (res, filepath) => {
@@ -6385,6 +6397,16 @@ app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) 
 });
 
 app.post('/api/upload-cost-sheet', uploadCostSheet.single('costSheetFile'), (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, error: "No file" });
+        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        res.json({ success: true, filePath: relativePath });
+    } catch (err) {
+        res.status(500).json({ success: false, error: "Upload failed" });
+    }
+});
+
+app.post('/api/upload-supplier-receipt', uploadSupplierReceipt.single('receiptFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');

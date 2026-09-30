@@ -925,7 +925,7 @@ export default app;
 1. **Never commit `db.json` or any `db.sandbox.*.json`.** They are `.gitignore`d. If already tracked: `git rm --cached db.json` (keep local file), then commit.
 2. **Never commit and push without explicit user instruction.** Step 1 (rebuild) and Step 2 (commit + push) are intentionally separate. See "Build, Run, and Deploy Lifecycle".
 3. **Never `Stop-Process -Name node` or `taskkill /IM node.exe /F`.** Find the specific PID with `Get-NetTCPConnection -LocalPort 5005` and stop that one. Other apps on other ports may be using node.
-4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001089`). Displayed by `components/VersionFooter.tsx`.
+4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001090`). Displayed by `components/VersionFooter.tsx`.
 5. **Add a schema migration, never edit `db.json` by hand.** Bump `CURRENT_SCHEMA_VERSION` in `server.js` (currently `8`) and add a function in the `migrations` array. The server runs migrations on startup across live and all sandboxes (`migrateAllSandboxesOnStartup`) and after restore. Business data (orders, customers, etc.) is never touched.
 6. **Never call `fetch()` from a component.** Add a method to `services/dataService.ts` and call it.
 7. **Never store sensitive fields in plaintext** — `settings.geminiConfig.apiKey`, `settings.openaiConfig.apiKey`, `settings.emailConfig.password`, `settings.googleDriveConfig.clientSecret`, `settings.googleDriveConfig.refreshToken`, `settings.localStorageConfig.secretKey` are AES-256-CBC encrypted at rest using a key derived from `FACTORY_PASS`. **Do not rotate `FACTORY_PASS` after go-live** — it will brick all existing encrypted values.
@@ -933,7 +933,7 @@ export default app;
 9. **PO line-item qty is a fallback, not a mutation.** `processedOrderInternal` does not write `quantity` back; it is read-only enforced via `getItemEffectiveQty`.
 10. **`/api/v1/wipe` is disabled in sandbox mode.** Sandboxes use `/api/v1/sandbox/reset`. `/api/v1/sandbox/reset` is only valid in a sandbox.
 11. **Always use `isAdminUser(req)` for admin route checks in `server.js`.** Live mode requests keep `req.roles = []` by design for zero-disk-IO pass-through. Using `(req.roles || []).includes('admin')` directly will silently deny every live caller.
-12. **Never embed base64 documents or spreadsheets in `db.json`.** Upload binary files via `POST /api/upload-cost-sheet` into `uploads/cost_sheets/` (or sandbox uploads) and store only relative file paths in the database.
+12. **Never embed base64 documents or spreadsheets in `db.json`.** Upload binary files via dedicated upload endpoints (e.g., `POST /api/upload-cost-sheet` into `uploads/cost_sheets/`, `POST /api/upload-supplier-receipt` into `uploads/supplier_receipts/`, or sandbox uploads) and store only relative file paths in the database.
 13. **Internal Stock Orders must remain isolated.** Internal stock orders (`customerName === 'internal stock'` or PO starting with `STOCK-`) must never generate customer wallet balances, commitments, billing SLAs, or margin violation blocks.
 14. **Always transfer received items to free stock on lifecycle rollbacks.** Cancelling or reverting a PO, rejecting an order, or rolling back to `LOGGED` must invoke `transferReceivedItemsToFreeStock` to release items to general inventory with `RELEASED_TO_STOCK` logs.
 

@@ -1312,23 +1312,33 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     });
   };
 
-  const handleSupplierPoReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSupplierPoReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
       alert("File size exceeds 10MB limit.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64Data = reader.result as string;
+    setSupplierPoPaymentModal(prev => prev ? { ...prev, loading: true, error: null } : null);
+    try {
+      const res = await dataService.uploadSupplierReceipt(file);
+      if (res && res.success && res.filePath) {
+        setSupplierPoPaymentModal(prev => prev ? {
+          ...prev,
+          receiptFile: res.filePath,
+          receiptFileName: file.name,
+          loading: false
+        } : null);
+      } else {
+        throw new Error(res?.error || 'Upload failed');
+      }
+    } catch (err: any) {
       setSupplierPoPaymentModal(prev => prev ? {
         ...prev,
-        receiptFile: base64Data,
-        receiptFileName: file.name
+        loading: false,
+        error: err.message || 'Failed to upload receipt file'
       } : null);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const handleSupplierPoPaymentSubmit = async () => {
@@ -1370,11 +1380,14 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const downloadOrViewSupplierReceipt = (receiptData: string, filename?: string) => {
     const link = document.createElement('a');
-    link.href = receiptData;
-    link.download = filename || 'supplier-receipt';
-    if (receiptData.startsWith('data:application/pdf') || receiptData.startsWith('data:image')) {
-      link.target = '_blank';
+    if (receiptData.startsWith('data:')) {
+      link.href = receiptData;
+    } else {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+      link.href = receiptData.startsWith('/') ? `${backendUrl}${receiptData}` : `${backendUrl}/${receiptData}`;
     }
+    link.download = filename || 'supplier-receipt';
+    link.target = '_blank';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

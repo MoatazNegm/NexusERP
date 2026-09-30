@@ -406,6 +406,21 @@ class DataService {
     return response.json();
   }
 
+  async uploadSupplierReceipt(file: File) {
+    const formData = new FormData();
+    formData.append('receiptFile', file);
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+    const response = await fetch(`${backendUrl}/api/upload-supplier-receipt`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: formData
+    });
+    if (!response.ok) {
+      throw new Error("Supplier receipt file upload failed");
+    }
+    return response.json();
+  }
+
   async getInventory() { return this.get<InventoryItem>('inventory'); }
   async addInventoryItem(item: Omit<InventoryItem, 'id' | 'quantityReserved'>) {
     await this.post('inventory', { ...item, quantityReserved: 0 });
