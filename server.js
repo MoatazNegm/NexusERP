@@ -2664,8 +2664,9 @@ const computeCustomerWallet = (customer, orders = []) => {
     const projectBalances = {};
     if (customer.walletBalances) {
         Object.entries(customer.walletBalances).forEach(([proj, bal]) => {
-            if (validProjects.has(proj.trim())) {
-                projectBalances[proj.trim()] = Number(bal) || 0;
+            const trimmed = proj.trim();
+            if (validProjects.has(trimmed) || trimmed.startsWith('(') || !validProjects.size) {
+                projectBalances[trimmed] = Number(bal) || 0;
             }
         });
     }
@@ -3221,6 +3222,53 @@ app.post('/api/v1/customers/merge', (req, res) => {
     } catch (e) {
         console.error(`[Merge] UNEXPECTED ERROR:`, e);
         res.status(500).json({ error: `Server error: ${e.message}` });
+    }
+});
+
+// Record customer advance deposit / unearned prepayment for future orders
+app.post('/api/v1/customers/:id/advance-payment', (req, res) => {
+    try {
+        const db = getDb(req);
+        const user = req.headers['x-user'] || 'System';
+        const { id } = req.params;
+        const { amount, memo, date, projectName } = req.body;
+        const numAmt = parseFloat(amount);
+        if (!numAmt || isNaN(numAmt) || numAmt <= 0) {
+            return res.status(400).json({ error: "Positive payment amount is required" });
+        }
+        const customer = (db.customers || []).find(c => c.id === id || c.name === id);
+        if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+        const projKey = (projectName && projectName.trim()) ? projectName.trim() : '(General Advance / Future Orders)';
+        customer.walletBalances = customer.walletBalances || {};
+        customer.walletBalances[projKey] = (customer.walletBalances[projKey] || 0) + numAmt;
+        customer.walletBalance = (customer.walletBalance || 0) + numAmt;
+
+        if (!customer.logs) customer.logs = [];
+        customer.logs.push(createAuditLog(
+            `Advance Payment Recorded: ${numAmt.toLocaleString()} L.E. - ${memo || 'Deposit for future orders'} (New Wallet Balance: ${customer.walletBalance.toLocaleString()} L.E.)`,
+            'WALLET_CREDIT',
+            user
+        ));
+
+        // Also record in db.ledger as an addition so cash flow and general ledger reflect the cash hit
+        if (!db.ledger) db.ledger = [];
+        db.ledger.push({
+            id: `adv_cust_${customer.id || Date.now()}_${Date.now()}`,
+            date: date || new Date().toISOString(),
+            type: 'ADDITION',
+            amount: numAmt,
+            description: `Customer Advance Deposit: ${customer.name} - ${memo || 'Deposit for future orders'}`,
+            category: 'Customer Advance',
+            fromAccount: 'Customer Deposit',
+            toAccount: 'Bank Account',
+            user
+        });
+
+        writeDb(db, getDbPath(req));
+        return res.json(computeCustomerWallet(customer, db.orders || []));
+    } catch (err) {
+        res.status(500).json({ error: err.message || "Failed to record customer advance payment" });
     }
 });
 
@@ -4763,6 +4811,25 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 });
 
                 const totalPaid = (order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+
+                if (payload.fromWallet && payload.amount > 0) {
+                    const customer = (db.customers || []).find(c => c.name === order.customerName);
+                    if (customer && (customer.walletBalance || 0) > 0) {
+                        const deductAmt = Math.min(payload.amount, customer.walletBalance);
+                        customer.walletBalance = Math.max(0, (customer.walletBalance || 0) - deductAmt);
+                        if (customer.walletBalances) {
+                            for (const key of Object.keys(customer.walletBalances)) {
+                                if (customer.walletBalances[key] > 0) {
+                                    const kDeduct = Math.min(deductAmt, customer.walletBalances[key]);
+                                    customer.walletBalances[key] -= kDeduct;
+                                    break;
+                                }
+                            }
+                        }
+                        order.logs.push(createAuditLog(`Applied ${deductAmt.toLocaleString()} L.E. from Customer Wallet balance. Remaining wallet: ${customer.walletBalance.toLocaleString()} L.E.`, order.status, user));
+                    }
+                }
+
                 const fullyPaid = isOrderFullyPaid(order);
                 const fullyDelivered = isOrderFullyDelivered(order);
                 const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE].includes(order.status);
@@ -6714,12 +6781,12 @@ app.get('/api/v1/supplierPayments', (req, res) => {
     res.json(db.supplierPayments || []);
 });
 
-// POST record a supplier payment with FIFO allocation
+// POST record a supplier payment with FIFO allocation & General Ledger reflection
 app.post('/api/v1/supplierPayments', (req, res) => {
     try {
         const db = getDb(req);
         const user = req.headers['x-user'] || 'System';
-        const { supplierId, amount, memo, date } = req.body;
+        const { supplierId, amount, memo, date, receiptFile, orderId, poNumber } = req.body;
         if (!supplierId || !amount || amount <= 0) {
             return res.status(400).json({ error: "supplierId and a positive amount are required" });
         }
@@ -6727,34 +6794,45 @@ app.post('/api/v1/supplierPayments', (req, res) => {
         const supplier = (db.suppliers || []).find(s => s.id === supplierId);
         if (!supplier) return res.status(404).json({ error: "Supplier not found" });
 
-        // Gather all PROCUREMENT components for this supplier across all orders, sorted FIFO
+        // Gather all PROCUREMENT components for this supplier across all orders
         const componentEntries = [];
         (db.orders || []).forEach(order => {
             order.items.forEach(item => {
                 (item.components || []).forEach(comp => {
                     if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId &&
                         ['ORDERED', 'ORDERED_FOR_STOCK', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(comp.status)) {
+                        const isTarget = Boolean((orderId && order.id === orderId) || (poNumber && comp.poNumber === poNumber));
+                        const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
+                        const netCost = (comp.quantity || 0) * (comp.unitCost || 0);
+                        const grossCost = netCost * (1 + (taxRate / 100));
+
                         componentEntries.push({
                             componentId: comp.id,
                             orderId: order.id,
                             orderNumber: order.internalOrderNumber,
                             itemDescription: comp.description,
-                            totalCost: (comp.quantity || 0) * (comp.unitCost || 0),
-                            procurementStartedAt: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp
+                            poNumber: comp.poNumber,
+                            totalCost: grossCost,
+                            procurementStartedAt: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp,
+                            isTarget
                         });
                     }
                 });
             });
         });
 
-        // Sort FIFO by procurement start date
-        componentEntries.sort((a, b) => new Date(a.procurementStartedAt).getTime() - new Date(b.procurementStartedAt).getTime());
+        // Sort: target PO components first, then FIFO by procurement start date
+        componentEntries.sort((a, b) => {
+            if (a.isTarget && !b.isTarget) return -1;
+            if (!a.isTarget && b.isTarget) return 1;
+            return new Date(a.procurementStartedAt).getTime() - new Date(b.procurementStartedAt).getTime();
+        });
 
         // Calculate already-allocated amounts per component from previous payments
         const previousAllocations = {};
         (db.supplierPayments || []).forEach(payment => {
             if (payment.supplierId === supplierId) {
-                payment.allocations.forEach(alloc => {
+                (payment.allocations || []).forEach(alloc => {
                     previousAllocations[alloc.componentId] = (previousAllocations[alloc.componentId] || 0) + alloc.amount;
                 });
             }
@@ -6780,20 +6858,46 @@ app.post('/api/v1/supplierPayments', (req, res) => {
             remaining -= allocAmount;
         }
 
+        const unallocatedAdvance = remaining > 0 ? Math.round(remaining * 100) / 100 : 0;
+
         // Create the payment record
         const paymentRecord = {
             id: `sp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
             supplierId,
             supplierName: supplier.name,
-            amount,
+            amount: Number(amount),
             date: date ? new Date(date).toISOString() : new Date().toISOString(),
             memo: memo || '',
             user,
+            receiptFile: receiptFile || undefined,
+            orderId: orderId || undefined,
+            poNumber: poNumber || undefined,
+            unallocatedAdvance,
             allocations
         };
 
         if (!db.supplierPayments) db.supplierPayments = [];
         db.supplierPayments.push(paymentRecord);
+
+        // Reflect into db.ledger for financial general ledger & cash flow tracking
+        if (!db.ledger) db.ledger = [];
+        const ledgerEntry = {
+            id: `sp_ledg_${paymentRecord.id}`,
+            date: paymentRecord.date,
+            type: 'COST',
+            amount: paymentRecord.amount,
+            description: `Supplier Payment: ${supplier.name}${poNumber ? ` - PO #${poNumber}` : ''}${memo ? ` - ${memo}` : ''}`,
+            category: 'Supplier Payment',
+            fromAccount: 'Cash/Bank',
+            toAccount: 'Accounts Payable',
+            user,
+            receiptFile: receiptFile || undefined,
+            supplierId,
+            orderId: orderId || undefined,
+            poNumber: poNumber || undefined
+        };
+        db.ledger.push(ledgerEntry);
+
         writeDb(db, getDbPath(req));
 
         res.json(paymentRecord);

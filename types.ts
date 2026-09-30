@@ -223,6 +223,10 @@ export interface SupplierPayment {
   memo: string;
   user: string;
   allocations: SupplierPaymentAllocation[];
+  receiptFile?: string;
+  orderId?: string;
+  poNumber?: string;
+  unallocatedAdvance?: number;
 }
 
 export interface LedgerEntry {
@@ -232,7 +236,14 @@ export interface LedgerEntry {
   amount: number;
   description: string;
   category?: string;
+  fromAccount?: string;
+  toAccount?: string;
   user: string;
+  receiptFile?: string;
+  receiptNumber?: string;
+  supplierId?: string;
+  orderId?: string;
+  poNumber?: string;
 }
 
 export type CompStatus = 'AVAILABLE' | 'PENDING_OFFER' | 'RFP_SENT' | 'AWARDED' | 'ORDERED' | 'ORDERED_FOR_STOCK' | 'WAITING_CONTRACT_START' | 'RUNNING_OUTSOURCING_CONTRACT' | 'RECEIVED' | 'RESERVED' | 'IN_MANUFACTURING' | 'MANUFACTURED' | 'CANCELLED';

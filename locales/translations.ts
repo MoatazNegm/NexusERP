@@ -25,10 +25,10 @@ export const translations: Record<string, any> = {
     },
     finance: {
       tabs: {
-        orders: 'Orders', billing_details: 'Billing Details', history: 'Transaction History',
+        orders: 'Orders', history: 'Transaction History',
         blacklist_hold: 'Blacklist & Hold', tax_clearances: 'Tax Clearances',
-        supplier_reporting: 'Supplier Reporting', ledger: 'Ledger',
-        contracts: 'Blanket Contracts', customer_wallets: 'Customer Wallets', project_wallets: 'Project Wallets',
+        supplier_reporting: 'Suppliers AP & Reporting', ledger: 'Ledger',
+        contracts: 'Blanket Contracts', customer_wallets: 'Customer Accounts & Wallets', project_wallets: 'Project Wallets',
         blanket_history: 'Blanket History', stock_orders: 'Stock Orders',
       },
       blanketHistory: {
@@ -103,8 +103,10 @@ export const translations: Record<string, any> = {
       entities: {
         customerHold: 'Hold Customer', supplierBlacklist: 'Blacklist Supplier', creditHold: 'CREDIT HOLD', accountActive: 'ACCOUNT ACTIVE', releaseHold: 'Release Hold', engageCreditHold: 'Engage Credit Hold', blacklisted: 'BLACKLISTED', approvedVendor: 'APPROVED VENDOR', restoreVendor: 'Restore Vendor', blacklistVendor: 'Blacklist Vendor', clientRelations: 'Client Relations', entityType: 'Entity Type',
         orderHold: 'Hold Order', orderReject: 'Reject Order',
+        vendorRelations: 'Vendor Relations',
       },
       poItemDefinition: 'PO Item Definition',
+      searchOrders: 'Search ID, PO, customer, project (or "non-project")...',
     },
     procurement: {
       title: 'Commercial Procurement', outsourcingTitle: 'Outsourcing Workflow',
@@ -558,10 +560,10 @@ export const translations: Record<string, any> = {
     },
     finance: {
       tabs: {
-        orders: 'الطلبات', billing_details: 'تفاصيل الفواتير', history: 'سجل المعاملات',
-        entities: 'الكيانات', tax_clearances: 'التخليص الضريبي',
-        supplier_reporting: 'تقارير الموردين', ledger: 'دفتر الأستاذ',
-        contracts: 'العقود الإطارية', customer_wallets: 'محافظ العملاء', project_wallets: 'محافظ المشاريع',
+        orders: 'الطلبات', history: 'سجل المعاملات',
+        blacklist_hold: 'قائمة الحظر والتعليق', entities: 'الكيانات', tax_clearances: 'التخليص الضريبي',
+        supplier_reporting: 'أوامر شراء الموردين والدائنين', ledger: 'دفتر الأستاذ',
+        contracts: 'العقود الإطارية', customer_wallets: 'حسابات ومحافظ العملاء', project_wallets: 'محافظ المشاريع',
         blanket_history: 'سجل العقود الإطارية', stock_orders: 'طلبات المخزون',
       },
       blanketHistory: {

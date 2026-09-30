@@ -338,11 +338,19 @@ class DataService {
   }
 
   async getSupplierPayments() { return this.get<SupplierPayment>('supplierPayments'); }
-  async recordSupplierPayment(supplierId: string, amount: number, memo: string, date?: string) {
+  async recordSupplierPayment(
+    supplierId: string,
+    amount: number,
+    memo: string,
+    date?: string,
+    receiptFile?: string,
+    orderId?: string,
+    poNumber?: string
+  ) {
     const res = await fetch(`${BACKEND_URL}/api/v1/supplierPayments`, {
       method: 'POST',
       headers: this.getHeaders(),
-      body: JSON.stringify({ supplierId, amount, memo, date })
+      body: JSON.stringify({ supplierId, amount, memo, date, receiptFile, orderId, poNumber })
     });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Payment failed'); }
     return res.json();
@@ -365,6 +373,37 @@ class DataService {
   }
   async updateLedgerEntry(id: string, updates: Partial<LedgerEntry>) {
     return this.put<LedgerEntry>('ledger', id, updates);
+  }
+
+  async recordTaxSettlement(amount: number, memo: string, date?: string, receiptNumber?: string, fromAccount?: string, receiptFile?: string) {
+    const user = this.getCurrentUser();
+    return this.addLedgerEntry({
+      date: date || new Date().toISOString(),
+      type: 'COST',
+      amount,
+      description: `Tax Authority Settlement: ${memo || 'VAT / Tax Declaration Settlement'}`,
+      category: 'Tax Settlement',
+      fromAccount: fromAccount || 'Cash/Bank',
+      toAccount: 'Tax Authority / مصلحة الضرائب',
+      user,
+      receiptNumber: receiptNumber || undefined,
+      receiptFile: receiptFile || undefined
+    });
+  }
+
+  async uploadWhtCertificate(file: File) {
+    const formData = new FormData();
+    formData.append('whtFile', file);
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+    const response = await fetch(`${backendUrl}/api/upload-wht-certificate`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: formData
+    });
+    if (!response.ok) {
+      throw new Error("Withholding Tax Certificate file upload failed");
+    }
+    return response.json();
   }
 
   async getInventory() { return this.get<InventoryItem>('inventory'); }
@@ -688,8 +727,21 @@ class DataService {
     return await response.json();
   }
 
-  async recordPayment(id: string, amount: number, memo: string) {
-    return this.dispatchAction(id, 'record-payment', { amount, memo });
+  async recordPayment(id: string, amount: number, memo: string, fromWallet?: boolean) {
+    return this.dispatchAction(id, 'record-payment', { amount, memo, fromWallet });
+  }
+
+  async recordCustomerAdvancePayment(customerId: string, amount: number, memo: string, date?: string, projectName?: string) {
+    const res = await fetch(`${BACKEND_URL}/api/v1/customers/${customerId}/advance-payment`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ amount, memo, date, projectName })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to record customer advance payment');
+    }
+    return res.json();
   }
 
   async approveDispatchReceipt(id: string, items: { itemId: string, qty: number }[], notes: string) {
