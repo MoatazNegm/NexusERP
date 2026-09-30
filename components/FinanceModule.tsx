@@ -155,19 +155,24 @@ const OrdersKPICard: React.FC<OrdersKPICardProps> = ({
   const { pos: balloonPos, arrow: arrowPos } = getBalloonAlignment();
 
   return (
-    <div className={`p-3.5 rounded-2xl border shadow-xs transition-all relative overflow-visible hover:z-[70] ${bgBorderColor}`}>
-      <div className="flex items-center justify-between gap-1 mb-1.5">
-        <div className="text-[9px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5 truncate">
-          <i className={`${icon} ${iconColor} text-[11px]`}></i>
-          <span className="truncate">{title}</span>
+    <div className={`p-3 sm:p-3.5 rounded-2xl border shadow-xs transition-all relative overflow-visible hover:z-[70] ${bgBorderColor}`}>
+      <div className="flex items-start justify-between gap-1.5 mb-1.5 min-h-[28px]">
+        <div className="flex items-start gap-1.5 min-w-0 flex-1">
+          <i className={`${icon} ${iconColor} text-[10px] mt-0.5 shrink-0`}></i>
+          <span 
+            className="text-[8.5px] sm:text-[9px] font-bold text-slate-700 leading-tight tracking-tight break-words line-clamp-2"
+            title={title}
+          >
+            {title}
+          </span>
         </div>
         {/* Help Balloon Tooltip */}
-        <div className="relative group/help inline-flex shrink-0">
+        <div className="relative group/help inline-flex shrink-0 mt-0.5">
           <span
             className="text-slate-400 hover:text-blue-600 transition-colors p-0.5 focus:outline-none cursor-help"
             title={description}
           >
-            <i className="fa-solid fa-circle-question text-[11px]"></i>
+            <i className="fa-solid fa-circle-question text-[10px]"></i>
           </span>
           <div className={`absolute bottom-full ${balloonPos} mb-2.5 hidden group-hover/help:block w-72 p-3 bg-slate-900/95 backdrop-blur-md text-white text-[11px] font-medium leading-relaxed rounded-2xl shadow-2xl z-[100] pointer-events-none border border-slate-700/80 normal-case text-start`}>
             <div className="font-bold text-white text-[10px] uppercase tracking-wider mb-1 flex items-center gap-1.5">
@@ -187,12 +192,12 @@ const OrdersKPICard: React.FC<OrdersKPICardProps> = ({
         </div>
       </div>
 
-      <div className={`text-lg font-black font-mono tracking-tight ${textColor} truncate`} title={value}>
+      <div className={`text-base sm:text-lg font-black font-mono tracking-tight ${textColor} truncate`} title={value}>
         {value}
       </div>
 
       <div className="text-[8px] font-bold text-slate-400 mt-1 uppercase truncate flex items-center justify-between gap-1">
-        <span className="truncate">{subtext}</span>
+        <span className="truncate" title={subtext}>{subtext}</span>
         {badge && (
           <span className={`px-1.5 py-0.5 rounded text-[8px] font-black shrink-0 ${badgeClass}`}>
             {badge}
@@ -5513,7 +5518,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
 
             {/* 8 KPI Summary Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2.5 sm:gap-3">
               {/* 1. Committed Gross Revenue */}
               <OrdersKPICard
                 title={language === 'ar' ? 'قيمة الطلبات الإجمالية' : 'Committed Gross PO'}
