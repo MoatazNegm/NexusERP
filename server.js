@@ -254,11 +254,189 @@ const getItemEffectiveStatus = (item) => {
     return 'MIXED';
 };
 
-const extractCostSheetMetrics = (base64Data) => {
-    if (!base64Data) return { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
+const parseCostSheetProjectBlocks = (input) => {
+    if (!input) return [];
     try {
-        const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-        const wb = XLSX.read(cleanBase64, { type: 'base64' });
+        let wb;
+        if (typeof input === 'string' && (input.startsWith('uploads/') || fs.existsSync(input))) {
+            wb = XLSX.readFile(input);
+        } else {
+            const cleanBase64 = input.includes(',') ? input.split(',')[1] : input;
+            wb = XLSX.read(cleanBase64, { type: 'base64' });
+        }
+        const sheetName = wb.SheetNames[0];
+        const sheet = sheetName ? wb.Sheets[sheetName] : undefined;
+        const data = sheet ? XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) : [];
+        if (!data.length) return [];
+
+        const cellText = (v) => String(v == null ? '' : v).replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').trim();
+        const toNumber = (v) => {
+            if (typeof v === 'number') return isFinite(v) ? v : 0;
+            const parsed = parseFloat(cellText(v).replace(/[,\s]/g, ''));
+            return isNaN(parsed) ? 0 : parsed;
+        };
+
+        let nameCol = 0;
+        if (!data.some(r => cellText((r || [])[0]) !== '') && data.some(r => cellText((r || [])[1]) !== '')) {
+            nameCol = 1;
+        }
+
+        let invoiceTotalCol = -1;
+        let salaryTotalCol = -1;
+        for (let r = 0; r < Math.min(10, data.length); r++) {
+            const row = data[r] || [];
+            for (let c = 0; c < row.length; c++) {
+                const rawVal = cellText(row[c]);
+                const val = rawVal.toLowerCase();
+                if (!val) continue;
+                if ((val.includes('المرتب') || val.includes('مرتب') || val.includes('salary') || val.includes('cost')) && (val.includes('اجمال') || val.includes('إجمال') || val.includes('صافي') || val.includes('قيمه') || val.includes('قيمة') || val.includes('total'))) {
+                    if (salaryTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال') || val.includes('total')) {
+                        salaryTotalCol = c;
+                    }
+                }
+                if (val.includes('الفاتور') || val.includes('فاتور') || val.includes('invoice')) {
+                    if (invoiceTotalCol === -1 || val.includes('اجمال') || val.includes('إجمال') || val.includes('total') || val.includes('قيمه') || val.includes('قيمة')) {
+                        invoiceTotalCol = c;
+                    }
+                }
+            }
+        }
+
+        const costSheetLabelIsTotal = (raw) => /(?:ا|إ)جمال/.test(String(raw || ''));
+        const isSubHeader = (label) => {
+            const v = label.toLowerCase();
+            return v === '' || ['الاسم', 'اسم', 'م', 'name', 'كشف', 'تقرير', 'report', 'sheet', 'رقم', 'الرقم', 'مسلسل', 'no', 'no.', 'sr', 's/n', '#'].includes(v);
+        };
+        const letterRegex = new RegExp('\\p{L}', 'u');
+        const isPersonRow = (label) => label !== '' && letterRegex.test(label) && !costSheetLabelIsTotal(label) && !isSubHeader(label);
+
+        let lastCol = nameCol;
+        for (const r of data) {
+            const row = r || [];
+            if (!isPersonRow(cellText(row[nameCol]))) continue;
+            for (let c = row.length - 1; c > nameCol; c -= 1) {
+                if (cellText(row[c]) !== '') { if (c > lastCol) lastCol = c; break; }
+            }
+        }
+
+        const costCol = salaryTotalCol !== -1 ? salaryTotalCol : lastCol;
+        let blocks = [];
+        let curCount = 0;
+        let curSum = 0;
+        let curInvoiceSum = 0;
+
+        const stripTotalWord = (raw) =>
+            String(raw || '')
+                .replace(/[ً-ْ]/g, '')
+                .replace(/ال(?:ا|إ)جمالي?ى?/g, ' ')
+                .replace(/(?:ا|إ)جمالي?ى?/g, ' ')
+                .replace(/[:\-–—_/\\]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+        for (const r of data) {
+            const row = r || [];
+            const label = cellText(row[nameCol]);
+            if (label === '') continue;
+            if (costSheetLabelIsTotal(label)) {
+                const summaryCost = costCol > nameCol ? toNumber(row[costCol]) : 0;
+                const finalCost = curSum > 0 ? curSum : summaryCost;
+                const summaryInv = invoiceTotalCol !== -1 ? toNumber(row[invoiceTotalCol]) : 0;
+                const finalInv = curInvoiceSum > 0 ? curInvoiceSum : summaryInv;
+
+                blocks.push({
+                    name: stripTotalWord(label),
+                    resourceCount: curCount,
+                    realCost: Math.round(finalCost * 100) / 100,
+                    invoiceTotal: Math.round(finalInv * 100) / 100
+                });
+                curCount = 0;
+                curSum = 0;
+                curInvoiceSum = 0;
+                continue;
+            }
+            if (!isPersonRow(label)) continue;
+            curCount += 1;
+            curSum += costCol > nameCol ? toNumber(row[costCol]) : 0;
+            if (invoiceTotalCol !== -1 && invoiceTotalCol !== costCol) {
+                curInvoiceSum += toNumber(row[invoiceTotalCol]);
+            }
+        }
+        return blocks;
+    } catch (e) {
+        console.error('[CostSheet] Block parse error:', e);
+        return [];
+    }
+};
+
+const normalizeProjectName = (raw) => {
+    const normRegex = new RegExp('[^\\p{L}\\p{N}]+', 'gu');
+    return String(raw || '')
+        .replace(/[ً-ْ]/g, '')
+        .replace(/ال(?:ا|إ)جمالي?ى?/g, ' ')
+        .replace(/(?:ا|إ)جمالي?ى?/g, ' ')
+        .replace(/[:\-–—_/\\]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase()
+        .replace(/[أإآ]/g, 'ا')
+        .replace(/ى/g, 'ي')
+        .replace(/ة/g, 'ه')
+        .replace(normRegex, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
+const findCostSheetProjectBlock = (blocks, projectName) => {
+    const target = normalizeProjectName(projectName);
+    if (!target || !blocks.length) return null;
+    let match = blocks.find(b => normalizeProjectName(b.name) === target);
+    if (!match) {
+        match = blocks.find(b => {
+            const n = normalizeProjectName(b.name);
+            return n !== '' && (n.includes(target) || target.includes(n));
+        });
+    }
+    return match || null;
+};
+
+const extractCostSheetProjectMetrics = (input, projectName) => {
+    if (!input || !projectName || !String(projectName).trim()) return null;
+    const blocks = parseCostSheetProjectBlocks(input);
+    const match = findCostSheetProjectBlock(blocks, projectName);
+    if (!match) return null;
+    return {
+        resourceCount: match.resourceCount,
+        realCost: match.realCost,
+        invoiceTotal: match.invoiceTotal,
+        projectName: match.name
+    };
+};
+
+const extractCostSheetMetrics = (base64Data, projectName) => {
+    if (!base64Data) return { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
+
+    // If a projectName is provided, first try matching a project-specific block
+    if (projectName && String(projectName).trim()) {
+        const projMetrics = extractCostSheetProjectMetrics(base64Data, projectName);
+        if (projMetrics) {
+            return {
+                resourceCount: projMetrics.resourceCount,
+                realCost: projMetrics.realCost,
+                invoiceTotal: projMetrics.invoiceTotal,
+                projectName: projMetrics.projectName
+            };
+        }
+    }
+
+    try {
+        let wb;
+        if (typeof base64Data === 'string' && (base64Data.startsWith('uploads/') || fs.existsSync(base64Data))) {
+            wb = XLSX.readFile(base64Data);
+        } else {
+            const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+            wb = XLSX.read(cleanBase64, { type: 'base64' });
+        }
         const sheetName = wb.SheetNames[0];
         if (!sheetName) return { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
         const sheet = wb.Sheets[sheetName];
@@ -1242,7 +1420,7 @@ const applySchemaMigrations = (db, targetPath = DB_PATH) => {
                             if (it.noRfpNeeded === undefined) it.noRfpNeeded = true;
                             if (it.costSheetFile && (!it.workingResourceCount || !it.realCost)) {
                                 try {
-                                    const m = extractCostSheetMetrics(it.costSheetFile);
+                                    const m = extractCostSheetMetrics(it.costSheetFile, o.projectName);
                                     it.workingResourceCount = m.resourceCount;
                                     it.realCost = m.realCost;
                                     it.invoiceTotal = m.invoiceTotal;
@@ -3679,7 +3857,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     let metrics = { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
                     if (item.costSheetFile) {
                         try {
-                            metrics = extractCostSheetMetrics(item.costSheetFile);
+                            metrics = extractCostSheetMetrics(item.costSheetFile, order.projectName);
                             item.workingResourceCount = metrics.resourceCount || item.workingResourceCount || 0;
                             item.realCost = metrics.realCost || item.realCost || 0;
                             item.invoiceTotal = metrics.invoiceTotal || item.invoiceTotal || 0;
@@ -4053,7 +4231,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 let metrics = { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
                 if (payload.costSheetFile) {
                     try {
-                        metrics = extractCostSheetMetrics(payload.costSheetFile);
+                        const targetProj = payload.projectName || order.projectName;
+                        metrics = extractCostSheetMetrics(payload.costSheetFile, targetProj);
                     } catch (err) {
                         console.error("[CostSheet] Failed to extract metrics:", err);
                     }
@@ -4155,7 +4334,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 let newMetrics = { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
                 if (newLatest.fileData) {
                     try {
-                        newMetrics = extractCostSheetMetrics(newLatest.fileData);
+                        newMetrics = extractCostSheetMetrics(newLatest.fileData, order.projectName);
                     } catch (err) {
                         console.error("[CostSheet] Failed to extract metrics after delete:", err);
                     }

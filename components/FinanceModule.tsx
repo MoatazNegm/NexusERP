@@ -6731,8 +6731,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   let matchedProjectBlock = false;
                   let projectMissing = false;
 
-                  if (projName && targetItem.costSheetFile) {
-                    const projMetrics = extractCostSheetProjectMetrics(targetItem.costSheetFile, projName);
+                  const sheetData = targetItem.costSheets?.[targetItem.costSheets.length - 1]?.fileData || targetItem.costSheetFile;
+                  const isBase64Sheet = Boolean(sheetData && (sheetData.startsWith('data:') || sheetData.startsWith('UEsDB') || sheetData.length > 500));
+
+                  if (projName && sheetData && isBase64Sheet) {
+                    const projMetrics = extractCostSheetProjectMetrics(sheetData, projName);
                     if (projMetrics) {
                       count = projMetrics.resourceCount;
                       cost = projMetrics.realCost;
@@ -6747,8 +6750,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     }
                   }
 
-                  if (!matchedProjectBlock && !projectMissing && (!count || !cost || !inv) && targetItem.costSheetFile) {
-                    const extracted = extractCostSheetMetrics(targetItem.costSheetFile);
+                  if (!matchedProjectBlock && !projectMissing && (!count || !cost || !inv) && sheetData && isBase64Sheet) {
+                    const extracted = extractCostSheetMetrics(sheetData);
                     if (!count) count = extracted.resourceCount;
                     if (!cost) cost = extracted.realCost;
                     if (!inv) inv = extracted.invoiceTotal;

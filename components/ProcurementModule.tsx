@@ -302,6 +302,9 @@ const getCurrentCostSheetItem = (order: CustomerOrder | null, selectedItemId: st
 
 export const extractCostSheetMetrics = (base64Data: string): { resourceCount: number; realCost: number; invoiceTotal: number } => {
   if (!base64Data) return { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
+  if (!base64Data.startsWith('data:') && !base64Data.startsWith('UEsDB') && base64Data.length < 500) {
+    return { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
+  }
   try {
     const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
     const wb = XLSX.read(cleanBase64, { type: 'base64' });
@@ -432,6 +435,9 @@ const _costSheetBlocksCache = new Map<string, CostSheetProjectBlock[]>();
  */
 const parseCostSheetProjectBlocks = (base64Data: string): CostSheetProjectBlock[] => {
   if (!base64Data) return [];
+  if (!base64Data.startsWith('data:') && !base64Data.startsWith('UEsDB') && base64Data.length < 500) {
+    return [];
+  }
   const cacheKey = `${base64Data.length}::${base64Data.slice(-128)}`;
   if (_costSheetBlocksCache.has(cacheKey)) return _costSheetBlocksCache.get(cacheKey)!;
 
@@ -2948,8 +2954,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                   // match this order's project name to its "اجمالى <project>" block in the
                   // sheet, then show that block's person count + sum of the right-most column.
                   const projName = group.projectName || getOrderProjName(o);
-                  if (projName && targetItem.costSheetFile) {
-                    const projMetrics = extractCostSheetProjectMetrics(targetItem.costSheetFile, projName);
+                  const sheetData = targetItem.costSheets?.[targetItem.costSheets.length - 1]?.fileData || targetItem.costSheetFile;
+                  const isBase64Sheet = Boolean(sheetData && (sheetData.startsWith('data:') || sheetData.startsWith('UEsDB') || sheetData.length > 500));
+                  if (projName && sheetData && isBase64Sheet) {
+                    const projMetrics = extractCostSheetProjectMetrics(sheetData, projName);
                     if (projMetrics) {
                       count = projMetrics.resourceCount;
                       cost = projMetrics.realCost;
@@ -2957,8 +2965,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                       sheetProjectName = projMetrics.projectName;
                       matchedProjectBlock = true;
                     } else {
-                      // The order names a project but the uploaded sheet has no block for
-                      // it — show 0/0, never the whole-sheet all-projects totals.
+                      // The order names a project but the uploaded sheet has no block for it
                       count = 0;
                       cost = 0;
                       inv = 0;
@@ -2966,8 +2973,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     }
                   }
 
-                  if (!matchedProjectBlock && !projectMissing && (!count || !cost || !inv) && targetItem.costSheetFile) {
-                    const extracted = extractCostSheetMetrics(targetItem.costSheetFile);
+                  if (!matchedProjectBlock && !projectMissing && (!count || !cost || !inv) && sheetData && isBase64Sheet) {
+                    const extracted = extractCostSheetMetrics(sheetData);
                     if (!count) count = extracted.resourceCount;
                     if (!cost) cost = extracted.realCost;
                     if (!inv) inv = extracted.invoiceTotal;
