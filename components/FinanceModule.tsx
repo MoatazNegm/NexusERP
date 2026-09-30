@@ -108,6 +108,8 @@ interface OrdersKPICardProps {
   icon: string;
   iconColor: string;
   bgBorderColor?: string;
+  activeBorderColor?: string;
+  activeRingColor?: string;
   textColor: string;
   value: string;
   subtext: string;
@@ -116,6 +118,8 @@ interface OrdersKPICardProps {
   description: string;
   formula?: string;
   alignBalloon?: 'left' | 'right' | 'center';
+  isSelected?: boolean;
+  onClick?: () => void;
 }
 
 const OrdersKPICard: React.FC<OrdersKPICardProps> = ({
@@ -124,6 +128,8 @@ const OrdersKPICard: React.FC<OrdersKPICardProps> = ({
   icon,
   iconColor,
   bgBorderColor = "bg-white border-slate-200",
+  activeBorderColor = "border-blue-600",
+  activeRingColor = "ring-blue-500/25",
   textColor,
   value,
   subtext,
@@ -131,7 +137,9 @@ const OrdersKPICard: React.FC<OrdersKPICardProps> = ({
   badgeClass = "bg-slate-100 text-slate-600",
   description,
   formula,
-  alignBalloon = 'center'
+  alignBalloon = 'center',
+  isSelected = false,
+  onClick
 }) => {
   const getBalloonAlignment = () => {
     if (alignBalloon === 'left') {
@@ -155,7 +163,16 @@ const OrdersKPICard: React.FC<OrdersKPICardProps> = ({
   const { pos: balloonPos, arrow: arrowPos } = getBalloonAlignment();
 
   return (
-    <div className={`p-3 sm:p-3.5 rounded-2xl border shadow-xs transition-all relative overflow-visible hover:z-[70] ${bgBorderColor}`}>
+    <div 
+      onClick={onClick}
+      className={`p-3 sm:p-3.5 rounded-2xl transition-all relative overflow-visible select-none ${
+        onClick ? 'cursor-pointer' : ''
+      } ${
+        isSelected
+          ? `${bgBorderColor} border-2 ${activeBorderColor} shadow-md ring-4 ${activeRingColor} -translate-y-0.5 z-20`
+          : `${bgBorderColor} border shadow-xs hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100 hover:border-slate-400 z-10`
+      }`}
+    >
       <div className="flex items-start justify-between gap-1.5 mb-1.5 min-h-[28px]">
         <div className="flex items-start gap-1.5 min-w-0 flex-1">
           <i className={`${icon} ${iconColor} text-[10px] mt-0.5 shrink-0`}></i>
@@ -166,28 +183,33 @@ const OrdersKPICard: React.FC<OrdersKPICardProps> = ({
             {title}
           </span>
         </div>
-        {/* Help Balloon Tooltip */}
-        <div className="relative group/help inline-flex shrink-0 mt-0.5">
-          <span
-            className="text-slate-400 hover:text-blue-600 transition-colors p-0.5 focus:outline-none cursor-help"
-            title={description}
-          >
-            <i className="fa-solid fa-circle-question text-[10px]"></i>
-          </span>
-          <div className={`absolute bottom-full ${balloonPos} mb-2.5 hidden group-hover/help:block w-72 p-3 bg-slate-900/95 backdrop-blur-md text-white text-[11px] font-medium leading-relaxed rounded-2xl shadow-2xl z-[100] pointer-events-none border border-slate-700/80 normal-case text-start`}>
-            <div className="font-bold text-white text-[10px] uppercase tracking-wider mb-1 flex items-center gap-1.5">
-              <i className="fa-solid fa-circle-info text-blue-400"></i>
-              <span>{balloonTitle}</span>
-            </div>
-            <div className="text-slate-200 text-[10.5px] leading-snug">
-              {description}
-            </div>
-            {formula && (
-              <div className="text-[9px] font-mono text-blue-300 mt-2 pt-2 border-t border-slate-800">
-                {formula}
+        {/* Help Balloon Tooltip & Active indicator */}
+        <div className="flex items-center gap-1 shrink-0 mt-0.5">
+          {isSelected && (
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse shrink-0" title="Active Filter"></span>
+          )}
+          <div className="relative group/help inline-flex shrink-0" onClick={(e) => e.stopPropagation()}>
+            <span
+              className="text-slate-400 hover:text-blue-600 transition-colors p-0.5 focus:outline-none cursor-help"
+              title={description}
+            >
+              <i className="fa-solid fa-circle-question text-[10px]"></i>
+            </span>
+            <div className={`absolute bottom-full ${balloonPos} mb-2.5 hidden group-hover/help:block w-72 p-3 bg-slate-900/95 backdrop-blur-md text-white text-[11px] font-medium leading-relaxed rounded-2xl shadow-2xl z-[100] pointer-events-none border border-slate-700/80 normal-case text-start`}>
+              <div className="font-bold text-white text-[10px] uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <i className="fa-solid fa-circle-info text-blue-400"></i>
+                <span>{balloonTitle}</span>
               </div>
-            )}
-            <div className={`absolute top-full ${arrowPos} border-4 border-transparent border-t-slate-900/95`}></div>
+              <div className="text-slate-200 text-[10.5px] leading-snug">
+                {description}
+              </div>
+              {formula && (
+                <div className="text-[9px] font-mono text-blue-300 mt-2 pt-2 border-t border-slate-800">
+                  {formula}
+                </div>
+              )}
+              <div className={`absolute top-full ${arrowPos} border-4 border-transparent border-t-slate-900/95`}></div>
+            </div>
           </div>
         </div>
       </div>
@@ -1065,6 +1087,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [costSheetModalData, setCostSheetModalData] = useState<{ fileName: string; fileData: string; orderTitle: string } | null>(null);
   const [costSheetActiveSheetIndex, setCostSheetActiveSheetIndex] = useState<number>(0);
 
+  // Orders Tab KPI Card Filter State - default is leftmost card (Committed Gross PO)
+  type OrderMetricFilter = 'gross_revenue' | 'paid' | 'customer_ar' | 'wip' | 'supplier_ap' | 'customer_advances' | 'net_vat' | 'variance';
+  const [orderMetricFilter, setOrderMetricFilter] = useState<OrderMetricFilter>('gross_revenue');
+
   const toggleOrderExpand = (orderId: string) => {
     setExpandedOrderIds(prev => ({
       ...prev,
@@ -1083,12 +1109,13 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   };
 
   const handleToggleExpandAll = () => {
-    const allExpanded = filteredOrders.length > 0 && filteredOrders.every(o => expandedOrderIds[o.id]);
+    const ordersToExpand = activeTab === 'orders' ? metricFilteredOrders : filteredOrders;
+    const allExpanded = ordersToExpand.length > 0 && ordersToExpand.every(o => expandedOrderIds[o.id]);
     if (allExpanded) {
       setExpandedOrderIds({});
     } else {
       const next: Record<string, boolean> = {};
-      filteredOrders.forEach(o => { next[o.id] = true; });
+      ordersToExpand.forEach(o => { next[o.id] = true; });
       groupedFinanceOrderItems.forEach(item => {
         if (item.type === 'blanket_project_group') {
           next[item.groupId] = true;
@@ -1135,6 +1162,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [supplierPoSearchQuery, setSupplierPoSearchQuery] = useState('');
   const [supplierPoStatusFilter, setSupplierPoStatusFilter] = useState<'all' | 'ALL_RECEIVED' | 'PARTIALLY_RECEIVED' | 'PENDING_DELIVERY'>('all');
   const [supplierPoPaymentFilter, setSupplierPoPaymentFilter] = useState<'all' | 'due' | 'settled' | 'overpaid'>('all');
+  // Suppliers AP Tab KPI Card Filter State - default is leftmost card (Committed POs Gross)
+  type SupplierMetricFilter = 'gross' | 'vat' | 'delivered' | 'paid' | 'due' | 'fulfillment';
+  const [supplierMetricFilter, setSupplierMetricFilter] = useState<SupplierMetricFilter>('gross');
   const [supplierPoPaymentModal, setSupplierPoPaymentModal] = useState<{
     po: any;
     amount: string;
@@ -1812,6 +1842,13 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const filteredSupplierPOs = useMemo(() => {
     return supplierPOsList.filter(po => {
+      // Metric filter from summary cards
+      if (supplierMetricFilter === 'vat' && !(po.taxAmount > 0.001)) return false;
+      if (supplierMetricFilter === 'delivered' && !(po.totalReceivedQty > 0 || po.receivedComponentsCount > 0 || po.receiptStatus === 'ALL_RECEIVED' || po.receiptStatus === 'PARTIALLY_RECEIVED')) return false;
+      if (supplierMetricFilter === 'paid' && !(po.paidAmount > 0.001)) return false;
+      if (supplierMetricFilter === 'due' && !(po.balanceDue > 0.001)) return false;
+      if (supplierMetricFilter === 'fulfillment' && po.receiptStatus !== 'ALL_RECEIVED') return false;
+
       // Search filter
       if (supplierPoSearchQuery.trim()) {
         const q = supplierPoSearchQuery.toLowerCase().trim();
@@ -1839,7 +1876,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       return true;
     });
-  }, [supplierPOsList, supplierPoSearchQuery, supplierPoStatusFilter, supplierPoPaymentFilter]);
+  }, [supplierPOsList, supplierMetricFilter, supplierPoSearchQuery, supplierPoStatusFilter, supplierPoPaymentFilter]);
 
   const supplierPoSummaryMetrics = useMemo(() => {
     return supplierPOsList.reduce((acc, po) => {
@@ -2402,6 +2439,38 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     };
   }, [filteredOrders, getPL]);
 
+  const isOrderMatchingMetricFilter = useCallback((o: CustomerOrder, filter: OrderMetricFilter): boolean => {
+    if (filter === 'gross_revenue') return true;
+    const pl = (o as any).pl || getPL(o);
+    switch (filter) {
+      case 'paid':
+        return (pl.paid || 0) > 0.001;
+      case 'customer_ar':
+        return (pl.customerAR || 0) > 0.001;
+      case 'wip':
+        return (pl.wip || 0) > 0.001;
+      case 'supplier_ap':
+        return (pl.supplierAP || 0) > 0.001;
+      case 'customer_advances':
+        return (pl.customerAdvance || 0) > 0.001;
+      case 'net_vat':
+        return (pl.recognizedOutputTax || 0) > 0.001 || (pl.inputTax || 0) > 0.001 || Math.abs(pl.netTaxOwed || 0) > 0.001;
+      case 'variance':
+        return !ordersSummaryMetrics.isOverallBalanced
+          ? (!pl.isPoBalanced || (pl.poVariance || 0) >= 0.05)
+          : (pl.isPoBalanced === true);
+      default:
+        return true;
+    }
+  }, [getPL, ordersSummaryMetrics.isOverallBalanced]);
+
+  const metricFilteredOrders = useMemo(() => {
+    if (orderMetricFilter === 'gross_revenue') {
+      return filteredOrders;
+    }
+    return filteredOrders.filter(o => isOrderMatchingMetricFilter(o, orderMetricFilter));
+  }, [filteredOrders, orderMetricFilter, isOrderMatchingMetricFilter]);
+
   type FinanceOrderDisplayItem =
     | {
         type: 'standard';
@@ -2426,7 +2495,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     const items: FinanceOrderDisplayItem[] = [];
     const processedProjects = new Set<string>();
 
-    filteredOrders.forEach((o, idx) => {
+    metricFilteredOrders.forEach((o, idx) => {
       const isBlanket = isOrderBlanket(o);
       const projName = getOrderProjectName(o);
 
@@ -2438,8 +2507,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         }
         processedProjects.add(normProj);
 
-        // Find all blanket orders matching this project name from filteredOrders
-        const matchingOrders = filteredOrders.filter(
+        // Find all blanket orders matching this project name from metricFilteredOrders
+        const matchingOrders = metricFilteredOrders.filter(
           other => isOrderBlanket(other) && getOrderProjectName(other).toLowerCase().trim() === normProj
         );
 
@@ -2476,7 +2545,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     });
 
     return items;
-  }, [filteredOrders, isOrderBlanket, getOrderProjectName]);
+  }, [metricFilteredOrders, isOrderBlanket, getOrderProjectName]);
 
 
   const handleRecordAndGenerateReceipt = async () => {
@@ -3316,14 +3385,14 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           </div>
         ) : (
           <div className="flex items-center gap-3 w-full xl:w-auto">
-            {activeTab === 'orders' && filteredOrders.length > 0 && (
+            {activeTab === 'orders' && metricFilteredOrders.length > 0 && (
               <button
                 onClick={handleToggleExpandAll}
                 className="px-3.5 py-3 bg-white border-2 border-slate-100 rounded-2xl text-[10px] font-black uppercase text-slate-600 hover:text-blue-600 hover:border-blue-200 transition-all shadow-sm flex items-center gap-2 shrink-0"
-                title={filteredOrders.every(o => expandedOrderIds[o.id]) ? (language === 'ar' ? 'طي جميع البنود' : 'Collapse All Items') : (language === 'ar' ? 'توسيع جميع البنود' : 'Expand All Items')}
+                title={metricFilteredOrders.every(o => expandedOrderIds[o.id]) ? (language === 'ar' ? 'طي جميع البنود' : 'Collapse All Items') : (language === 'ar' ? 'توسيع جميع البنود' : 'Expand All Items')}
               >
-                <i className={`fa-solid ${filteredOrders.every(o => expandedOrderIds[o.id]) ? 'fa-compress' : 'fa-expand'} text-xs`}></i>
-                <span>{filteredOrders.every(o => expandedOrderIds[o.id]) ? (language === 'ar' ? 'طي الكل' : 'Collapse All') : (language === 'ar' ? 'توسيع الكل' : 'Expand All')}</span>
+                <i className={`fa-solid ${metricFilteredOrders.every(o => expandedOrderIds[o.id]) ? 'fa-compress' : 'fa-expand'} text-xs`}></i>
+                <span>{metricFilteredOrders.every(o => expandedOrderIds[o.id]) ? (language === 'ar' ? 'طي الكل' : 'Collapse All') : (language === 'ar' ? 'توسيع الكل' : 'Expand All')}</span>
               </button>
             )}
             <div className="relative w-full xl:w-96">
@@ -4213,10 +4282,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
           {/* Supplier Financial KPI Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
-            <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 shadow-xs">
-              <div className="text-[9px] font-black uppercase tracking-wider text-blue-700 mb-1 flex items-center gap-1.5">
-                <i className="fa-solid fa-file-invoice text-blue-600"></i>
-                <span>{language === 'ar' ? 'إجمالي قيمة المشتريات' : 'Committed POs (Gross)'}</span>
+            {/* 1. Committed POs (Gross) - Default */}
+            <div
+              onClick={() => {
+                setSupplierPoViewMode('orders');
+                setSupplierMetricFilter('gross');
+              }}
+              className={`p-4 rounded-2xl transition-all cursor-pointer select-none ${
+                supplierMetricFilter === 'gross'
+                  ? 'bg-blue-50/90 border-2 border-blue-600 shadow-md ring-4 ring-blue-500/20 -translate-y-0.5 z-20'
+                  : 'bg-blue-50/70 border border-blue-200 shadow-xs hover:border-blue-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100 z-10'
+              }`}
+            >
+              <div className="text-[9px] font-black uppercase tracking-wider text-blue-700 mb-1 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <i className="fa-solid fa-file-invoice text-blue-600"></i>
+                  <span>{language === 'ar' ? 'إجمالي قيمة المشتريات' : 'Committed POs (Gross)'}</span>
+                </div>
+                {supplierMetricFilter === 'gross' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse shrink-0"></span>
+                )}
               </div>
               <div className="text-xl font-black text-blue-950 font-mono">
                 {supplierPoSummaryMetrics.totalGross.toLocaleString(undefined, { maximumFractionDigits: 0 })}
@@ -4226,10 +4311,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-purple-50/70 border border-purple-200 shadow-xs">
-              <div className="text-[9px] font-black uppercase tracking-wider text-purple-700 mb-1 flex items-center gap-1.5">
-                <i className="fa-solid fa-receipt text-purple-600"></i>
-                <span>{language === 'ar' ? 'ضريبة المدخلات (14%)' : 'Input VAT (14%)'}</span>
+            {/* 2. Input VAT (14%) */}
+            <div
+              onClick={() => {
+                setSupplierPoViewMode('orders');
+                setSupplierMetricFilter(supplierMetricFilter === 'vat' ? 'gross' : 'vat');
+              }}
+              className={`p-4 rounded-2xl transition-all cursor-pointer select-none ${
+                supplierMetricFilter === 'vat'
+                  ? 'bg-purple-50/90 border-2 border-purple-600 shadow-md ring-4 ring-purple-500/20 -translate-y-0.5 z-20'
+                  : 'bg-purple-50/70 border border-purple-200 shadow-xs hover:border-purple-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100 z-10'
+              }`}
+            >
+              <div className="text-[9px] font-black uppercase tracking-wider text-purple-700 mb-1 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <i className="fa-solid fa-receipt text-purple-600"></i>
+                  <span>{language === 'ar' ? 'ضريبة المدخلات (14%)' : 'Input VAT (14%)'}</span>
+                </div>
+                {supplierMetricFilter === 'vat' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-600 animate-pulse shrink-0"></span>
+                )}
               </div>
               <div className="text-xl font-black text-purple-950 font-mono">
                 {supplierPoSummaryMetrics.totalTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}
@@ -4239,10 +4340,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-teal-50/70 border border-teal-200 shadow-xs">
-              <div className="text-[9px] font-black uppercase tracking-wider text-teal-700 mb-1 flex items-center gap-1.5">
-                <i className="fa-solid fa-boxes-stacked text-teal-600"></i>
-                <span>{language === 'ar' ? 'القيمة المستلمة بالمخزن' : 'Delivered Value'}</span>
+            {/* 3. Delivered Value */}
+            <div
+              onClick={() => {
+                setSupplierPoViewMode('orders');
+                setSupplierMetricFilter(supplierMetricFilter === 'delivered' ? 'gross' : 'delivered');
+              }}
+              className={`p-4 rounded-2xl transition-all cursor-pointer select-none ${
+                supplierMetricFilter === 'delivered'
+                  ? 'bg-teal-50/90 border-2 border-teal-600 shadow-md ring-4 ring-teal-500/20 -translate-y-0.5 z-20'
+                  : 'bg-teal-50/70 border border-teal-200 shadow-xs hover:border-teal-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100 z-10'
+              }`}
+            >
+              <div className="text-[9px] font-black uppercase tracking-wider text-teal-700 mb-1 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <i className="fa-solid fa-boxes-stacked text-teal-600"></i>
+                  <span>{language === 'ar' ? 'القيمة المستلمة بالمخزن' : 'Delivered Value'}</span>
+                </div>
+                {supplierMetricFilter === 'delivered' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-600 animate-pulse shrink-0"></span>
+                )}
               </div>
               <div className="text-xl font-black text-teal-950 font-mono">
                 {supplierAnalytics.reduce((s, x) => s + x.delivered, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
@@ -4252,10 +4369,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 shadow-xs">
-              <div className="text-[9px] font-black uppercase tracking-wider text-emerald-700 mb-1 flex items-center gap-1.5">
-                <i className="fa-solid fa-money-bill-transfer text-emerald-600"></i>
-                <span>{language === 'ar' ? 'المدفوع للموردين' : 'Paid to Suppliers'}</span>
+            {/* 4. Paid to Suppliers */}
+            <div
+              onClick={() => {
+                setSupplierPoViewMode('orders');
+                setSupplierMetricFilter(supplierMetricFilter === 'paid' ? 'gross' : 'paid');
+              }}
+              className={`p-4 rounded-2xl transition-all cursor-pointer select-none ${
+                supplierMetricFilter === 'paid'
+                  ? 'bg-emerald-50/90 border-2 border-emerald-600 shadow-md ring-4 ring-emerald-500/20 -translate-y-0.5 z-20'
+                  : 'bg-emerald-50/70 border border-emerald-200 shadow-xs hover:border-emerald-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100 z-10'
+              }`}
+            >
+              <div className="text-[9px] font-black uppercase tracking-wider text-emerald-700 mb-1 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <i className="fa-solid fa-money-bill-transfer text-emerald-600"></i>
+                  <span>{language === 'ar' ? 'المدفوع للموردين' : 'Paid to Suppliers'}</span>
+                </div>
+                {supplierMetricFilter === 'paid' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse shrink-0"></span>
+                )}
               </div>
               <div className="text-xl font-black text-emerald-950 font-mono">
                 {supplierPoSummaryMetrics.totalPaid.toLocaleString(undefined, { maximumFractionDigits: 0 })}
@@ -4265,10 +4398,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-rose-50/70 border border-rose-200 shadow-xs">
-              <div className="text-[9px] font-black uppercase tracking-wider text-rose-700 mb-1 flex items-center gap-1.5">
-                <i className="fa-solid fa-clock-rotate-left text-rose-600"></i>
-                <span>{language === 'ar' ? 'رصيد الموردين المستحق' : 'Open AP Balance (Due)'}</span>
+            {/* 5. Open AP Balance (Due) */}
+            <div
+              onClick={() => {
+                setSupplierPoViewMode('orders');
+                setSupplierMetricFilter(supplierMetricFilter === 'due' ? 'gross' : 'due');
+              }}
+              className={`p-4 rounded-2xl transition-all cursor-pointer select-none ${
+                supplierMetricFilter === 'due'
+                  ? 'bg-rose-50/90 border-2 border-rose-600 shadow-md ring-4 ring-rose-500/20 -translate-y-0.5 z-20'
+                  : 'bg-rose-50/70 border border-rose-200 shadow-xs hover:border-rose-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100 z-10'
+              }`}
+            >
+              <div className="text-[9px] font-black uppercase tracking-wider text-rose-700 mb-1 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <i className="fa-solid fa-clock-rotate-left text-rose-600"></i>
+                  <span>{language === 'ar' ? 'رصيد الموردين المستحق' : 'Open AP Balance (Due)'}</span>
+                </div>
+                {supplierMetricFilter === 'due' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-pulse shrink-0"></span>
+                )}
               </div>
               <div className="text-xl font-black text-rose-950 font-mono">
                 {supplierPoSummaryMetrics.totalBalanceDue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
@@ -4278,10 +4427,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 shadow-xs">
-              <div className="text-[9px] font-black uppercase tracking-wider text-slate-500 mb-1 flex items-center gap-1.5">
-                <i className="fa-solid fa-list-check text-slate-600"></i>
-                <span>{language === 'ar' ? 'حالة التوريد والاستلام' : 'Fulfillment Status'}</span>
+            {/* 6. Fulfillment Status */}
+            <div
+              onClick={() => {
+                setSupplierPoViewMode('orders');
+                setSupplierMetricFilter(supplierMetricFilter === 'fulfillment' ? 'gross' : 'fulfillment');
+              }}
+              className={`p-4 rounded-2xl transition-all cursor-pointer select-none ${
+                supplierMetricFilter === 'fulfillment'
+                  ? 'bg-slate-100 border-2 border-slate-700 shadow-md ring-4 ring-slate-500/20 -translate-y-0.5 z-20'
+                  : 'bg-slate-50 border border-slate-200 shadow-xs hover:border-slate-400 hover:shadow-sm hover:-translate-y-0.5 opacity-85 hover:opacity-100 z-10'
+              }`}
+            >
+              <div className="text-[9px] font-black uppercase tracking-wider text-slate-600 mb-1 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <i className="fa-solid fa-list-check text-slate-600"></i>
+                  <span>{language === 'ar' ? 'حالة التوريد والاستلام' : 'Fulfillment Status'}</span>
+                </div>
+                {supplierMetricFilter === 'fulfillment' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700 animate-pulse shrink-0"></span>
+                )}
               </div>
               <div className="text-xl font-black text-slate-900 font-mono">
                 {supplierPoSummaryMetrics.allReceivedCount} / {supplierPoSummaryMetrics.totalCount}
@@ -5511,6 +5676,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full uppercase">
                   {ordersSummaryMetrics.totalOrdersCount} {ordersSummaryMetrics.totalOrdersCount === 1 ? (language === 'ar' ? 'طلب' : 'Order') : (language === 'ar' ? 'طلبات' : 'Orders')}
                 </span>
+                {orderMetricFilter !== 'gross_revenue' && (
+                  <button
+                    onClick={() => setOrderMetricFilter('gross_revenue')}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors cursor-pointer"
+                    title={language === 'ar' ? 'إعادة ضبط الفلتر لعرض جميع الطلبات' : 'Reset filter to show all orders'}
+                  >
+                    <span>
+                      {language === 'ar' 
+                        ? `مفلتر: ${metricFilteredOrders.length} طلب (إلغاء الفلتر)`
+                        : `Filtered: ${metricFilteredOrders.length} POs (Reset)`}
+                    </span>
+                    <i className="fa-solid fa-xmark text-[8px]"></i>
+                  </button>
+                )}
               </div>
               <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest hidden sm:block">
                 {language === 'ar' ? 'معادلة التوازن: الأصول = الخصوم + الأرباح المحققة' : 'Equation: Assets = Liabilities + Realized Equity'}
@@ -5526,6 +5705,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 icon="fa-solid fa-file-invoice-dollar"
                 iconColor="text-blue-600"
                 bgBorderColor="bg-blue-50/70 border-blue-200"
+                activeBorderColor="border-blue-600"
+                activeRingColor="ring-blue-500/25"
                 textColor="text-blue-950"
                 value={`${ordersSummaryMetrics.totalGrossRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                 subtext={language === 'ar' ? `صافي: ${ordersSummaryMetrics.totalNetRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })} ج.م` : `Net: ${ordersSummaryMetrics.totalNetRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })} L.E.`}
@@ -5534,6 +5715,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 description={language === 'ar' ? 'إجمالي القيمة المالية لجميع أوامر شراء العملاء النشطة في خط الأنابيب، شاملاً ضريبة المبيعات 14% (ضريبة المخرجات).' : 'Total gross monetary value of all active customer Purchase Orders in the pipeline, inclusive of 14% sales tax (Output VAT).'}
                 formula={language === 'ar' ? 'المعادلة: Σ (كمية البند × سعر الوحدة × 1.14)' : 'Formula: Σ (Item Qty × Unit Price × 1.14)'}
                 alignBalloon="left"
+                isSelected={orderMetricFilter === 'gross_revenue'}
+                onClick={() => setOrderMetricFilter('gross_revenue')}
               />
 
               {/* 2. Collections (PAID) */}
@@ -5543,6 +5726,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 icon="fa-solid fa-money-bill-transfer"
                 iconColor="text-emerald-600"
                 bgBorderColor="bg-emerald-50/70 border-emerald-200"
+                activeBorderColor="border-emerald-600"
+                activeRingColor="ring-emerald-500/25"
                 textColor="text-emerald-950"
                 value={`${ordersSummaryMetrics.totalPaid.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                 subtext={language === 'ar' ? `محصل: ${((ordersSummaryMetrics.totalPaid / Math.max(1, ordersSummaryMetrics.totalGrossRevenue)) * 100).toFixed(1)}%` : `${((ordersSummaryMetrics.totalPaid / Math.max(1, ordersSummaryMetrics.totalGrossRevenue)) * 100).toFixed(1)}% Collected`}
@@ -5551,6 +5736,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 description={language === 'ar' ? 'إجمالي المدفوعات والتحصيلات النقدية والبنكية المستلمة فعلياً من العملاء مقابل هذه الأوامر النشطة حتى تاريخه.' : 'Actual cash and bank payments received from customers against these active purchase orders to date.'}
                 formula={language === 'ar' ? 'المعادلة: Σ (مقبوضات العملاء المسجلة)' : 'Formula: Σ (Recorded Customer Receipts)'}
                 alignBalloon="left"
+                isSelected={orderMetricFilter === 'paid'}
+                onClick={() => setOrderMetricFilter(orderMetricFilter === 'paid' ? 'gross_revenue' : 'paid')}
               />
 
               {/* 3. Customer AR Due */}
@@ -5560,6 +5747,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 icon="fa-solid fa-clock-rotate-left"
                 iconColor="text-amber-600"
                 bgBorderColor="bg-amber-50/70 border-amber-200"
+                activeBorderColor="border-amber-600"
+                activeRingColor="ring-amber-500/25"
                 textColor="text-amber-950"
                 value={`${ordersSummaryMetrics.totalCustomerAR.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                 subtext={language === 'ar' ? 'فواتير قيد السداد' : 'Due on Invoices'}
@@ -5568,6 +5757,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 description={language === 'ar' ? 'الذمم المدينة المستحقة نظاماً على العملاء بموجب فواتير ضريبية صادرة قيد الانتظار للتحصيل النقدي.' : 'Legally due receivables owed by customers for officially issued tax invoices awaiting cash collection.'}
                 formula={language === 'ar' ? 'المعادلة: Σ (الفواتير الصادرة - المقبوضات)' : 'Formula: Σ (Invoiced Gross - Collected Cash)'}
                 alignBalloon="left"
+                isSelected={orderMetricFilter === 'customer_ar'}
+                onClick={() => setOrderMetricFilter(orderMetricFilter === 'customer_ar' ? 'gross_revenue' : 'customer_ar')}
               />
 
               {/* 4. WIP Inventory Asset */}
@@ -5577,6 +5768,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 icon="fa-solid fa-boxes-stacked"
                 iconColor="text-sky-600"
                 bgBorderColor="bg-sky-50/70 border-sky-200"
+                activeBorderColor="border-sky-600"
+                activeRingColor="ring-sky-500/25"
                 textColor="text-sky-950"
                 value={`${ordersSummaryMetrics.totalWIP.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                 subtext={language === 'ar' ? 'تكاليف ما قبل الفوترة' : 'Pre-Invoice Sourced'}
@@ -5585,6 +5778,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 description={language === 'ar' ? 'أصل المخزون قيد التشغيل: تكاليف الشراء والتصنيع المحملة على أوامر جارية قبل إصدار الفاتورة الضريبية للعميل. تتحول إلى تكلفة بضاعة مباعة (COGS) فور الفوترة.' : 'Work-In-Progress Asset: Sourced procurement and manufacturing costs incurred for orders currently in progress before issuing customer invoices. Transforms into COGS upon invoicing.'}
                 formula={language === 'ar' ? 'المعادلة: Σ (تكاليف الشراء للأوامر غير المفوترة)' : 'Formula: Σ (Sourced Costs on Uninvoiced Orders)'}
                 alignBalloon="center"
+                isSelected={orderMetricFilter === 'wip'}
+                onClick={() => setOrderMetricFilter(orderMetricFilter === 'wip' ? 'gross_revenue' : 'wip')}
               />
 
               {/* 5. Committed Supplier AP */}
@@ -5594,6 +5789,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 icon="fa-solid fa-truck-ramp-box"
                 iconColor="text-purple-600"
                 bgBorderColor="bg-purple-50/70 border-purple-200"
+                activeBorderColor="border-purple-600"
+                activeRingColor="ring-purple-500/25"
                 textColor="text-purple-950"
                 value={`${ordersSummaryMetrics.totalSupplierAP.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                 subtext={language === 'ar' ? 'التزامات للموردين' : 'Owed for Sourced Parts'}
@@ -5602,6 +5799,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 description={language === 'ar' ? 'حسابات الموردين الدائنة: إجمالي الالتزامات المستحقة أو الملتزم بها للموردين عن المكونات والخدمات المنفذة لهذه الأوامر.' : 'Accounts Payable: Total obligations committed or owed to suppliers for materials, components, and outsourced services across active orders.'}
                 formula={language === 'ar' ? 'المعادلة: Σ (إجمالي تكلفة الشراء - سدادات الموردين)' : 'Formula: Σ (Gross Sourced Cost - Supplier Payments)'}
                 alignBalloon="center"
+                isSelected={orderMetricFilter === 'supplier_ap'}
+                onClick={() => setOrderMetricFilter(orderMetricFilter === 'supplier_ap' ? 'gross_revenue' : 'supplier_ap')}
               />
 
               {/* 6. Customer Advances (Adv) */}
@@ -5611,6 +5810,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 icon="fa-solid fa-vault"
                 iconColor="text-indigo-600"
                 bgBorderColor="bg-indigo-50/70 border-indigo-200"
+                activeBorderColor="border-indigo-600"
+                activeRingColor="ring-indigo-500/25"
                 textColor="text-indigo-950"
                 value={`${ordersSummaryMetrics.totalCustomerAdvances.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                 subtext={language === 'ar' ? 'إيراد غير مكتسب' : 'Unearned Revenue Liab'}
@@ -5619,6 +5820,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 description={language === 'ar' ? 'الدفعات المقدمة: مبالغ نقدية محصلة من العملاء قبل إصدار الفواتير الضريبية، وتسجل كالتزام في الميزانية لحين التسليم وإصدار الفاتورة.' : 'Customer Prepayments: Unearned cash collected from customers prior to tax invoice generation, held as a balance sheet liability until delivery and billing.'}
                 formula={language === 'ar' ? 'المعادلة: Σ (مقبوضات الأوامر غير المفوترة)' : 'Formula: Σ (Pre-Invoice Cash Collections)'}
                 alignBalloon="right"
+                isSelected={orderMetricFilter === 'customer_advances'}
+                onClick={() => setOrderMetricFilter(orderMetricFilter === 'customer_advances' ? 'gross_revenue' : 'customer_advances')}
               />
 
               {/* 7. Net VAT Balance */}
@@ -5628,6 +5831,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 icon="fa-solid fa-landmark"
                 iconColor="text-teal-600"
                 bgBorderColor="bg-teal-50/70 border-teal-200"
+                activeBorderColor="border-teal-600"
+                activeRingColor="ring-teal-500/25"
                 textColor="text-teal-950"
                 value={`${ordersSummaryMetrics.totalNetTaxOwed >= 0 ? '+' : ''}${ordersSummaryMetrics.totalNetTaxOwed.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                 subtext={language === 'ar' ? `مخرجات: ${ordersSummaryMetrics.totalRecognizedOutputTax.toLocaleString(undefined, { maximumFractionDigits: 0 })} | مدخلات: ${ordersSummaryMetrics.totalInputTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `Out: ${ordersSummaryMetrics.totalRecognizedOutputTax.toLocaleString(undefined, { maximumFractionDigits: 0 })} | In: ${ordersSummaryMetrics.totalInputTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
@@ -5636,6 +5841,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 description={language === 'ar' ? 'موقف ضريبة القيمة المضافة: ضريبة المخرجات المحققة من فواتير العملاء مخصوماً منها ضريبة المدخلات من فواتير الموردين. القيمة الموجبة تعني ضريبة واجبة السداد لمصلحة الضرائب، والسالبة تعني رصيد دائن مسترد.' : 'Net VAT Position: Recognized Output Tax billed to customers minus deductible Input Tax paid on supplier purchases. Positive indicates tax payable to Egyptian Tax Authority; negative indicates refundable tax credit.'}
                 formula={language === 'ar' ? 'المعادلة: ضريبة المخرجات المحققة - ضريبة المدخلات المخصومة' : 'Formula: Recognized Output VAT - Deductible Input VAT'}
                 alignBalloon="right"
+                isSelected={orderMetricFilter === 'net_vat'}
+                onClick={() => setOrderMetricFilter(orderMetricFilter === 'net_vat' ? 'gross_revenue' : 'net_vat')}
               />
 
               {/* 8. Double-Entry Variance */}
@@ -5645,6 +5852,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 icon="fa-solid fa-scale-balanced"
                 iconColor={ordersSummaryMetrics.isOverallBalanced ? 'text-emerald-600' : 'text-rose-600'}
                 bgBorderColor={ordersSummaryMetrics.isOverallBalanced ? 'bg-emerald-50/70 border-emerald-300' : 'bg-rose-50/70 border-rose-300'}
+                activeBorderColor={ordersSummaryMetrics.isOverallBalanced ? 'border-emerald-600' : 'border-rose-600'}
+                activeRingColor={ordersSummaryMetrics.isOverallBalanced ? 'ring-emerald-500/25' : 'ring-rose-500/25'}
                 textColor={ordersSummaryMetrics.isOverallBalanced ? 'text-emerald-950' : 'text-rose-950'}
                 value={ordersSummaryMetrics.isOverallBalanced ? (language === 'ar' ? 'فارق 0.00 ✓ متطابق' : '0.00 Variance ✓') : (language === 'ar' ? `فارق ${ordersSummaryMetrics.totalVariance.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `${ordersSummaryMetrics.totalVariance.toLocaleString(undefined, { maximumFractionDigits: 0 })} Variance`)}
                 subtext={language === 'ar' ? `أرباح محققة: +${ordersSummaryMetrics.totalRealizedProfit.toLocaleString(undefined, { maximumFractionDigits: 0 })} ج.م` : `Realized Profit: +${ordersSummaryMetrics.totalRealizedProfit.toLocaleString(undefined, { maximumFractionDigits: 0 })} L.E.`}
@@ -5653,6 +5862,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 description={language === 'ar' ? 'مطابقة القيد المزدوج: التحقق من معادلة التوازن المحاسبي (الأصول = الخصوم + الربح المحقق). التباين 0.00 يؤكد توازن الدفاتر المحاسبية بالكامل.' : 'Double-Entry Verification: Checks that Total Assets (Cash + AR + WIP) exactly equal Total Liabilities + Realized Equity (AP + Advances + Net VAT + Realized Profit). A variance of 0.00 mathematically proves balanced books.'}
                 formula={language === 'ar' ? 'المعادلة: الأصول (نقدية+مدينون+WIP) = الخصوم (دائنون+دفعات+ضريبة) + الربح' : 'Equation: Assets (Cash + AR + WIP) === Liab (AP + Adv + Tax) + Realized Profit'}
                 alignBalloon="right"
+                isSelected={orderMetricFilter === 'variance'}
+                onClick={() => setOrderMetricFilter(orderMetricFilter === 'variance' ? 'gross_revenue' : 'variance')}
               />
             </div>
           </div>
@@ -7087,10 +7298,12 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           </tbody>
         </table>
         {
-          filteredOrders.length === 0 && !loading && (
+          (activeTab === 'orders' ? metricFilteredOrders.length === 0 : filteredOrders.length === 0) && !loading && (
             <div className="p-20 text-center flex flex-col items-center gap-3 text-slate-300 italic uppercase font-black tracking-widest text-xs">
               <i className="fa-solid fa-vault text-5xl opacity-10 mb-4"></i>
-              {language === 'ar' ? 'قائمة العمليات المالية فارغة' : 'Financial queue is empty'}
+              {activeTab === 'orders' && orderMetricFilter !== 'gross_revenue'
+                ? (language === 'ar' ? 'لا توجد أوامر شراء مطابقة لمعيار البطاقة المحددة' : 'No purchase orders matching selected card metric')
+                : (language === 'ar' ? 'قائمة العمليات المالية فارغة' : 'Financial queue is empty')}
             </div>
           )
         }
