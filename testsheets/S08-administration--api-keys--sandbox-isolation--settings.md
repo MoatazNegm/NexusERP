@@ -2,7 +2,7 @@
 
 - **Scenario id / name:** S08 / Administration: API keys, sandbox isolation, settings
 - **Role / user:** admin (password for all seed users: `Nexus#Test2026`)
-- **Total points:** 15 (1 point per step, 15 steps)
+- **Total points:** 17 (1 point per step, 17 steps)
 - **Preconditions:**
   - Clean seed.
   - A customer 'S08 Live Cust' exists in Live (create as crm1).
@@ -28,3 +28,5 @@
 | 13 | Download the REST API user guide (Help Center or GET /api/v1/user-guide?format=markdown). | Markdown document 'NexusERP RESTful API User Guide' downloads. | 1 |
 | 14 | Create a full backup in Settings -> backups (GET /api/v1/full-backup with needed params). | An encrypted .nxarchive file is downloaded. | 1 |
 | 15 | As admin list GET /api/v1/settings. | Settings JSON returned with enableNewOrderAlerts false in the seeded instance. | 1 |
+| 16 | Enable new-order alerts with an SMTP host that is unreachable, create an order, and during the 60 s audit change the order (accept item, finalize study). | The order keeps the user change (status WAITING_SUPPLIERS) after the audit finishes: the audit merges only its own log/notification changes (regression for lost-update fix; timing-dependent, see Findings in README). | 1 |
+| 17 | Start a fresh container with FACTORY_PASS and SMTP_* unset and read GET /api/v1/settings and try login username factory. | emailConfig.smtpServer is empty (no built-in SMTP account) and the factory emergency login is refused (disabled when FACTORY_PASS is unset). | 1 |

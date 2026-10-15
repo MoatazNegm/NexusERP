@@ -11,6 +11,11 @@ services:
       DB_PATH: /data/db.json
       UPLOADS_PATH: /data/uploads
       NODE_ENV: production
+      # No built-in secrets: factory emergency login stays disabled unless FACTORY_PASS is exported on the host.
+      FACTORY_PASS: ${FACTORY_PASS:-}
+      SMTP_SERVER: ${SMTP_SERVER:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
     ports: ["5005:5005"]
     volumes:
       - /home/erp/NexusERP:/app

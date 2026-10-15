@@ -3,7 +3,7 @@ import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGr
 import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.000001 for every code update
-export const APP_VERSION = '1.0001095';
+export const APP_VERSION = '1.001_ai';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
@@ -46,12 +46,12 @@ export const INITIAL_CONFIG: AppConfig = {
     tursoUrl: '',
     tursoAuthToken: '',
     emailConfig: {
-      smtpServer: 'mail.quickstor.net',
+      smtpServer: '',
       smtpPort: 465,
-      username: 'erpalerts@quickstor.net',
-      password: 'YousefNadody123!',
+      username: '',
+      password: '',
       senderName: 'Nexus System Alert',
-      senderEmail: 'erpalerts@quickstor.net',
+      senderEmail: '',
       useSsl: true
     },
     companyName: 'شراكه خدمات التعبئه',

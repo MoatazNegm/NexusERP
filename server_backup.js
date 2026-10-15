@@ -114,7 +114,7 @@ const syncAuthoritativeUsersToSandboxes = (liveDb) => {
 };
 
 const SERVER_START_TIME = Date.now();
-const FACTORY_PASS = 'YousefNadody!@#2';
+const FACTORY_PASS = process.env.FACTORY_PASS || '';
 const CURRENT_SCHEMA_VERSION = 8; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
@@ -746,12 +746,12 @@ const resolveSettings = (db, isSandboxReq = false) => {
             ...DEFAULT_LOCAL_STORAGE_CONFIG
         },
         emailConfig: {
-            smtpServer: 'mail.quickstor.net',
+            smtpServer: '',
             smtpPort: 465,
-            username: 'erpalerts@quickstor.net',
-            password: 'YousefNadody123!',
+            username: '',
+            password: '',
             senderName: 'Nexus System Alert',
-            senderEmail: 'erpalerts@quickstor.net',
+            senderEmail: '',
             useSsl: true
         },
         availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers', 'shipment'],

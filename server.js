@@ -115,7 +115,9 @@ const syncAuthoritativeUsersToSandboxes = (liveDb) => {
 };
 
 const SERVER_START_TIME = Date.now();
-const FACTORY_PASS = 'YousefNadody!@#2';
+// Emergency factory password and cipher secret come from the environment only (no built-in default).
+// FACTORY_PASS unset -> the 'factory' emergency login is disabled.
+const FACTORY_PASS = process.env.FACTORY_PASS || '';
 const CURRENT_SCHEMA_VERSION = 8; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
@@ -938,7 +940,23 @@ const isAdminUser = (req) => {
 };
 
 // --- AES-256-CBC CIPHER FOR SENSITIVE SETTINGS ---
-const CIPHER_KEY = crypto.createHash('sha256').update(FACTORY_PASS).digest(); // 32 bytes
+// Secret for settings encryption: NEXUS_CIPHER_SECRET, else FACTORY_PASS, else a random secret
+// generated once and stored beside the database file (mode 0600). Never a hardcoded default.
+const resolveCipherSecret = () => {
+    if (process.env.NEXUS_CIPHER_SECRET) return process.env.NEXUS_CIPHER_SECRET;
+    if (FACTORY_PASS) return FACTORY_PASS;
+    const keyFile = path.join(path.dirname(DB_PATH), '.nexus-cipher-key');
+    try {
+        if (fs.existsSync(keyFile)) return fs.readFileSync(keyFile, 'utf8').trim();
+        const gen = crypto.randomBytes(32).toString('hex');
+        fs.writeFileSync(keyFile, gen, { mode: 0o600 });
+        return gen;
+    } catch (e) {
+        console.error('[Security] Cannot persist cipher key; set NEXUS_CIPHER_SECRET.', e.message);
+        return crypto.randomBytes(32).toString('hex');
+    }
+};
+const CIPHER_KEY = crypto.createHash('sha256').update(resolveCipherSecret()).digest(); // 32 bytes
 const CIPHER_PREFIX = 'ENC:';
 
 const encryptValue = (plainText) => {
@@ -1036,13 +1054,14 @@ const resolveSettings = (db, isSandboxReq = false) => {
             ...DEFAULT_LOCAL_STORAGE_CONFIG
         },
         emailConfig: {
-            smtpServer: 'mail.quickstor.net',
-            smtpPort: 465,
-            username: 'erpalerts@quickstor.net',
-            password: 'YousefNadody123!',
+            // No built-in SMTP defaults: configure via Settings or SMTP_* environment variables.
+            smtpServer: process.env.SMTP_SERVER || '',
+            smtpPort: parseInt(process.env.SMTP_PORT || '465', 10),
+            username: process.env.SMTP_USERNAME || '',
+            password: process.env.SMTP_PASSWORD || '',
             senderName: 'Nexus System Alert',
-            senderEmail: 'erpalerts@quickstor.net',
-            useSsl: true
+            senderEmail: process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USERNAME || '',
+            useSsl: process.env.SMTP_USE_SSL !== 'false'
         },
         availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'planning', 'suppliers', 'shipment'],
         roleMappings: {
@@ -2368,6 +2387,10 @@ const runThresholdAudit = async () => {
     // Live DB"). The on-read migration guard in readDb() still upgrades the live
     // DB's schema if it is behind CURRENT_SCHEMA_VERSION.
     const db = readDb();
+    // Snapshot taken before the audit mutates anything: the audit awaits e-mail sends,
+    // during which other requests may change the live DB. At the end only the audit's own
+    // deltas are merged into a fresh read instead of writing back this stale copy.
+    const auditSnapshot = JSON.parse(JSON.stringify({ orders: db.orders || [], notifications: db.notifications || [] }));
     const orders = db.orders || [];
     const notifications = db.notifications || [];
     const settings = resolveSettings(db);
@@ -2631,8 +2654,27 @@ const runThresholdAudit = async () => {
     }
 
     if (dbChanged) {
-        db.notifications = notifications;
-        writeDb(db, DB_PATH);
+        // Merge only the audit's own changes into a fresh copy of the DB (no lost update).
+        const fresh = readDb();
+        const snapById = new Map(auditSnapshot.orders.map(o => [o.id, o]));
+        for (const o of orders) {
+            const snap = snapById.get(o.id);
+            const target = (fresh.orders || []).find(x => x.id === o.id);
+            if (!snap || !target) continue;
+            for (const k of Object.keys(o)) {
+                if (k === 'logs') continue;
+                if (JSON.stringify(o[k]) !== JSON.stringify(snap[k])) target[k] = o[k];
+            }
+            const newLogs = (o.logs || []).slice((snap.logs || []).length);
+            if (newLogs.length) target.logs = [...(target.logs || []), ...newLogs];
+        }
+        const knownIds = new Set((fresh.notifications || []).map(n => n.id));
+        const snapIds = new Set(auditSnapshot.notifications.map(n => n.id));
+        fresh.notifications = fresh.notifications || [];
+        for (const n of notifications) {
+            if (!snapIds.has(n.id) && !knownIds.has(n.id)) fresh.notifications.push(n);
+        }
+        writeDb(fresh, DB_PATH);
     }
     } catch (err) {
         console.error('[Audit] Error in runThresholdAudit:', err);
@@ -3099,6 +3141,9 @@ const addToCollection = (col) => (req, res) => {
         }
     }
 
+    if (col === 'users' && !isAdminUser(req)) {
+        return res.status(403).json({ error: "Admin privileges are required to create users." });
+    }
     if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
 
     if (col === 'orders') {
@@ -3160,6 +3205,15 @@ const updateInCollection = (col) => (req, res) => {
     const oldItem = db[col][index];
     let updated = { ...oldItem, ...req.body };
 
+    if (col === 'users' && !isAdminUser(req)) {
+        // Non-admins may only edit their own record and may never change roles.
+        const caller = String(req.headers['x-user'] || '').trim().toLowerCase();
+        const isSelf = caller && String(oldItem.username || '').toLowerCase() === caller;
+        const rolesChanged = req.body.roles !== undefined && JSON.stringify(req.body.roles) !== JSON.stringify(oldItem.roles);
+        if (!isSelf || rolesChanged) {
+            return res.status(403).json({ error: "Admin privileges are required to modify users or roles." });
+        }
+    }
     if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
 
     // Encrypt sensitive settings before storing with preservation guards for empty fields
@@ -3295,6 +3349,9 @@ const deleteFromCollection = (col) => (req, res) => {
         }
     }
 
+    if (col === 'users' && !isAdminUser(req)) {
+        return res.status(403).json({ error: "Admin privileges are required to delete users." });
+    }
     db[col] = db[col].filter(it => it.id !== req.params.id);
     if (writeDb(db, getDbPath(req))) {
         if (col === 'users' || col === 'userGroups') {
@@ -6887,7 +6944,7 @@ app.post('/api/v1/login', (req, res) => {
     }
   }
 
-  const isFactory = username === 'factory' && (Date.now() - SERVER_START_TIME) < 300000 && password === FACTORY_PASS;
+  const isFactory = username === 'factory' && !!FACTORY_PASS && (Date.now() - SERVER_START_TIME) < 300000 && password === FACTORY_PASS;
   if (isFactory) {
     if (targetEnv !== 'live') return res.status(403).json({ error: "Factory emergency bypass is only permitted on Live ERP." });
     const factoryUser = (liveDb.users || []).find(u => u.username === 'factory') || { id: 'factory', username: 'factory', name: 'Factory Admin', roles: ['admin'], email: 'factory@nexus.local' };

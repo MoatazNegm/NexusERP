@@ -2,7 +2,7 @@
 
 - **Scenario id / name:** S07 / Negative and exception cases
 - **Role / user:** sales1, planner1, proc1, inv1, fin1, ship1, admin (password for all seed users: `Nexus#Test2026`)
-- **Total points:** 20 (1 point per step, 20 steps)
+- **Total points:** 22 (1 point per step, 22 steps)
 - **Preconditions:**
   - Clean seed.
   - Customer 'S07 Cust' and supplier 'S07 Supplier' exist.
@@ -33,3 +33,5 @@
 | 18 | Duplicate customer PO reference for the same customer (create a second order with PO-S07-001). | Documented rule: must be unique per customer. UI blocks it. (Known: raw API accepted the duplicate in the live run - log as defect if the UI also allows it.) | 1 |
 | 19 | Call POST /api/v1/orders/:id/dispatch-action on an unknown order id. | HTTP 404 {"error":"Order not found"}. | 1 |
 | 20 | Call DELETE /api/v1/orders/:id. | Route does not exist (404); permanent removal is only via action hard-delete-order (admin). | 1 |
+| 21 | As sales1 call POST /api/v1/users with roles [admin]. | HTTP 403 'Admin privileges are required to create users.' and no user is created (regression for privilege escalation fix). | 1 |
+| 22 | As sales1 call PUT /api/v1/users/:id with roles [admin] for any user, including sales1's own record. | HTTP 403 'Admin privileges are required to modify users or roles.' | 1 |

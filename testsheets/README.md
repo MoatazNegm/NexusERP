@@ -1,4 +1,4 @@
-# NexusERP test sheets (AI_testing)
+# NexusERP test sheets (AI_testing, app version v1.001_ai)
 
 Scenario sheets for the NexusERP app (branch NexusVSC + AI_testing). One Markdown file and one CSV per scenario, columns: Step No | Action | Expected success symptom | Points (1 per step).
 
@@ -10,10 +10,10 @@ Scenario sheets for the NexusERP app (branch NexusVSC + AI_testing). One Markdow
 | S04 | Manufacturing order: BoM, sourcing, production, delivery, payment | S04-manufacturing-order--bom--sourcing--production--delivery--payment.md / S04-manufacturing-order--bom--sourcing--production--delivery--payment.csv | 22 | 22 |
 | S05 | Inventory and stock reservation | S05-inventory-and-stock-reservation.md / S05-inventory-and-stock-reservation.csv | 15 | 15 |
 | S06 | Finance: payments, customer wallet, supplier payments, ledger | S06-finance--payments--customer-wallet--supplier-payments--ledger.md / S06-finance--payments--customer-wallet--supplier-payments--ledger.csv | 15 | 15 |
-| S07 | Negative and exception cases | S07-negative-and-exception-cases.md / S07-negative-and-exception-cases.csv | 20 | 20 |
-| S08 | Administration: API keys, sandbox isolation, settings | S08-administration--api-keys--sandbox-isolation--settings.md / S08-administration--api-keys--sandbox-isolation--settings.csv | 15 | 15 |
+| S07 | Negative and exception cases | S07-negative-and-exception-cases.md / S07-negative-and-exception-cases.csv | 22 | 22 |
+| S08 | Administration: API keys, sandbox isolation, settings | S08-administration--api-keys--sandbox-isolation--settings.md / S08-administration--api-keys--sandbox-isolation--settings.csv | 17 | 17 |
 | S09 | Reporting, search and history | S09-reporting--search-and-history.md / S09-reporting--search-and-history.csv | 15 | 15 |
-| | **Total** | | **170** | **170** |
+| | **Total** | | **174** | **174** |
 
 ## Running the app
 
@@ -33,10 +33,10 @@ bash testsheets/reset-testdata.sh
 
 ## Known application findings while preparing the sheets
 
-1. Lost update: the periodic audit job (every 60 s) awaits sendEmail and then writes back a stale copy of the database; with new-order alerts enabled it reverted a fully processed order to WAITING_SUPPLIERS (server.js ~2477). Seed disables alerts; S03 step 22 guards it.
+1. FIXED (1.001_ai): lost update in the periodic audit job; it now merges only its own deltas into a fresh read.
 2. POST /api/v1/inventory/adjust changes legacy `quantity`, not `quantityInStock` (log says 'from 0 to 0').
 3. API does not enforce unique customer name, unique SKU, unique supplier part number or unique customer PO ref (UI-only checks).
-4. Any caller can create an admin user: POST /api/v1/users with `x-user: sales1` and roles [admin] succeeded (identity is a trusted header).
+4. FIXED (1.001_ai): only admins can create/modify/delete users or change roles (identity is still a trusted x-user header). Hardcoded FACTORY_PASS and SMTP defaults removed: use env FACTORY_PASS, NEXUS_CIPHER_SECRET, SMTP_*.
 5. consume-factory-component reports 'Insufficient stock ... Available: 0' right after a procurement component was received.
 6. User guide payloads differ from the code (send-rfp-batch needs `components` + `rfpSupplierIds`; award needs `components[{id,unitCost}]`, `supplierId`; issue-po-batch needs `components` + `poNumber`; receive-component needs `compId` + `qty`; hub receipt needs `receipts[]`; shipping actions need `items[{itemId,qty}]`).
 7. Shipment module is OFF in the app default config (constants.tsx); the seed turns it on.
