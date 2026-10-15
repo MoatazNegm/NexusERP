@@ -1,0 +1,49 @@
+== toggle-acceptance
+HTTP 200 TECHNICAL_REVIEW None None
+   comp c_1792067589510_0_0 NEW None None
+== finalize-study
+HTTP 200 WAITING_SUPPLIERS None None
+   comp c_1792067589510_0_0 PENDING_OFFER None None
+== send-rfp-batch
+HTTP 200 WAITING_SUPPLIERS None None
+   comp c_1792067589510_0_0 RFP_SENT None None
+== award-tender-batch
+HTTP 200 WAITING_SUPPLIERS None None
+   comp c_1792067589510_0_0 AWARDED None None
+== issue-po-batch
+HTTP 200 WAITING_SUPPLIERS None None
+   comp c_1792067589510_0_0 ORDERED PO-S03-0001 None
+== receive-component
+HTTP 200 WAITING_SUPPLIERS None None
+   comp c_1792067589510_0_0 ORDERED PO-S03-0001 4
+== receive-component
+HTTP 400 None Cannot receive more than ordered (Left: 6) None
+== receive-component
+HTTP 200 IN_PRODUCT_HUB None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10
+== issue-invoice
+HTTP 200 INVOICED None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10
+== release-delivery
+HTTP 400 None Cannot dispatch 10 units of Heavy Duty Valve Assembly. Finance receipt required. Only 0 units are financially cleared. None
+== approve-dispatch-receipt
+HTTP 200 INVOICED None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10
+== release-delivery
+HTTP 200 HUB_RELEASED None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10
+== ship-items
+HTTP 200 HUB_RELEASED None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10
+== confirm-delivery
+HTTP 200 DELIVERED None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10
+== record-payment
+HTTP 200 DELIVERED None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10
+== record-payment
+HTTP 200 WAITING_GOVE None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10
+== attach-einvoice
+HTTP 200 FULFILLED None None
+   comp c_1792067589510_0_0 Manufactured PO-S03-0001 10

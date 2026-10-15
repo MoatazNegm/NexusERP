@@ -1,0 +1,19 @@
+# AI_testing: run NexusERP without building an image (uses local ubuntu:22.04 + host node).
+# Prereq on host: npm ci && npm run build (node_modules + dist in repo dir). Data in /home/erp/data.
+services:
+  nexuserp:
+    image: ubuntu:22.04
+    container_name: nexuserp
+    working_dir: /app
+    command: ["/node/bin/node", "server.js"]
+    environment:
+      PORT: "5005"
+      DB_PATH: /data/db.json
+      UPLOADS_PATH: /data/uploads
+      NODE_ENV: production
+    ports: ["5005:5005"]
+    volumes:
+      - /home/erp/NexusERP:/app
+      - /home/erp/data:/data
+      - /root/.nvm/versions/node/v20.20.2:/node:ro
+    restart: unless-stopped
