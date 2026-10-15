@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { AppConfig, HelpLink, User } from '../types';
+import { dataService } from '../services/dataService';
 
 interface HelpModuleProps {
   config: AppConfig;
@@ -41,6 +42,27 @@ export const HelpModule: React.FC<HelpModuleProps> = ({ config, currentUser }) =
         <div className="px-4 py-2 bg-blue-50 rounded-xl border border-blue-100 text-[10px] font-black uppercase text-blue-600 tracking-widest">
           <i className="fa-solid fa-circle-info mr-2"></i>
           {currentUser.name}
+        </div>
+      </div>
+
+      {/* RESTful API Documentation Banner */}
+      <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-[2.5rem] p-8 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 border border-indigo-900/50">
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-lg text-[10px] font-black uppercase tracking-wider border border-indigo-500/30">
+            <i className="fa-solid fa-code"></i> Developer RESTful API
+          </div>
+          <h3 className="text-lg font-black tracking-tight">NexusERP RESTful API User Guide</h3>
+          <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+            Full RESTful API specification covering every function, field, and button available in the Web UI: Orders, Technical Review, Sourcing &amp; RFPs, Inventory, Production, Shipping, Invoicing, and Customer Wallets. Includes sandbox isolation rules and live data access controls.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={() => dataService.get_user_guide('markdown', true)}
+            className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black uppercase tracking-wider rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2 cursor-pointer"
+          >
+            <i className="fa-solid fa-download"></i> Download User Guide (.md)
+          </button>
         </div>
       </div>
 

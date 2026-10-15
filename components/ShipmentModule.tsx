@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, User, CustomerOrderItem } from '../types';
-import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig } from '../utils';
-import html2canvas from 'html2canvas';
+import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import jsPDF from 'jspdf';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
@@ -167,10 +166,10 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
         setProcessingId(printingOrder.id);
         try {
             const element = deliveryNoteRef.current;
-            const canvas = await html2canvas(element, {
+            const canvas = await safeHtml2Canvas(element, {
                 scale: 2,
                 useCORS: true,
-                logging: true,
+                logging: false,
                 backgroundColor: '#ffffff'
             });
             const imgData = canvas.toDataURL('image/png');
@@ -333,7 +332,7 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                                             <td className="px-8 py-6 text-right">
                                                 {h.delivery.podFilePath ? (
                                                     <a
-                                                        href={h.delivery.podFilePath}
+                                                        href={h.delivery.podFilePath.startsWith('http') || h.delivery.podFilePath.startsWith('/') ? h.delivery.podFilePath : `/${h.delivery.podFilePath}`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
                                                         className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-xl font-black text-[9px] uppercase hover:bg-emerald-100 transition-all"
@@ -522,30 +521,30 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
                         </div>
 
                         {/* Receiver Info */}
-                        <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 mb-10 flex justify-between">
+                        <div className="p-6 rounded-2xl mb-10 flex justify-between" style={{ backgroundColor: '#f8fafc', border: '1px solid #f1f5f9' }}>
                             <div>
-                                <div className="text-[10px] font-black text-slate-400 uppercase mb-2" style={{ letterSpacing: '0px' }}>Deliver To</div>
-                                <div className="text-lg font-black text-slate-800" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{printingOrder.customerName}</div>
-                                <div className="text-sm font-medium text-slate-600 mt-1" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{printingOrder.customerReferenceNumber}</div>
+                                <div className="text-[10px] font-black uppercase mb-2" style={{ letterSpacing: '0px', color: '#94a3b8' }}>Deliver To</div>
+                                <div className="text-lg font-black" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal', color: '#1e293b' }}>{printingOrder.customerName}</div>
+                                <div className="text-sm font-medium mt-1" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal', color: '#475569' }}>{printingOrder.customerReferenceNumber}</div>
                             </div>
                             <div className="text-right">
-                                <div className="text-[10px] font-black text-slate-400 uppercase mb-2" style={{ letterSpacing: '0px' }}>Reference Documents</div>
-                                <div className="text-sm font-bold text-slate-600">PO Ref: {printingOrder.customerReferenceNumber}</div>
-                                <div className="text-sm font-bold text-slate-600">Inv Ref: {printingOrder.invoiceNumber || 'PENDING'}</div>
+                                <div className="text-[10px] font-black uppercase mb-2" style={{ letterSpacing: '0px', color: '#94a3b8' }}>Reference Documents</div>
+                                <div className="text-sm font-bold" style={{ color: '#475569' }}>PO Ref: {printingOrder.customerReferenceNumber}</div>
+                                <div className="text-sm font-bold" style={{ color: '#475569' }}>Inv Ref: {printingOrder.invoiceNumber || 'PENDING'}</div>
                             </div>
                         </div>
 
                         {/* Items Table */}
                         <div className="mb-16">
-                            <table className="w-full text-left">
-                                <thead className="bg-slate-900 text-white text-[10px] font-black uppercase">
-                                    <tr>
+                            <table className="w-full text-left" style={{ borderCollapse: 'collapse' }}>
+                                <thead style={{ backgroundColor: '#0f172a', color: '#ffffff' }}>
+                                    <tr style={{ fontSize: '10px', fontWeight: 900, textTransform: 'uppercase' }}>
                                         <th className="px-6 py-4 rounded-l-xl">Item Description</th>
                                         <th className="px-6 py-4 text-center">Unit</th>
                                         <th className="px-6 py-4 text-right rounded-r-xl">Delivered Qty</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
+                                <tbody>
                                     {printingOrder.items.map((item, idx) => {
                                         const qty = activeTab === 'pending'
                                             ? (item.dispatchedQty || 0) - (item.shippedQty || 0)
@@ -553,10 +552,10 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
 
                                         if (qty <= 0) return null;
                                         return (
-                                            <tr key={idx}>
-                                                <td className="px-6 py-6 font-bold text-slate-800" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>{item.description}</td>
-                                                <td className="px-6 py-6 text-center text-sm font-medium text-slate-500">{item.unit}</td>
-                                                <td className="px-6 py-6 text-right font-black text-slate-900">{qty}</td>
+                                            <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                <td className="px-6 py-6 font-bold" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal', color: '#1e293b' }}>{item.description}</td>
+                                                <td className="px-6 py-6 text-center text-sm font-medium" style={{ color: '#64748b' }}>{item.unit}</td>
+                                                <td className="px-6 py-6 text-right font-black" style={{ color: '#0f172a' }}>{qty}</td>
                                             </tr>
                                         );
                                     })}
@@ -566,22 +565,22 @@ export const ShipmentModule: React.FC<ShipmentModuleProps> = ({ config, refreshK
 
                         {/* Signatures */}
                         <div className="grid grid-cols-2 gap-12 mt-auto">
-                            <div className="border-t-2 border-slate-200 pt-4">
-                                <div className="text-[10px] font-black text-slate-400 uppercase mb-8" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>Issued By ({config.settings.companyName})</div>
+                            <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: '16px' }}>
+                                <div className="text-[10px] font-black uppercase mb-8" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal', color: '#94a3b8' }}>Issued By ({config.settings.companyName})</div>
                                 <div className="h-16"></div>
-                                <div className="text-xs font-bold text-slate-900 border-t border-dashed border-slate-300 pt-2 w-2/3">Authorized Signature & Date</div>
+                                <div className="text-xs font-bold pt-2 w-2/3" style={{ borderTop: '1px dashed #cbd5e1', color: '#0f172a' }}>Authorized Signature & Date</div>
                             </div>
-                            <div className="border-t-2 border-slate-200 pt-4">
-                                <div className="text-[10px] font-black text-slate-400 uppercase mb-8" style={{ letterSpacing: '0px' }}>Received By (Customer)</div>
-                                <div className="text-sm font-bold text-slate-800 mb-2">Name: __________________________</div>
-                                <div className="text-sm font-bold text-slate-800 mb-6">ID/Ref: __________________________</div>
+                            <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: '16px' }}>
+                                <div className="text-[10px] font-black uppercase mb-8" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal', color: '#94a3b8' }}>Received By (Customer)</div>
+                                <div className="text-sm font-bold mb-2" style={{ color: '#1e293b' }}>Name: __________________________</div>
+                                <div className="text-sm font-bold mb-6" style={{ color: '#1e293b' }}>ID/Ref: __________________________</div>
                                 <div className="h-4"></div>
-                                <div className="text-xs font-bold text-slate-900 border-t border-dashed border-slate-300 pt-2 w-2/3">Customer Signature & Date</div>
+                                <div className="text-xs font-bold pt-2 w-2/3" style={{ borderTop: '1px dashed #cbd5e1', color: '#0f172a' }}>Customer Signature & Date</div>
                             </div>
                         </div>
 
                         {/* Footer */}
-                        <div className="mt-12 text-center text-[10px] font-bold text-slate-300 uppercase" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal' }}>
+                        <div className="mt-12 text-center text-[10px] font-bold uppercase" style={{ letterSpacing: '0px', fontVariantLigatures: 'normal', color: '#cbd5e1' }}>
                             Thank you for your business • {config.settings.companyName}
                         </div>
                     </div>

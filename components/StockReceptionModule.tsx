@@ -277,8 +277,22 @@ export const StockReceptionModule: React.FC<StockReceptionModuleProps> = ({ curr
                       </button>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="font-black text-slate-800">{comp.description}</div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Quantity Expected: {comp.quantity} {comp.unit}</div>
+                      <div className="font-black text-slate-800 flex items-center gap-2">
+                        <span>{comp.description}</span>
+                        {comp.isExtension && (
+                          <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-purple-100 text-purple-800 border border-purple-200" title={`Amended / Extended PO (Original Qty: ${comp.originalPoQuantity || 'N/A'})`}>
+                            Amended PO Qty
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
+                        Quantity Expected: {Math.max(0, (comp.quantity || 0) - (comp.receivedQty || 0))} {comp.unit}
+                        {(comp.receivedQty || 0) > 0 && (
+                          <span className="text-emerald-600 font-bold ml-1">
+                            ({comp.receivedQty} already received of {comp.quantity})
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-xs font-bold text-slate-600 flex items-center gap-2">

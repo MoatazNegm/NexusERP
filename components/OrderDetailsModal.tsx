@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CustomerOrder, LogEntry, ManufacturingComponent, OrderStatus, AppConfig } from '../types';
-import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, getOrderPoType, getPoTypeConfig } from '../utils';
+import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -188,7 +187,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
     setTimeout(async () => {
       try {
         if (!invoiceTemplateRef.current) return;
-        const canvas = await html2canvas(invoiceTemplateRef.current, {
+        const canvas = await safeHtml2Canvas(invoiceTemplateRef.current, {
           scale: 2,
           useCORS: true,
           logging: false,

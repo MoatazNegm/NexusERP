@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import { PartHistory } from './PartHistory';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
-import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig } from '../utils';
+import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -1256,6 +1256,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const [pendingRollbackOrder, setPendingRollbackOrder] = useState<CustomerOrder | null>(null);
   const [rollbackIsBlanket, setRollbackIsBlanket] = useState<boolean>(false);
   const [allOrders, setAllOrders] = useState<CustomerOrder[]>([]);
+  const [supplierPayments, setSupplierPayments] = useState<any[]>([]);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'asc' });
 
   const isOrderBlanketType = (order: CustomerOrder): boolean => {
@@ -1271,8 +1272,13 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   useEffect(() => { fetchData(); }, [refreshKey]);
 
   const fetchData = async () => {
-    const [o, s] = await Promise.all([dataService.getOrders(), dataService.getSuppliers()]);
+    const [o, s, p] = await Promise.all([
+      dataService.getOrders(),
+      dataService.getSuppliers(),
+      dataService.getSupplierPayments()
+    ]);
     setAllOrders(o);
+    setSupplierPayments(p || []);
     const eligibleOrders = o.filter(order =>
       order.status !== OrderStatus.REJECTED &&
       order.status !== OrderStatus.FULFILLED &&
@@ -1282,6 +1288,98 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     setOrders(eligibleOrders);
     setSuppliers(s.filter(supp => !supp.isDeletedSupplier && supp.name.trim().toLowerCase() !== 'deleted suppliers' && supp.name.trim().toLowerCase() !== 'deleted suppleirs'));
   };
+
+  const poExtensionData = useMemo(() => {
+    if (activeAction?.type !== 'CANCEL_PO_BATCH') return null;
+    const compsList = multiComps && multiComps.length > 0 ? multiComps : (activeAction.comp ? [{ item: activeAction.item, comp: activeAction.comp, order: activeAction.order }] : []);
+    if (compsList.length === 0) return null;
+
+    let totalOrderedQty = 0;
+    let totalReceivedQty = 0;
+    let totalPaid = 0;
+    let totalGrossValue = 0;
+    let totalReceivedGross = 0;
+
+    const compIds = new Set(compsList.map(m => m.comp.id));
+    const compPaidMap: Record<string, number> = {};
+
+    (supplierPayments || []).forEach((sp: any) => {
+      (sp.allocations || []).forEach((alloc: any) => {
+        if (compIds.has(alloc.componentId)) {
+          totalPaid += (alloc.amount || 0);
+          compPaidMap[alloc.componentId] = (compPaidMap[alloc.componentId] || 0) + (alloc.amount || 0);
+        }
+      });
+      if ((!sp.allocations || sp.allocations.length === 0) && activeAction.order?.id && sp.orderId === activeAction.order.id && activeAction.comp?.poNumber && sp.poNumber === activeAction.comp.poNumber) {
+        totalPaid += (sp.amount || 0);
+      }
+    });
+
+    const itemsBreakdown = compsList.map(({ item, comp }) => {
+      const ordQty = comp.quantity || 0;
+      const recQty = comp.receivedQty || 0;
+      const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
+      const unitCost = comp.unitCost || 0;
+      const grossUnit = unitCost * (1 + (taxRate / 100));
+      const compPaid = compPaidMap[comp.id!] || 0;
+      const paidUnits = grossUnit > 0 ? (compPaid / grossUnit) : 0;
+
+      // Rule: newPoQty = Math.max(recQty, paidUnits)
+      const calculatedNewPoQty = Math.max(recQty, Math.round(paidUnits * 1000) / 1000);
+      const newPoQty = Math.min(ordQty, calculatedNewPoQty);
+      const leftoverQty = Math.max(0, ordQty - newPoQty);
+      const awaitingReceipt = Math.max(0, newPoQty - recQty);
+
+      totalOrderedQty += ordQty;
+      totalReceivedQty += recQty;
+      totalGrossValue += ordQty * grossUnit;
+      totalReceivedGross += recQty * grossUnit;
+
+      return {
+        comp,
+        item,
+        ordQty,
+        recQty,
+        unitCost,
+        grossUnit,
+        compPaid,
+        paidUnits: Math.round(paidUnits * 1000) / 1000,
+        newPoQty,
+        leftoverQty,
+        awaitingReceipt
+      };
+    });
+
+    const hasReceivedOrPaid = totalReceivedQty > 0 || totalPaid > 0.01;
+    const totalNewPoQty = itemsBreakdown.reduce((s, x) => s + x.newPoQty, 0);
+    const totalLeftoverQty = itemsBreakdown.reduce((s, x) => s + x.leftoverQty, 0);
+    const totalAwaitingReceipt = itemsBreakdown.reduce((s, x) => s + x.awaitingReceipt, 0);
+
+    let subcase: 'CASE_1' | 'SUBCASE_2_1' | 'SUBCASE_2_2' | 'SUBCASE_UNDERPAID' = 'CASE_1';
+    if (hasReceivedOrPaid) {
+      if (Math.abs(totalPaid - totalReceivedGross) < 1 || Math.abs(totalNewPoQty - totalReceivedQty) < 0.001) {
+        subcase = 'SUBCASE_2_1';
+      } else if (totalPaid > totalReceivedGross + 1) {
+        subcase = 'SUBCASE_2_2';
+      } else {
+        subcase = 'SUBCASE_UNDERPAID';
+      }
+    }
+
+    return {
+      hasReceivedOrPaid,
+      subcase,
+      totalOrderedQty,
+      totalReceivedQty,
+      totalPaid,
+      totalGrossValue,
+      totalReceivedGross,
+      totalNewPoQty,
+      totalLeftoverQty,
+      totalAwaitingReceipt,
+      itemsBreakdown
+    };
+  }, [activeAction, multiComps, supplierPayments]);
 
   const getOrderProjName = useCallback((ord: CustomerOrder): string => {
     if (ord.projectName && ord.projectName.trim() !== '') return ord.projectName.trim();
@@ -1749,8 +1847,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     if (!activeAction?.order || rfpCompSelection.length === 0 || !rfpTemplateRef.current) return;
     setIsDownloadingRfp(true);
     try {
-      const h2c = (await import('html2canvas')).default;
-      const canvas = await h2c(rfpTemplateRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+      const canvas = await safeHtml2Canvas(rfpTemplateRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
       const imgData = canvas.toDataURL('image/png');
       const { jsPDF } = await import('jspdf');
       const pdf = new jsPDF('p', 'mm', 'a4');
@@ -1783,8 +1880,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       if (!rfpTemplateRef.current) return;
       setIsDownloadingRfp(true);
       try {
-        const h2c = (await import('html2canvas')).default;
-        const canvas = await h2c(rfpTemplateRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
+        const canvas = await safeHtml2Canvas(rfpTemplateRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false });
         const imgData = canvas.toDataURL('image/png');
         const { jsPDF } = await import('jspdf');
         const pdf = new jsPDF('p', 'mm', 'a4');
@@ -1887,19 +1983,29 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
         await dataService.dispatchAction(order.id, 'issue-po-batch', payload);
       } else if (type === 'CANCEL_PO_BATCH') {
-        if (!resetReason.trim()) throw new Error("Cancellation reason is required");
+        if (!resetReason.trim()) throw new Error(t('procurement.cancelPO.reasonForCancellation') || "Cancellation reason is required");
 
         setIsActionLoading('bulk-cancel');
-        if (comp?.sendPoId) {
+        const isExt = Boolean(poExtensionData?.hasReceivedOrPaid);
+        if (isExt) {
+          await dataService.amendPoExtension(order.id, {
+            sendPoId: comp?.sendPoId,
+            selectedCompIds: selectedCompIds.length > 0 ? selectedCompIds : undefined,
+            itemId: item?.id,
+            compId: comp?.id,
+            reason: resetReason.trim()
+          });
+        } else if (comp?.sendPoId) {
           await dataService.dispatchAction(order.id, 'cancel-po-batch', {
             sendPoId: comp.sendPoId,
-            reason: resetReason.trim()
+            reason: resetReason.trim(),
+            isExtension: false
           });
         } else {
           // Fallback if sendPoId is absent: cancel components via cancel-component-po
           const targets = multiComps && multiComps.length > 0 ? multiComps : [{ item, comp }];
           for (const m of targets) {
-            await dataService.cancelComponentPo(order.id, m.item.id, m.comp.id!);
+            await dataService.cancelComponentPo(order.id, m.item.id, m.comp.id!, resetReason.trim(), false);
           }
         }
       } else if (type === 'REVERT_PO') {
@@ -3689,6 +3795,18 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       PO CANCELLED {c.cancelledPoNumber ? `(${c.cancelledPoNumber})` : ''}
                                     </span>
                                   )}
+                                  {c.isExtension && (
+                                    <span className="text-[9px] font-black text-purple-700 uppercase border border-purple-200 bg-purple-50 px-2 py-0.5 rounded ml-1" title={`Order Extension (Original PO Qty: ${c.originalPoQuantity || 'N/A'}). ${c.extensionReason || ''}`}>
+                                      <i className="fa-solid fa-code-branch mr-1"></i>
+                                      PO EXTENDED {c.originalPoQuantity ? `(ORIG: ${c.originalPoQuantity})` : ''}
+                                    </span>
+                                  )}
+                                  {c.splitFromExtensionPo && (
+                                    <span className="text-[9px] font-black text-indigo-700 uppercase border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded ml-1" title={`Split from extended PO ${c.splitFromExtensionPo} remainder to reprocure. ${c.splitReason || ''}`}>
+                                      <i className="fa-solid fa-arrows-split-up-and-left mr-1"></i>
+                                      REMAINDER FROM {c.splitFromExtensionPo}
+                                    </span>
+                                  )}
                                   {c.revertReason && c.status === 'AWARDED' && (
                                     <span className="text-[9px] font-black text-amber-700 uppercase border border-amber-200 bg-amber-50 px-2 py-0.5 rounded ml-1" title={`Reverted from PO: ${c.revertReason}`}>
                                       <i className="fa-solid fa-rotate-left mr-1"></i>
@@ -4538,67 +4656,239 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
                     {activeAction.type === 'CANCEL_PO_BATCH' && (
                       <div className="space-y-6">
-                        <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 flex justify-between items-center">
-                          <div>
-                            <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">{t('procurement.cancelPO.title')}</div>
-                            <div className="text-xl font-black text-rose-900 uppercase tracking-tight">
-                              {activeAction.comp?.poNumber || 'N/A'}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">{t('procurement.cancelPO.affectedComponents')}</div>
-                            <div className="text-lg font-black text-rose-600">{selectedCompIds.length}</div>
-                          </div>
-                        </div>
-
-                        {/* If any component has received items, show stock release advisory */}
-                        {multiComps.some(m => (m.comp.receivedQty || 0) > 0 || ['RECEIVED', 'RESERVED'].includes(m.comp.status || '')) && (
-                          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
-                            <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 text-sm">
-                              <i className="fa-solid fa-warehouse"></i>
-                            </div>
-                            <div>
-                              <div className="text-[10px] font-black text-emerald-800 uppercase tracking-widest mb-1">
-                                {t('procurement.component.received', 'Received')} Stock Transfer
+                        {poExtensionData?.hasReceivedOrPaid ? (
+                          /* CASE 2: Order Amendment / Extension Required */
+                          <div className="space-y-6">
+                            <div className="p-6 bg-purple-50 rounded-3xl border border-purple-200 flex justify-between items-center shadow-xs">
+                              <div>
+                                <div className="text-[10px] font-black text-purple-600 uppercase tracking-widest flex items-center gap-1.5">
+                                  <i className="fa-solid fa-code-branch text-purple-600"></i>
+                                  {t('procurement.cancelPO.extensionTitle')}
+                                </div>
+                                <div className="text-xl font-black text-purple-950 uppercase tracking-tight mt-0.5">
+                                  {activeAction.comp?.poNumber || 'N/A'}
+                                </div>
+                                <div className="text-[11px] font-bold text-purple-700 mt-1 max-w-md">
+                                  {t('procurement.cancelPO.extensionSubtitle')}
+                                </div>
                               </div>
-                              <p className="text-[11px] font-bold text-emerald-900 leading-relaxed">
-                                {t('procurement.cancelPO.stockReleaseNotice', 'Notice: Any items already received into inventory will automatically lose customer reservation and be transferred to general component stock for warehouse reuse.')}
+                              <div className="text-right flex flex-col items-end gap-1.5">
+                                <span className={`px-2.5 py-1 text-[9px] font-black rounded-lg uppercase tracking-wider ${
+                                  poExtensionData.subcase === 'SUBCASE_2_1'
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : poExtensionData.subcase === 'SUBCASE_2_2'
+                                    ? 'bg-indigo-100 text-indigo-800 border border-indigo-300'
+                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                                }`}>
+                                  {poExtensionData.subcase === 'SUBCASE_2_1'
+                                    ? t('procurement.cancelPO.subcase21Badge')
+                                    : poExtensionData.subcase === 'SUBCASE_2_2'
+                                    ? t('procurement.cancelPO.subcase22Badge')
+                                    : t('procurement.cancelPO.subcaseUnderpaidBadge')}
+                                </span>
+                                <span className="text-[10px] font-black text-purple-600">
+                                  {selectedCompIds.length} {t('procurement.cancelPO.affectedComponents')}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Subcase diagnostic callout */}
+                            <div className={`p-4 rounded-2xl border flex items-start gap-3 ${
+                              poExtensionData.subcase === 'SUBCASE_2_1'
+                                ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
+                                : poExtensionData.subcase === 'SUBCASE_2_2'
+                                ? 'bg-indigo-50/80 border-indigo-200 text-indigo-950'
+                                : 'bg-amber-50/80 border-amber-200 text-amber-950'
+                            }`}>
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 text-sm ${
+                                poExtensionData.subcase === 'SUBCASE_2_1'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : poExtensionData.subcase === 'SUBCASE_2_2'
+                                  ? 'bg-indigo-100 text-indigo-700'
+                                  : 'bg-amber-100 text-amber-700'
+                              }`}>
+                                <i className={`fa-solid ${
+                                  poExtensionData.subcase === 'SUBCASE_2_1'
+                                    ? 'fa-circle-check'
+                                    : poExtensionData.subcase === 'SUBCASE_2_2'
+                                    ? 'fa-hand-holding-dollar'
+                                    : 'fa-triangle-exclamation'
+                                }`}></i>
+                              </div>
+                              <div className="flex-1">
+                                <div className="text-[10px] font-black uppercase tracking-wider mb-0.5">
+                                  {poExtensionData.subcase === 'SUBCASE_2_1'
+                                    ? t('procurement.cancelPO.subcase21Badge')
+                                    : poExtensionData.subcase === 'SUBCASE_2_2'
+                                    ? t('procurement.cancelPO.subcase22Badge')
+                                    : t('procurement.cancelPO.subcaseUnderpaidBadge')}
+                                </div>
+                                <p className="text-[11px] font-bold leading-relaxed">
+                                  {poExtensionData.subcase === 'SUBCASE_2_1'
+                                    ? t('procurement.cancelPO.subcase21Desc')
+                                    : poExtensionData.subcase === 'SUBCASE_2_2'
+                                    ? t('procurement.cancelPO.subcase22Desc')
+                                    : t('procurement.cancelPO.subcaseUnderpaidDesc')}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* KPI Metrics Summary */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                              <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl">
+                                <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{t('procurement.cancelPO.orderedQty')}</div>
+                                <div className="text-base font-black text-slate-800 mt-0.5">{poExtensionData.totalOrderedQty}</div>
+                              </div>
+                              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl">
+                                <div className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">{t('procurement.cancelPO.receivedQty')}</div>
+                                <div className="text-base font-black text-emerald-800 mt-0.5">{poExtensionData.totalReceivedQty}</div>
+                              </div>
+                              <div className="p-3 bg-purple-50 border border-purple-200 rounded-2xl">
+                                <div className="text-[9px] font-black text-purple-600 uppercase tracking-widest">{t('procurement.cancelPO.newPoQty')}</div>
+                                <div className="text-base font-black text-purple-900 mt-0.5">{poExtensionData.totalNewPoQty}</div>
+                              </div>
+                              <div className="p-3 bg-blue-50 border border-blue-200 rounded-2xl">
+                                <div className="text-[9px] font-black text-blue-600 uppercase tracking-widest">{t('procurement.cancelPO.reprocureQty')}</div>
+                                <div className="text-base font-black text-blue-900 mt-0.5">{poExtensionData.totalLeftoverQty}</div>
+                              </div>
+                            </div>
+
+                            {/* Awaiting receipt banner if applicable */}
+                            {poExtensionData.totalAwaitingReceipt > 0 && (
+                              <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-2xl flex items-center justify-between text-indigo-900">
+                                <div className="flex items-center gap-2">
+                                  <i className="fa-solid fa-boxes-packing text-indigo-600"></i>
+                                  <span className="text-[11px] font-black uppercase tracking-tight">
+                                    {t('procurement.cancelPO.awaitingReceiptQty')}: {poExtensionData.totalAwaitingReceipt} units already paid for
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-bold text-indigo-600 bg-white/80 px-2 py-0.5 rounded-md border border-indigo-200">
+                                  Tracked in Stock Reception & Finance
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Detailed Items Breakdown Table */}
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.cancelPO.affectedComponents')}</label>
+                              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-2xs max-h-48 custom-scrollbar">
+                                <table className="w-full text-left border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-50 border-b border-slate-200 text-[9px] font-black text-slate-500 uppercase tracking-wider">
+                                      <th className="p-2.5">Component</th>
+                                      <th className="p-2.5 text-center">{t('procurement.cancelPO.orderedQty')}</th>
+                                      <th className="p-2.5 text-center">{t('procurement.cancelPO.receivedQty')}</th>
+                                      <th className="p-2.5 text-center">{t('procurement.cancelPO.paidUnits')}</th>
+                                      <th className="p-2.5 text-center text-purple-700 bg-purple-50/50">{t('procurement.cancelPO.newPoQty')}</th>
+                                      <th className="p-2.5 text-center text-blue-700">{t('procurement.cancelPO.reprocureQty')}</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100 text-[11px] font-bold text-slate-700">
+                                    {poExtensionData.itemsBreakdown.map(item => (
+                                      <tr key={item.comp.id} className="hover:bg-slate-50/50">
+                                        <td className="p-2.5">
+                                          <div className="font-black text-slate-900 uppercase text-[10px]">{item.comp.componentNumber}</div>
+                                          <div className="text-slate-500 text-[10px] truncate max-w-[200px]">{item.comp.description}</div>
+                                        </td>
+                                        <td className="p-2.5 text-center font-mono">{item.ordQty} {item.comp.unit}</td>
+                                        <td className="p-2.5 text-center font-mono text-emerald-600">{item.recQty}</td>
+                                        <td className="p-2.5 text-center font-mono text-indigo-600">{item.paidUnits}</td>
+                                        <td className="p-2.5 text-center font-mono font-black text-purple-700 bg-purple-50/30">
+                                          {item.newPoQty} {item.comp.unit}
+                                          {item.awaitingReceipt > 0 && (
+                                            <div className="text-[9px] text-indigo-600 font-bold">({item.awaitingReceipt} in transit)</div>
+                                          )}
+                                        </td>
+                                        <td className="p-2.5 text-center font-mono font-black text-blue-600">
+                                          {item.leftoverQty > 0 ? `${item.leftoverQty} ${item.comp.unit}` : '—'}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+
+                            {/* Mandatory Reason for Order Extension */}
+                            <div className="p-6 bg-purple-50 rounded-3xl border border-purple-100 space-y-3">
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] font-black text-purple-700 uppercase">
+                                  {t('procurement.cancelPO.reasonForExtension', 'Reason for Order Extension / Amendment')}
+                                </label>
+                                <textarea
+                                  className="w-full p-4 bg-white border border-purple-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-purple-100 placeholder:text-slate-300"
+                                  placeholder="e.g. Supplier delivered partial goods, adjusting PO to settled/paid amount..."
+                                  rows={3}
+                                  value={resetReason}
+                                  onChange={e => setResetReason(e.target.value)}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          /* CASE 1: Direct Cancellation */
+                          <div className="space-y-6">
+                            <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 flex justify-between items-center">
+                              <div>
+                                <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">{t('procurement.cancelPO.title')}</div>
+                                <div className="text-xl font-black text-rose-900 uppercase tracking-tight">
+                                  {activeAction.comp?.poNumber || 'N/A'}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">{t('procurement.cancelPO.affectedComponents')}</div>
+                                <div className="text-lg font-black text-rose-600">{selectedCompIds.length}</div>
+                              </div>
+                            </div>
+
+                            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
+                              <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 text-sm">
+                                <i className="fa-solid fa-check"></i>
+                              </div>
+                              <div>
+                                <div className="text-[10px] font-black text-emerald-800 uppercase tracking-widest mb-1">
+                                  Direct Cancellation Permitted
+                                </div>
+                                <p className="text-[11px] font-bold text-emerald-900 leading-relaxed">
+                                  {t('procurement.cancelPO.case1Notice')}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-3">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.cancelPO.affectedComponents')}</label>
+                              <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1 custom-scrollbar">
+                                {(multiComps.length > 0 ? multiComps : (activeAction.comp ? [{ comp: activeAction.comp }] : [])).map(({ comp: mc }) => (
+                                  <div key={mc.id} className="p-3 bg-white border border-rose-100 rounded-xl flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-xs">
+                                      <i className="fa-solid fa-ban"></i>
+                                    </div>
+                                    <div className="flex flex-col">
+                                      <span className="text-[10px] font-black uppercase tracking-tight text-slate-400">{mc.componentNumber}</span>
+                                      <span className="text-[11px] font-black uppercase tracking-tight text-slate-700">{mc.description}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
+                              <p className="text-[11px] text-rose-800 font-black leading-relaxed uppercase">
+                                {t('procurement.cancelPO.strategicRollback')}
                               </p>
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] font-black text-rose-400 uppercase">{t('procurement.cancelPO.reasonForCancellation')}</label>
+                                <textarea
+                                  className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100 placeholder:text-slate-300"
+                                  placeholder="e.g. Supplier stock issue, project change, incorrect price..."
+                                  rows={3}
+                                  value={resetReason}
+                                  onChange={e => setResetReason(e.target.value)}
+                                />
+                              </div>
                             </div>
                           </div>
                         )}
-
-                        <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t('procurement.cancelPO.affectedComponents')}</label>
-                          <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto p-1 custom-scrollbar">
-                            {multiComps.map(({ comp: mc }) => (
-                              <div key={mc.id} className="p-3 bg-white border border-rose-100 rounded-xl flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-xs">
-                                  <i className="fa-solid fa-ban"></i>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-[10px] font-black uppercase tracking-tight text-slate-400">{mc.componentNumber}</span>
-                                  <span className="text-[11px] font-black uppercase tracking-tight text-slate-700">{mc.description}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="p-6 bg-rose-50 rounded-3xl border border-rose-100 space-y-4">
-                          <p className="text-[11px] text-rose-800 font-black leading-relaxed uppercase">
-                            {t('procurement.cancelPO.strategicRollback')}
-                          </p>
-                          <div className="space-y-1.5">
-                            <label className="text-[9px] font-black text-rose-400 uppercase">{t('procurement.cancelPO.reasonForCancellation')}</label>
-                            <textarea
-                              className="w-full p-4 bg-white border border-rose-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-rose-100 placeholder:text-slate-300"
-                              placeholder="e.g. Supplier stock issue, project change, incorrect price..."
-                              rows={3}
-                              value={resetReason} onChange={e => setResetReason(e.target.value)}
-                            />
-                          </div>
-                        </div>
                       </div>
                     )}
 
@@ -4869,11 +5159,30 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     <button
                       disabled={isCommitProcurementDisabled}
                       onClick={handleExecuteAction}
-                      className={`flex-[2] py-3.5 rounded-xl font-black text-[10px] uppercase shadow-md transition-all flex items-center justify-center gap-2 ${isCommitProcurementDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH' ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100' : activeAction?.type === 'REVERT_PO' || activeAction?.type === 'REVERT_TO_PENDING' ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100' : activeAction?.type === 'REVIVE_CONTRACT' ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
-                        }`}
+                      className={`flex-[2] py-3.5 rounded-xl font-black text-[10px] uppercase shadow-md transition-all flex items-center justify-center gap-2 ${
+                        isCommitProcurementDisabled
+                          ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
+                          : activeAction?.type === 'CANCEL_PO_BATCH' && poExtensionData?.hasReceivedOrPaid
+                          ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-purple-100'
+                          : activeAction?.type === 'RESET' || activeAction?.type === 'ORDER_ROLLBACK' || activeAction?.type === 'CANCEL_PO_BATCH'
+                          ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100'
+                          : activeAction?.type === 'REVERT_PO' || activeAction?.type === 'REVERT_TO_PENDING'
+                          ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100'
+                          : activeAction?.type === 'REVIVE_CONTRACT'
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100'
+                          : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
+                      }`}
                     >
-                      {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-check-double"></i>}
-                      {activeAction.type === 'RFP' ? t('procurement.rfp.broadcastRfp') : activeAction.type === 'AWARD' ? t('procurement.award.confirmAward') : activeAction.type === 'RESET' ? t('procurement.reset.confirmReset') : activeAction.type === 'ORDER_ROLLBACK' ? t('procurement.rollback.executeRollback') : activeAction.type === 'CANCEL_PO_BATCH' ? t('procurement.cancelPO.confirmCancellation') : activeAction.type === 'REVERT_PO' ? t('procurement.revertPO.confirmRevert') : activeAction.type === 'REVERT_TO_PENDING' ? t('procurement.revertToPending.confirmRevertPending') : activeAction.type === 'REVIVE_CONTRACT' ? t('procurement.revive.reviveContract') : t('procurement.commitProcurement')}
+                      {isActionLoading ? <i className="fa-solid fa-spinner fa-spin"></i> : activeAction.type === 'CANCEL_PO_BATCH' && poExtensionData?.hasReceivedOrPaid ? <i className="fa-solid fa-code-branch"></i> : <i className="fa-solid fa-check-double"></i>}
+                      {activeAction.type === 'RFP' ? t('procurement.rfp.broadcastRfp') :
+                       activeAction.type === 'AWARD' ? t('procurement.award.confirmAward') :
+                       activeAction.type === 'RESET' ? t('procurement.reset.confirmReset') :
+                       activeAction.type === 'ORDER_ROLLBACK' ? t('procurement.rollback.executeRollback') :
+                       activeAction.type === 'CANCEL_PO_BATCH' ? (poExtensionData?.hasReceivedOrPaid ? (t('procurement.cancelPO.approveExtension') || 'Approve Order Extension') : (t('procurement.cancelPO.confirmCancellation') || 'Confirm Cancellation')) :
+                       activeAction.type === 'REVERT_PO' ? t('procurement.revertPO.confirmRevert') :
+                       activeAction.type === 'REVERT_TO_PENDING' ? t('procurement.revertToPending.confirmRevertPending') :
+                       activeAction.type === 'REVIVE_CONTRACT' ? t('procurement.revive.reviveContract') :
+                       t('procurement.commitProcurement')}
                     </button>
                   </div>
                 </div>

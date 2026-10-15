@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus, CustomerOrderItem, ManufacturingComponent, CostSheetRecord } from '../types';
-import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig } from '../utils';
+import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { jsPDF } from 'jspdf';
@@ -1716,6 +1716,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       isOverpaid: boolean;
       isSettled: boolean;
       payments: any[];
+      isExtension?: boolean;
+      paidUnreceivedQty?: number;
+      paidUnreceivedValue?: number;
     }>();
 
     (orders || []).forEach(o => {
@@ -1760,7 +1763,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               balanceDue: 0,
               isOverpaid: false,
               isSettled: false,
-              payments: []
+              payments: [],
+              isExtension: false,
+              paidUnreceivedQty: 0,
+              paidUnreceivedValue: 0
             });
           }
 
@@ -1835,6 +1841,33 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       po.isSettled = po.grossTotal > 0 && po.paidAmount >= po.grossTotal - 0.05;
       po.isOverpaid = po.paidAmount > po.grossTotal + 0.05;
       po.payments = matchedPayments;
+
+      // 3. PO Extension & Paid-Unreceived Qty tracking
+      po.isExtension = po.components.some((c: any) => c.isExtension);
+
+      // Compute allocated paid amount and paid-unreceived qty for each component
+      po.components.forEach((c: any) => {
+        let compPaid = 0;
+        (matchedPayments || []).forEach(sp => {
+          (sp.allocations || []).forEach((a: any) => {
+            if (a.componentId === c.id) compPaid += (a.amount || 0);
+          });
+        });
+        if (compPaid === 0 && po.components.length === 1) {
+          compPaid = po.paidAmount;
+        }
+        c.allocatedPaidAmount = Math.round(compPaid * 100) / 100;
+        const grossUnitCost = (c.unitCost || 0) * (1 + ((c.taxRate !== undefined ? c.taxRate : 14) / 100));
+        const paidUnits = grossUnitCost > 0 ? (compPaid / grossUnitCost) : 0;
+        c.paidUnits = Math.round(paidUnits * 1000) / 1000;
+        const recQty = c.receivedQty || 0;
+        const compPaidUnrecQty = Math.max(0, Math.round((c.paidUnits - recQty) * 1000) / 1000);
+        c.paidUnreceivedQty = compPaidUnrecQty;
+        c.paidUnreceivedValue = Math.round(compPaidUnrecQty * grossUnitCost * 100) / 100;
+      });
+
+      po.paidUnreceivedQty = Math.round(po.components.reduce((sum: number, c: any) => sum + (c.paidUnreceivedQty || 0), 0) * 1000) / 1000;
+      po.paidUnreceivedValue = Math.round(po.components.reduce((sum: number, c: any) => sum + (c.paidUnreceivedValue || 0), 0) * 100) / 100;
 
       return po;
     }).sort((a, b) => b.orderNumber.localeCompare(a.orderNumber));
@@ -2700,104 +2733,6 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [printOrder, setPrintOrder] = useState<CustomerOrder | null>(null);
   const printOrderRef = React.useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
-
-  // html2canvas v1 does not support modern CSS color functions (oklch/oklab/lch/lab/color)
-  // which Tailwind CSS 4 uses by default.
-  // safeHtml2Canvas wraps html2canvas:
-  // 1. Proxies window.getComputedStyle and the cloned iframe's getComputedStyle during capture
-  // 2. Converts any oklch(...) to valid rgba(...) via Canvas 2D 8-bit rasterization (getImageData)
-  // 3. Cleanly restores window.getComputedStyle in finally
-  const safeHtml2Canvas = async (
-    element: HTMLElement,
-    options: any = {}
-  ): Promise<HTMLCanvasElement> => {
-    let cvs: HTMLCanvasElement | null = null;
-    let ctx: CanvasRenderingContext2D | null = null;
-    try {
-      cvs = document.createElement('canvas');
-      cvs.width = 1;
-      cvs.height = 1;
-      ctx = cvs.getContext('2d', { willReadFrequently: true });
-    } catch {}
-
-    const oklchToRgb = (str: string): string => {
-      if (!str || typeof str !== 'string') return str;
-      if (!str.includes('oklch') && !str.includes('oklab') && !str.includes('lch') && !str.includes('lab') && !str.includes('color(')) {
-        return str;
-      }
-      return str.replace(
-        /oklch\([^)]+\)|oklab\([^)]+\)|lch\([^)]+\)|lab\([^)]+\)|color\([^)]+\)/gi,
-        (match) => {
-          try {
-            if (!ctx) return match;
-            ctx.clearRect(0, 0, 1, 1);
-            ctx.fillStyle = match;
-            ctx.fillRect(0, 0, 1, 1);
-            const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-            return `rgba(${r},${g},${b},${a / 255})`;
-          } catch {
-            return match;
-          }
-        }
-      );
-    };
-
-    const createStyleProxy = (origGetComputedStyle: typeof window.getComputedStyle, targetWindow: Window) => {
-      return function(el: Element, pseudo?: string | null) {
-        const cs = origGetComputedStyle.call(targetWindow, el, pseudo);
-        return new Proxy(cs, {
-          get(target: any, prop: string | symbol) {
-            // Never allow letter-spacing on Arabic text (prevents html2canvas from splitting cursive Arabic letters)
-            if (prop === 'letterSpacing') {
-              if (el && el.textContent && /[\u0600-\u06FF]/.test(el.textContent)) {
-                return '0px';
-              }
-            }
-            if (prop === 'getPropertyValue') {
-              return function(property: string) {
-                if (property === 'letter-spacing' && el && el.textContent && /[\u0600-\u06FF]/.test(el.textContent)) {
-                  return '0px';
-                }
-                const res = target.getPropertyValue(property);
-                return typeof res === 'string' ? oklchToRgb(res) : res;
-              };
-            }
-            const val = target[prop];
-            if (typeof val === 'string') {
-              return oklchToRgb(val);
-            }
-            if (typeof val === 'function') {
-              return val.bind(target);
-            }
-            return val;
-          }
-        });
-      };
-    };
-
-    const origWinGetComputedStyle = window.getComputedStyle;
-    window.getComputedStyle = createStyleProxy(origWinGetComputedStyle, window);
-
-    const userOnClone = options.onclone;
-
-    try {
-      return await html2canvas(element, {
-        ...options,
-        onclone: (clonedDoc: Document, el: HTMLElement) => {
-          try {
-            const clonedWin = clonedDoc.defaultView || window;
-            clonedWin.getComputedStyle = createStyleProxy(clonedWin.getComputedStyle, clonedWin);
-          } catch {}
-
-          if (typeof userOnClone === 'function') {
-            userOnClone(clonedDoc, el);
-          }
-        }
-      });
-    } finally {
-      window.getComputedStyle = origWinGetComputedStyle;
-    }
-  };
 
   const handleDownloadInvoice = async (order: CustomerOrder) => {
     setPrintOrder(order);
@@ -4591,9 +4526,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
                               {/* Supplier PO # */}
                               <td className="px-5 py-4">
-                                <div className="inline-flex items-center gap-1.5 font-mono text-xs font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                                  <i className="fa-solid fa-file-contract text-[10px]"></i>
-                                  <span>{po.poNumber}</span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <div className="inline-flex items-center gap-1.5 font-mono text-xs font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                                    <i className="fa-solid fa-file-contract text-[10px]"></i>
+                                    <span>{po.poNumber}</span>
+                                  </div>
+                                  {po.isExtension && (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-purple-50 text-purple-700 border border-purple-200" title={language === 'ar' ? 'تم تمديد وتعديل أمر الشراء' : 'Amended / Extended PO'}>
+                                      <i className="fa-solid fa-code-branch text-[7px]"></i>
+                                      <span>{language === 'ar' ? 'معدل / ملحق' : 'Amended / Ext'}</span>
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-xs font-bold text-slate-700 mt-1 flex items-center gap-1">
                                   <i className="fa-solid fa-truck text-[9px] text-slate-400"></i>
@@ -4647,6 +4590,14 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                     <div className="text-[8px] font-mono text-slate-400 mt-0.5">
                                       0 / {po.totalOrderedQty.toLocaleString()} {language === 'ar' ? 'وحدة' : 'units'}
                                     </div>
+                                  </div>
+                                )}
+                                {po.paidUnreceivedQty > 0 && (
+                                  <div className="mt-1">
+                                    <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-indigo-50 text-indigo-700 border border-indigo-200 inline-flex items-center gap-1 shadow-2xs font-mono" title={`${po.paidUnreceivedQty} units paid for but not yet received into stock`}>
+                                      <i className="fa-solid fa-boxes-packing text-indigo-600"></i>
+                                      <span>{po.paidUnreceivedQty.toLocaleString()} {language === 'ar' ? 'مدفوع لم يستلم' : 'Paid & Unreceived'}</span>
+                                    </span>
                                   </div>
                                 )}
                               </td>
@@ -4734,7 +4685,19 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                           return (
                                             <tr key={c.id || cIdx} className="hover:bg-slate-50/70 transition-colors">
                                               <td className="px-5 py-3">
-                                                <div className="font-black text-slate-800">{c.description}</div>
+                                                <div className="font-black text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                                  <span>{c.description}</span>
+                                                  {c.isExtension && (
+                                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-purple-100 text-purple-800 border border-purple-200" title={`Amended / Extended PO (Original Qty: ${c.originalPoQuantity || 'N/A'})`}>
+                                                      {language === 'ar' ? 'ملحق' : 'Ext'} {c.originalPoQuantity ? `(${c.originalPoQuantity})` : ''}
+                                                    </span>
+                                                  )}
+                                                  {c.paidUnreceivedQty > 0 && (
+                                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-indigo-100 text-indigo-800 border border-indigo-200 font-mono" title={`${c.paidUnreceivedQty} units paid but unreceived`}>
+                                                      {c.paidUnreceivedQty} {language === 'ar' ? 'مدفوع غير مستلم' : 'Paid Unreceived'}
+                                                    </span>
+                                                  )}
+                                                </div>
                                                 {c.status && (
                                                   <span className="text-[8px] font-mono uppercase text-slate-400 tracking-wider">
                                                     {language === 'ar' ? 'الحالة:' : 'Status:'} {c.status}
@@ -5399,6 +5362,29 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       </div>
                     </div>
                   </div>
+
+                  {supplierPoPaymentModal.po.isExtension && (
+                    <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex items-center gap-2 text-purple-900 text-xs">
+                      <i className="fa-solid fa-code-branch text-purple-600"></i>
+                      <span className="font-bold">
+                        {language === 'ar' ? 'أمر الشراء هذا ملحق/معدل لتسوية الكميات المستلمة أو المسددة.' : 'This PO was amended / extended to reconcile received or paid quantities.'}
+                      </span>
+                    </div>
+                  )}
+
+                  {supplierPoPaymentModal.po.paidUnreceivedQty > 0 && (
+                    <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between text-indigo-900 text-xs">
+                      <div className="flex items-center gap-2">
+                        <i className="fa-solid fa-boxes-packing text-indigo-600"></i>
+                        <span className="font-bold">
+                          {language === 'ar' ? `يوجد ${supplierPoPaymentModal.po.paidUnreceivedQty} وحدة مدفوعة في انتظار استلامها بالمخزن.` : `${supplierPoPaymentModal.po.paidUnreceivedQty} units of this PO were paid for and are awaiting receipt into stock.`}
+                        </span>
+                      </div>
+                      <span className="font-mono font-black text-indigo-700">
+                        {supplierPoPaymentModal.po.paidUnreceivedValue.toLocaleString()} {language === 'ar' ? 'ج.م' : 'L.E.'}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Payment Amount Input */}
                   <div>

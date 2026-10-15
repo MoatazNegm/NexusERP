@@ -572,8 +572,12 @@ class DataService {
     return this.dispatchAction(orderId, 'receive-component', { itemId, compId, qty });
   }
 
-  async cancelComponentPo(orderId: string, itemId: string, compId: string) {
-    return this.dispatchAction(orderId, 'cancel-component-po', { itemId, compId });
+  async cancelComponentPo(orderId: string, itemId: string, compId: string, reason?: string, isExtension?: boolean) {
+    return this.dispatchAction(orderId, 'cancel-component-po', { itemId, compId, reason, isExtension });
+  }
+
+  async amendPoExtension(orderId: string, payload: { sendPoId?: string; itemId?: string; compId?: string; reason: string; selectedCompIds?: string[] }) {
+    return this.dispatchAction(orderId, 'amend-po-extension', payload);
   }
 
   async startProduction(id: string) {
@@ -855,13 +859,41 @@ class DataService {
 
   // --- API KEYS (ERP Test Tool machine authentication) ---
   async getApiKeys(): Promise<ApiKey[]> { return this.get<ApiKey>('api-keys'); }
-  async createApiKey(payload: { name: string; username?: string }): Promise<ApiKey> {
+  async createApiKey(payload: { name: string; username?: string; allowLive?: boolean }): Promise<ApiKey> {
     return this.post<ApiKey>('api-keys', payload);
   }
-  async updateApiKey(id: string, updates: Partial<Pick<ApiKey, 'name' | 'enabled'>>): Promise<ApiKey> {
+  async updateApiKey(id: string, updates: Partial<Pick<ApiKey, 'name' | 'enabled' | 'allowLive'>>): Promise<ApiKey> {
     return this.put<ApiKey>('api-keys', id, updates);
   }
   async deleteApiKey(id: string) { return this.delete('api-keys', id); }
+
+  // --- RESTFUL API USER GUIDE ---
+  async get_user_guide(format: 'markdown' | 'json' | 'text' = 'markdown', download: boolean = false): Promise<any> {
+    const url = `${BACKEND_URL}/api/v1/user-guide?format=${format}${download ? '&download=true' : ''}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: this.getHeaders()
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch API user guide: ${res.statusText}`);
+    }
+    if (download && typeof window !== 'undefined') {
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = format === 'json' ? 'NexusERP_RESTful_API_User_Guide.json' : 'NexusERP_RESTful_API_User_Guide.md';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      return { success: true, downloaded: true };
+    }
+    if (format === 'json') {
+      return res.json();
+    }
+    return res.text();
+  }
 
 
 

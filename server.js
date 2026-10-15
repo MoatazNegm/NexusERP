@@ -13,6 +13,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const archiver = require('archiver');
 const unzipper = require('unzipper');
+import { API_USER_GUIDE_MARKDOWN, API_USER_GUIDE_JSON, getUserGuideMarkdown, getUserGuideJson } from './api_user_guide.js';
 import * as XLSX from 'xlsx';
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -131,14 +132,25 @@ const isStockOrder = (order) => {
 };
 
 // --- MULTER CONFIG ---
-// Each storage is request-scoped: in sandbox mode (req.sandboxOwner set by
-// the multi-tenant middleware above), files land under
-// uploads/sandbox/<owner>/<subdir>/ instead of uploads/<subdir>/.
+// All uploaded files land directly under UPLOADS_BASE/<subdir>/ (e.g. uploads/pod/,
+// uploads/cost_sheets/, uploads/einvoices/) so that all files across the entire app
+// reside in the same unified storage area and can be backed up together.
 const resolveUploadDir = (req, subDir) => {
-    const base = req.sandboxOwner ? getSandboxUploadsPath(req.sandboxOwner) : UPLOADS_BASE;
-    const dir = path.join(base, subDir);
+    const dir = path.join(UPLOADS_BASE, subDir);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     return dir;
+};
+
+const mirrorToSandboxIfApplicable = (req, subDir, filePath) => {
+    if (req.sandboxOwner) {
+        try {
+            const sbDir = path.join(getSandboxUploadsPath(req.sandboxOwner), subDir);
+            if (!fs.existsSync(sbDir)) fs.mkdirSync(sbDir, { recursive: true });
+            fs.copyFileSync(filePath, path.join(sbDir, path.basename(filePath)));
+        } catch (mirrorErr) {
+            console.warn(`[Upload ${subDir}] Sandbox mirror warning:`, mirrorErr.message);
+        }
+    }
 };
 
 const podStorage = multer.diskStorage({
@@ -2648,17 +2660,33 @@ app.use(bodyParser.json({ limit: '50mb' }));
 //     directly will silently deny every live caller. This is a hard rule;
 //     see `isAdminUser` for the implementation.
 app.use((req, res, next) => {
-    const apiKeyHeader = String(req.headers['x-api-key'] || '').trim();
+    let apiKeyHeader = String(req.headers['x-api-key'] || '').trim();
+    if (!apiKeyHeader && req.headers['authorization']) {
+        const authHdr = String(req.headers['authorization']).trim();
+        if (authHdr.toLowerCase().startsWith('bearer ')) {
+            apiKeyHeader = authHdr.slice(7).trim();
+        }
+    }
     let username = req.headers['x-user'];
-    const sandboxOwner = req.headers['x-sandbox-owner'];
+    let sandboxOwner = req.headers['x-sandbox-owner'];
+    let keyRec = null;
 
-    // API-key header authentication (ERP Test Tool / machine clients): when an
-    // x-api-key header is present it resolves to the key's owner user (identity
-    // match against the live DB). Sandbox tenancy still applies via x-sandbox-owner.
+    // API-key header authentication (ERP Test Tool / machine clients / REST API): when an
+    // x-api-key or Authorization: Bearer <key> header is present it resolves to the key's owner user
+    // (identity match against the live DB).
     if (apiKeyHeader) {
-        const keyRec = findApiKeyBySecret(apiKeyHeader, { touch: false });
+        keyRec = findApiKeyBySecret(apiKeyHeader, { touch: false });
         if (!keyRec) return res.status(401).json({ error: 'Invalid API key.' });
         username = keyRec.username;
+        req.apiKeyRecord = keyRec;
+
+        // By default, API tokens are granted all the linked user's roles within
+        // his sandbox only. If allowLive is NOT explicitly true (unset by default), any call
+        // to the API routes to the user's personal sandbox, whether the caller
+        // requested the sandbox or even if they requested live data.
+        if (keyRec.allowLive !== true) {
+            sandboxOwner = keyRec.username;
+        }
     }
 
     req.user = username || null;
@@ -2677,17 +2705,25 @@ app.use((req, res, next) => {
         );
         const isAdmin = liveUser && (liveUser.roles || []).includes('admin');
 
-        // Auto-create sandbox file if it doesn't exist (owner or admin accessing)
-        if (!fs.existsSync(sandboxPath) && liveUser && (isOwner || isAdmin)) {
+        // Auto-create sandbox file if it doesn't exist (owner, admin, or API key owner accessing own sandbox)
+        if (!fs.existsSync(sandboxPath) && liveUser && (isOwner || isAdmin || (keyRec && keyRec.username.toLowerCase() === sanitizedOwner.toLowerCase()))) {
+            const stubPath = path.join(__dirname, 'db.stub.json');
+            let stubDb = fs.existsSync(stubPath) ? JSON.parse(fs.readFileSync(stubPath, 'utf8')) : {};
             const liveAi = getLiveAiSettings();
-            const stubDb = {
-                settings: [{ id: 'system_settings', aiProvider: liveAi.aiProvider, geminiConfig: liveAi.geminiConfig, openaiConfig: liveAi.openaiConfig, dbSchemaVersion: CURRENT_SCHEMA_VERSION }],
-                modules: [], orders: [], customers: [], inventory: [], notifications: [], contracts: [], supplierPayments: [], suppliers: [], procurement: [],
-                userGroups: [
-                    { id: 'ug_mgmt', name: 'Executive Management', roles: ['admin'], permissions: { canViewFinancials: true, canApproveTechReview: true, canReleaseHub: true, canManageUsers: true } }
-                ],
-                users: [{ ...liveUser, roles: liveUser.roles || [] }]
-            };
+            stubDb.settings = [{ id: 'system_settings', aiProvider: liveAi.aiProvider, geminiConfig: liveAi.geminiConfig, openaiConfig: liveAi.openaiConfig, dbSchemaVersion: CURRENT_SCHEMA_VERSION }];
+            if (!stubDb.modules) stubDb.modules = [];
+            if (!stubDb.orders) stubDb.orders = [];
+            if (!stubDb.customers) stubDb.customers = [];
+            if (!stubDb.inventory) stubDb.inventory = [];
+            if (!stubDb.notifications) stubDb.notifications = [];
+            if (!stubDb.contracts) stubDb.contracts = [];
+            if (!stubDb.supplierPayments) stubDb.supplierPayments = [];
+            if (!stubDb.suppliers) stubDb.suppliers = [];
+            if (!stubDb.procurement) stubDb.procurement = [];
+            stubDb.userGroups = stubDb.userGroups || [
+                { id: 'ug_mgmt', name: 'Executive Management', roles: ['admin'], permissions: { canViewFinancials: true, canApproveTechReview: true, canReleaseHub: true, canManageUsers: true } }
+            ];
+            stubDb.users = [{ ...liveUser, roles: liveUser.roles || [], groupIds: liveUser.groupIds || [] }];
             writeDb(stubDb, sandboxPath);
         }
 
@@ -2737,12 +2773,12 @@ app.use((req, res, next) => {
                 }
             }
 
-            const hasAccess = userEntry && (userEntry.sandboxAccess || isOwner || isAdmin);
+            const hasAccess = userEntry && (userEntry.sandboxAccess || isOwner || isAdmin || (keyRec && keyRec.username.toLowerCase() === sanitizedOwner.toLowerCase()));
 
             if (hasAccess) {
                 req.sandboxDbPath = sandboxPath;
                 req.sandboxOwner = sanitizedOwner;
-                req.roles = liveUser ? (liveUser.roles || []) : (userEntry.roles || []);
+                req.roles = liveUser ? (liveUser.roles || []) : (userEntry ? (userEntry.roles || []) : (keyRec?.roles || []));
                 const snapshotPath = getSandboxLoginSnapshotPath(sanitizedOwner);
                 if (!fs.existsSync(snapshotPath)) {
                     saveSandboxLoginSnapshot(sanitizedOwner);
@@ -2750,6 +2786,15 @@ app.use((req, res, next) => {
             } else {
                 return res.status(403).json({ error: 'ACCESS_REVOKED', message: 'Access to this sandbox has been restricted.' });
             }
+        }
+    } else if (username) {
+        // Live mode: populate req.roles for authenticated API key identities
+        const liveDb = readDb(DB_PATH);
+        const liveUser = (liveDb.users || []).find(
+            u => u.username.toLowerCase() === username.toLowerCase()
+        );
+        if (keyRec) {
+            req.roles = liveUser ? (liveUser.roles || []) : (keyRec.roles || []);
         }
     }
     next();
@@ -3462,16 +3507,387 @@ app.post('/api/v1/customers/:id/advance-payment', (req, res) => {
     }
 });
 
+// --- RESTFUL API USER GUIDE ---
+app.get('/api/v1/user-guide', (req, res) => {
+    const format = String(req.query.format || 'markdown').toLowerCase();
+    const isDownload = req.query.download === 'true' || req.query.download === '1';
+
+    if (isDownload) {
+        const filename = format === 'json' ? 'NexusERP_RESTful_API_User_Guide.json' : 'NexusERP_RESTful_API_User_Guide.md';
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    }
+
+    if (format === 'json') {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        return res.json(getUserGuideJson());
+    }
+
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    return res.send(getUserGuideMarkdown());
+});
+
+app.get('/api/v1/user-guide/download', (req, res) => {
+    res.setHeader('Content-Disposition', 'attachment; filename="NexusERP_RESTful_API_User_Guide.md"');
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    return res.send(getUserGuideMarkdown());
+});
+
+// --- ORDER SUB-RESOURCES & CONVENIENCE ENDPOINTS ---
+app.post('/api/v1/orders/:id/items', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const order = (db.orders || []).find(o => o.id === req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    const item = req.body;
+    if (!item.description || !item.unit) {
+        return res.status(400).json({ error: "Item description and unit are required" });
+    }
+    const newItem = {
+        id: item.id || `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        description: String(item.description).trim(),
+        quantity: Number(item.quantity) || 1,
+        pricePerUnit: Number(item.pricePerUnit ?? item.unitPrice ?? 0),
+        unit: String(item.unit).trim(),
+        components: Array.isArray(item.components) ? item.components : [],
+        productionType: item.productionType || 'MANUFACTURED',
+        isAccepted: item.isAccepted !== undefined ? item.isAccepted : false
+    };
+
+    order.items = order.items || [];
+    order.items.push(newItem);
+    order.logs = order.logs || [];
+    order.logs.push(createAuditLog(`Line item added: ${newItem.description} (${newItem.quantity} ${newItem.unit})`, order.status, user));
+
+    const updated = processedOrderInternal(order, db, user, false, order);
+    const idx = db.orders.findIndex(o => o.id === order.id);
+    db.orders[idx] = updated;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.status(201).json(updated);
+    } else {
+        res.status(500).json({ error: "Failed to add item to order" });
+    }
+});
+
+app.put('/api/v1/orders/:id/items/:itemId', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const order = (db.orders || []).find(o => o.id === req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    order.items = order.items || [];
+    const itemIdx = order.items.findIndex(it => it.id === req.params.itemId);
+    if (itemIdx === -1) return res.status(404).json({ error: "Order item not found" });
+
+    const oldItem = order.items[itemIdx];
+    order.items[itemIdx] = { ...oldItem, ...req.body };
+    order.logs = order.logs || [];
+    order.logs.push(createAuditLog(`Line item updated: ${order.items[itemIdx].description || oldItem.description}`, order.status, user));
+
+    const updated = processedOrderInternal(order, db, user, false, order);
+    const idx = db.orders.findIndex(o => o.id === order.id);
+    db.orders[idx] = updated;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.json(updated);
+    } else {
+        res.status(500).json({ error: "Failed to update order item" });
+    }
+});
+
+app.delete('/api/v1/orders/:id/items/:itemId', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const order = (db.orders || []).find(o => o.id === req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    order.items = order.items || [];
+    const itemIdx = order.items.findIndex(it => it.id === req.params.itemId);
+    if (itemIdx === -1) return res.status(404).json({ error: "Order item not found" });
+
+    const removed = order.items.splice(itemIdx, 1)[0];
+    order.logs = order.logs || [];
+    order.logs.push(createAuditLog(`Line item removed: ${removed.description}`, order.status, user));
+
+    const updated = processedOrderInternal(order, db, user, false, order);
+    const idx = db.orders.findIndex(o => o.id === order.id);
+    db.orders[idx] = updated;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.json(updated);
+    } else {
+        res.status(500).json({ error: "Failed to remove order item" });
+    }
+});
+
+app.post('/api/v1/orders/:id/hold', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const order = (db.orders || []).find(o => o.id === req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    const isHold = req.body.isHold !== undefined ? Boolean(req.body.isHold) : !order.isHold;
+    const holdReason = req.body.holdReason || (isHold ? 'Manual hold applied via API' : 'Hold released via API');
+
+    order.isHold = isHold;
+    order.holdReason = isHold ? holdReason : undefined;
+    order.logs = order.logs || [];
+    order.logs.push(createAuditLog(`${isHold ? 'Hold Engaged' : 'Hold Released'}: ${holdReason}`, order.status, user));
+
+    const idx = db.orders.findIndex(o => o.id === order.id);
+    db.orders[idx] = order;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.json(order);
+    } else {
+        res.status(500).json({ error: "Failed to update order hold state" });
+    }
+});
+
+app.post('/api/v1/customers/:id/hold', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const customer = (db.customers || []).find(c => c.id === req.params.id);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+    const isHold = req.body.isHold !== undefined ? Boolean(req.body.isHold) : !customer.isHold;
+    const holdReason = req.body.holdReason || (isHold ? 'Credit hold applied' : 'Hold released');
+
+    customer.isHold = isHold;
+    customer.holdReason = isHold ? holdReason : undefined;
+    customer.logs = customer.logs || [];
+    customer.logs.push(createAuditLog(`${isHold ? 'Hold Engaged' : 'Hold Released'}: ${holdReason}`, undefined, user));
+
+    const idx = db.customers.findIndex(c => c.id === customer.id);
+    db.customers[idx] = customer;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.json(computeCustomerWallet(customer, db.orders || []));
+    } else {
+        res.status(500).json({ error: "Failed to update customer hold state" });
+    }
+});
+
+app.post('/api/v1/suppliers/:id/parts', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const supplier = (db.suppliers || []).find(s => s.id === req.params.id);
+    if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    if (supplier.isDeletedSupplier || supplier.name.trim().toLowerCase() === 'deleted suppliers') {
+        return res.status(400).json({ error: "Cannot add parts to Deleted Suppliers vault" });
+    }
+
+    supplier.priceList = supplier.priceList || [];
+    const part = {
+        id: req.body.id || `part_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        partNumber: String(req.body.partNumber || '').trim(),
+        description: String(req.body.description || '').trim(),
+        unitCost: Number(req.body.unitCost) || 0,
+        currency: req.body.currency || 'L.E.',
+        leadTimeDays: Number(req.body.leadTimeDays) || 0,
+        dateAdded: new Date().toISOString()
+    };
+    supplier.priceList.push(part);
+    supplier.logs = supplier.logs || [];
+    supplier.logs.push(createAuditLog(`Part added to price list: ${part.partNumber || part.description}`, undefined, user));
+
+    const idx = db.suppliers.findIndex(s => s.id === supplier.id);
+    db.suppliers[idx] = supplier;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.status(201).json(supplier);
+    } else {
+        res.status(500).json({ error: "Failed to add part to supplier" });
+    }
+});
+
+app.put('/api/v1/suppliers/:id/parts/:partId', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const supplier = (db.suppliers || []).find(s => s.id === req.params.id);
+    if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    supplier.priceList = supplier.priceList || [];
+    const pIdx = supplier.priceList.findIndex(p => p.id === req.params.partId);
+    if (pIdx === -1) return res.status(404).json({ error: "Part not found in supplier price list" });
+
+    supplier.priceList[pIdx] = { ...supplier.priceList[pIdx], ...req.body };
+    supplier.logs = supplier.logs || [];
+    supplier.logs.push(createAuditLog(`Part updated in price list: ${supplier.priceList[pIdx].partNumber}`, undefined, user));
+
+    const idx = db.suppliers.findIndex(s => s.id === supplier.id);
+    db.suppliers[idx] = supplier;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.json(supplier);
+    } else {
+        res.status(500).json({ error: "Failed to update supplier part" });
+    }
+});
+
+app.delete('/api/v1/suppliers/:id/parts/:partId', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const supplier = (db.suppliers || []).find(s => s.id === req.params.id);
+    if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    supplier.priceList = supplier.priceList || [];
+    const pIdx = supplier.priceList.findIndex(p => p.id === req.params.partId);
+    if (pIdx === -1) return res.status(404).json({ error: "Part not found in supplier price list" });
+
+    const [removedPart] = supplier.priceList.splice(pIdx, 1);
+    supplier.logs = supplier.logs || [];
+    supplier.logs.push(createAuditLog(`Part removed from price list: ${removedPart.partNumber}`, undefined, user));
+
+    // Archive to Deleted Suppliers vault
+    let vault = (db.suppliers || []).find(s => s.isDeletedSupplier || s.name.trim().toLowerCase() === 'deleted suppliers');
+    if (!vault) {
+        vault = {
+            id: 'supp_deleted_vault',
+            name: 'Deleted Suppliers',
+            isDeletedSupplier: true,
+            contactPerson: 'System Vault',
+            email: 'vault@nexus.local',
+            phone: '-',
+            category: 'Archive',
+            priceList: [],
+            logs: []
+        };
+        db.suppliers.push(vault);
+    }
+    vault.priceList = vault.priceList || [];
+    vault.priceList.push({
+        ...removedPart,
+        deletedFromSupplierId: supplier.id,
+        deletedFromSupplierName: supplier.name,
+        deletedAt: new Date().toISOString()
+    });
+
+    const idx = db.suppliers.findIndex(s => s.id === supplier.id);
+    db.suppliers[idx] = supplier;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.json({ message: "Part archived to Deleted Suppliers vault", supplier });
+    } else {
+        res.status(500).json({ error: "Failed to remove part" });
+    }
+});
+
+app.post('/api/v1/suppliers/:id/blacklist', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const supplier = (db.suppliers || []).find(s => s.id === req.params.id);
+    if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const isBlacklisted = req.body.isBlacklisted !== undefined ? Boolean(req.body.isBlacklisted) : !supplier.isBlacklisted;
+    const blacklistReason = req.body.blacklistReason || (isBlacklisted ? 'Blacklisted via API' : 'Blacklist cleared via API');
+
+    supplier.isBlacklisted = isBlacklisted;
+    supplier.blacklistReason = isBlacklisted ? blacklistReason : undefined;
+    supplier.logs = supplier.logs || [];
+    supplier.logs.push(createAuditLog(`${isBlacklisted ? 'Blacklisted' : 'Blacklist Removed'}: ${blacklistReason}`, undefined, user));
+
+    const idx = db.suppliers.findIndex(s => s.id === supplier.id);
+    db.suppliers[idx] = supplier;
+
+    if (writeDb(db, getDbPath(req))) {
+        res.json(supplier);
+    } else {
+        res.status(500).json({ error: "Failed to update supplier blacklist state" });
+    }
+});
+
+app.post('/api/v1/inventory/adjust', (req, res) => {
+    const db = getDb(req);
+    const user = req.headers['x-user'] || 'System';
+    const { id, sku, delta, reason } = req.body;
+    const numDelta = Number(delta);
+    if (!Number.isFinite(numDelta) || numDelta === 0) {
+        return res.status(400).json({ error: "Non-zero numeric delta is required" });
+    }
+
+    db.inventory = db.inventory || [];
+    const item = db.inventory.find(it => (id && it.id === id) || (sku && String(it.sku || '').trim().toLowerCase() === String(sku).trim().toLowerCase()));
+    if (!item) return res.status(404).json({ error: "Inventory item not found" });
+
+    const oldQty = Number(item.quantity) || 0;
+    const newQty = Math.max(0, oldQty + numDelta);
+    item.quantity = newQty;
+    item.logs = item.logs || [];
+    item.logs.push(createAuditLog(`Stock level adjusted from ${oldQty} to ${newQty} (delta: ${numDelta > 0 ? '+' : ''}${numDelta}). Reason: ${reason || 'Manual API adjustment'}`, undefined, user));
+
+    if (writeDb(db, getDbPath(req))) {
+        res.json(item);
+    } else {
+        res.status(500).json({ error: "Failed to adjust inventory stock" });
+    }
+});
+
+app.get('/api/v1/procurement/unique-po-number', (req, res) => {
+    const db = getDb(req);
+    const prefix = `PO-${new Date().getFullYear()}-`;
+    const existingNumbers = [];
+    (db.orders || []).forEach(o => {
+        (o.items || []).forEach(it => {
+            (it.components || []).forEach(c => {
+                if (c.poNumber && c.poNumber.startsWith(prefix)) {
+                    const num = parseInt(c.poNumber.replace(prefix, ''), 10);
+                    if (!isNaN(num)) existingNumbers.push(num);
+                }
+            });
+        });
+    });
+    const nextNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1001;
+    const poNumber = `${prefix}${String(nextNumber).padStart(4, '0')}`;
+    res.json({ poNumber });
+});
+
+app.get('/api/v1/reports/orders', (req, res) => {
+    const db = getDb(req);
+    const { startDate, endDate, statuses, query } = req.query;
+    let orders = db.orders || [];
+
+    if (startDate) orders = orders.filter(o => o.orderDate >= startDate);
+    if (endDate) orders = orders.filter(o => o.orderDate <= endDate);
+    if (statuses) {
+        const statusList = Array.isArray(statuses) ? statuses : String(statuses).split(',').map(s => s.trim());
+        orders = orders.filter(o => statusList.includes(o.status));
+    }
+    if (query) {
+        const q = String(query).toLowerCase().trim();
+        orders = orders.filter(o =>
+            (o.internalOrderNumber && o.internalOrderNumber.toLowerCase().includes(q)) ||
+            (o.customerReferenceNumber && o.customerReferenceNumber.toLowerCase().includes(q)) ||
+            (o.customerName && o.customerName.toLowerCase().includes(q)) ||
+            (o.projectName && o.projectName.toLowerCase().includes(q))
+        );
+    }
+
+    const settings = resolveSettings(db, isSandbox(req));
+    const enrichedOrders = orders.map(o => calculateOrderHealth(o, settings));
+    const totalRevenue = enrichedOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
+    const totalRealCost = enrichedOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0);
+    const count = enrichedOrders.length;
+
+    res.json({
+        count,
+        totalRevenue,
+        totalRealCost,
+        grossProfit: totalRevenue - totalRealCost,
+        profitMarginPct: totalRevenue > 0 ? ((totalRevenue - totalRealCost) / totalRevenue) * 100 : 0,
+        orders: enrichedOrders
+    });
+});
+
 const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules', 'ledger', 'contracts'];
 COLLECTIONS.forEach(col => {
     app.get(`/api/v1/${col}`, getCollection(col));
     app.get(`/api/v1/${col}/:id`, getItemFromCollection(col));
     app.post(`/api/v1/${col}`, addToCollection(col));
     app.put(`/api/v1/${col}/:id`, updateInCollection(col));
-    app.delete(`/api/v1/${col}/:id`, deleteFromCollection(col));
 });
-
-
 
 app.post('/api/v1/wipe', (req, res) => {
   if (isSandbox(req)) return res.status(400).json({ error: "Direct wipe is disabled in sandbox mode. Use /api/v1/sandbox/reset." });
@@ -3841,6 +4257,133 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
             });
         });
+    };
+
+    // Helper: Get payments allocated to a component
+    const getComponentAllocatedPaidAmount = (targetComp) => {
+        if (!db.supplierPayments || !targetComp) return 0;
+        let paid = 0;
+        (db.supplierPayments || []).forEach(sp => {
+            const matchesSupplier = targetComp.supplierId ? sp.supplierId === targetComp.supplierId :
+                (targetComp.supplierName && sp.supplierName && sp.supplierName.trim().toLowerCase() === targetComp.supplierName.trim().toLowerCase());
+            if (matchesSupplier) {
+                let allocFound = false;
+                (sp.allocations || []).forEach(alloc => {
+                    if (alloc.componentId === targetComp.id) {
+                        paid += (alloc.amount || 0);
+                        allocFound = true;
+                    }
+                });
+                if (!allocFound && (!sp.allocations || sp.allocations.length === 0) && sp.orderId === order.id && (sp.poNumber === targetComp.poNumber || !sp.poNumber)) {
+                    paid += (sp.amount || 0);
+                }
+            }
+        });
+        return Math.round(paid * 100) / 100;
+    };
+
+    // Helper: Execute Case 1 (Standard PO Cancel) or Case 2 (PO Extension & Amendment)
+    const executeComponentPoCancelOrExtension = (item, comp, cancelReason, isExtension) => {
+        const originalQty = comp.quantity || 0;
+        const receivedQty = comp.receivedQty || 0;
+        const compPaidAmount = getComponentAllocatedPaidAmount(comp);
+        const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
+        const grossUnitCost = (comp.unitCost || 0) * (1 + (taxRate / 100));
+        const paidUnits = grossUnitCost > 0 ? (compPaidAmount / grossUnitCost) : 0;
+        const hasReceivedOrPaid = receivedQty > 0 || compPaidAmount > 0.01;
+
+        if (hasReceivedOrPaid) {
+            if (!isExtension) {
+                throw new Error(`Cannot cancel PO directly: ${comp.description} has ${receivedQty} units received and/or ${compPaidAmount} L.E. paid. Use PO Extension & Amendment workflow.`);
+            }
+
+            // Case 2: System Extension & Amendment superseding original PO
+            const calculatedNewPoQty = Math.max(receivedQty, Math.round(paidUnits * 1000) / 1000);
+            const newPoQty = Math.min(originalQty, calculatedNewPoQty);
+            const leftoverQty = Math.max(0, originalQty - newPoQty);
+
+            const oldPoNumber = comp.poNumber || 'N/A';
+            comp.originalPoQuantity = originalQty;
+            comp.quantity = newPoQty;
+            comp.isExtension = true;
+            comp.supersededOriginalPo = true;
+            comp.supersededPoNumber = oldPoNumber;
+            comp.extensionReason = cancelReason;
+            comp.extendedAt = new Date().toISOString();
+            comp.statusUpdatedAt = new Date().toISOString();
+
+            if (receivedQty >= newPoQty) {
+                comp.status = isStockOrder(order) ? 'RECEIVED' : (item.productionType === 'TRADING' ? 'Manufactured' : 'RESERVED');
+            } else {
+                comp.status = 'ORDERED';
+            }
+
+            // If there are leftover quantities, create a new pending procurement component for the customer order
+            let newCompCreated = null;
+            if (leftoverQty > 0.0001) {
+                const newCompId = `c_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                newCompCreated = {
+                    id: newCompId,
+                    componentNumber: comp.componentNumber || `COMP-${Date.now().toString().slice(-4)}`,
+                    description: comp.description,
+                    unit: comp.unit || 'pcs',
+                    quantity: leftoverQty,
+                    unitCost: 0,
+                    taxPercent: comp.taxPercent !== undefined ? comp.taxPercent : 14,
+                    source: 'PROCUREMENT',
+                    status: 'PENDING_OFFER',
+                    statusUpdatedAt: new Date().toISOString(),
+                    procurementStartedAt: new Date().toISOString(),
+                    splitFromExtensionPo: oldPoNumber,
+                    splitReason: cancelReason
+                };
+                if (!item.components) item.components = [];
+                item.components.push(newCompCreated);
+            }
+
+            order.logs.push(createAuditLog(
+                `PO ${oldPoNumber} amended via extension: ${comp.description} adjusted from ${originalQty} to ${newPoQty} units (superseding original PO). ${leftoverQty > 0.0001 ? `Remaining ${leftoverQty} units returned to Procurement (PENDING_OFFER). ` : ''}Reason: ${cancelReason}`,
+                order.status,
+                user
+            ));
+
+            return { type: 'EXTENSION', comp, originalQty, newPoQty, leftoverQty, newCompCreated };
+        } else {
+            // Case 1: No items received and no payments made - standard cancellation
+            transferReceivedItemsToFreeStock(order, db, `Supplier PO Cancellation: ${cancelReason}`, user, comp.id);
+
+            const oldPoNumber = comp.poNumber || 'N/A';
+            const oldSupplier = comp.supplierName || comp.supplierId || 'N/A';
+
+            comp.cancelledPoNumber = oldPoNumber;
+            comp.cancellationReason = cancelReason;
+            comp.lastAction = 'CANCELLED';
+            comp.lastActionComment = cancelReason;
+            delete comp.revertReason;
+            comp.status = 'PENDING_OFFER';
+            comp.statusUpdatedAt = new Date().toISOString();
+            comp.procurementStartedAt = new Date().toISOString();
+            delete comp.supplierId;
+            delete comp.supplierName;
+            delete comp.poNumber;
+            delete comp.sendPoId;
+            delete comp.contractStartDate;
+            delete comp.contractNumber;
+            delete comp.awardId;
+            delete comp.rfpId;
+            delete comp.rfpSupplierIds;
+            delete comp.quotedCurrency;
+            delete comp.cost;
+            comp.unitCost = 0;
+
+            order.logs.push(createAuditLog(
+                `Supplier PO cancelled for: ${comp.description} (PO: ${oldPoNumber}, Supplier: ${oldSupplier}). Reason: ${cancelReason}. Component reset to PENDING_OFFER for re-procurement.`,
+                'CANCELLED',
+                user
+            ));
+
+            return { type: 'CANCELLED', comp, originalQty, leftoverQty: originalQty };
+        }
     };
 
     try {
@@ -4650,41 +5193,18 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             }
 
             case 'cancel-component-po': {
-                // Cancel a supplier PO and reset component for re-procurement
+                // Cancel a supplier PO or amend via extension if goods received / payments made
                 const ccItemIdx = order.items.findIndex(i => i.id === payload.itemId);
                 if (ccItemIdx === -1) throw new Error("Item not found");
-                const ccComp = order.items[ccItemIdx].components?.find(c => c.id === payload.compId);
+                const item = order.items[ccItemIdx];
+                const ccComp = item.components?.find(c => c.id === payload.compId);
                 if (!ccComp) throw new Error("Component not found");
-                const oldPoNumber = ccComp.poNumber || 'N/A';
-                const oldSupplier = ccComp.supplierName || ccComp.supplierId || 'N/A';
                 const cancelReason = (payload.reason || '').trim() || 'PO cancelled by user';
+                const isExtension = Boolean(payload.isExtension);
 
-                // Release any received quantity to free warehouse stock
-                transferReceivedItemsToFreeStock(order, db, `Supplier PO Cancellation: ${cancelReason}`, user, ccComp.id);
+                const res = executeComponentPoCancelOrExtension(item, ccComp, cancelReason, isExtension);
 
-                ccComp.cancelledPoNumber = oldPoNumber;
-                ccComp.cancellationReason = cancelReason;
-                ccComp.lastAction = 'CANCELLED';
-                ccComp.lastActionComment = cancelReason;
-                delete ccComp.revertReason;
-                // Reset to PENDING_OFFER so it re-enters the procurement pipeline
-                ccComp.status = 'PENDING_OFFER';
-                ccComp.statusUpdatedAt = new Date().toISOString();
-                ccComp.procurementStartedAt = new Date().toISOString();
-                // Clear supplier-related fields
-                delete ccComp.supplierId;
-                delete ccComp.supplierName;
-                delete ccComp.poNumber;
-                delete ccComp.awardId;
-                delete ccComp.sendPoId;
-                delete ccComp.rfpId;
-                delete ccComp.rfpSupplierIds;
-                delete ccComp.quotedCurrency;
-                delete ccComp.cost;
-                ccComp.unitCost = 0;
-                order.logs.push(createAuditLog(`Supplier PO cancelled for: ${ccComp.description} (PO: ${oldPoNumber}, Supplier: ${oldSupplier}). Reason: ${cancelReason}. Component reset to PENDING_OFFER for re-procurement.`, 'CANCELLED', user));
-                // If order was past WAITING_SUPPLIERS, revert it since a component now needs procurement
-                if ([OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING, OrderStatus.READY_FOR_PRODUCTION].includes(order.status)) {
+                if ((res.leftoverQty > 0.0001 || res.type === 'CANCELLED') && [OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING, OrderStatus.READY_FOR_PRODUCTION].includes(order.status)) {
                     const old = order.status;
                     order.status = OrderStatus.WAITING_SUPPLIERS;
                     order.logs.push(createAuditLog(`[AUTO] Order reverted from ${old} to WAITING_SUPPLIERS: component requires re-procurement.`, order.status, 'System'));
@@ -4799,46 +5319,86 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             case 'cancel-po-batch': {
                 if (!payload.sendPoId) throw new Error("sendPoId required");
-                let updatedCount = 0;
                 const cancelReason = (payload.reason || '').trim() || 'PO cancelled by user';
-                let cancelledPoNum = '';
+                const isExtension = Boolean(payload.isExtension);
+
+                // Collect all components matching sendPoId in active PO/received statuses
+                const targets = [];
                 order.items.forEach(item => {
                     item.components?.forEach(comp => {
                         if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
-                            // Release any received quantity to free warehouse stock
-                            transferReceivedItemsToFreeStock(order, db, `PO Batch Cancellation: ${cancelReason}`, user, comp.id);
-
-                            cancelledPoNum = comp.poNumber || cancelledPoNum;
-                            comp.cancelledPoNumber = comp.poNumber || '';
-                            comp.cancellationReason = cancelReason;
-                            comp.lastAction = 'CANCELLED';
-                            comp.lastActionComment = cancelReason;
-                            delete comp.revertReason;
-                            delete comp.sendPoId;
-                            delete comp.poNumber;
-                            delete comp.contractStartDate;
-                            delete comp.contractNumber;
-                            delete comp.awardId;
-                            delete comp.rfpId;
-                            delete comp.rfpSupplierIds;
-                            delete comp.supplierId;
-                            delete comp.supplierName;
-                            delete comp.quotedCurrency;
-                            delete comp.cost;
-                            comp.unitCost = 0;
-                            comp.status = 'PENDING_OFFER';
-                            comp.statusUpdatedAt = new Date().toISOString();
-                            comp.procurementStartedAt = new Date().toISOString();
-                            updatedCount++;
+                            targets.push({ item, comp });
                         }
                     });
                 });
-                order.logs.push(createAuditLog(`Cancelled PO batch ${cancelledPoNum ? `(PO: ${cancelledPoNum}) ` : ''}for ${updatedCount} components (Group ID: ${payload.sendPoId}). Reason: ${cancelReason}. Returned to Send RFP (PENDING_OFFER).`, 'CANCELLED', user));
-                // If order was past WAITING_SUPPLIERS, revert it since components now require re-procurement
-                if ([OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING, OrderStatus.READY_FOR_PRODUCTION].includes(order.status)) {
+
+                if (targets.length === 0) throw new Error("No components found matching sendPoId");
+
+                // Check Case 1 vs Case 2: if any component has received items or payments
+                const hasReceivedOrPaid = targets.some(({ comp }) => {
+                    const rec = comp.receivedQty || 0;
+                    const paid = getComponentAllocatedPaidAmount(comp);
+                    return rec > 0 || paid > 0.01;
+                });
+
+                if (hasReceivedOrPaid && !isExtension) {
+                    throw new Error("Cannot cancel PO directly: some items have been received into inventory or paid for. Please approve the PO extension/amendment.");
+                }
+
+                let hasLeftover = false;
+                targets.forEach(({ item, comp }) => {
+                    const res = executeComponentPoCancelOrExtension(item, comp, cancelReason, isExtension);
+                    if (res.leftoverQty > 0.0001 || res.type === 'CANCELLED') hasLeftover = true;
+                });
+
+                if (hasLeftover && [OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING, OrderStatus.READY_FOR_PRODUCTION].includes(order.status)) {
                     const oldOrdStatus = order.status;
                     order.status = OrderStatus.WAITING_SUPPLIERS;
-                    order.logs.push(createAuditLog(`[AUTO] Order reverted from ${oldOrdStatus} to WAITING_SUPPLIERS: components require re-procurement after PO cancellation.`, order.status, 'System'));
+                    order.logs.push(createAuditLog(`[AUTO] Order reverted from ${oldOrdStatus} to WAITING_SUPPLIERS: components require re-procurement after PO cancellation/extension.`, order.status, 'System'));
+                }
+                break;
+            }
+
+            case 'amend-po-extension': {
+                const cancelReason = (payload.reason || '').trim() || 'PO amended via extension';
+                const targets = [];
+
+                if (payload.sendPoId) {
+                    order.items.forEach(item => {
+                        item.components?.forEach(comp => {
+                            if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                                targets.push({ item, comp });
+                            }
+                        });
+                    });
+                } else if (payload.selectedCompIds && Array.isArray(payload.selectedCompIds)) {
+                    order.items.forEach(item => {
+                        item.components?.forEach(comp => {
+                            if (payload.selectedCompIds.includes(comp.id)) {
+                                targets.push({ item, comp });
+                            }
+                        });
+                    });
+                } else if (payload.itemId && payload.compId) {
+                    const item = order.items.find(i => i.id === payload.itemId);
+                    const comp = item?.components?.find(c => c.id === payload.compId);
+                    if (item && comp) targets.push({ item, comp });
+                }
+
+                if (targets.length === 0) {
+                    throw new Error("No eligible components found for PO amendment extension");
+                }
+
+                let hasLeftover = false;
+                targets.forEach(({ item, comp }) => {
+                    const res = executeComponentPoCancelOrExtension(item, comp, cancelReason, true);
+                    if (res.leftoverQty > 0.0001 || res.type === 'CANCELLED') hasLeftover = true;
+                });
+
+                if (hasLeftover && [OrderStatus.WAITING_FACTORY, OrderStatus.MANUFACTURING, OrderStatus.READY_FOR_PRODUCTION].includes(order.status)) {
+                    const oldOrdStatus = order.status;
+                    order.status = OrderStatus.WAITING_SUPPLIERS;
+                    order.logs.push(createAuditLog(`[AUTO] Order reverted from ${oldOrdStatus} to WAITING_SUPPLIERS: components require re-procurement after PO amendment extension.`, order.status, 'System'));
                 }
                 break;
             }
@@ -5718,8 +6278,9 @@ app.get('/api/v1/full-backup', (req, res) => {
         if (isSandbox(req)) {
             const sandboxDb = getDb(req);
             archive.append(JSON.stringify(sandboxDb, null, 2), { name: "db.json" });
-            const sandboxUploads = getSandboxUploadsPath(req.sandboxOwner);
-            if (fs.existsSync(sandboxUploads)) archive.directory(sandboxUploads, 'uploads');
+            if (fs.existsSync(UPLOADS_BASE)) {
+                archive.directory(UPLOADS_BASE, 'uploads');
+            }
         } else {
             const liveDb = readDb(DB_PATH);
             archive.append(JSON.stringify(liveDb, null, 2), { name: "db.json" });
@@ -5906,6 +6467,8 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       }
       const extractedUploads = path.join(tempDir, 'uploads');
       if (fs.existsSync(extractedUploads)) {
+        if (!fs.existsSync(UPLOADS_BASE)) fs.mkdirSync(UPLOADS_BASE, { recursive: true });
+        fs.cpSync(extractedUploads, UPLOADS_BASE, { recursive: true });
         const targetUploads = getSandboxUploadsPath(req.sandboxOwner);
         if (!fs.existsSync(targetUploads)) fs.mkdirSync(targetUploads, { recursive: true });
         fs.cpSync(extractedUploads, targetUploads, { recursive: true });
@@ -6310,11 +6873,18 @@ app.post('/api/v1/login', (req, res) => {
   // An admin-generated API key resolves to its owner user, then the normal
   // environment resolution below proceeds identically to a password login.
   let authedViaApiKey = false;
+  let keyRec = null;
   if (apiKey && !password) {
-    const keyRec = findApiKeyBySecret(String(apiKey).trim(), { touch: true });
+    keyRec = findApiKeyBySecret(String(apiKey).trim(), { touch: true });
     if (!keyRec) return res.status(401).json({ error: "Invalid API key." });
     username = keyRec.username;
     authedViaApiKey = true;
+
+    // If API token does not have live access granted (unset by default),
+    // redirect targetEnv to 'self' sandbox even if it requested live data!
+    if (keyRec.allowLive !== true && targetEnv === 'live') {
+      targetEnv = 'self';
+    }
   }
 
   const isFactory = username === 'factory' && (Date.now() - SERVER_START_TIME) < 300000 && password === FACTORY_PASS;
@@ -6435,7 +7005,14 @@ app.post('/api/v1/login', (req, res) => {
 app.get('/api/v1/api-keys', (req, res) => {
     if (!isAdminUser(req)) return res.status(403).json({ error: 'Admin privileges are required to manage API keys.' });
     const liveDb = readDb(DB_PATH);
-    const safe = (liveDb.apiKeys || []).map(({ keyHash, ...rest }) => rest);
+    const safe = (liveDb.apiKeys || []).map(({ keyHash, ...rest }) => {
+        const ownerUser = (liveDb.users || []).find(u => u.username.toLowerCase() === (rest.username || '').toLowerCase());
+        return {
+            allowLive: false,
+            roles: ownerUser?.roles || [],
+            ...rest
+        };
+    });
     return res.json(safe);
 });
 
@@ -6453,10 +7030,16 @@ app.post('/api/v1/api-keys', (req, res) => {
     if (!ownerUser) return res.status(400).json({ error: `User "${ownerUsername}" does not exist.` });
 
     const secret = generateApiKey();
+    // Default to sandbox only: allowLive is false unless explicitly set to true.
+    const allowLive = req.body.allowLive === true;
+    const roles = Array.isArray(ownerUser.roles) ? [...ownerUser.roles] : [];
+
     const record = {
         id: makeApiKeyId(),
         name,
         username: ownerUser.username,
+        roles,
+        allowLive,
         keyHash: hashApiKey(secret),
         prefix: secret.slice(0, 14),
         createdAt: new Date().toISOString(),
@@ -6469,7 +7052,7 @@ app.post('/api/v1/api-keys', (req, res) => {
     if (!writeDb(liveDb, DB_PATH)) return res.status(500).json({ error: 'Failed to store API key.' });
     invalidateApiKeyCache();   // ensure the new key is usable on the next request
 
-    console.log(`[API Keys] Created key "${name}" for ${record.username} by ${creator}.`);
+    console.log(`[API Keys] Created key "${name}" for ${record.username} (allowLive: ${allowLive}) by ${creator}.`);
     const { keyHash, ...safeRecord } = record;
     return res.status(201).json({ ...safeRecord, key: secret });
 });
@@ -6484,6 +7067,7 @@ app.put('/api/v1/api-keys/:id', (req, res) => {
     const updates = {};
     if (typeof req.body.name === 'string' && req.body.name.trim()) updates.name = req.body.name.trim();
     if (typeof req.body.enabled === 'boolean') updates.enabled = req.body.enabled;
+    if (typeof req.body.allowLive === 'boolean') updates.allowLive = req.body.allowLive;
     list[idx] = { ...list[idx], ...updates };
     liveDb.apiKeys = list;
     if (!writeDb(liveDb, DB_PATH)) return res.status(500).json({ error: 'Failed to update API key.' });
@@ -6549,6 +7133,7 @@ app.post('/api/upload-pod', uploadPod.single('podFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        mirrorToSandboxIfApplicable(req, 'pod', req.file.path);
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -6559,6 +7144,7 @@ app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, re
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        mirrorToSandboxIfApplicable(req, 'einvoices', req.file.path);
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -6569,6 +7155,7 @@ app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) 
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        mirrorToSandboxIfApplicable(req, 'wht_certificates', req.file.path);
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -6579,6 +7166,7 @@ app.post('/api/upload-cost-sheet', uploadCostSheet.single('costSheetFile'), (req
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        mirrorToSandboxIfApplicable(req, 'cost_sheets', req.file.path);
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -6589,6 +7177,7 @@ app.post('/api/upload-supplier-receipt', uploadSupplierReceipt.single('receiptFi
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        mirrorToSandboxIfApplicable(req, 'supplier_receipts', req.file.path);
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });

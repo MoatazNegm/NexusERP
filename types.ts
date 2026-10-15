@@ -310,6 +310,14 @@ export interface ManufacturingComponent {
   workingResourceCount?: number;
   realCost?: number;
   invoiceTotal?: number;
+  isExtension?: boolean;
+  originalPoQuantity?: number;
+  supersededOriginalPo?: boolean;
+  supersededPoNumber?: string;
+  extensionReason?: string;
+  extendedAt?: string;
+  splitFromExtensionPo?: string;
+  splitReason?: string;
 }
 
 
@@ -475,6 +483,10 @@ export interface ApiKey {
   createdBy: string;
   lastUsedAt?: string | null;
   enabled: boolean;
+  /** Whether the API key is permitted to call live data. Defaults to false (sandbox only). */
+  allowLive?: boolean;
+  /** Granted user roles inherited from the linked user. */
+  roles?: string[];
   /** Present only on the create response. */
   key?: string;
 }

@@ -61,6 +61,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [showCreateApiKeyModal, setShowCreateApiKeyModal] = useState(false);
   const [newApiKeyName, setNewApiKeyName] = useState('');
   const [newApiKeyOwner, setNewApiKeyOwner] = useState(currentUser.username);
+  const [newApiKeyAllowLive, setNewApiKeyAllowLive] = useState(false);
   const [createdApiKeySecret, setCreatedApiKeySecret] = useState<ApiKey | null>(null);
   const [apiKeySecretSecondsLeft, setApiKeySecretSecondsLeft] = useState(0);
   const [copiedKeyPrefix, setCopiedKeyPrefix] = useState<string | null>(null);
@@ -319,16 +320,41 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     try {
       const created = await dataService.createApiKey({
         name: newApiKeyName.trim(),
-        username: newApiKeyOwner.trim() || undefined
+        username: newApiKeyOwner.trim() || undefined,
+        allowLive: newApiKeyAllowLive
       });
       setCreatedApiKeySecret(created);
       setNewApiKeyName('');
-      setMessage({ type: 'success', text: 'API key generated successfully. It has been copied to your clipboard and will be cleared from this view in 60 seconds.' });
+      setNewApiKeyAllowLive(false);
+      setMessage({ type: 'success', text: `API key generated successfully (${created.allowLive ? 'Live ERP Access Allowed' : 'Restricted to Sandbox Only'}). It has been copied to your clipboard and will be cleared from this view in 60 seconds.` });
       await loadApiKeys();
     } catch (e: any) {
       setMessage({ type: 'error', text: e?.message || 'Failed to generate API key.' });
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleToggleApiKeyLive = async (key: ApiKey) => {
+    try {
+      const nextAllowLive = !key.allowLive;
+      await dataService.updateApiKey(key.id, { allowLive: nextAllowLive });
+      setMessage({
+        type: 'success',
+        text: `API key "${key.name}" environment scope changed to: ${nextAllowLive ? 'Live ERP Allowed' : 'Sandbox Only'}.`
+      });
+      await loadApiKeys();
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e?.message || 'Failed to toggle API key environment access.' });
+    }
+  };
+
+  const handleDownloadApiUserGuide = async () => {
+    try {
+      await dataService.get_user_guide('markdown', true);
+      setMessage({ type: 'success', text: 'NexusERP RESTful API User Guide download initiated.' });
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e?.message || 'Failed to download user guide.' });
     }
   };
 
@@ -2940,13 +2966,22 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       <p className="text-xs text-slate-500 font-medium">Machine-level authentication for the ERP Test Tool &amp; external integrations</p>
                     </div>
                   </div>
-                  <button
-                    onClick={() => { setShowCreateApiKeyModal(true); setCreatedApiKeySecret(null); }}
-                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase rounded-xl shadow-lg shadow-indigo-200 transition-all disabled:opacity-50"
-                    disabled={!isAdmin}
-                  >
-                    <i className="fa-solid fa-plus mr-2"></i>Generate New Key
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleDownloadApiUserGuide}
+                      className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase rounded-xl transition-all flex items-center gap-2 border border-slate-200"
+                      title="Download complete RESTful API documentation"
+                    >
+                      <i className="fa-solid fa-file-arrow-down text-indigo-600"></i>Download API Guide
+                    </button>
+                    <button
+                      onClick={() => { setShowCreateApiKeyModal(true); setCreatedApiKeySecret(null); setNewApiKeyAllowLive(false); }}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase rounded-xl shadow-lg shadow-indigo-200 transition-all disabled:opacity-50"
+                      disabled={!isAdmin}
+                    >
+                      <i className="fa-solid fa-plus mr-2"></i>Generate New Key
+                    </button>
+                  </div>
                 </div>
 
                 <div className="p-4 bg-white/70 border border-indigo-100 rounded-2xl text-xs text-slate-600 leading-relaxed">
@@ -2990,6 +3025,24 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                           <option key={u.id} value={u.username}>@{u.username} — {u.name}</option>
                         ))}
                       </select>
+                    </div>
+
+                    <div className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl md:col-span-2">
+                      <input
+                        type="checkbox"
+                        id="newApiKeyAllowLive"
+                        checked={newApiKeyAllowLive}
+                        onChange={e => setNewApiKeyAllowLive(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                      />
+                      <label htmlFor="newApiKeyAllowLive" className="cursor-pointer">
+                        <span className="block text-xs font-black text-slate-700 uppercase tracking-wider">
+                          Allow Live Data Access
+                        </span>
+                        <span className="block text-[11px] text-slate-500 mt-0.5">
+                          Unset by default. When unset, all API calls using this token route strictly to the user's personal sandbox, even if live data is requested. Check this box only to allow calling live ERP data.
+                        </span>
+                      </label>
                     </div>
                   </div>
 
@@ -3036,7 +3089,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       Done
                     </button>
                   </div>
-                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">Owner: @{createdApiKeySecret.username} · Prefix: {createdApiKeySecret.prefix}…</p>
+                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">Owner: @{createdApiKeySecret.username} · Prefix: {createdApiKeySecret.prefix}… · Scope: {createdApiKeySecret.allowLive ? 'Live Allowed' : 'Sandbox Only'}</p>
                 </div>
               )}
 
@@ -3052,6 +3105,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       <tr className="bg-slate-50/50 border-b border-slate-100">
                         <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Name</th>
                         <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Owner</th>
+                        <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Scope</th>
                         <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Key</th>
                         <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Created</th>
                         <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Last Used</th>
@@ -3066,6 +3120,19 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                           <td className="px-6 py-3">
                             <span className="inline-flex items-center gap-1 text-[10px] font-black text-blue-600 bg-blue-50 rounded-lg px-2 py-1">@{k.username}</span>
                           </td>
+                          <td className="px-6 py-3">
+                            <div className="space-y-1">
+                              <span className={`inline-flex items-center gap-1.5 text-[9px] font-black uppercase ${k.allowLive ? 'text-emerald-700 bg-emerald-50 border border-emerald-200' : 'text-amber-700 bg-amber-50 border border-amber-200'} rounded-lg px-2 py-0.5`}>
+                                <i className={`fa-solid ${k.allowLive ? 'fa-database' : 'fa-flask'} text-[9px]`}></i>
+                                {k.allowLive ? 'Live Allowed' : 'Sandbox Only'}
+                              </span>
+                              {k.roles && k.roles.length > 0 && (
+                                <div className="text-[9px] font-mono text-slate-400 truncate max-w-[120px]" title={k.roles.join(', ')}>
+                                  {k.roles.join(', ')}
+                                </div>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-6 py-3 font-mono text-[11px] text-slate-500">{k.prefix}…</td>
                           <td className="px-6 py-3 text-[11px] text-slate-500">{new Date(k.createdAt).toLocaleString()}</td>
                           <td className="px-6 py-3 text-[11px] text-slate-500">{k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : <span className="italic text-slate-400">never</span>}</td>
@@ -3077,6 +3144,13 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                           </td>
                           <td className="px-6 py-3">
                             <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => handleToggleApiKeyLive(k)}
+                                title={k.allowLive ? 'Restrict to Sandbox only' : 'Allow Live access'}
+                                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${k.allowLive ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
+                              >
+                                <i className={`fa-solid ${k.allowLive ? 'fa-database' : 'fa-flask'} text-xs`}></i>
+                              </button>
                               <button
                                 onClick={() => handleToggleApiKey(k)}
                                 title={k.enabled ? 'Disable key' : 'Enable key'}

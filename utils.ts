@@ -1,4 +1,5 @@
 import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, DEFAULT_CURRENCY, OrderStatus } from './types';
+import html2canvas, { Options } from 'html2canvas';
 
 export const getItemEffectiveQty = (item: CustomerOrderItem): number => {
     const qty = item.alteredQty !== undefined && item.alteredQty !== null ? item.alteredQty : item.quantity;
@@ -186,5 +187,119 @@ export const calculateCatalogMatchScore = (partNumber?: string, description?: st
     if (d.includes(q)) return 200;
     if (v.includes(q)) return 100;
     return 0;
+};
+
+/**
+ * Robust wrapper around html2canvas that sanitizes modern color functions (oklch, oklab, lch, lab, color)
+ * to standard rgba/rgb colors using an in-memory canvas context, and neutralizes letter-spacing on Arabic text
+ * to prevent cursive ligatures from breaking.
+ */
+export const safeHtml2Canvas = async (element: HTMLElement, options: Partial<Options> = {}): Promise<HTMLCanvasElement> => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+        throw new Error('Browser environment required for safeHtml2Canvas');
+    }
+
+    let cvs: HTMLCanvasElement | null = null;
+    let ctx: CanvasRenderingContext2D | null = null;
+    try {
+        cvs = document.createElement('canvas');
+        cvs.width = 1;
+        cvs.height = 1;
+        ctx = cvs.getContext('2d', { willReadFrequently: true });
+    } catch {}
+
+    const oklchToRgb = (str: string): string => {
+        if (!str || typeof str !== 'string') return str;
+        if (!str.includes('oklch') && !str.includes('oklab') && !str.includes('lch') && !str.includes('lab') && !str.includes('color(')) {
+            return str;
+        }
+        return str.replace(
+            /oklch\([^)]+\)|oklab\([^)]+\)|lch\([^)]+\)|lab\([^)]+\)|color\([^)]+\)/gi,
+            (match) => {
+                try {
+                    if (!ctx) return match;
+                    ctx.clearRect(0, 0, 1, 1);
+                    ctx.fillStyle = match;
+                    ctx.fillRect(0, 0, 1, 1);
+                    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+                    return `rgba(${r},${g},${b},${a / 255})`;
+                } catch {
+                    return match;
+                }
+            }
+        );
+    };
+
+    const createStyleProxy = (origGetComputedStyle: typeof window.getComputedStyle, targetWindow: Window) => {
+        return function(el: Element, pseudo?: string | null) {
+            const cs = origGetComputedStyle.call(targetWindow, el, pseudo);
+            return new Proxy(cs, {
+                get(target: any, prop: string | symbol) {
+                    // Never allow letter-spacing on Arabic text (prevents html2canvas from splitting cursive Arabic letters)
+                    if (prop === 'letterSpacing') {
+                        if (el && el.textContent && /[\u0600-\u06FF]/.test(el.textContent)) {
+                            return '0px';
+                        }
+                    }
+                    if (prop === 'getPropertyValue') {
+                        return function(property: string) {
+                            if (property === 'letter-spacing' && el && el.textContent && /[\u0600-\u06FF]/.test(el.textContent)) {
+                                return '0px';
+                            }
+                            const res = target.getPropertyValue(property);
+                            return typeof res === 'string' ? oklchToRgb(res) : res;
+                        };
+                    }
+                    const val = target[prop];
+                    if (typeof val === 'string') {
+                        return oklchToRgb(val);
+                    }
+                    if (typeof val === 'function') {
+                        return val.bind(target);
+                    }
+                    return val;
+                }
+            });
+        };
+    };
+
+    const origWinGetComputedStyle = window.getComputedStyle;
+    window.getComputedStyle = createStyleProxy(origWinGetComputedStyle, window);
+
+    const userOnClone = options.onclone;
+
+    try {
+        return await html2canvas(element, {
+            ...options,
+            onclone: (clonedDoc: Document, el: HTMLElement) => {
+                try {
+                    const clonedWin = clonedDoc.defaultView || window;
+                    clonedWin.getComputedStyle = createStyleProxy(clonedWin.getComputedStyle, clonedWin);
+                } catch {}
+
+                try {
+                    const allEls = clonedDoc.querySelectorAll('*');
+                    allEls.forEach((node) => {
+                        const htmlEl = node as HTMLElement;
+                        if (htmlEl.style) {
+                            for (let i = 0; i < htmlEl.style.length; i++) {
+                                const prop = htmlEl.style[i];
+                                const val = htmlEl.style.getPropertyValue(prop);
+                                if (val && (val.includes('oklch') || val.includes('oklab') || val.includes('lch') || val.includes('lab') || val.includes('color('))) {
+                                    htmlEl.style.setProperty(prop, oklchToRgb(val));
+                                }
+                            }
+                        }
+                    });
+                } catch {}
+
+                if (typeof userOnClone === 'function') {
+                    userOnClone(clonedDoc, el);
+                }
+            }
+        });
+    } finally {
+        window.getComputedStyle = origWinGetComputedStyle;
+    }
 };
 

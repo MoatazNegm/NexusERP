@@ -120,7 +120,7 @@ db.stub.json             # fresh-install template (commit-worthy; no prod data)
 
 ## Feature entry points (read these first, then dive in)
 
-When asked to change a feature, land on the row below, not on the file. All line numbers are in the current tree as of v1.0001082.
+When asked to change a feature, land on the row below, not on the file. All line numbers are in the current tree as of v1.0001095.
 
 ### Order Management
 
@@ -171,11 +171,21 @@ When asked to change a feature, land on the row below, not on the file. All line
   - In the Procurement Outsourcing tab (`components/ProcurementModule.tsx`), blanket orders (`isOrderBlanketType(order)`) sharing the same project name (`getOrderProjName(order)`) are consolidated into a single card ("as if they were one large order").
   - The card header prominently displays quick info for the "latest" order in that project: Customer PO Number, Internal Order Number, and PO Received Date.
   - A toggleable "Project Orders History" dropdown link in the header opens an embedded subcard showing all orders in the project row by row: Customer PO Number, Internal Order Number, Received Date, and download pills for all cost sheets uploaded during that order's PO calendar month.
-- **PO Cancellation & Reversion on Received/Reserved Components:**
-  - Users can cancel POs (`cancel-po` / `cancel-po-batch`) or revert POs to award (`revert-po-to-award`) even when components are already in `RECEIVED` or `RESERVED` status.
-  - Distinct status badges: `In Transit` (ORDERED), `Received` (RECEIVED), `Reserved` (RESERVED).
-  - Modals render prominent warehouse stock transfer notices: received items will be safely transferred to free warehouse component stock via `transferReceivedItemsToFreeStock`.
-  - Automatic order status rollback: if an order was in `WAITING_FACTORY`, `MANUFACTURING`, or `READY_FOR_PRODUCTION`, cancelling or reverting a PO automatically reverts order status back to `WAITING_SUPPLIERS`.
+- **PO Cancellation vs PO Extension & Amendment Architecture (Two-Case Lifecycle):**
+  - **Case 1: Standard Direct Cancellation** (`cancel-po` / `cancel-po-batch`):
+    - Applies when components on the PO have **zero goods received** (`receivedQty === 0`) and **zero supplier payments** recorded (`compPaidAmount <= 0.01`).
+    - The PO is cancelled directly, and the full component quantity returns to `PENDING_OFFER` for immediate re-procurement from alternative suppliers.
+  - **Case 2: PO Extension & Amendment (Superseding Original PO)** (`amend-po-extension`):
+    - When any component has already been received into stock (`receivedQty > 0`) or paid for by Finance (`paidAmount > 0.01`), **direct PO cancellation is strictly blocked**.
+    - The user must approve the PO Extension & Amendment workflow:
+      - The system calculates the new amended PO quantity: `newPoQty = min(originalQty, max(receivedQty, round(paidUnits * 1000) / 1000))`.
+      - The existing component PO quantity is amended down to `newPoQty`, flagged with `isExtension: true`, `supersededOriginalPo: true`, and stores `originalPoQuantity`, `supersededPoNumber`, `extensionReason`, and `extendedAt`.
+      - **Subcase 2-1 (Paid Equals Received Goods Value):** Payment matches received items value. PO is amended to received quantity and superseded. The supplier order in Finance is 100% fulfilled and settled.
+      - **Subcase 2-2 (Advance Payment Exceeds Received Goods):** Finance paid for more items than currently received. The PO is adjusted to the paid quantity and superseded. Unreceived paid items are tracked in Inventory (awaiting receipt) and Finance (`paidUnreceivedQty`).
+      - **Subcase 2-3 (Delivered Goods Exceed Payments):** Delivered goods exceed paid amounts. The PO is adjusted to the received quantity to protect warehouse inventory, and Finance continues tracking the remaining Accounts Payable (AP) balance due.
+      - **Leftover Re-Procurement:** If there is unfulfilled leftover quantity (`leftoverQty = originalQty - newPoQty > 0`), a new component is automatically created for the customer order in `PENDING_OFFER` with `splitFromExtensionPo: oldPoNumber` and `splitReason: cancelReason`, allowing Procurement to immediately procure the remainder.
+      - **Automatic Order Status Rollback:** If the customer order was in `WAITING_FACTORY`, `MANUFACTURING`, or `READY_FOR_PRODUCTION`, unfulfilled leftover components automatically revert the order back to `WAITING_SUPPLIERS`.
+  - **PO Reversion to Award** (`revert-po-to-award`): Returns the order lines to the awarded supplier state for renegotiation, releasing any received items to free stock via `transferReceivedItemsToFreeStock`.
 - **Action Modals UX (Send RFP & Award Tender):**
   - Action popups (`activeAction`) use a viewport-constrained layout (`max-h-[88vh]` with pinned header, pinned footer, and scrollable middle container) so that submission/abort buttons are always visible without scrolling the browser window.
   - In Send RFP, suppliers are selected via a compact multi-select list box with search filtering and Select All / Clear controls, replacing bulky card grids.
@@ -186,6 +196,7 @@ When asked to change a feature, land on the row below, not on the file. All line
 
 - **Module:** `components/InventoryModule.tsx` (~191 KB)
 - **Stock-reception sub-view:** `components/StockReceptionModule.tsx` (PO goods-in; creates inventory)
+- **Stock Goods-In for Amended / Extended POs:** When receiving items for amended POs (`comp.isExtension`), the table prominently displays an "Amended PO Qty" badge with the original PO quantity tooltip. Expected quantity is accurately computed as `Math.max(0, quantity - receivedQty)`, displaying previously received counts to prevent duplicate reception.
 - **Full Arabic Localization & Bidirectional RTL:** Fully localized using `useLanguage()`, RTL direction support (`dir={isAr ? 'rtl' : 'ltr'}`), and persistent language state across reloads.
 - **Clickable Metric Filter Cards (`StockMetricFilter`):**
   - Metric cards for Total Stock, PO-Linked, Reserved, and Free Warehouse Stock with active ring highlights.
@@ -240,6 +251,7 @@ When asked to change a feature, land on the row below, not on the file. All line
 - **Blanket vs. Non-Blanket Indicators:**
   - `showBlanketBadge` displays a teal **Blanket** badge only when the order is associated with a blanket contract (`blanketOrder || contractId || blanketContractId`) **and** Procurement has certified that "No RFP Needed" (`isOrderNoRfpNeeded(o)`).
   - Otherwise, displays a **Non-Blanket** badge with tooltip explaining whether it is a standard order or awaiting Procurement's No RFP Needed clearance.
+- **Supplier AP PO Extension & Paid-Unreceived Tracking:** The Supplier AP tab tracks amended/extended supplier POs with a purple "Amended PO" badge (`po.isExtension`). If Finance recorded payments that exceed currently received warehouse quantities (`paidUnits > receivedQty`), the system computes and renders an indigo `paidUnreceivedQty` badge (e.g. `X units paid but unreceived`) and tracks total company `paidUnreceivedValue`. This provides immediate visibility into supplier prepayments awaiting fulfillment without distorting inventory or invoice liability.
 - **Settle blanket order / financial request** action lives in the contracts table within this module
 - **Type:** `LedgerEntry` in `types.ts`
 - **Server:** generic `GET/POST/PUT/DELETE /api/v1/ledger`; supplier payments at `server.js:6497-6590`
@@ -283,7 +295,8 @@ When asked to change a feature, land on the row below, not on the file. All line
 
 - **Multi-tenant middleware:** `server.js:2461` (sets `req.sandboxDbPath`, `req.sandboxOwner`, `req.roles` — once, before any route)
 - **Admin check hard rule (`isAdminUser(req)`):** `server.js:730`. Live mode has `req.roles = []` by design (zero disk I/O); sandbox mode populates `req.roles` from the live-synced user. Handlers checking admin authorization MUST call `isAdminUser(req)`. Calling `req.roles.includes('admin')` directly will silently fail in live mode.
-- **API key authentication (`x-api-key`):** `server.js:2462` allows ERP Test Tool / automated clients to authenticate via API key.
+- **API key authentication (`x-api-key` or `Authorization: Bearer <key>`):** `server.js:2462` allows ERP Test Tool, machine clients, and third-party integrations to authenticate via API key. Inherits all live user roles. Calls are **strictly routed to the owner's personal sandbox by default**, unless explicitly created/toggled with `allowLive: true`.
+- **API User Guide (`GET /api/v1/user-guide`):** `server.js` and `api_user_guide.js` provide complete, machine-readable (JSON) and downloadable Markdown REST documentation. Client helper: `dataService.get_user_guide()`.
 - **`getDbPath` / `isSandbox` / `getDb` helpers:** `server.js:41-42`
 - **Sync authoritative users:** `server.js:72`; sweeps all sandboxes on boot and on every user mutation
 - **Migrations at startup:** `server.js:6959` `migrateAllSandboxesOnStartup()` (before `app.listen()`)
@@ -302,6 +315,7 @@ When asked to change a feature, land on the row below, not on the file. All line
 - **Effective qty:** `utils.ts` `getItemEffectiveQty`
 - **Status-time limits:** `utils.ts` `getStatusLimitHours(status, settings)`
 - **Catalog match score:** `utils.ts` `calculateCatalogMatchScore` (Technical Review + Studying autocomplete)
+- **`safeHtml2Canvas` (Tailwind CSS 4 & Arabic Ligatures Safe Wrapper):** `utils.ts` `safeHtml2Canvas(element, options)`. Sanitizes modern CSS color spaces (`oklch()`, `oklab()`, `lch()`, `lab()`, `color()`) by evaluating them onto an offscreen canvas to produce standard `rgba(...)` before `html2canvas` parses them (preventing render crashes under Tailwind CSS 4). Neutralizes `letter-spacing` on Arabic text (`/[\u0600-\u06FF]/`) to `0px` to prevent cursive Arabic ligatures from breaking apart during canvas rasterization. Used across `FinanceModule.tsx`, `ProcurementModule.tsx`, `ShipmentModule.tsx`, and `OrderDetailsModal.tsx`.
 
 ---
 
@@ -495,7 +509,7 @@ None of these are required for the app to work — they're quality-of-life impro
 ## Application versioning
 
 - **`APP_VERSION` is defined in `constants.tsx`** (string format).
-- Current base version: `1.0001082`.
+- Current base version: `1.0001095`.
 - **Increment by `0.000001` per update** — every rebuild, no exceptions.
 - Displayed at the bottom of every page in small font via `components/VersionFooter.tsx`.
 
@@ -766,6 +780,44 @@ To safely allow external, junior, or training personnel to work in sandboxes wit
 - **Sandbox Access Unaffected**: The user can still log into their personal sandbox (`env=self`) or any shared sandbox they have been granted access to (`env=<owner>`).
 - **Admin Protection**: Administrators cannot revoke their own `liveAccess` via the UI, and the root `admin` account is hard-coded to always retain Live access.
 
+### RESTful API Architecture, Automated Token Sandboxing & API User Guide
+
+To enable full-fidelity headless automation, scripts, and third-party integrations matching 100% of the Web UI's capabilities:
+
+1. **Role Inheritance**:
+   - Every generated API Key (`ApiKey`) records its creating username and automatically inherits the user's active authoritative roles (`roles: liveUser.roles || []`).
+   - Requests authenticated via `x-api-key: <key>` or `Authorization: Bearer <key>` possess the full operational permissions granted to that user.
+
+2. **Sandbox-by-Default Protection & Live Checkmark (`allowLive`)**:
+   - By default, API tokens have `allowLive: false` (unchecked in the UI).
+   - In the tenancy middleware (`server.js`), any request carrying an API key where `allowLive !== true` is **strictly forced into the token owner's personal sandbox** (`sandboxOwner = keyRec.username`), auto-provisioning `db.sandbox.<username>.json` if it does not already exist.
+   - **Zero Live Leakage**: Even if an API request explicitly sets `targetEnv = 'live'`, passes `x-sandbox-owner: null`, or queries live routes, the request is unconditionally diverted to the user's sandbox. Live production data cannot be touched or corrupted.
+   - **Explicit Live Bypass**: Only when an administrator or user explicitly checks **"Allow Live Data Access"** (`allowLive: true`) on the API key will requests authenticated by that key target the live production database (`db.json`).
+   - In `components/DataMaintenance.tsx`, API keys display visual badges for "Live Allowed" (emerald) vs "Sandbox Only" (amber), show inherited roles, and provide a quick toggle button to switch environments with instant effect.
+
+3. **Programmatic REST API User Guide (`get_user_guide`)**:
+   - Backend module: `api_user_guide.js` exports comprehensive Markdown documentation and JSON specifications detailing all 12 business domains, dispatch action payloads, sub-resources, parameters, headers, and code examples.
+   - REST Endpoints:
+     - `GET /api/v1/user-guide` — returns structured documentation (supports `?format=json` or `?format=markdown`, plus `?download=true` for browser file downloads).
+     - `GET /api/v1/user-guide/download` — dedicated direct download endpoint serving `NexusERP_REST_API_User_Guide.md`.
+   - Client DataService Method: `dataService.get_user_guide(format, download)` facilitates programmatic retrieval and file downloads from any React component or script.
+   - User Interface: Direct download buttons are surfaced in both the **Help Center** (`components/HelpModule.tsx`) under a Developer RESTful API card and the **Data Maintenance** API Key manager (`components/DataMaintenance.tsx`).
+
+4. **Web UI Functional Parity & Sub-Resource Endpoints**:
+   To ensure every button and action across all Web UI modules is executable over REST:
+   - `POST /api/v1/orders/:id/items` — add line item to order.
+   - `PUT /api/v1/orders/:id/items/:itemId` — update line item properties.
+   - `DELETE /api/v1/orders/:id/items/:itemId` — remove line item.
+   - `POST /api/v1/orders/:id/hold` — toggle hold status with reason.
+   - `POST /api/v1/customers/:id/hold` — toggle customer-wide operational hold.
+   - `POST /api/v1/suppliers/:id/parts` — add new priced part to supplier catalog.
+   - `PUT /api/v1/suppliers/:id/parts/:partId` — update supplier part.
+   - `DELETE /api/v1/suppliers/:id/parts/:partId` — soft-delete part into Deleted Suppliers Vault.
+   - `POST /api/v1/suppliers/:id/blacklist` — blacklist/unblacklist supplier.
+   - `POST /api/v1/inventory/adjust` — adjust warehouse stock with reason and audit log.
+   - `GET /api/v1/procurement/unique-po-number` — generate collision-free PO sequence number.
+   - `GET /api/v1/reports/orders` — aggregate financial and order execution metrics.
+
 ### Configuration
 
 - **No new environment variables.** The feature uses the existing `DB_PATH` (for live) and derives sandbox paths via `path.join(__dirname, 'db.sandbox.' + sanitizeUsername(owner) + '.json')`.
@@ -925,7 +977,7 @@ export default app;
 1. **Never commit `db.json` or any `db.sandbox.*.json`.** They are `.gitignore`d. If already tracked: `git rm --cached db.json` (keep local file), then commit.
 2. **Never commit and push without explicit user instruction.** Step 1 (rebuild) and Step 2 (commit + push) are intentionally separate. See "Build, Run, and Deploy Lifecycle".
 3. **Never `Stop-Process -Name node` or `taskkill /IM node.exe /F`.** Find the specific PID with `Get-NetTCPConnection -LocalPort 5005` and stop that one. Other apps on other ports may be using node.
-4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001090`). Displayed by `components/VersionFooter.tsx`.
+4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001095`). Displayed by `components/VersionFooter.tsx`.
 5. **Add a schema migration, never edit `db.json` by hand.** Bump `CURRENT_SCHEMA_VERSION` in `server.js` (currently `8`) and add a function in the `migrations` array. The server runs migrations on startup across live and all sandboxes (`migrateAllSandboxesOnStartup`) and after restore. Business data (orders, customers, etc.) is never touched.
 6. **Never call `fetch()` from a component.** Add a method to `services/dataService.ts` and call it.
 7. **Never store sensitive fields in plaintext** — `settings.geminiConfig.apiKey`, `settings.openaiConfig.apiKey`, `settings.emailConfig.password`, `settings.googleDriveConfig.clientSecret`, `settings.googleDriveConfig.refreshToken`, `settings.localStorageConfig.secretKey` are AES-256-CBC encrypted at rest using a key derived from `FACTORY_PASS`. **Do not rotate `FACTORY_PASS` after go-live** — it will brick all existing encrypted values.
@@ -933,7 +985,7 @@ export default app;
 9. **PO line-item qty is a fallback, not a mutation.** `processedOrderInternal` does not write `quantity` back; it is read-only enforced via `getItemEffectiveQty`.
 10. **`/api/v1/wipe` is disabled in sandbox mode.** Sandboxes use `/api/v1/sandbox/reset`. `/api/v1/sandbox/reset` is only valid in a sandbox.
 11. **Always use `isAdminUser(req)` for admin route checks in `server.js`.** Live mode requests keep `req.roles = []` by design for zero-disk-IO pass-through. Using `(req.roles || []).includes('admin')` directly will silently deny every live caller.
-12. **Never embed base64 documents or spreadsheets in `db.json`.** Upload binary files via dedicated upload endpoints (e.g., `POST /api/upload-cost-sheet` into `uploads/cost_sheets/`, `POST /api/upload-supplier-receipt` into `uploads/supplier_receipts/`, or sandbox uploads) and store only relative file paths in the database.
+12. **Never embed base64 documents or spreadsheets in `db.json`.** Upload binary files via dedicated upload endpoints (e.g., `POST /api/upload-cost-sheet` into `uploads/cost_sheets/`, `POST /api/upload-supplier-receipt` into `uploads/supplier_receipts/`, `POST /api/upload-pod` into `uploads/pod/`, `POST /api/upload-einvoice` into `uploads/einvoices/`, `POST /api/upload-wht-certificate` into `uploads/wht_certificates/`). All physical files reside under unified `UPLOADS_BASE/<subdir>/` (`resolveUploadDir`), and in sandboxes are mirrored to sandbox storage (`mirrorToSandboxIfApplicable`). Store only relative file paths in `db.json`.
 13. **Internal Stock Orders must remain isolated.** Internal stock orders (`customerName === 'internal stock'` or PO starting with `STOCK-`) must never generate customer wallet balances, commitments, billing SLAs, or margin violation blocks.
 14. **Always transfer received items to free stock on lifecycle rollbacks.** Cancelling or reverting a PO, rejecting an order, or rolling back to `LOGGED` must invoke `transferReceivedItemsToFreeStock` to release items to general inventory with `RELEASED_TO_STOCK` logs.
 
