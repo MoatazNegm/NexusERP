@@ -1,0 +1,16 @@
+Step No,Action,Expected success symptom,Points
+1,GET /api/v1/orders with the key.,"HTTP 200 and a JSON array of orders (live data, because the key has allowLive=true).",1
+2,GET /api/v1/orders with `Authorization: Bearer <KEY>` instead of x-api-key.,"HTTP 200, same array.",1
+3,GET /api/v1/orders with header x-api-key: nex_invalidkey.,"HTTP 401 {""error"":""Invalid API key.""}.",1
+4,GET /api/v1/customers with the key.,"HTTP 200, array of customers (used to pick the customer of an order).",1
+5,GET /api/v1/contracts with the key.,"HTTP 200, array (blanket contracts).",1
+6,GET /api/v1/settings with the key.,"HTTP 200, array with the system_settings record (needed by the UI for SLA/tax defaults).",1
+7,GET /api/v1/modules with the key.,HTTP 200 (module flags used to show/hide menus).,1
+8,GET /api/v1/api-keys with the key.,"HTTP 403 {""error"":""Admin privileges are required to manage API keys.""}.",1
+9,GET /api/v1/admin/sandboxes with the key.,"HTTP 401 {""error"":""Unauthorized""} (no admin identity).",1
+10,"POST /api/v1/users with the key, body {username,name,roles:[admin],password}.","HTTP 403 {""error"":""Admin privileges are required to create users.""}; no user created.",1
+11,POST /api/v1/orders/<unknown id>/dispatch-action with the key.,"HTTP 404 {""error"":""Order not found""}.",1
+12,"Log in on the UI as ai_tester with the account password (POST /api/v1/login, environment live).",Login succeeds; response lists roles [order_management] and no password.,1
+13,On the UI look at the left menu after login as ai_tester.,Only 'Order Management' and 'Help Center' are shown (UI only).,1
+14,Open the Order Management page.,"Tabs 'New', 'Logged', 'Blanket', 'Stock' are available (UI only; ManagementTab in OrderManagement.tsx).",1
+15,Check the footer version.,Footer shows v1.002_ai (UI only).,1

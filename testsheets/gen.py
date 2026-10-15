@@ -6,8 +6,8 @@ PW = "Nexus#Test2026"
 HDR = ["Step No", "Action", "Expected success symptom", "Points"]
 
 SC = []
-def sc(id, name, role, pre, data, steps, verified):
-    SC.append(dict(id=id, name=name, role=role, pre=pre, data=data, steps=steps, verified=verified))
+def sc(id, name, role, pre, data, steps, verified, findings=None):
+    SC.append(dict(id=id, name=name, role=role, pre=pre, data=data, steps=steps, verified=verified, findings=findings or []))
 
 # ---------------------------------------------------------------- S01
 sc("S01", "Login, roles and menu visibility", "admin, then sales1 / planner1 / proc1 / inv1 / fin1 / factory1 / ship1 / crm1 / mgmt1",
@@ -269,6 +269,8 @@ _extra("S07",[("As sales1 call POST /api/v1/users with roles [admin].","HTTP 403
 _extra("S08",[("Enable new-order alerts with an SMTP host that is unreachable, create an order, and during the 60 s audit change the order (accept item, finalize study).","The order keeps the user change (status WAITING_SUPPLIERS) after the audit finishes: the audit merges only its own log/notification changes (regression for lost-update fix; timing-dependent, see Findings in README)."),
  ("Start a fresh container with FACTORY_PASS and SMTP_* unset and read GET /api/v1/settings and try login username factory.","emailConfig.smtpServer is empty (no built-in SMTP account) and the factory emergency login is refused (disabled when FACTORY_PASS is unset).")])
 
+exec(open(os.path.join(HERE,'gen_om.py')).read())
+
 def md_escape(s): return s.replace("|", "\\|")
 
 def write(sc_):
@@ -284,6 +286,8 @@ def write(sc_):
     for i, (a, e) in enumerate(sc_["steps"], 1):
         lines.append(f"| {i} | {md_escape(a)} | {md_escape(e)} | 1 |")
         rows.append([i, a, e, 1])
+    if sc_.get("findings"):
+        lines += ["", "## Findings (observed behaviour, not fixed)", ""] + [f"{i}. {f}" for i, f in enumerate(sc_["findings"], 1)]
     open(base + ".md", "w").write("\n".join(lines) + "\n")
     with open(base + ".csv", "w", newline="") as f:
         w = csv.writer(f); w.writerow(HDR); w.writerows(rows)
@@ -293,7 +297,7 @@ idx = []
 for s in SC:
     b, n = write(s); idx.append((s["id"], s["name"], b, n))
 tot = sum(n for *_, n in idx)
-r = ["# NexusERP test sheets (AI_testing, app version v1.001_ai)", "",
+r = ["# NexusERP test sheets (AI_testing, app version v1.002_ai)", "",
      "Scenario sheets for the NexusERP app (branch NexusVSC + AI_testing). One Markdown file and one CSV per scenario, columns: Step No | Action | Expected success symptom | Points (1 per step).", "",
      "| Scenario | Name | Sheet (.md / .csv) | Steps | Points |", "|---|---|---|---|---|"]
 for i, nm, b, n in idx:
@@ -319,6 +323,7 @@ r += [f"| | **Total** | | **{tot}** | **{tot}** |", "",
       "4. FIXED (1.001_ai): only admins can create/modify/delete users or change roles (identity is still a trusted x-user header). Hardcoded FACTORY_PASS and SMTP defaults removed: use env FACTORY_PASS, NEXUS_CIPHER_SECRET, SMTP_*.",
       "5. consume-factory-component reports 'Insufficient stock ... Available: 0' right after a procurement component was received.",
       "6. User guide payloads differ from the code (send-rfp-batch needs `components` + `rfpSupplierIds`; award needs `components[{id,unitCost}]`, `supplierId`; issue-po-batch needs `components` + `poNumber`; receive-component needs `compId` + `qty`; hub receipt needs `receipts[]`; shipping actions need `items[{itemId,qty}]`).",
-      "7. Shipment module is OFF in the app default config (constants.tsx); the seed turns it on."]
+      "7. Shipment module is OFF in the app default config (constants.tsx); the seed turns it on.",
+      "8. Order-management role sheets O01-O09 (user ai_tester, role order_management, key file outside the repo at /root/topstor/AI_erp): see each sheet's Findings section; main ones: unauthenticated read/write on collection routes, finance/planning dispatch actions allowed for the key, PUT /orders accepts any status, server accepts empty items/missing customer/invalid date."]
 open(os.path.join(HERE, "README.md"), "w").write("\n".join(r) + "\n")
 print(idx, tot)

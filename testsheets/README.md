@@ -1,4 +1,4 @@
-# NexusERP test sheets (AI_testing, app version v1.001_ai)
+# NexusERP test sheets (AI_testing, app version v1.002_ai)
 
 Scenario sheets for the NexusERP app (branch NexusVSC + AI_testing). One Markdown file and one CSV per scenario, columns: Step No | Action | Expected success symptom | Points (1 per step).
 
@@ -13,7 +13,16 @@ Scenario sheets for the NexusERP app (branch NexusVSC + AI_testing). One Markdow
 | S07 | Negative and exception cases | S07-negative-and-exception-cases.md / S07-negative-and-exception-cases.csv | 22 | 22 |
 | S08 | Administration: API keys, sandbox isolation, settings | S08-administration--api-keys--sandbox-isolation--settings.md / S08-administration--api-keys--sandbox-isolation--settings.csv | 17 | 17 |
 | S09 | Reporting, search and history | S09-reporting--search-and-history.md / S09-reporting--search-and-history.csv | 15 | 15 |
-| | **Total** | | **174** | **174** |
+| O01 | Order-management identity, API key and access boundary | O01-order-management-identity--api-key-and-access-boundary.md / O01-order-management-identity--api-key-and-access-boundary.csv | 15 | 15 |
+| O02 | Customers as seen from Order Management | O02-customers-as-seen-from-order-management.md / O02-customers-as-seen-from-order-management.csv | 15 | 15 |
+| O03 | Create orders: valid variants | O03-create-orders--valid-variants.md / O03-create-orders--valid-variants.csv | 16 | 16 |
+| O04 | Create orders: validation and boundary values | O04-create-orders--validation-and-boundary-values.md / O04-create-orders--validation-and-boundary-values.csv | 19 | 19 |
+| O05 | Edit order and line items | O05-edit-order-and-line-items.md / O05-edit-order-and-line-items.csv | 15 | 15 |
+| O06 | Order lifecycle controls: hold, rollback, reject, alter quantity | O06-order-lifecycle-controls--hold--rollback--reject--alter-quantity.md / O06-order-lifecycle-controls--hold--rollback--reject--alter-quantity.csv | 16 | 16 |
+| O07 | Blanket contracts and settling orders | O07-blanket-contracts-and-settling-orders.md / O07-blanket-contracts-and-settling-orders.csv | 15 | 15 |
+| O08 | Listing, search, filtering, reports and documents | O08-listing--search--filtering--reports-and-documents.md / O08-listing--search--filtering--reports-and-documents.csv | 15 | 15 |
+| O09 | Permission denied and trust-boundary checks for the order-management key | O09-permission-denied-and-trust-boundary-checks-for-the-order-management-key.md / O09-permission-denied-and-trust-boundary-checks-for-the-order-management-key.csv | 15 | 15 |
+| | **Total** | | **315** | **315** |
 
 ## Running the app
 
@@ -40,3 +49,4 @@ bash testsheets/reset-testdata.sh
 5. consume-factory-component reports 'Insufficient stock ... Available: 0' right after a procurement component was received.
 6. User guide payloads differ from the code (send-rfp-batch needs `components` + `rfpSupplierIds`; award needs `components[{id,unitCost}]`, `supplierId`; issue-po-batch needs `components` + `poNumber`; receive-component needs `compId` + `qty`; hub receipt needs `receipts[]`; shipping actions need `items[{itemId,qty}]`).
 7. Shipment module is OFF in the app default config (constants.tsx); the seed turns it on.
+8. Order-management role sheets O01-O09 (user ai_tester, role order_management, key file outside the repo at /root/topstor/AI_erp): see each sheet's Findings section; main ones: unauthenticated read/write on collection routes, finance/planning dispatch actions allowed for the key, PUT /orders accepts any status, server accepts empty items/missing customer/invalid date.
