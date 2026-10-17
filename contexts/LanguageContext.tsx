@@ -14,11 +14,31 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 export const useLanguage = () => {
   const context = useContext(LanguageContext);
   if (!context) {
-    // Fallback for components not wrapped in a LanguageProvider — default to English
+    // Fallback for components not wrapped in a LanguageProvider
+    const defaultLang: Language = (typeof localStorage !== 'undefined' && (localStorage.getItem('nexus_lang_global') === 'en' || localStorage.getItem('nexus_lang_sourcing') === 'en')) ? 'en' : 'ar';
     return {
-      language: 'en' as Language,
+      language: defaultLang,
       toggleLanguage: () => {},
-      t: (key: string) => key,
+      t: (key: string, params?: Record<string, string>): string => {
+        const keys = key.split('.');
+        let val: any = translations[defaultLang];
+        for (const k of keys) val = val?.[k];
+        if (val !== undefined) {
+          if (params) {
+            return Object.entries(params).reduce((str, [pKey, pVal]) => str.replace(`{{${pKey}}}`, pVal), val);
+          }
+          return val;
+        }
+        let fallback: any = translations['en'];
+        for (const k of keys) fallback = fallback?.[k];
+        if (fallback !== undefined) {
+          if (params) {
+            return Object.entries(params).reduce((str, [pKey, pVal]) => str.replace(`{{${pKey}}}`, pVal), fallback);
+          }
+          return fallback;
+        }
+        return '';
+      },
     };
   }
   return context;
@@ -64,8 +84,15 @@ export const LanguageProvider: React.FC<LanguageProviderProps> = ({ children, pa
       for (const k of keys) {
         fallback = fallback?.[k];
       }
-      if (fallback !== undefined) return fallback;
-      return key;
+      if (fallback !== undefined) {
+        if (params) {
+          return Object.entries(params).reduce((str, [paramKey, paramValue]) => {
+            return str.replace(`{{${paramKey}}}`, paramValue);
+          }, fallback);
+        }
+        return fallback;
+      }
+      return '';
     }
 
     if (params) {

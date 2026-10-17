@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, OrderStatus, AppConfig, User, Customer, CustomerOrderItem } from '../types';
 import { getItemEffectiveQty, getOrderConversionRate, getOrderPoType, getPoTypeConfig } from '../utils';
-import { useLanguage } from '../contexts/LanguageContext';
+import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
+import { LanguageToggle } from './LanguageToggle';
 
 interface SourcingModuleProps {
   config: AppConfig;
@@ -10,7 +11,7 @@ interface SourcingModuleProps {
   currentUser: User;
 }
 
-export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshKey, currentUser }) => {
+const SourcingModuleInner: React.FC<SourcingModuleProps> = ({ config, refreshKey, currentUser }) => {
   const { t, language } = useLanguage();
   const isAr = language === 'ar';
 
@@ -279,27 +280,28 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-black text-slate-800 uppercase tracking-tight">
-                {t('sourcing.title') || (isAr ? 'إدارة التسليمات واعتماد الشحن (Taslemat)' : 'Sourcing & Delivery Authorization (Taslemat)')}
+                {isAr ? 'إدارة التسليمات واعتماد الشحن (تسليمات)' : 'Delivery & Sourcing Authorizations (Taslemat)'}
               </h1>
               <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-sky-100 text-sky-700 border border-sky-200">
                 {isAr ? 'تسليمات' : 'Sourcing Hub'}
               </span>
             </div>
             <p className="text-xs font-bold text-slate-400 mt-1">
-              {t('sourcing.subtitle') || (isAr ? 'اعتماد تسليم البنود وإدارة التغطية المالية والدفعات المقدمة لأوامر الشراء' : 'Authorize delivery release and manage downpayment clearances per PO')}
+              {isAr ? 'متابعة جاهزية البضائع بالمركز واعتماد أذون التسليم بناءً على دفعات العملاء' : 'Monitor hub readiness and authorize delivery releases based on customer payments'}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 self-stretch md:self-auto">
+          <LanguageToggle />
           <button
             onClick={fetchData}
             disabled={loading}
             className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
-            title={t('common.refresh') || 'Refresh'}
+            title={isAr ? 'تحديث' : 'Refresh'}
           >
             <i className={`fa-solid fa-rotate ${loading ? 'fa-spin text-sky-600' : ''}`}></i>
-            <span className="hidden sm:inline">{t('common.refresh') || 'Refresh'}</span>
+            <span className="hidden sm:inline">{isAr ? 'تحديث' : 'Refresh'}</span>
           </button>
           <button
             onClick={handleExpandAll}
@@ -335,13 +337,15 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
 
       {/* Top 4 KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Tile 1: Hub Ready Orders */}
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-              {t('sourcing.kpiHubReadyOrders') || (isAr ? 'طلبات جاهزة بالمركز' : 'Hub Ready Orders')}
+              {isAr ? 'طلبات بها بضاعة بالمركز' : 'Orders Ready in Hub'}
             </p>
             <h3 className="text-2xl font-black text-slate-800 mt-1">{kpis.hubReadyOrdersCount}</h3>
             <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+              <span>{isAr ? 'القيمة الإجمالية:' : 'Total Value:'} </span>
               {kpis.totalHubGrossValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} {isAr ? 'ج.م' : 'L.E.'}
             </p>
           </div>
@@ -350,39 +354,48 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
           </div>
         </div>
 
+        {/* Tile 2: Total Units in Hub */}
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-              {t('sourcing.kpiHubReadyUnits') || (isAr ? 'قطع جاهزة بالمركز' : 'Hub Ready Units')}
+              {isAr ? 'إجمالي القطع بالمركز' : 'Total Units in Hub'}
             </p>
             <h3 className="text-2xl font-black text-sky-600 mt-1">{kpis.totalHubUnits.toLocaleString()}</h3>
-            <p className="text-[10px] font-bold text-slate-400 mt-0.5">{isAr ? 'بالمخزن جاهزة للتسليم' : 'In product hub'}</p>
+            <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+              {isAr ? 'بالمخزن بانتظار الاعتماد' : 'In product hub awaiting release'}
+            </p>
           </div>
           <div className="w-12 h-12 bg-sky-50 text-sky-600 rounded-2xl flex items-center justify-center text-xl">
             <i className="fa-solid fa-warehouse"></i>
           </div>
         </div>
 
+        {/* Tile 3: Total Authorized Units */}
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-              {t('sourcing.kpiAuthorizedUnits') || (isAr ? 'قطع معتمدة للتسليم' : 'Authorized Units')}
+              {isAr ? 'إجمالي المعتمد للتسليم' : 'Total Authorized for Release'}
             </p>
             <h3 className="text-2xl font-black text-emerald-600 mt-1">{kpis.totalAuthorizedUnits.toLocaleString()}</h3>
-            <p className="text-[10px] font-bold text-slate-400 mt-0.5">{isAr ? 'مصرح بشحنها للعميل' : 'Cleared for shipment'}</p>
+            <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+              {isAr ? 'مصرح بشحنها للعميل' : 'Cleared for shipment to client'}
+            </p>
           </div>
           <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center text-xl">
             <i className="fa-solid fa-file-circle-check"></i>
           </div>
         </div>
 
+        {/* Tile 4: Pending Clearance Decision */}
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-              {t('sourcing.kpiPendingClearance') || (isAr ? 'بانتظار الاعتماد' : 'Pending Clearance')}
+              {isAr ? 'بانتظار قرار الاعتماد' : 'Awaiting Authorization'}
             </p>
             <h3 className="text-2xl font-black text-amber-600 mt-1">{kpis.totalPendingClearance.toLocaleString()}</h3>
-            <p className="text-[10px] font-bold text-slate-400 mt-0.5">{isAr ? 'تتطلب قرار التسليمات' : 'Awaiting Sourcing Decision'}</p>
+            <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+              {isAr ? 'جاهزة وتتطلب قرار التسليم' : 'In hub awaiting clearance decision'}
+            </p>
           </div>
           <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center text-xl">
             <i className="fa-solid fa-hourglass-half"></i>
@@ -400,7 +413,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder={t('sourcing.searchPlaceholder') || (isAr ? 'ابحث برقم أمر الشراء، الطلب الداخلي، العميل، البند، المشروع...' : 'Search PO, internal #, customer, item, project...')}
+              placeholder={isAr ? 'ابحث برقم أمر الشراء، الطلب الداخلي، العميل، البند، المشروع...' : 'Search PO, internal #, customer, item, project...'}
               className="w-full pl-11 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-700 outline-none focus:bg-white focus:border-sky-500 focus:ring-4 focus:ring-sky-100 transition-all"
             />
             {search && (
@@ -428,14 +441,14 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
         {/* Status Pill Filters */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
           <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 mr-2">
-            {isAr ? 'تصفية الحالة:' : 'Filter:'}
+            {isAr ? 'تصفية الحالة:' : 'Filter Status:'}
           </span>
           {[
             { id: 'ALL', label: isAr ? 'جميع الطلبات' : 'All Orders' },
-            { id: 'READY_HUB', label: isAr ? 'بانتظار الاعتماد (جاهز)' : 'Pending Clearance' },
+            { id: 'READY_HUB', label: isAr ? 'بانتظار الاعتماد (جاهز)' : 'Pending Clearance (In Hub)' },
             { id: 'PARTIAL_AUTH', label: isAr ? 'معتمد جزئياً' : 'Partially Cleared' },
             { id: 'FULLY_AUTH', label: isAr ? 'مكتمل الاعتماد' : 'Fully Cleared' },
-            { id: 'NO_CLEARANCE', label: t('sourcing.noClearanceYet') || (isAr ? 'لا يوجد اعتماد بعد' : 'No Clearance Yet') }
+            { id: 'NO_CLEARANCE', label: isAr ? 'لا يوجد اعتماد بعد' : 'No Clearance Yet' }
           ].map(f => (
             <button
               key={f.id}
@@ -463,7 +476,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
               <i className="fa-solid fa-boxes-stacked"></i>
             </div>
             <h4 className="text-sm font-black uppercase tracking-wider text-slate-700">
-              {t('sourcing.noOrders') || (isAr ? 'لا توجد طلبات بانتظار اعتماد التسليم حالياً' : 'No orders pending delivery authorization')}
+              {isAr ? 'لا توجد طلبات بانتظار اعتماد التسليم حالياً' : 'No orders pending delivery authorization'}
             </h4>
             <p className="text-xs font-medium text-slate-400 max-w-md mx-auto">
               {isAr ? 'تظهر هنا أوامر الشراء التي وصلت منتجاتها إلى المركز (Product Hub) لاعتماد تسليمها للعميل بناءً على الدفعات وموافقة التسليمات.' : 'Customer orders with items received in the Product Hub appear here for delivery release based on payment coverage and sourcing decisions.'}
@@ -531,7 +544,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                       const totalOrderPending = (order.items || []).reduce((s, it) => s + Math.max(0, (it.hubReceivedQty || 0) - (it.approvedForDispatchQty || 0)), 0);
 
                       let cBadge = {
-                        text: t('sourcing.noClearanceYet') || (isAr ? 'لا يوجد اعتماد بعد' : 'No clearance yet'),
+                        text: isAr ? 'لا يوجد اعتماد بعد' : 'No clearance yet',
                         cls: 'bg-slate-100 text-slate-500 border-slate-200',
                         icon: 'fa-hourglass-start'
                       };
@@ -553,7 +566,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                           }
                         } else {
                           cBadge = {
-                            text: t('sourcing.fullyCleared') || (isAr ? 'مكتمل الاعتماد' : 'Fully Cleared'),
+                            text: isAr ? 'مكتمل الاعتماد والتسليم' : 'Fully Cleared',
                             cls: 'bg-emerald-50 text-emerald-800 border-emerald-200',
                             icon: 'fa-circle-check'
                           };
@@ -607,7 +620,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                       <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-2.5">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                           <span className="text-[10px] font-black uppercase tracking-wider text-sky-700 flex items-center gap-1.5">
-                            <i className="fa-solid fa-receipt"></i> {t('sourcing.orderStatus') || (isAr ? 'الموقف المالي لأمر الشراء هذا' : 'Customer Status for this Order')}
+                            <i className="fa-solid fa-receipt"></i> {isAr ? 'الموقف المالي لأمر الشراء هذا' : 'Financial Status for this Order'}
                           </span>
                           <span className="text-[9px] font-mono font-bold text-slate-400">
                             PO #{order.customerReferenceNumber || order.internalOrderNumber}
@@ -615,7 +628,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                         </div>
                         <div className="grid grid-cols-3 gap-2 text-center">
                           <div className="p-2 bg-slate-50 rounded-xl">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase block">{isAr ? 'إجمالي الأمر' : 'Revenue'}</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase block">{isAr ? 'إجمالي الأمر' : 'Order Total'}</span>
                             <span className="text-xs font-black text-slate-800">{orderFin.grossRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })} {orderFin.currency}</span>
                           </div>
                           <div className="p-2 bg-emerald-50 rounded-xl">
@@ -636,7 +649,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                       <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-2.5">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                           <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 flex items-center gap-1.5">
-                            <i className="fa-solid fa-building-user"></i> {t('sourcing.customerStatus') || (isAr ? 'الموقف المالي العام للعميل' : 'Overall Customer Status')}
+                            <i className="fa-solid fa-building-user"></i> {isAr ? 'الموقف المالي العام للعميل' : 'Overall Customer Financial Status'}
                           </span>
                           <span className="text-[9px] font-bold text-slate-500">
                             {order.customerName} ({custOverall.ordersCount} {isAr ? 'طلبات' : 'POs'})
@@ -670,10 +683,10 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                     <div className="bg-white rounded-2xl shadow-xs border border-slate-200 overflow-hidden divide-y divide-slate-100">
                       <div className="px-4 py-2.5 bg-slate-100 text-[9px] font-black text-slate-500 uppercase tracking-wider grid grid-cols-12 gap-3 items-center">
                         <div className="col-span-4">{isAr ? 'بند أمر الشراء والمواصفات' : 'PO Line Item & Details'}</div>
-                        <div className="col-span-1 text-center">{isAr ? 'جاهز بالمركز' : 'Hub Ready'}</div>
-                        <div className="col-span-2 text-center">{isAr ? 'معتمد للتسليم' : 'Authorized'}</div>
+                        <div className="col-span-1 text-center">{isAr ? 'جاهز بالمركز' : 'Ready in Hub'}</div>
+                        <div className="col-span-2 text-center">{isAr ? 'معتمد للتسليم' : 'Authorized for Release'}</div>
                         <div className="col-span-1 text-center">{isAr ? 'تم الشحن' : 'Shipped'}</div>
-                        <div className="col-span-4 text-end">{isAr ? 'قرار اعتماد التسليم (Sourcing)' : 'Sourcing Delivery Authorization'}</div>
+                        <div className="col-span-4 text-end">{isAr ? 'إجراء اعتماد التسليم' : 'Delivery Clearance Action'}</div>
                       </div>
 
                       {(order.items || []).map(item => {
@@ -764,7 +777,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                                       className="px-2.5 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 hover:border-emerald-300 rounded-xl text-[9px] font-black uppercase transition-all disabled:opacity-40"
                                       title={isAr ? `تعيين لأقصى كمية مغطاة بالدفعة المسددة (${finalSuggestedMax})` : `Set to max affordable with paid downpayment (${finalSuggestedMax})`}
                                     >
-                                      {isAr ? 'الحد المدفوع' : 'Max Paid'}
+                                      {isAr ? 'الحد الأقصى المدفوع' : 'Max Paid'}
                                     </button>
 
                                     <button
@@ -773,7 +786,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                                       className="px-2.5 py-1.5 bg-slate-100 hover:bg-amber-50 text-slate-700 hover:text-amber-800 border border-slate-200 hover:border-amber-300 rounded-xl text-[9px] font-black uppercase transition-all disabled:opacity-40"
                                       title={isAr ? `اعتماد كامل الجاهز بالمركز (${maxAuth}) وتجاوز مقترح الدفعة` : `Authorize all ready in hub (${maxAuth}) bypassing suggested limit`}
                                     >
-                                      {isAr ? 'كامل الجاهز' : 'All in Hub'}
+                                      {isAr ? 'كامل الجاهز بالمركز' : 'All in Hub'}
                                     </button>
 
                                     <button
@@ -784,17 +797,17 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                                       }`}
                                     >
                                       <i className="fa-solid fa-file-signature"></i>
-                                      {isAr ? 'اعتماد' : 'Authorize'}
+                                      {isAr ? 'اعتماد التسليم' : 'Authorize'}
                                     </button>
                                   </div>
                                 </>
                               ) : inHub <= 0 && approved <= 0 ? (
                                 <div className="text-[10px] font-black text-slate-500 uppercase bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 flex items-center gap-1">
-                                  <i className="fa-solid fa-hourglass-start text-slate-400"></i> {t('sourcing.noClearanceYet') || (isAr ? 'لا يوجد اعتماد بعد' : 'No clearance yet')}
+                                  <i className="fa-solid fa-hourglass-start text-slate-400"></i> {isAr ? 'لا يوجد اعتماد بعد' : 'No clearance yet'}
                                 </div>
                               ) : (
                                 <div className="text-[10px] font-black text-emerald-700 uppercase bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center gap-1">
-                                  <i className="fa-solid fa-circle-check mr-1"></i> {t('sourcing.fullyCleared') || (isAr ? 'مكتمل الاعتماد والتسليم' : 'Fully Cleared')}
+                                  <i className="fa-solid fa-circle-check mr-1"></i> {isAr ? 'مكتمل الاعتماد والتسليم' : 'Fully Cleared'}
                                 </div>
                               )}
                             </div>
@@ -812,4 +825,10 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
     </div>
   );
 };
+
+export const SourcingModule: React.FC<SourcingModuleProps> = (props) => (
+  <LanguageProvider pageId="sourcing">
+    <SourcingModuleInner {...props} />
+  </LanguageProvider>
+);
 export default SourcingModule;

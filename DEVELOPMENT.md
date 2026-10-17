@@ -121,7 +121,7 @@ db.stub.json             # fresh-install template (commit-worthy; no prod data)
 
 ## Feature entry points (read these first, then dive in)
 
-When asked to change a feature, land on the row below, not on the file. All line numbers are in the current tree as of v1.0001098.
+When asked to change a feature, land on the row below, not on the file. All line numbers are in the current tree as of v1.0001099.
 
 ### Order Management
 
@@ -522,7 +522,7 @@ None of these are required for the app to work — they're quality-of-life impro
 ## Application versioning
 
 - **`APP_VERSION` is defined in `constants.tsx`** (string format).
-- Current base version: `1.0001098`.
+- Current base version: `1.0001099`.
 - **Increment by `0.000001` per update** — every rebuild, no exceptions.
 - Displayed at the bottom of every page in small font via `components/VersionFooter.tsx`.
 
@@ -990,7 +990,7 @@ export default app;
 1. **Never commit `db.json` or any `db.sandbox.*.json`.** They are `.gitignore`d. If already tracked: `git rm --cached db.json` (keep local file), then commit.
 2. **Never commit and push without explicit user instruction.** Step 1 (rebuild) and Step 2 (commit + push) are intentionally separate. See "Build, Run, and Deploy Lifecycle".
 3. **Never `Stop-Process -Name node` or `taskkill /IM node.exe /F`.** Find the specific PID with `Get-NetTCPConnection -LocalPort 5005` and stop that one. Other apps on other ports may be using node.
-4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001098`). Displayed by `components/VersionFooter.tsx`.
+4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001099`). Displayed by `components/VersionFooter.tsx`.
 5. **Add a schema migration, never edit `db.json` by hand.** Bump `CURRENT_SCHEMA_VERSION` in `server.js` (currently `9`) and add a function in the `migrations` array. The server runs migrations on startup across live and all sandboxes (`migrateAllSandboxesOnStartup`) and after restore. Business data (orders, customers, etc.) is never touched.
 6. **Never call `fetch()` from a component.** Add a method to `services/dataService.ts` and call it.
 7. **Never store sensitive fields in plaintext** — `settings.geminiConfig.apiKey`, `settings.openaiConfig.apiKey`, `settings.emailConfig.password`, `settings.googleDriveConfig.clientSecret`, `settings.googleDriveConfig.refreshToken`, `settings.localStorageConfig.secretKey` are AES-256-CBC encrypted at rest using a key derived from `FACTORY_PASS`. **Do not rotate `FACTORY_PASS` after go-live** — it will brick all existing encrypted values.
