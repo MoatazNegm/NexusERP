@@ -318,13 +318,13 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   }, [selectedOrder?.id]);
 
   useEffect(() => {
-    if (selectedOrder && selectedItem && !selectedOrder.rolledBackToLogged) {
+    if (selectedOrder && selectedItem && !selectedOrder.rolledBackToLogged && !selectedOrder.blanketOrder) {
       const pType = selectedItem.productionType || 'TRADING';
       if (pType === 'TRADING' && (!selectedItem.components || selectedItem.components.length === 0)) {
         dataService.setProductionType(selectedOrder.id, selectedItem.id, 'TRADING').then(o => updateOrderInState(o));
       }
     }
-  }, [selectedOrder?.id, selectedItem?.id, selectedItem?.productionType, selectedItem?.components?.length]);
+  }, [selectedOrder?.id, selectedItem?.id, selectedItem?.productionType, selectedItem?.components?.length, selectedOrder?.blanketOrder]);
 
   const fetchData = async (keepSelection = true) => {
     const [o, i, s] = await Promise.all([
@@ -1443,7 +1443,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               </p>
                             </div>
                           </div>
-                        ) : (!selectedItem.isAccepted || (selectedItem.productionType === 'MANUFACTURING' || selectedItem.productionType === 'OUTSOURCING')) && (
+                        ) : (!selectedItem.isAccepted || (selectedItem.productionType === 'MANUFACTURING' || selectedItem.productionType === 'OUTSOURCING' || Boolean(selectedOrder.blanketOrder))) && (
 
                           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6">
                             <div className="flex justify-between items-center border-b border-slate-100 pb-4">
@@ -1458,7 +1458,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                   </button>
                                   <button
                                     onClick={() => {
-                                      if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length) {
+                                      if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length && !selectedOrder.blanketOrder) {
                                         if (!confirm("Switching to Outsourcing will remove the automatically generated mirror component. Continue?")) return;
                                       }
                                       dataService.setProductionType(selectedOrder.id, selectedItem.id, 'OUTSOURCING').then(o => updateOrderInState(o));
@@ -1469,7 +1469,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                   </button>
                                   <button
                                     onClick={() => {
-                                      if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length) {
+                                      if (selectedItem.productionType === 'TRADING' && selectedItem.components?.length && !selectedOrder.blanketOrder) {
                                         if (!confirm("Switching to Manufacturing will remove the automatically generated mirror component. Continue?")) return;
                                       }
                                       dataService.setProductionType(selectedOrder.id, selectedItem.id, 'MANUFACTURING').then(o => updateOrderInState(o));
@@ -1481,12 +1481,12 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                 </div>
                               </div>
                               <div className="text-[10px] font-bold text-blue-600 uppercase tracking-tight">
-                                <i className="fa-solid fa-brain-circuit mr-1"></i> {selectedItem.productionType === 'TRADING' ? 'Trading Mirror Active' : 'Sourcing Engine Active'}
+                                <i className="fa-solid fa-brain-circuit mr-1"></i> {selectedOrder.blanketOrder ? (selectedItem.productionType === 'TRADING' ? 'Blanket Trade Sourcing Active' : selectedItem.productionType === 'OUTSOURCING' ? 'Blanket Outsourcing Active' : 'Blanket Manufacturing Active') : (selectedItem.productionType === 'TRADING' ? 'Trading Mirror Active' : 'Sourcing Engine Active')}
                               </div>
 
                             </div>
 
-                            {(selectedItem.productionType === 'MANUFACTURING' || selectedItem.productionType === 'OUTSOURCING') && (
+                            {(selectedItem.productionType === 'MANUFACTURING' || selectedItem.productionType === 'OUTSOURCING' || (selectedOrder.blanketOrder && selectedItem.productionType === 'TRADING')) && (
 
                               <div className="flex justify-between items-center border-b border-slate-100 pb-4">
                                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Add Components / Services</h4>
@@ -1858,7 +1858,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                               </div>
                             )}
 
-                            {selectedItem.productionType === 'TRADING' && (
+                            {selectedItem.productionType === 'TRADING' && !selectedOrder.blanketOrder && (
                               <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                   <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
@@ -1870,6 +1870,21 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                   </div>
                                 </div>
                                 <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-white px-3 py-1 rounded-lg border border-blue-50">Locked for Trading</div>
+                              </div>
+                            )}
+
+                            {selectedItem.productionType === 'TRADING' && selectedOrder.blanketOrder && (
+                              <div className="p-4 bg-teal-50 border border-teal-100 rounded-2xl flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center text-teal-600">
+                                    <i className="fa-solid fa-cart-shopping"></i>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] font-black text-teal-900 uppercase">Blanket Order Trade Mode Active</div>
+                                    <div className="text-xs text-teal-600 font-medium">Add trade components with any quantity required for this blanket order. These components will proceed through standard trade procurement.</div>
+                                  </div>
+                                </div>
+                                <div className="text-[10px] font-black text-teal-700 uppercase tracking-widest bg-white px-3 py-1 rounded-lg border border-teal-100 shadow-sm">Blanket Trade Active</div>
                               </div>
                             )}
 

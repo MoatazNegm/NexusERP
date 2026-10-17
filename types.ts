@@ -36,7 +36,7 @@ export enum OrderStatus {
   RUNNING_OUTSOURCING_CONTRACT = 'RUNNING_OUTSOURCING_CONTRACT'
 }
 
-export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice' | 'planning' | 'suppliers' | 'shipment' | 'sales' | 'warehouse' | 'logistics';
+export type UserRole = 'admin' | 'management' | 'order_management' | 'factory' | 'procurement' | 'finance' | 'crm' | 'inventory' | 'Gov.EInvoice' | 'planning' | 'suppliers' | 'shipment' | 'sales' | 'warehouse' | 'logistics' | 'sourcing';
 
 export interface UserGroup {
   id: string;
