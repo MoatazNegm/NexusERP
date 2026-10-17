@@ -7040,8 +7040,14 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                           {language === 'ar' ? 'الحد الأقصى المدفوع' : 'Max Paid'}
                                         </button>
                                       </>
+                                    ) : inHub <= 0 && approved <= 0 ? (
+                                      <div className="text-[9px] font-black text-slate-500 uppercase bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 flex items-center gap-1">
+                                        <i className="fa-solid fa-hourglass-start text-slate-400"></i> {language === 'ar' ? 'لا يوجد اعتماد بعد' : 'No clearance yet'}
+                                      </div>
                                     ) : (
-                                      <div className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">{language === 'ar' ? 'مكتمل التخليص' : 'Fully Cleared'}</div>
+                                      <div className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 flex items-center gap-1">
+                                        <i className="fa-solid fa-circle-check"></i> {language === 'ar' ? 'مكتمل التخليص' : 'Fully Cleared'}
+                                      </div>
                                     )}
                                   </div>
                                 </div>

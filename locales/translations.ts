@@ -578,6 +578,8 @@ export const translations: Record<string, any> = {
       authFail: 'Failed to authorize delivery',
       searchPlaceholder: 'Search PO, internal #, customer, item, project...',
       noOrders: 'No orders pending delivery authorization',
+      noClearanceYet: 'No clearance yet',
+      fullyCleared: 'Fully Cleared',
     },
   },
 
@@ -1160,6 +1162,8 @@ export const translations: Record<string, any> = {
       authFail: 'فشل في اعتماد التسليم',
       searchPlaceholder: 'ابحث برقم أمر الشراء، الطلب الداخلي، العميل، البند، المشروع...',
       noOrders: 'لا توجد طلبات بانتظار اعتماد التسليم حالياً',
+      noClearanceYet: 'لا يوجد اعتماد بعد',
+      fullyCleared: 'مكتمل الاعتماد والتسليم',
     },
   },
 };

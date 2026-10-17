@@ -19,7 +19,7 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
   const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'READY_HUB' | 'PARTIAL_AUTH' | 'FULLY_AUTH'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'READY_HUB' | 'PARTIAL_AUTH' | 'FULLY_AUTH' | 'NO_CLEARANCE'>('ALL');
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
   const [showCustomerStatusDrawer, setShowCustomerStatusDrawer] = useState<string | null>(null);
 
@@ -112,16 +112,19 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
     };
   }, [orders, customers, getOrderFinancials]);
 
-  // Filter orders eligible for Delivery Authorization (orders that have items in hub or authorized)
+  // Filter orders eligible for Delivery Authorization (active orders in pipeline or with hub/dispatch items)
   const eligibleOrders = useMemo(() => {
     return orders.filter(o => {
       if (o.status === OrderStatus.REJECTED || (o.status as string) === 'REJECTED') return false;
       if (o.customerName?.trim().toLowerCase() === 'internal stock') return false;
       if (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-')) return false;
 
-      // Has items received in Hub
-      const hasHubItems = (o.items || []).some(it => (it.hubReceivedQty || 0) > 0 || (it.approvedForDispatchQty || 0) > 0);
-      return hasHubItems;
+      // Include all open orders in the pipeline or orders with items in hub/authorized
+      const isFulfilled = o.status === OrderStatus.FULFILLED || (o.status as string) === 'FULFILLED';
+      if (isFulfilled) {
+        return (o.items || []).some(it => (it.hubReceivedQty || 0) > 0 || (it.approvedForDispatchQty || 0) > 0);
+      }
+      return true;
     });
   }, [orders]);
 
@@ -184,6 +187,10 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
       } else if (statusFilter === 'FULLY_AUTH') {
         const isFullyAuth = (o.items || []).length > 0 && (o.items || []).every(it => (it.approvedForDispatchQty || 0) >= (it.hubReceivedQty || 0) && (it.hubReceivedQty || 0) > 0);
         if (!isFullyAuth) return false;
+      } else if (statusFilter === 'NO_CLEARANCE') {
+        const totalHub = (o.items || []).reduce((s, it) => s + (it.hubReceivedQty || 0), 0);
+        const totalApproved = (o.items || []).reduce((s, it) => s + (it.approvedForDispatchQty || 0), 0);
+        if (totalHub > 0 || totalApproved > 0) return false;
       }
 
       // Text search
@@ -427,7 +434,8 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
             { id: 'ALL', label: isAr ? 'جميع الطلبات' : 'All Orders' },
             { id: 'READY_HUB', label: isAr ? 'بانتظار الاعتماد (جاهز)' : 'Pending Clearance' },
             { id: 'PARTIAL_AUTH', label: isAr ? 'معتمد جزئياً' : 'Partially Cleared' },
-            { id: 'FULLY_AUTH', label: isAr ? 'مكتمل الاعتماد' : 'Fully Cleared' }
+            { id: 'FULLY_AUTH', label: isAr ? 'مكتمل الاعتماد' : 'Fully Cleared' },
+            { id: 'NO_CLEARANCE', label: t('sourcing.noClearanceYet') || (isAr ? 'لا يوجد اعتماد بعد' : 'No Clearance Yet') }
           ].map(f => (
             <button
               key={f.id}
@@ -516,6 +524,48 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                     <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border ${poConfig.badgeClass}`}>
                       <i className={`fa-solid ${poConfig.icon} mr-1`}></i> {poConfig.shortLabel}
                     </span>
+
+                    {(() => {
+                      const totalOrderHub = (order.items || []).reduce((s, it) => s + (it.hubReceivedQty || 0), 0);
+                      const totalOrderApproved = (order.items || []).reduce((s, it) => s + (it.approvedForDispatchQty || 0), 0);
+                      const totalOrderPending = (order.items || []).reduce((s, it) => s + Math.max(0, (it.hubReceivedQty || 0) - (it.approvedForDispatchQty || 0)), 0);
+
+                      let cBadge = {
+                        text: t('sourcing.noClearanceYet') || (isAr ? 'لا يوجد اعتماد بعد' : 'No clearance yet'),
+                        cls: 'bg-slate-100 text-slate-500 border-slate-200',
+                        icon: 'fa-hourglass-start'
+                      };
+
+                      if (totalOrderHub > 0 || totalOrderApproved > 0) {
+                        if (totalOrderPending > 0) {
+                          if (totalOrderApproved > 0) {
+                            cBadge = {
+                              text: isAr ? 'معتمد جزئياً' : 'Partially Cleared',
+                              cls: 'bg-amber-50 text-amber-800 border-amber-200',
+                              icon: 'fa-clock-rotate-left'
+                            };
+                          } else {
+                            cBadge = {
+                              text: isAr ? 'بانتظار الاعتماد' : 'Pending Clearance',
+                              cls: 'bg-sky-50 text-sky-800 border-sky-200',
+                              icon: 'fa-boxes-packing'
+                            };
+                          }
+                        } else {
+                          cBadge = {
+                            text: t('sourcing.fullyCleared') || (isAr ? 'مكتمل الاعتماد' : 'Fully Cleared'),
+                            cls: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+                            icon: 'fa-circle-check'
+                          };
+                        }
+                      }
+
+                      return (
+                        <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border flex items-center gap-1 ${cBadge.cls}`}>
+                          <i className={`fa-solid ${cBadge.icon}`}></i> {cBadge.text}
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   {/* Financial Snapshot Badges for this Order */}
@@ -738,9 +788,13 @@ export const SourcingModule: React.FC<SourcingModuleProps> = ({ config, refreshK
                                     </button>
                                   </div>
                                 </>
+                              ) : inHub <= 0 && approved <= 0 ? (
+                                <div className="text-[10px] font-black text-slate-500 uppercase bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 flex items-center gap-1">
+                                  <i className="fa-solid fa-hourglass-start text-slate-400"></i> {t('sourcing.noClearanceYet') || (isAr ? 'لا يوجد اعتماد بعد' : 'No clearance yet')}
+                                </div>
                               ) : (
-                                <div className="text-[10px] font-black text-emerald-700 uppercase bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
-                                  <i className="fa-solid fa-circle-check mr-1"></i> {isAr ? 'مكتمل الاعتماد والتسليم' : 'Fully Cleared'}
+                                <div className="text-[10px] font-black text-emerald-700 uppercase bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center gap-1">
+                                  <i className="fa-solid fa-circle-check mr-1"></i> {t('sourcing.fullyCleared') || (isAr ? 'مكتمل الاعتماد والتسليم' : 'Fully Cleared')}
                                 </div>
                               )}
                             </div>
