@@ -1,0 +1,46 @@
+1|Log in as sales1, open Order Management and create a new order: customer "S03 Customer Co", PO reference PO-S03-001, a line item as in the test data (production type Trading, VAT 14%), component source Procurement, cost 100. Press Save.
+   => The order is saved with an internal number INT-2024-000x. Its status moves by itself from Logged to Technical Review (history "[AUTO] Initial Status").
+2|Log in as planner1, open Technical Review and select the order.
+   => The order is in the queue and its time limit (SLA) counter is running.
+3|Try to finalize the study before accepting the line item.
+   => Refused with the message "All items must be accepted before finalizing study". The status stays Technical Review.
+4|Accept line item 1.
+   => The item shows Accepted. The history shows "Item 1: Accepted".
+5|Finalize the study.
+   => The status becomes "Waiting Suppliers". The history shows "Technical study finalized and pushed to Procurement". The component waits for an offer.
+6|Log in as proc1, open Procurement, find the order and send the request for proposal (Send RFP) for the component to "S03 Supplier Ltd".
+   => The component status is "RFP Sent". The history shows "Sent RFP batch for 1 components".
+7|Award the tender to "S03 Supplier Ltd" at unit cost 100 and lead time 7 days.
+   => The component status is "Awarded". The history shows "Awarded Tender batch ... to S03 Supplier Ltd".
+8|Get a purchase order number (or use PO-S03-0001) and press Issue PO.
+   => The component status is "Ordered" with the PO number PO-S03-0001.
+9|Log in as inv1, open Inventory & Hub (Stock Reception) and receive 4 pieces of the component.
+   => Received 4 of 10. The order stays in "Waiting Suppliers".
+10|Try to receive 7 more pieces.
+   => Refused with the message "Cannot receive more than ordered (Left: 6)".
+11|Receive the remaining 6 pieces.
+   => The component shows received 10 of 10. Trading goods go straight to the Product Hub and the order status is "In Product Hub".
+12|Log in as fin1, open Finance Operations and issue the invoice for the order.
+   => The status is "Invoiced" and an invoice number of the form INV-<yymmdd>-<nnn> is given.
+13|Log in as ship1 and try to release 10 pieces for delivery before Finance has approved.
+   => Refused with the message "Finance receipt required. Only 0 units are financially cleared".
+14|Log in as fin1 and approve the dispatch receipt for 10 pieces.
+   => 10 pieces are approved for dispatch. The status stays "Invoiced".
+15|Log in as ship1 and release 10 pieces from the hub.
+   => The status is "Hub Released".
+16|Mark the 10 pieces as shipped (in transit).
+   => 10 pieces are shown as shipped. The history shows "Items transitioned to IN TRANSIT".
+17|Try to confirm the delivery without a signed delivery note (proof of delivery).
+   => Refused with the message "Signed Delivery Note is required to confirm delivery."
+18|Upload a proof-of-delivery file and confirm the delivery of 10 pieces.
+   => The order status is "Delivered". A delivery record is created and holds the uploaded file.
+19|Log in as fin1 and record a payment of 2,000.00 with the memo "S03 first payment".
+   => The payment is saved with a receipt number (RCV-...). The status stays "Delivered" (partly paid).
+20|Record a second payment of 3,130.00 with the memo "S03 balance".
+   => The order is fully paid (total 5,130.00). The status becomes "Waiting Gov. E-Invoice".
+21|As a Gov. E-Invoice or finance user, attach the e-invoice file to the order.
+   => The status becomes "Fulfilled". The history shows "Gov. E-Invoice Attached ... Order FULFILLED".
+22|Wait 70 seconds (one background check of the system) and reload the order.
+   => The status is still "Fulfilled" and the whole history is intact. (This checks a fault that once lost changes when e-mail alerts are switched on.)
+23|Open the details window of the order and read the history.
+   => The history lists every step above in order, with the user who did each action.

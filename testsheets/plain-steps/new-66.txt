@@ -1,0 +1,30 @@
+1|Log in as inv1, open Inventory & Hub and find the item BOLT-M8.
+   => The row shows stock 100 and reserved 0 (free stock 100).
+2|Edit BOLT-M8 and set the minimum stock level to 20 (if it is not 20 yet).
+   => The minimum level is saved.
+3|Log in as sales1 and create the order PO-S05-001 for the customer "S05 Cust" with a Manufacturing line "Bracket", quantity 10, price 200, VAT 14%.
+   => The order is saved with the status "Technical Review".
+4|Log in as planner1 and add a component "M8 Bolt", quantity 30, source STOCK, choosing the inventory item BOLT-M8.
+   => The component is added. Reserved stock of BOLT-M8 becomes 30 and free stock 70.
+5|As planner1, add another STOCK component of quantity 80 for BOLT-M8.
+   => Refused with the message "Insufficient stock: only 70 pcs available (100 in stock, 30 reserved)".
+6|Open the Stock Card of BOLT-M8.
+   => The card shows a reservation of 30 linked to the order.
+7|Click the "Reserved" card at the top of the list.
+   => The list shows only items with reserved stock; BOLT-M8 is shown and the card is highlighted.
+8|As planner1 roll the order back to Logged with the reason "wrong spec".
+   => The status is "Logged" and a "Rolled-Back" lock badge shows in Technical Review. The order stays locked until Order Management updates it.
+9|As sales1 edit the order (change the customer reference or the line items) and save.
+   => The rolled-back mark is removed and Technical Review is unlocked, with a fresh time limit (SLA).
+10|As admin, change the stock of BOLT-M8 to 90 by editing the quantity in Inventory.
+   => The stock shows 90. (Known deviation: the separate "adjust stock" function of the interface changes an older quantity field, not the stock shown on the screen.)
+11|Delete a test SKU that was created for this sheet.
+   => The SKU is removed from the list.
+12|Use the universal search with the PO number "PO-S05-001".
+   => Inventory and related views show only the items linked to that order reference.
+13|As inv1 create a second SKU NUT-M8 with quantity 50 and minimum 10.
+   => The item is listed with stock 50.
+14|Search the inventory by "NUT".
+   => Only NUT-M8 is shown.
+15|Edit NUT-M8 and set the last cost to 1.5.
+   => The cost shows 1.5 and stays after you reload the list.

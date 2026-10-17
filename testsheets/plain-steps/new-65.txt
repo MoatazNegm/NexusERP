@@ -1,0 +1,44 @@
+1|Log in as sales1 and create an order for "S04 Beta Trading" with PO reference PO-S04-001: line item "Control Panel", quantity 5, price 1000, VAT 14%, production type Manufacturing, no components.
+   => The order is saved with the status "Technical Review" and gets an internal order number.
+2|Log in as planner1, open the order in Technical Review and add a component to the bill of materials: "PLC Module", quantity 5, unit cost 300, source Procurement.
+   => The component is listed in the bill of materials. The history shows "Component added: PLC Module (PROCUREMENT)".
+3|Accept the line item.
+   => The item shows Accepted.
+4|Finalize the study.
+   => The status becomes "Waiting Suppliers" and the component waits for an offer.
+5|Log in as proc1 and send the request for proposal for "PLC Module" to "S04 Gamma Parts".
+   => The component status is "RFP Sent".
+6|Award the tender at 300 per unit with a lead time of 5 days.
+   => The component status is "Awarded".
+7|Issue the purchase order PO-S04-0001.
+   => The component status is "Ordered" with PO number PO-S04-0001. The order stays in "Waiting Suppliers".
+8|Log in as inv1 and receive 5 pieces of "PLC Module".
+   => The component is reserved for this order (received 5 of 5). The order status is "Waiting Factory".
+9|Log in as factory1, open Factory Build and start production.
+   => The status becomes "Manufacturing". The history shows "Production Started: Released to Floor".
+10|Try to register 9 manufactured units.
+   => Refused with the message "Cannot manufacture 9 units. Only 5 units remaining to meet target."
+11|Register 5 manufactured units.
+   => Manufactured 5 of 5. The order moves by itself to "Manufacturing Completed".
+12|Log in as inv1 and receive the 5 finished units into the Product Hub.
+   => Hub received 5 of 5. The status is "In Product Hub".
+13|Try to receive 1 more unit into the hub.
+   => Refused: no more units are ready or manufactured.
+14|Log in as fin1 and issue the invoice.
+   => The status is "Invoiced" and an invoice number is given.
+15|Record an advance payment of 2,000.00 with the memo "advance".
+   => A payment receipt is created, the status stays "Invoiced" and the balance of 3,700.00 is shown.
+16|Approve the dispatch receipt for 5 units.
+   => 5 units are approved for dispatch.
+17|Log in as ship1, release 5 units and then ship 5 units.
+   => After the release the status is "Hub Released"; after shipping, 5 units are shown as shipped.
+18|Confirm the delivery of 5 units and attach the proof-of-delivery file (s04.pdf).
+   => The status becomes "Delivered" and a delivery record is created.
+19|Record the payment of 3,700.00 with the memo "balance".
+   => The order is fully paid and the status becomes "Waiting Gov. E-Invoice".
+20|Attach the e-invoice file (s04.pdf).
+   => The status becomes "Fulfilled".
+21|Open Finance Operations, find the order card and expand it.
+   => The card shows the invoiced amount 5,700, collections 5,700, the supplier payable for "PLC Module" of 1,500 (plus 14% input VAT) and the realized profit.
+22|Open the supplier payable view (Suppliers or Finance) for "S04 Gamma Parts".
+   => The committed amount 1,500.00 and the delivered value 1,500.00 are listed for PO-S04-0001.

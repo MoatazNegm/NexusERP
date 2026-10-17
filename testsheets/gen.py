@@ -275,8 +275,8 @@ def md_escape(s): return s.replace("|", "\\|")
 
 def write(sc_):
     n = len(sc_["steps"])
-    base = os.path.join(HERE, f"{sc_['id']}-" + "".join(c if c.isalnum() else "-" for c in sc_["name"]).strip("-").lower())
-    lines = [f"# {sc_['id']} - {sc_['name']}", "",
+    base = os.path.join(HERE, f"NexusERP-AI-{sc_['id']}-" + "".join(c if c.isalnum() else "-" for c in sc_["name"]).strip("-").lower())
+    lines = [f"# NexusERP-AI {sc_['id']} - {sc_['name']}", "",
              f"- **Scenario id / name:** {sc_['id']} / {sc_['name']}",
              f"- **Role / user:** {sc_['role']} (password for all seed users: `{PW}`)",
              f"- **Total points:** {n} (1 point per step, {n} steps)",

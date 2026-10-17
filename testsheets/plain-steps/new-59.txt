@@ -1,0 +1,30 @@
+1|Create a blanket contract with the number "CTR-OM-1" followed by the time stamp, a customer, the description "Frame", a target of 100 items and today as the received date.
+   => The contract is saved with exactly the number you entered.
+2|Open the list of blanket contracts.
+   => The new contract is in the list.
+3|Create a blanket order that belongs to contract "CTR-OM-1" (with the time stamp).
+   => The order is saved as a blanket order with the status "Logged".
+4|Create an order that refers to a blanket contract "CTR-NONE", which does not exist.
+   => The order is refused with the message: Blanket contract "CTR-NONE" not found.
+5|Create an order that refers to the number of the blanket order created in step 3.
+   => The order is accepted and keeps the reference to the blanket order. (If you type the contract number instead, the system answers: Blanket contract "<number>" not found, because the field expects the blanket ORDER number.)
+6|Open the details of the contract.
+   => The contract is unchanged by the settling order: number, customer, description, target items and received date are as before.
+7|Change the description of the contract to "Frame v2" and save.
+   => The description is updated.
+8|Try to delete the contract.
+   => Observed behaviour: there is no delete function for contracts (not found). In the screen, deleting a contract that is linked to a blanket order is described as blocked.
+9|On the Order Management page open the tab "Blanket", then the sub tab "New contract", and press the submit button with the contract number left empty.
+   => The form does not allow the empty entry to be submitted.
+10|Open the sub tab "Logged blanket" and search for the contract number.
+   => Only the blanket orders that match are listed.
+11|With the access key, try the action "settle blanket order" (an administrator or management action).
+   => Write down what the system answers. (This is not done on live data.)
+12|With the access key, try the action "revive contract".
+   => Write down what the system answers. (This is not done on live data.)
+13|Create a stock order with the customer reference "STOCK-1" followed by the time stamp and a unit price of 0.
+   => The order is accepted with the status "Logged".
+14|Create the same kind of stock order (customer "Internal Stock") with a unit price of -1.
+   => The order is refused with the message "Item 1 unit price cannot be negative".
+15|Create an order with unit price 0 for a customer called "STOCK" but with a reference that does not start with "STOCK-".
+   => The order is refused with the message "Item 1 unit price must be a positive number". The name "STOCK" alone does not make it a stock order.

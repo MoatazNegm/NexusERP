@@ -1,0 +1,30 @@
+1|Log in as crm1 or fin1, open Finance, then "Customer Accounts & Wallets", and select the customer "S06 Cust".
+   => The customer's wallet shows a balance of 0.00.
+2|Record an advance payment of 5,000 with the reference ADV-1 and the note "deposit".
+   => The wallet balance is 5,000. The history shows "Advance Payment Recorded: 5,000 L.E.".
+3|Open the "Project Wallets" tab.
+   => One entry "(General Advance / Future Orders)" with a balance of 5000 is shown, with the customer listed.
+4|Open the invoiced order PO-S06-001 in Finance and record a payment of 2,000.00 using "Apply from Customer Wallet".
+   => The wallet decreases by 2,000 to 3,000. The payment is recorded with a receipt number.
+5|Record a payment of 3,130.00 in cash.
+   => The total paid, 5,130, equals the invoice total and the order is fully paid (its status moves to "Waiting Gov. E-Invoice" once delivered).
+6|Generate the payment receipt (PDF) for the first payment.
+   => A PDF named Receipt-<order>-<receipt>.pdf is downloaded; it shows the customer, the amount and the previous payments.
+7|Cancel the 3,130 payment and give a reason.
+   => The payment is removed, the balance due is 3,130 again, and the history shows the cancellation.
+8|Log in as proc1 or fin1 and record a supplier payment: supplier "S06 Supplier", amount 100, PO PO-X, reference TRX1.
+   => The payment is saved, with 100 shown as an advance that is not yet matched to any PO.
+9|Open the supplier ledger for that supplier.
+   => The summary shows total paid 100 and a balance of -100 (an advance in favour of the company).
+10|In the General Ledger add a manual journal entry: "Manual journal", 250, debit, account Cash.
+   => The entry appears in the ledger list.
+11|Open the balance sheet view of the General Ledger.
+   => The Assets and the Liabilities + Equity sections are shown, and the difference indicator is zero for the starting data.
+12|In the Finance order list search for the word "non-project".
+   => Only orders without a project name are listed.
+13|Press "Expand All" for the order cards.
+   => All cards open; "Collapse All" closes them.
+14|Open the filter "Unpaid" of the Finance order list.
+   => Only orders with a balance due are listed.
+15|Reload the page and open the customer wallet again.
+   => The wallet balance is still the same (it is kept by the server).

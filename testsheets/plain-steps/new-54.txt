@@ -1,0 +1,30 @@
+1|Register a new customer called "OM Cust A" followed by the time stamp of the run, with an e-mail address, a tax number, an address and a minimum profit margin of 10.
+   => The customer is saved and receives its own customer number. The history of the customer shows the entry "Entity registered".
+2|Open the customer list and look for the customer you just created.
+   => The customer is listed with the e-mail address and tax number you entered.
+3|Change that customer's phone number to +20100 and save.
+   => The phone number is updated; all other details of the customer stay as they were.
+4|Put the customer on hold with the reason "credit".
+   => The customer is shown as on hold.
+5|Create an order for the customer that is on hold.
+   => Observed behaviour: the order is accepted (the system does not stop orders for a customer on hold). Write down what the screen does so the user can confirm whether this is wanted.
+6|Take the customer off hold.
+   => The customer is no longer on hold.
+7|Open the details of the customer.
+   => The details are shown together with the calculated wallet balance of the customer (in total and per currency).
+8|Try to open a customer with a number that does not exist (customers_000).
+   => The system says the item was not found.
+9|Try to register a customer with an empty name.
+   => Observed behaviour: the customer is created even though the name is empty (the system does not check the name). Write down what you see.
+10|In the order form, type a customer name that does not exist yet.
+   => An "Add customer" window appears, and the customer is created when you save it.
+11|In the order form, open the customer drop-down list and type part of a customer name.
+   => The list narrows down while you type.
+12|Open the list of project wallets (advance balances of customers, grouped by project).
+   => The advance balances of the customers are shown, grouped per project.
+13|Record an advance payment of 100 for the customer with the reference "ADV" and the note "x".
+   => The payment is accepted. The project wallets now show an entry "(General Advance / Future Orders)" with a balance of 100 for that customer.
+14|With the order-management user's access key, ask the system to merge customers, giving a main customer and an empty list of customers to merge into it.
+   => Observed behaviour: the system answers that no valid customers to merge were found. It shows that this role can reach the merge function, although it belongs to CRM.
+15|Try to delete the customer.
+   => There is no way to delete a customer; the system answers that the function does not exist.

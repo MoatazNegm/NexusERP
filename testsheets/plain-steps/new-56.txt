@@ -1,0 +1,38 @@
+1|On the "New" tab, enter a line item with quantity 0 and press Save.
+   => The order is refused with the message "Item 1 quantity must be a positive number".
+2|Enter a line item with quantity -1 and save.
+   => The same message is shown.
+3|Enter the text "abc" as the quantity of the line item and save.
+   => The same message is shown.
+4|Enter a unit price of 0 for a customer that is not a stock customer and save.
+   => The order is refused with the message "Item 1 unit price must be a positive number".
+5|Enter a unit price of -5 and save.
+   => The same message is shown.
+6|Leave the unit of the line item empty and save.
+   => The order is refused with the message "Item 1 unit is required".
+7|Add a component to the line item with a unit cost of 0 and save.
+   => The order is refused with the message "Item 1 component 1 unit cost must be a positive number".
+8|Add a component with quantity 0 and save.
+   => The order is refused with the message "Item 1 component 1 quantity must be a positive number".
+9|Enter the fractional quantity 0.5 and save.
+   => Observed behaviour: the order is accepted.
+10|Enter a very large quantity, 1,000,000,000, and save.
+   => Observed behaviour: the order is accepted; there is no upper limit.
+11|Save an order that has no line items at all.
+   => Observed behaviour: the order is created without any line item.
+12|Save an order without choosing a customer.
+   => Observed behaviour: the order is created without a customer.
+13|Save an order with an empty customer reference (PO reference).
+   => Observed behaviour: the order is created with an empty PO reference.
+14|Save an order whose order date is the text "not-a-date".
+   => Observed behaviour: the order is created and the text "not-a-date" is kept as its date.
+15|Save an order with the currency "XXX", which is not a supported currency.
+   => Observed behaviour: the order is created and the currency XXX is kept.
+16|Create another order for the same customer with a PO reference that is already used.
+   => The order is refused with the message: Duplicate PO reference "<reference>" already exists for customer "<name>".
+17|Repeat that PO reference but with different upper and lower case letters.
+   => The same refusal is shown (upper and lower case do not matter).
+18|Repeat the customer name with extra spaces and different upper and lower case letters, using the same PO reference.
+   => The same refusal is shown (extra spaces and case do not matter).
+19|Reuse the PO reference of an order of the same customer that was REJECTED.
+   => The order is accepted. Rejected orders do not count for the "unique reference" rule.

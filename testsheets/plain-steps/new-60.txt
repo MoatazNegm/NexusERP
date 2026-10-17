@@ -1,0 +1,30 @@
+1|Open the list of all orders.
+   => The list is shown. Each order has a customer, a customer reference, an internal order number, a status, line items and a history.
+2|Ask for only the orders with the status "Logged" using the status filter of the list request.
+   => Observed behaviour: the filter is ignored and all orders are returned (the server has no such filter).
+3|Ask for only 2 orders per page, page 1.
+   => Observed behaviour: the paging is ignored and all orders are returned.
+4|Ask for only the orders of one customer name.
+   => Observed behaviour: the customer filter is ignored and all orders are returned.
+5|Open one order.
+   => The single order is shown, including the calculated health values of the order.
+6|Open the orders report.
+   => The report shows the number of orders, total revenue, total real cost, gross profit, profit margin in percent and the list of orders.
+7|Ask the system for a new unique purchase order number.
+   => A number of the form PO-2026-1001 is returned.
+8|Download the user guide in text (Markdown) form.
+   => The guide is shown as formatted text.
+9|On the tab "Logged" type a PO reference in the search box.
+   => Only the orders that match are listed.
+10|On the tab "Logged" choose a type in the type filter (trade, manufacturing, blanket, stock, standard).
+   => The list shows only orders of that type.
+11|Click a column heading in the "Logged" table, then click it again.
+   => The rows are sorted ascending on the first click and descending on the second.
+12|Open the details window of an order.
+   => The details, line items, history and delivery data are visible.
+13|In the details of an order press the button to export the order as PDF.
+   => A PDF of the order is downloaded.
+14|Upload a small PDF as proof of delivery.
+   => The file is stored and its location is returned. (This was seen in the S03 flow; document upload belongs to Shipment and Finance.)
+15|Count the orders in the list and compare with the number shown on the "Logged" tab.
+   => The number on the tab equals the number of orders in the statuses Logged, Technical Review and so on, as the tab filters define them.

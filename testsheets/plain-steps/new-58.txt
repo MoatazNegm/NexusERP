@@ -1,0 +1,32 @@
+1|Put an order on hold with the reason "customer asked".
+   => The order shows as on hold. Its history shows "Hold Engaged: customer asked". The status stays "Logged".
+2|Release the hold.
+   => The order is no longer on hold. The history shows "Hold Released".
+3|Press the hold button without typing a reason.
+   => The hold is switched on with the standard reason "Manual hold applied via API".
+4|Use the strategic hold action on the order with the reason "strategic".
+   => The status becomes "In Hold". The history shows "Order placed in STRATEGIC HOLD: strategic".
+5|Release the strategic hold.
+   => The status returns to what it was before (Logged).
+6|Roll the order back to "Logged" with the reason "wrong spec".
+   => The status is "Logged" and the order is marked as rolled back. The data-entry time is reset.
+7|After the rollback, edit the order (set the order date to today) and save.
+   => The rolled-back mark is removed and the Technical Review time limit (SLA) starts again.
+8|Change the quantity to be delivered of a line item (original quantity 10) to 5 with a reason.
+   => The line item shows the reduced quantity 5, while the original quantity stays 10.
+9|Try to change that quantity to 11, which is above the original 10.
+   => The system refuses with the message "Cannot increase quantity above original order quantity (10)."
+10|Change that quantity to 0.
+   => Observed behaviour: the change is accepted and the reduced quantity is 0.
+11|Change that quantity back to the original value 10.
+   => The reduced quantity is removed (the line item is back to normal).
+12|Reject a second order (order Y) with the reason "cannot supply".
+   => The order status is "Rejected". The internal order number is renamed to "rej_<date>_INT-..." and the customer PO reference to "rej_<date>_<reference>".
+13|Create a new order with the PO reference that the rejected order Y used.
+   => The order is accepted; the reference is free again.
+14|With the order-management access key, try the "hard delete order" action.
+   => The system refuses with the message "Unauthorized: Only superusers or management can hard delete an order".
+15|With the access key, try an action with a name that does not exist.
+   => The system refuses with the message "Unknown action: <name>".
+16|On the tab "Logged", press Reject on an order and confirm with a reason.
+   => The order disappears from the "Logged" list and is shown as Rejected.

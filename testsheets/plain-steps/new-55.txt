@@ -1,0 +1,32 @@
+1|Create a new order for a customer with the customer reference "OM-T-001" followed by the time stamp, today's order date, currency L.E., payment terms of 30 days and one line item "Valve A".
+   => The order is saved with an internal order number of the form INT-2024-000n and the status "Logged". Its history shows "Order acquisition recorded". The line item gets its own number and an automatic matching component.
+2|Open the order you just created.
+   => The same order is shown and its history has exactly one entry.
+3|Create an order with a Manufacturing line item that has one component whose source is Procurement.
+   => The order is saved and its status is "Technical Review" because a component exists.
+4|Create an order with 3 line items (two Trading items and one Manufacturing item).
+   => The order is saved with 3 line items. When the cost is higher than the price (seen with prices 10, 20 and 30) the status is "Negative Margin".
+5|Create an order in the currency USD with a conversion rate of 50.
+   => The order is saved with currency USD and conversion rate 50.
+6|Create an order and tick the option for withholding tax.
+   => The order is saved and the withholding tax option is still ticked.
+7|Create an order with a target delivery of 15 days.
+   => The order is saved with 15 days. When you create it from outside the screen, no target delivery date is calculated (the screen calculates the date itself).
+8|Create an order with the project name "Project X".
+   => The order is saved with the project name. It appears under that project in the project wallets and in the Finance grouping.
+9|Create an order whose customer reference and description contain the characters < > & " and '.
+   => The order is saved and the characters are kept as typed. The screen must show them as text without breaking the page.
+10|Create an order with a line item discount of 10 percent.
+   => The order is saved and the discount of 10 percent is kept on the line item. The totals are not recalculated when the order is created from outside the screen.
+11|Create an order with the same customer reference as an existing order but for a DIFFERENT customer.
+   => The order is accepted. A customer reference only has to be unique for the same customer.
+12|Create an order with the customer reference "STOCK-1" followed by the time stamp and a unit price of 0.
+   => The order is accepted. References that start with "STOCK-" (or the customer "Internal Stock") are stock orders and may have a price of 0.
+13|On the Order Management page open the tab "New", fill in the customer, the PO reference, the date and the line items, then press Save.
+   => A success message appears with the new internal order number.
+14|On the tab "New", upload a PO file (PDF or picture) so that the fields are filled in by the scan.
+   => The form fields are filled in from the document. This needs an AI provider to be set up in the settings.
+15|On the tab "New", add two line items and remove the first one with the delete button before saving.
+   => Only the remaining line item is saved.
+16|Open the order list and count the orders that were created in this sheet.
+   => All the orders you created are in the list, each with a different internal order number.

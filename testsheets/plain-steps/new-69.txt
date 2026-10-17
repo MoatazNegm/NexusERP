@@ -1,0 +1,34 @@
+1|Log in as admin, open Settings, then API Keys, and create a key called "qa-key" for admin.
+   => The key is shown only ONCE and begins with nex_. The badge "Sandbox Only" is shown and the roles admin and management are taken over.
+2|Look at the list of access keys.
+   => The entry shows the beginning of the key, that it is enabled, that live data is not allowed, and never the full secret.
+3|From an outside program, ask for the list of customers presenting the key.
+   => The list is empty: the key is limited to the personal sandbox of admin and live data is not visible.
+4|With the key, create a customer "S08 Sandbox Cust".
+   => The customer is created in the sandbox. The live customer list of admin does NOT contain it.
+5|Switch on "Allow Live Data Access" for the key.
+   => The badge becomes "Live Allowed". Requests with the key now see live data (for example "S08 Live Cust").
+6|Revoke the key.
+   => The message "API key revoked." appears. Using the key again is refused as an invalid key.
+7|On the login screen choose "My Own Sandbox (Test Admin)" and log in.
+   => A sandbox banner stays visible with the buttons Reset Data, Revert to Login State and Exit Sandbox. Live data is not visible.
+8|In the sandbox press Reset Data and type RESET.
+   => The business data of the sandbox is cleared; users and groups are kept.
+9|While in sandbox mode, try to wipe all data directly.
+   => Refused with the message "Direct wipe is disabled in sandbox mode. Use the sandbox reset instead."
+10|Press Exit Sandbox.
+   => You are back on the login screen and the saved login of the browser is cleared.
+11|As admin, open the list of sandboxes.
+   => The list contains the admin sandbox with its size and member count.
+12|Open Settings, then modules, switch off the Shipment module, and log in as ship1.
+   => The Shipment menu is gone for ship1. Switching it on again brings it back.
+13|Download the user guide of the interface (Help Center).
+   => A text document "NexusERP RESTful API User Guide" is downloaded.
+14|Create a full backup in Settings, then backups.
+   => An encrypted file with the ending .nxarchive is downloaded.
+15|As admin, open the system settings.
+   => The settings are shown. In the starting data, new-order alerts are switched off.
+16|Switch on new-order alerts with an e-mail server that cannot be reached, create an order and, during the 60-second background check, change the order (accept the item and finalize the study).
+   => The order keeps your change (status "Waiting Suppliers") after the check ends. The check only merges its own history and notification changes. (Depends on timing; see the findings in the README.)
+17|Start a fresh container with FACTORY_PASS and the SMTP settings not set, open the system settings and try to log in as the user "factory".
+   => The e-mail server setting is empty (no built-in e-mail account) and the emergency login "factory" is refused (it is disabled when FACTORY_PASS is not set).

@@ -1,0 +1,42 @@
+1|Log in as crm1, open CRM Contacts and press Add Customer.
+   => The window for adding a customer opens.
+2|Enter the name "S02 Acme Industrial", e-mail po@acme.test, phone +20100000001, tax number TX-1001, address Cairo and minimum profit margin 10, then save.
+   => The customer appears in the list with its own customer number. The history shows "Entity registered" by crm1, and the wallet balance is 0.
+3|Add a second customer called "S02 Acme Ind (dup)".
+   => The second customer is listed (it is used for the merge test).
+4|Edit "S02 Acme Industrial": set the minimum profit margin to 20 and the phone to +2011, then save.
+   => The list shows margin 20 and the new phone. The history of the customer gets an update entry.
+5|Switch the customer hold ON with the reason "credit check".
+   => The customer shows a hold badge. The history shows "Hold Engaged: credit check".
+6|Switch the customer hold OFF.
+   => The hold badge disappears.
+7|Merge "(dup)" into "S02 Acme Industrial" with the CRM merge tool.
+   => The message "Successfully merged 1 customers" appears and only "S02 Acme Industrial" remains in the list.
+8|Log in as proc1, open Suppliers and then Active Suppliers, and add the supplier "S02 Delta Steel" with contact Omar and category Raw material.
+   => The supplier appears with an empty price list.
+9|Open the supplier and add a part: part number CSH-100, description "Cast Steel Housing", unit cost 100, currency L.E., lead time 7.
+   => The part is listed in the price list. The history of the supplier shows "Part added to price list: CSH-100".
+10|Try to add a second part with the part number " csh-100 " (different capital letters and extra spaces).
+   => Saving is blocked with a message that the part number already exists. (Known: only the screen checks this rule; the system itself does not.)
+11|Blacklist the supplier with the reason "quality".
+   => The supplier shows a Blacklisted badge with the reason.
+12|Remove the blacklist.
+   => The badge disappears.
+13|Log in as admin, open Suppliers and change the unit cost of CSH-100 to 110.
+   => The price list shows 110. The editing controls are visible ONLY for admin, not for proc1.
+14|As admin, delete the part CSH-100.
+   => The message "Part archived to Deleted Suppliers vault" appears. The part disappears from the active supplier and appears in the admin-only tab "Deleted Suppliers", where it can only be read.
+15|Log in as inv1, open Inventory & Hub and add an item: SKU BOLT-M8, description "M8 Bolt", quantity 100, minimum stock 20, bin A-01, unit pcs, cost 2.
+   => The item is listed with stock 100 and bin A-01.
+16|Try to add another item with the SKU " bolt-m8 " (different capital letters and extra spaces).
+   => The screen blocks it with a "SKU must be unique" error (capital letters and spaces do not matter). Known: the system itself accepts the duplicate.
+17|Edit BOLT-M8, set the bin location to B-07 and save.
+   => The item shows bin B-07.
+18|Open the Stock Card of the item.
+   => The stock card window shows the creation entry and the history of movements.
+19|Click the "Total Stock" card, then the "Free Warehouse Stock" card.
+   => The list is filtered each time and the chosen card is highlighted.
+20|Search the inventory list for "bolt".
+   => Only BOLT-M8 is displayed.
+21|Log in as crm1 and try to open Suppliers from the menu or by changing the page address.
+   => Not possible: crm1 has no access to Suppliers and is sent to CRM Contacts.

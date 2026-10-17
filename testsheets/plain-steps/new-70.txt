@@ -1,0 +1,30 @@
+1|Log in as mgmt1 and open the Dashboard.
+   => The dashboard cards load, and the status distribution includes the Fulfilled order.
+2|Open the Profitability report.
+   => The report lists the order with revenue, real cost, gross profit and margin in percent.
+3|Open the orders report.
+   => The report shows the number of orders, total revenue, total real cost, gross profit, profit margin in percent and the list of orders.
+4|On the Dashboard export the executive snapshot as PDF (management role).
+   => A PDF is downloaded with the status distribution, the critical margin alerts and the summaries of customers and suppliers.
+5|Log in as proc1, open Part History and search for "Heavy Duty".
+   => The history shows the S03 component with supplier, price 100, quantity 10 and the PO number.
+6|Ask for the purchase history of parts with the description "Valve".
+   => The list contains the order number, supplier name, price 100 and quantity 10 for the S03 order.
+7|Open the Procurement universal search and search for the PO number PO-S03-0001, then for the word "non-project".
+   => The order card appears for the PO number; the word "non-project" keeps it in the list (it has no project name).
+8|Log in as admin and open System Audit.
+   => The system logs are listed. Users who are not admin do not see this menu item.
+9|Open the order list in Order Management and sort by "Last Edited".
+   => The most recently edited order appears first; clicking again reverses the order.
+10|Switch the language to Arabic with the language button.
+   => The screen turns right-to-left with Arabic labels, and the choice is still there after a reload.
+11|Switch back to English.
+   => The screen returns to left-to-right English.
+12|Open Help Center.
+   => The help links and videos set up in the settings are shown as cards; with none set up, an empty message is shown.
+13|Compare the footer version with the version of the application (APP_VERSION in the program).
+   => The footer shows the same version as the program (1.0001095 at the time of writing).
+14|Count the orders with the status "Fulfilled" in the list of all orders.
+   => The count equals the number you see with the "Fulfilled" filter in Finance.
+15|Open the Gov.EInvoice module.
+   => The Fulfilled order with its attached e-invoice is listed, with the link to the file.

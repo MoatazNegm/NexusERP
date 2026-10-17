@@ -1,0 +1,30 @@
+1|Using the personal access key of the user ai_tester (as an outside program would, not on screen), ask the system for the list of orders.
+   => The system accepts the key and returns the list of orders, including the real (live) orders, because this key is allowed to see live data.
+2|Do the same request again, but this time present the access key in the "Bearer" form of the authorization header instead of the usual key header.
+   => The system accepts it as well and returns the same list of orders.
+3|Ask for the list of orders again, but present a made-up key (nex_invalidkey).
+   => The system refuses the request and says the API key is invalid. No orders are returned.
+4|With the valid key, ask the system for the list of customers.
+   => The list of customers is returned (the order form uses it to pick the customer of an order).
+5|With the valid key, ask for the list of blanket contracts.
+   => The list of blanket contracts is returned (it may be empty).
+6|With the valid key, ask for the system settings.
+   => The settings record is returned (the screens need it for the default delivery-time and tax values).
+7|With the valid key, ask which modules are switched on.
+   => The module list is returned (the menus use it to show or hide pages).
+8|With the valid key, try to open the list of access keys, which is an administrator function.
+   => The system refuses and tells you that administrator rights are required to manage access keys.
+9|With the valid key, try to open the list of sandboxes, which is also an administrator function.
+   => The system refuses and says you are not authorized, because the key carries no administrator identity.
+10|With the valid key, try to create a new user with the administrator role and a password.
+   => The system refuses and tells you that administrator rights are required to create users. Afterwards the user list shows no new user.
+11|With the valid key, try to perform an action (for example a dispatch action) on an order number that does not exist.
+   => The system answers that the order was not found.
+12|On the login screen, log in as ai_tester with the account password, choosing the live environment (Live ERP).
+   => Login succeeds. The user has only the Order Management role, and the password is never shown back.
+13|After logging in as ai_tester, look at the menu on the left.
+   => Only "Order Management" and "Help Center" are shown.
+14|Click "Order Management" in the left menu.
+   => The page opens with the tabs "New", "Logged", "Blanket" and "Stock".
+15|Scroll to the bottom of the page and read the version text in the footer.
+   => The footer shows version v1.002_ai.

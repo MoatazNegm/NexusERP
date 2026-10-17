@@ -1,0 +1,48 @@
+1|Open the NexusERP address (http://<host>:5005) in a browser.
+   => The login screen appears with the fields Username and Password and a choice of environment.
+2|Type the user name admin in the Username field, but do not log in yet.
+   => The list of environments appears with "Live ERP (Production)" and "My Own Sandbox (Test Admin)".
+3|Choose "Live ERP (Production)", type a WRONG password for admin and press Login.
+   => Login is refused with the message "Invalid username or password" and you stay on the login screen.
+4|Type the user name nouser with any password, choose Live and press Login.
+   => The same message "Invalid username or password" appears; it gives no hint whether the user exists.
+5|Type the user name ADMIN in capital letters with the correct password, environment Live, and press Login.
+   => Login succeeds (user names do not depend on capital letters). The user has the roles admin and management, and the password is never shown.
+6|After logging in as admin, look at the menu on the left.
+   => You see Dashboard, Order Management, Technical Review, Finance Operations, Procurement, Factory Build, Inventory & Hub, Shipment, CRM Contacts, Suppliers, Profitability, Gov.EInvoice, System Audit, Help Center and Settings. "Minimums" is NOT shown, because it needs a group called Managers or superusers.
+7|Scroll to the bottom of any page.
+   => The application version is shown in the footer (for example 1.0001095).
+8|Click Logout.
+   => The login screen appears again. The saved login of the browser is removed and the Back button of the browser does not bring you back into the application.
+9|Log in as sales1.
+   => The menu shows only Order Management and Help Center.
+10|Log out and log in as planner1.
+   => The menu shows only Technical Review and Help Center.
+11|Log out and log in as proc1.
+   => The menu shows Procurement, Suppliers and Help Center.
+12|Log out and log in as inv1.
+   => The menu shows Inventory & Hub and Help Center.
+13|Log out and log in as fin1.
+   => The menu shows Finance Operations and Help Center.
+14|Log out and log in as factory1.
+   => The menu shows Factory Build and Help Center.
+15|Log out and log in as ship1.
+   => The menu shows Shipment and Help Center (the shipping module is switched on in the starting data).
+16|Log out and log in as crm1.
+   => The menu shows CRM Contacts and Help Center.
+17|Log out and log in as mgmt1.
+   => The menu shows Dashboard, Profitability and Help Center.
+18|Log in as admin, open Settings and the user management page, and add the user qa.temp with the name "QA Temp", e-mail qa.temp@test.local, password Temp#12345 and the role Procurement. Save.
+   => The user is saved and appears in the list with the role Procurement. The password is not shown in the list.
+19|Log out and log in as qa.temp with the password Temp#12345.
+   => Login succeeds. The menu shows Procurement, Suppliers and Help Center.
+20|Log in as admin, edit qa.temp, add the role CRM and save. Then log in again as qa.temp.
+   => After logging in again, CRM Contacts is also visible in the menu.
+21|Log in as sales1 and try to open the user list (Settings) from the menu or by changing the page address.
+   => There is no Settings item, and any attempt to open it sends you back to the first page you are allowed to see (Order Management). If the user list is requested from outside the screen, it contains no passwords.
+22|As sales1, try to open the list of access keys.
+   => The system refuses and says administrator rights are required to manage access keys.
+23|As sales1, try to open the list of sandboxes.
+   => The system refuses and says that access is restricted to administrators.
+24|Open Help Center as any user.
+   => Help Center opens for every role. A Developer API card offers the user guide of the interface for download.

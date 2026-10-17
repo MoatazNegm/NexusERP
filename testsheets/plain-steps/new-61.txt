@@ -1,0 +1,30 @@
+1|With the order-management access key, try the "hard delete order" action.
+   => The system refuses with the message "Unauthorized: Only superusers or management can hard delete an order". This user must NOT be able to hard delete.
+2|With the key, try to create a user with the administrator role.
+   => The system refuses and says administrator rights are required to create users.
+3|With the key, try to open the list of access keys.
+   => The system refuses (administrator rights required).
+4|With the key, try to create an order inside the sandbox of another user (the administrator's).
+   => The system refuses with "ACCESS_REVOKED". You cannot write into another user's sandbox.
+5|With the key, try the finance action "issue invoice" on a Logged order.
+   => Observed behaviour: the action is accepted. By the role design it should be refused (it is a finance task).
+6|With the key, try the finance action "record payment" for the amount 10.
+   => Observed behaviour: the action is accepted. It should be refused.
+7|With the key, try the planning action "toggle acceptance" of a line item.
+   => Observed behaviour: the action is accepted. It should be refused (it is a planning task).
+8|With the key, open the lists of inventory, suppliers and user groups.
+   => Observed behaviour: all three lists are shown. The role does not restrict reading.
+9|Ask for the list of orders without presenting any key or login.
+   => Observed behaviour: the orders are returned. Expected: the system should refuse because nobody is logged in.
+10|Create an order without presenting any key or login.
+   => Observed behaviour: the order is created. Expected: the system should refuse.
+11|Present only the user name "ai_tester" in the user header, with no key.
+   => Observed behaviour: the system accepts it. The identity is trusted from that header.
+12|As administrator revoke the access key, then repeat step 1 of test O01 (ask for the list of orders). Do this step last and create the key again afterwards.
+   => The system refuses and says the API key is invalid.
+13|As administrator remove all roles from the user ai_tester, then create an order with the key.
+   => Write down what the system does. (The roles of a key come from the user record.)
+14|Log in as ai_tester and try to open the Settings page by changing the address of the page (#settings).
+   => You are sent back to Order Management. Settings cannot be opened.
+15|As ai_tester try to open the Finance page by changing the address of the page.
+   => You are sent back to Order Management.

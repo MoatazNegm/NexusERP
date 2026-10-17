@@ -1,0 +1,30 @@
+1|Open an existing order and change its customer reference to "OM-T-001-REV" followed by the time stamp, then save.
+   => The PO reference of the order is changed.
+2|Change the PO reference of the order to one that another order of the same customer already uses, then save.
+   => The change is refused with the duplicate PO reference message.
+3|Edit the order so that one line item has quantity 0, then save.
+   => Observed behaviour: the change is accepted and the quantity is stored as 1 (it is corrected, not refused).
+4|Add a new line item "Added line" with quantity 3, price 50 and unit pcs to the order.
+   => The order has one more line item. Its history shows "Line item added: ...".
+5|Try to add a line item without a unit.
+   => The system refuses with the message "Item description and unit are required".
+6|Change the quantity of an existing line item to 12 and save.
+   => The quantity is 12. The history shows "Line item updated".
+7|Change the quantity of a line item to -3 and save.
+   => Observed behaviour: the change is accepted and the quantity is stored as 1 (it is corrected, not refused).
+8|Try to change a line item that does not exist (item number "nope").
+   => The system answers "Order item not found".
+9|Try to remove a line item that does not exist (item number "nope").
+   => The system answers "Order item not found".
+10|Remove an existing line item from the order.
+   => The line item is gone. The history shows "Line item removed: ...".
+11|Try to delete the whole order in the normal way.
+   => There is no such function. An order can only be deleted by the special "hard delete" action that is allowed for administrators and management.
+12|Try to set the status of the order to "Fulfilled" by editing it directly.
+   => Observed behaviour: the change is accepted and the order becomes "Fulfilled" (listed as a finding).
+13|Open the tab "Logged", press Edit on an order, change a quantity and press Save.
+   => The order list shows the change. Editing is blocked ("frozen") once the order is beyond Technical Review.
+14|Try to edit an order whose status is after Technical Review.
+   => The edit controls are disabled and a message tells you the order is locked.
+15|Open the order again after all these changes and read its history.
+   => The history shows every edit in time order, with the user ai_tester (or "System" for changes made with the access key).

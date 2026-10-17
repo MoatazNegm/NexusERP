@@ -1,0 +1,44 @@
+1|Log in as sales1 and create the order PO-S07-001 with the line "Gear Box", quantity 2, price 500 and no components.
+   => The order is saved with the status "Technical Review".
+2|Try to save an order whose line item has no unit.
+   => Refused with the message "Item 1 unit is required".
+3|As planner1 try to finalize the study while nothing is accepted.
+   => Refused with the message "All items must be accepted before finalizing study".
+4|Try to release 1 unit for delivery now.
+   => Refused with the message "Finance receipt required. Only 0 units are financially cleared."
+5|Try to confirm a delivery without a proof-of-delivery file.
+   => Refused with the message "Signed Delivery Note is required to confirm delivery."
+6|Put the order on hold with the reason "customer asked".
+   => The hold is shown with its reason. The status does not change (Logged or Technical Review).
+7|Release the hold.
+   => The order is no longer on hold.
+8|As planner1 roll the order back to Logged.
+   => The status is "Logged" and the order shows the rolled-back lock badge.
+9|Reject the order with the reason "cannot supply".
+   => The status is "Rejected". Any goods already received are released to free stock, with history entries "RELEASED_TO_STOCK".
+10|Create an order whose component cost is higher than the price (price 100, component cost 500) and try to go on to issue the purchase order.
+   => The order shows "Negative Margin" (margin block). Issuing the PO is blocked until management or admin releases the margin.
+11|Log in as proc1 and try to issue a PO for a component that is still at "RFP Sent".
+   => Refused with a message that a PO cannot be issued until all procurement components are awarded.
+12|Try to receive more than was ordered (7 pieces when only 6 are left).
+   => Refused with the message "Cannot receive more than ordered (Left: 6)".
+13|Try to register more manufactured units than the remaining target.
+   => Refused with the message "Cannot manufacture N units. Only M units remaining to meet target."
+14|Try to approve dispatch for more units than are in the hub.
+   => Refused with a message that the receipt would exceed the items currently available.
+15|Try to ship more units than were released for transit.
+   => Refused with a message that only M units are awaiting transit.
+16|Try to confirm delivery of more units than were shipped.
+   => Refused with a message that the units are still in transit on a truck.
+17|On the login screen type a wrong password three times in a row, then the correct one.
+   => Each wrong attempt shows "Invalid username or password". The account is not locked and the correct password still works.
+18|Create a second order for the same customer with the same PO reference PO-S07-001.
+   => By the written rule the reference must be unique per customer, and the screen should block it. (Known: the interface itself accepted the duplicate once. If the screen also allows it, write it up as a defect.)
+19|Try an action on an order number that does not exist.
+   => The system answers "Order not found".
+20|Try to delete an order in the normal way.
+   => There is no such function; permanent removal exists only through the "hard delete order" action for the administrator.
+21|Log in as sales1 and try to create a user with the administrator role.
+   => Refused with the message "Admin privileges are required to create users." and no user is created (this checks the fix against privilege escalation).
+22|As sales1 try to change the roles of any user to administrator, including sales1's own record.
+   => Refused with the message "Admin privileges are required to modify users or roles."
