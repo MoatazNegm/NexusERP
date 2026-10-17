@@ -252,7 +252,52 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   const [description, setDescription] = useState('');
   const [fromAccount, setFromAccount] = useState('');
   const [toAccount, setToAccount] = useState('');
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [selectedPoNumber, setSelectedPoNumber] = useState<string | null>(null);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedCustomerName, setSelectedCustomerName] = useState<string | null>(null);
+  const [toAccountSearch, setToAccountSearch] = useState('');
+  const [isToAccountDropdownOpen, setIsToAccountDropdownOpen] = useState(false);
+  const [expandedCustomerKey, setExpandedCustomerKey] = useState<string | null>(null);
+  const [toAccountFilterTab, setToAccountFilterTab] = useState<'ALL' | 'ACCOUNTS' | 'CUSTOMERS'>('ALL');
   const [error, setError] = useState<string | null>(null);
+
+  // Group and sort customer POs (newest to oldest) for To Account selection
+  const customersWithOrders = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; orders: CustomerOrder[] }>();
+
+    (customers || []).forEach(c => {
+      const name = String(c.name || '').trim();
+      if (!name || name.toLowerCase() === 'internal stock') return;
+      const key = name.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, { id: c.id, name, orders: [] });
+      }
+    });
+
+    (orders || []).forEach(o => {
+      const name = String(o.customerName || '').trim();
+      if (!name || name.toLowerCase() === 'internal stock') return;
+      const key = name.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, { id: o.customerId || key, name, orders: [] });
+      }
+      if (o.status !== OrderStatus.REJECTED) {
+        map.get(key)!.orders.push(o);
+      }
+    });
+
+    map.forEach(c => {
+      c.orders.sort((a, b) => {
+        const dateA = new Date(a.orderDate || (a as any).dataEntryTimestamp || 0).getTime();
+        const dateB = new Date(b.orderDate || (b as any).dataEntryTimestamp || 0).getTime();
+        if (dateB !== dateA) return dateB - dateA;
+        return String(b.internalOrderNumber || '').localeCompare(String(a.internalOrderNumber || ''));
+      });
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [customers, orders]);
 
   // Compute Company Enterprise Balance Sheet & Double-Entry Financial Position
   const companyFinancials = useMemo(() => {
@@ -316,7 +361,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
 
     const supplierCashOut = (supplierPayments || []).reduce((s, p) => s + (p.amount || 0), 0);
 
-    const manualAdditions = entries.filter(e => e.type === 'ADDITION' && !e.id?.startsWith('adv_cust_')).reduce((s, e) => s + (e.amount || 0), 0);
+    const manualAdditions = entries.filter(e => e.type === 'ADDITION' && !e.id?.startsWith('adv_cust_') && !e.orderId).reduce((s, e) => s + (e.amount || 0), 0);
     const manualCosts = entries.filter(e => e.type === 'COST' && !e.id?.startsWith('sp_ledg_') && e.category !== 'Supplier Payment').reduce((s, e) => s + (e.amount || 0), 0);
 
     const netCashInBank = (customerCashIn + manualAdditions) - (supplierCashOut + manualCosts);
@@ -431,6 +476,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     // 2. Customer payments (these don't have from/to accounts, so they stay as-is)
     orders.forEach(o => {
       (o.payments || []).forEach((p, idx) => {
+        if ((p as any).ledgerEntryId) return;
         all.push({
           id: `cust_${o.id}_${idx}`,
           date: p.date,
@@ -498,9 +544,15 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   }, [filteredEntries]);
 
   const handleAddEntry = async () => {
-    if (!amount || !description || !fromAccount || !toAccount) { setError('Amount, description, from account, and to account are mandatory'); return; }
+    if (!amount || !description || !fromAccount || !toAccount) { 
+      setError(language === 'ar' ? 'المبلغ، الوصف، من حساب، وإلى حساب إلزامية' : 'Amount, description, from account, and to account are mandatory'); 
+      return; 
+    }
     const amt = parseFloat(amount);
-    if (isNaN(amt) || amt <= 0) { setError('Enter a valid positive amount'); return; }
+    if (isNaN(amt) || amt <= 0) { 
+      setError(language === 'ar' ? 'أدخل مبلغاً صحيحاً موجباً' : 'Enter a valid positive amount'); 
+      return; 
+    }
 
     setLoading(true);
     setError(null);
@@ -512,6 +564,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         description,
         fromAccount,
         toAccount,
+        orderId: selectedOrderId || undefined,
+        poNumber: selectedPoNumber || undefined,
         user: currentUser.username
       });
       setShowAddModal(false);
@@ -519,6 +573,12 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       setDescription('');
       setFromAccount('');
       setToAccount('');
+      setSelectedOrderId(null);
+      setSelectedPoNumber(null);
+      setSelectedCustomerId(null);
+      setSelectedCustomerName(null);
+      setToAccountSearch('');
+      setIsToAccountDropdownOpen(false);
       onRefresh();
     } catch (e: any) {
       setError(e.message || 'Failed to add entry');
@@ -526,6 +586,32 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       setLoading(false);
     }
   };
+
+  // Filter standard accounts and customer POs based on search input
+  const filteredStandardAccounts = useMemo(() => {
+    const q = toAccountSearch.trim().toLowerCase();
+    if (!q) return ledgerAccounts;
+    return ledgerAccounts.filter(acc => acc.toLowerCase().includes(q));
+  }, [ledgerAccounts, toAccountSearch]);
+
+  const filteredCustomers = useMemo(() => {
+    const q = toAccountSearch.trim().toLowerCase();
+    if (!q) return customersWithOrders;
+    return customersWithOrders
+      .map(c => {
+        const custMatch = c.name.toLowerCase().includes(q);
+        const matchingOrders = c.orders.filter(o => {
+          const poRef = String(o.customerReferenceNumber || '').toLowerCase();
+          const intRef = String(o.internalOrderNumber || '').toLowerCase();
+          const proj = String(o.projectName || '').toLowerCase();
+          return poRef.includes(q) || intRef.includes(q) || proj.includes(q);
+        });
+        if (custMatch) return c;
+        if (matchingOrders.length > 0) return { ...c, orders: matchingOrders };
+        return null;
+      })
+      .filter(Boolean) as typeof customersWithOrders;
+  }, [customersWithOrders, toAccountSearch]);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -880,7 +966,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
 
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[200] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg p-10 animate-in zoom-in-95 border border-slate-100">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl p-10 animate-in zoom-in-95 border border-slate-100 max-h-[90vh] overflow-y-auto custom-scrollbar">
             <div className="flex items-center gap-6 mb-8">
               <div className="w-16 h-16 rounded-3xl bg-blue-50 text-blue-600 flex items-center justify-center text-3xl shadow-inner">
                 <i className="fa-solid fa-file-invoice-dollar"></i>
@@ -959,30 +1045,316 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     })}
                   </select>
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t("finance.ledger.toAccountLabel")}</label>
-                  <select
-                    className="w-full p-4 border rounded-2xl bg-slate-50 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-50 focus:bg-white"
-                    value={toAccount} onChange={e => setToAccount(e.target.value)}
-                  >
-                    <option value="">{t("finance.ledger.selectAccount")}</option>
-                    {/* Grouped accounts - accounts can appear in multiple groups */}
-                    {ledgerAccounts.map(account => {
-                      const accountGroups = (() => {
-                        const groups = [];
-                        for (const [gName, accounts] of Object.entries(config.settings.ledgerAccountGroups || {})) {
-                          if (accounts.includes(account)) groups.push(gName);
-                        }
-                        return groups.length > 0 ? groups : [language === 'ar' ? 'غير مصنف' : 'Ungrouped'];
-                      })();
+                <div className="space-y-1.5 relative">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{t("finance.ledger.toAccountLabel")}</label>
+                    {selectedPoNumber && (
+                      <span className="text-[9px] font-mono font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                        PO Linked
+                      </span>
+                    )}
+                  </div>
 
-                      return (
-                        <option key={account} value={account}>
-                          {account} ({accountGroups.slice(0, 2).join(', ')}{accountGroups.length > 2 ? '...' : ''})
-                        </option>
-                      );
-                    })}
-                  </select>
+                  {/* Trigger Button */}
+                  <div
+                    onClick={() => setIsToAccountDropdownOpen(prev => !prev)}
+                    className={`w-full p-3.5 border-2 rounded-2xl cursor-pointer transition-all flex items-center justify-between gap-2 min-h-[58px] ${
+                      toAccount 
+                        ? 'bg-blue-50/40 border-blue-400 text-slate-800' 
+                        : 'bg-slate-50 border-slate-200 text-slate-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs shrink-0 ${
+                        selectedPoNumber 
+                          ? 'bg-amber-500 text-white shadow-sm' 
+                          : selectedCustomerName 
+                          ? 'bg-emerald-500 text-white shadow-sm' 
+                          : toAccount 
+                          ? 'bg-blue-600 text-white shadow-sm' 
+                          : 'bg-slate-200 text-slate-400'
+                      }`}>
+                        <i className={`fa-solid ${
+                          selectedPoNumber 
+                            ? 'fa-file-invoice' 
+                            : selectedCustomerName 
+                            ? 'fa-user-tie' 
+                            : 'fa-building-columns'
+                        }`}></i>
+                      </div>
+                      <div className="min-w-0 flex-1 text-left" dir="ltr">
+                        {toAccount ? (
+                          <div>
+                            <div className="text-xs font-black truncate text-slate-800" title={toAccount}>
+                              {toAccount}
+                            </div>
+                            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                              {selectedPoNumber ? (language === 'ar' ? 'حساب أمر شراء عميل (PO)' : 'Customer PO Account') :
+                               selectedCustomerName ? (language === 'ar' ? 'حساب عام للعميل' : 'Customer Account') :
+                               (language === 'ar' ? 'حساب دفتر أستاذ قياسي' : 'Standard Ledger Account')}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-xs font-bold text-slate-400">
+                            {language === 'ar' ? 'اختر الحساب، العميل، أو أمر الشراء...' : 'Select account, customer, or PO...'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {toAccount && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setToAccount('');
+                            setSelectedOrderId(null);
+                            setSelectedPoNumber(null);
+                            setSelectedCustomerId(null);
+                            setSelectedCustomerName(null);
+                          }}
+                          className="w-6 h-6 rounded-lg bg-slate-200 hover:bg-rose-100 hover:text-rose-600 flex items-center justify-center text-[10px] text-slate-500 transition-colors"
+                          title={language === 'ar' ? 'إلغاء التحديد' : 'Clear selection'}
+                        >
+                          <i className="fa-solid fa-xmark"></i>
+                        </button>
+                      )}
+                      <i className={`fa-solid fa-chevron-down text-xs text-slate-400 transition-transform ${isToAccountDropdownOpen ? 'rotate-180 text-blue-600' : ''}`}></i>
+                    </div>
+                  </div>
+
+                  {/* Dropdown Menu */}
+                  {isToAccountDropdownOpen && (
+                    <div className="mt-2 bg-white rounded-3xl shadow-xl border border-slate-200 p-4 space-y-3 z-30">
+                      {/* Search Input */}
+                      <div className="relative">
+                        <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                        <input
+                          type="text"
+                          autoFocus
+                          className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500 focus:bg-white transition-all placeholder:text-slate-400"
+                          placeholder={language === 'ar' ? 'بحث بالحساب، العميل، أو رقم PO...' : 'Search account, customer, or PO #...'}
+                          value={toAccountSearch}
+                          onChange={e => setToAccountSearch(e.target.value)}
+                        />
+                        {toAccountSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setToAccountSearch('')}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                          >
+                            <i className="fa-solid fa-circle-xmark"></i>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Filter Pills */}
+                      <div className="flex gap-1 text-[9px] font-black uppercase tracking-wider">
+                        <button
+                          type="button"
+                          onClick={() => setToAccountFilterTab('ALL')}
+                          className={`px-2.5 py-1 rounded-lg transition-colors ${toAccountFilterTab === 'ALL' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                        >
+                          {language === 'ar' ? 'الكل' : 'All'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setToAccountFilterTab('CUSTOMERS')}
+                          className={`px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 ${toAccountFilterTab === 'CUSTOMERS' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                        >
+                          <i className="fa-solid fa-users text-[8px]"></i>
+                          {language === 'ar' ? 'العملاء و POs' : 'Customers & POs'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setToAccountFilterTab('ACCOUNTS')}
+                          className={`px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 ${toAccountFilterTab === 'ACCOUNTS' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                        >
+                          <i className="fa-solid fa-building-columns text-[8px]"></i>
+                          {language === 'ar' ? 'الحسابات' : 'Accounts'}
+                        </button>
+                      </div>
+
+                      {/* Scrollable Items */}
+                      <div className="overflow-y-auto space-y-2.5 max-h-60 custom-scrollbar pr-1">
+                        {/* Standard Accounts */}
+                        {toAccountFilterTab !== 'CUSTOMERS' && filteredStandardAccounts.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 px-1 flex items-center gap-1.5">
+                              <i className="fa-solid fa-building-columns text-blue-500"></i>
+                              {language === 'ar' ? 'حسابات دفتر الأستاذ' : 'Standard Accounts'}
+                            </div>
+                            <div className="space-y-1">
+                              {filteredStandardAccounts.map(account => {
+                                const accountGroups = (() => {
+                                  const groups = [];
+                                  for (const [gName, accounts] of Object.entries(config.settings.ledgerAccountGroups || {})) {
+                                    if (accounts.includes(account)) groups.push(gName);
+                                  }
+                                  return groups.length > 0 ? groups : [language === 'ar' ? 'غير مصنف' : 'Ungrouped'];
+                                })();
+
+                                const isSelected = toAccount === account && !selectedPoNumber && !selectedCustomerName;
+                                return (
+                                  <div
+                                    key={account}
+                                    onClick={() => {
+                                      setToAccount(account);
+                                      setSelectedOrderId(null);
+                                      setSelectedPoNumber(null);
+                                      setSelectedCustomerId(null);
+                                      setSelectedCustomerName(null);
+                                      setIsToAccountDropdownOpen(false);
+                                    }}
+                                    className={`p-2 rounded-xl cursor-pointer transition-all flex items-center justify-between text-left ${
+                                      isSelected 
+                                        ? 'bg-blue-600 text-white shadow-sm' 
+                                        : 'hover:bg-slate-100 text-slate-700'
+                                    }`}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-xs font-black truncate">{account}</div>
+                                      <div className={`text-[8px] font-bold ${isSelected ? 'text-blue-100' : 'text-slate-400'}`}>
+                                        {accountGroups.slice(0, 2).join(', ')}
+                                      </div>
+                                    </div>
+                                    {isSelected && <i className="fa-solid fa-check text-xs ml-2"></i>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Customers and POs */}
+                        {toAccountFilterTab !== 'ACCOUNTS' && filteredCustomers.length > 0 && (
+                          <div className="space-y-1.5">
+                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 px-1 flex items-center gap-1.5">
+                              <i className="fa-solid fa-users text-emerald-500"></i>
+                              {language === 'ar' ? 'العملاء وأوامر الشراء' : 'Customers & Orders'}
+                            </div>
+                            <div className="space-y-1.5">
+                              {filteredCustomers.map(c => {
+                                const isCustSelected = selectedCustomerName === c.name && !selectedPoNumber;
+                                const isExpanded = expandedCustomerKey === c.id || (toAccountSearch.trim().length > 0 && c.orders.length > 0);
+                                return (
+                                  <div key={c.id} className="border border-slate-200 rounded-2xl p-2 bg-slate-50/50 space-y-1.5">
+                                    <div className="flex items-center justify-between gap-1.5">
+                                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <div className="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] shrink-0 font-bold">
+                                          <i className="fa-solid fa-user-tie"></i>
+                                        </div>
+                                        <span className="text-xs font-black text-slate-800 truncate" title={c.name}>
+                                          {c.name}
+                                        </span>
+                                        <span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-slate-200 text-slate-600">
+                                          {c.orders.length}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setToAccount(`Customer: ${c.name}`);
+                                            setSelectedOrderId(null);
+                                            setSelectedPoNumber(null);
+                                            setSelectedCustomerId(c.id);
+                                            setSelectedCustomerName(c.name);
+                                            setIsToAccountDropdownOpen(false);
+                                          }}
+                                          className={`px-2 py-0.5 rounded-lg text-[8px] font-black transition-colors ${
+                                            isCustSelected 
+                                              ? 'bg-emerald-600 text-white' 
+                                              : 'bg-white border border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+                                          }`}
+                                          title={language === 'ar' ? 'تحديد حساب العميل العام' : 'Select Customer Account'}
+                                        >
+                                          {language === 'ar' ? 'حساب العميل' : 'Select'}
+                                        </button>
+
+                                        {c.orders.length > 0 && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setExpandedCustomerKey(prev => prev === c.id ? null : c.id)}
+                                            className="w-6 h-6 rounded-lg bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 flex items-center justify-center text-[10px]"
+                                            title={isExpanded ? 'Collapse POs' : 'Expand POs'}
+                                          >
+                                            <i className={`fa-solid fa-chevron-${isExpanded ? 'up' : 'down'}`}></i>
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {/* POs list sorted from newest to oldest */}
+                                    {isExpanded && c.orders.length > 0 && (
+                                      <div className="pl-3 border-l-2 border-emerald-300 space-y-1 pt-1">
+                                        <div className="text-[7.5px] font-black uppercase tracking-wider text-slate-400">
+                                          {language === 'ar' ? 'أوامر الشراء (من الأحدث إلى الأقدم):' : 'POs (Newest to Oldest):'}
+                                        </div>
+                                        {c.orders.map(order => {
+                                          const poRef = order.customerReferenceNumber || order.internalOrderNumber;
+                                          const isOrderSelected = selectedOrderId === order.id;
+                                          const orderDateStr = order.orderDate ? new Date(order.orderDate).toLocaleDateString() : '-';
+                                          return (
+                                            <div
+                                              key={order.id}
+                                              onClick={() => {
+                                                setToAccount(`PO: ${poRef} - ${c.name}`);
+                                                setSelectedOrderId(order.id);
+                                                setSelectedPoNumber(poRef);
+                                                setSelectedCustomerId(c.id);
+                                                setSelectedCustomerName(c.name);
+                                                setIsToAccountDropdownOpen(false);
+                                              }}
+                                              className={`p-2 rounded-xl cursor-pointer transition-all flex items-center justify-between text-left ${
+                                                isOrderSelected 
+                                                  ? 'bg-amber-500 text-white shadow-sm' 
+                                                  : 'bg-white hover:bg-amber-50 border border-slate-100 text-slate-700'
+                                              }`}
+                                            >
+                                              <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                  <span className="font-mono text-[10.5px] font-black">{poRef}</span>
+                                                  {order.internalOrderNumber && order.internalOrderNumber !== poRef && (
+                                                    <span className={`text-[8.5px] font-bold ${isOrderSelected ? 'text-amber-100' : 'text-slate-400'}`}>
+                                                      ({order.internalOrderNumber})
+                                                    </span>
+                                                  )}
+                                                  {order.projectName && (
+                                                    <span className={`px-1 py-0.2 rounded text-[7.5px] font-bold ${isOrderSelected ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                                                      {order.projectName}
+                                                    </span>
+                                                  )}
+                                                </div>
+                                                <div className={`text-[8px] font-bold mt-0.5 flex items-center gap-2 ${isOrderSelected ? 'text-amber-100' : 'text-slate-400'}`}>
+                                                  <span><i className="fa-regular fa-calendar mr-1"></i>{orderDateStr}</span>
+                                                  <span>•</span>
+                                                  <span>{order.status}</span>
+                                                </div>
+                                              </div>
+                                              {isOrderSelected && <i className="fa-solid fa-check text-xs ml-1.5"></i>}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {filteredStandardAccounts.length === 0 && filteredCustomers.length === 0 && (
+                          <div className="p-6 text-center text-slate-400 text-xs italic">
+                            {language === 'ar' ? 'لا توجد نتائج مطابقة للبحث' : 'No matching accounts or POs found'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

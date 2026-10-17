@@ -116,7 +116,7 @@ const syncAuthoritativeUsersToSandboxes = (liveDb) => {
 
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 8; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 9; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -1379,6 +1379,18 @@ const migrations = [
     // v7 → v8: Extract base64 cost sheets from DB to physical files
     (settings) => {
         return settings;
+    },
+    // v8 → v9: Sourcing role and roleMappings
+    (settings) => {
+        if (!settings.availableRoles) settings.availableRoles = [];
+        if (!settings.availableRoles.includes('sourcing')) {
+            settings.availableRoles.push('sourcing');
+        }
+        if (!settings.roleMappings) settings.roleMappings = {};
+        if (!settings.roleMappings['sourcing']) {
+            settings.roleMappings['sourcing'] = ['sourcing', 'admin', 'management'];
+        }
+        return settings;
     }
 ];
 
@@ -1500,6 +1512,17 @@ const applySchemaMigrations = (db, targetPath = DB_PATH) => {
             });
             if (extractedFiles > 0) console.log(`[System] v7→v8 migration: Extracted ${extractedFiles} base64 cost sheet(s) to physical files in ${isLive ? 'Live' : targetSandboxOwner}.`);
         }
+        if (version === 9) {
+            if (!settings.availableRoles) settings.availableRoles = [];
+            if (!settings.availableRoles.includes('sourcing')) {
+                settings.availableRoles.push('sourcing');
+            }
+            if (!settings.roleMappings) settings.roleMappings = {};
+            if (!settings.roleMappings['sourcing']) {
+                settings.roleMappings['sourcing'] = ['sourcing', 'admin', 'management'];
+            }
+            console.log(`[System] v8→v9 migration: Registered 'sourcing' (taslemat) role and navigation mapping.`);
+        }
     }
 
     settings.dbSchemaVersion = CURRENT_SCHEMA_VERSION;
@@ -1582,7 +1605,7 @@ const repairTradingMirrorOrders = (db, targetPath = DB_PATH) => {
     if (!db.orders || db.orders.length === 0) return;
     let changed = false;
     db.orders.forEach(order => {
-        if (order.rolledBackToLogged) return;
+        if (order.rolledBackToLogged || order.blanketOrder) return;
         (order.items || []).forEach((item, idx) => {
             const pType = item.productionType || 'TRADING';
             if (pType === 'TRADING' && (!item.components || item.components.length === 0)) {
@@ -1954,73 +1977,97 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
 
         if (!order.rolledBackToLogged) {
             if (item.productionType === 'TRADING') {
-
-                // Ensure exactly one component that mirrors the item (skip if fully depleted/allocated)
-                const isFullyDepleted = (item.allocatedQty || 0) >= getItemEffectiveQty(item) && (item.allocatedQty || 0) > 0;
-                if ((!item.components || item.components.length === 0) && !isFullyDepleted) {
-                    const newComp = {
-                        id: `c_${Date.now()}_${idx}_0`,
-                        description: item.description,
-                        quantity: getItemEffectiveQty(item),
-                        unit: item.unit || 'pcs',
-                        unitCost: 0,
-                        taxPercent: 14,
-                        source: 'PROCUREMENT',
-                        status: isOrderApproved ? 'PENDING_OFFER' : 'NEW',
-                        componentNumber: `CMP-${order.internalOrderNumber}-${idx + 1}-1`
-                    };
-                    
-                    // Automatic intelligence: search price list for match
-                    const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(item.description || '').trim().toLowerCase());
-                    if (match) newComp.supplierPartNumber = match.partNumber;
-
-                    item.components = [newComp];
-                } else if (item.components && item.components.length > 0) {
-                    // Mirror sync: Only the first component is active in TRADING
-                    const comp = item.components[0];
-                    if (comp.description !== item.description) {
-                        comp.description = item.description;
+                if (order.blanketOrder) {
+                    // Blanket order in Trade Mode: Technical review adds components with any qty needed.
+                    // Do NOT force a single mirror component or overwrite descriptions/quantities.
+                    if (item.components && Array.isArray(item.components)) {
+                        item.components.forEach((comp, cIdx) => {
+                            if (!comp.componentNumber) {
+                                comp.componentNumber = comp.supplierPartNumber || `CMP-${order.internalOrderNumber}-${idx + 1}-${cIdx + 1}`;
+                            }
+                            if (isOrderApproved) {
+                                if (comp.source === 'PROCUREMENT' && ['NEW', 'PENDING_OFFER'].includes(comp.status)) {
+                                    comp.status = 'PENDING_OFFER';
+                                    if (!comp.procurementStartedAt) {
+                                        comp.procurementStartedAt = new Date().toISOString();
+                                    }
+                                }
+                            } else {
+                                if (comp.status === 'PENDING_OFFER' && !comp.poNumber && !comp.rfpId && !comp.awardId && !comp.procurementStartedAt) {
+                                    comp.status = 'NEW';
+                                }
+                            }
+                        });
                     }
-                    
-                    // Attempt to auto-populate part number if missing
-                    if (!comp.supplierPartNumber) {
-                        const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(comp.description || '').trim().toLowerCase());
-                        if (match) comp.supplierPartNumber = match.partNumber;
-                    }
+                } else {
+                    // Standard non-blanket TRADING mirror logic
+                    // Ensure exactly one component that mirrors the item (skip if fully depleted/allocated)
+                    const isFullyDepleted = (item.allocatedQty || 0) >= getItemEffectiveQty(item) && (item.allocatedQty || 0) > 0;
+                    if ((!item.components || item.components.length === 0) && !isFullyDepleted) {
+                        const newComp = {
+                            id: `c_${Date.now()}_${idx}_0`,
+                            description: item.description,
+                            quantity: getItemEffectiveQty(item),
+                            unit: item.unit || 'pcs',
+                            unitCost: 0,
+                            taxPercent: 14,
+                            source: 'PROCUREMENT',
+                            status: isOrderApproved ? 'PENDING_OFFER' : 'NEW',
+                            componentNumber: `CMP-${order.internalOrderNumber}-${idx + 1}-1`
+                        };
+                        
+                        // Automatic intelligence: search price list for match
+                        const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(item.description || '').trim().toLowerCase());
+                        if (match) newComp.supplierPartNumber = match.partNumber;
 
-                    const isStock = isStockOrder(order);
-                    const hasAllocations = (item.allocatedQty || 0) > 0 || (comp.allocatedQty || 0) > 0;
-
-                    // Only sync comp.quantity directly from item.quantity for non-stock orders without allocations
-                    if (!isStock && !hasAllocations) {
-                        if (!comp.allocatedFromStockOrderId && comp.quantity !== getItemEffectiveQty(item)) {
-                            comp.quantity = getItemEffectiveQty(item);
+                        item.components = [newComp];
+                    } else if (item.components && item.components.length > 0) {
+                        // Mirror sync: Only the first component is active in TRADING
+                        const comp = item.components[0];
+                        if (comp.description !== item.description) {
+                            comp.description = item.description;
                         }
-                    } else if (hasAllocations) {
-                        const totalBase = (item.originalQuantity !== undefined ? item.originalQuantity : ((item.quantity || 0) + (item.allocatedQty || comp.allocatedQty || 0)));
-                        if (item.originalQuantity === undefined) item.originalQuantity = totalBase;
-                        const remaining = Math.max(0, totalBase - (item.allocatedQty || comp.allocatedQty || 0));
-                        comp.quantity = remaining;
-                        item.quantity = remaining;
-                        if (remaining <= 0) {
-                            comp.status = 'DEPLETED';
+                        
+                        // Attempt to auto-populate part number if missing
+                        if (!comp.supplierPartNumber) {
+                            const match = (db.suppliers || []).flatMap(s => s.priceList || []).find(p => String(p?.description || '').trim().toLowerCase() === String(comp.description || '').trim().toLowerCase());
+                            if (match) comp.supplierPartNumber = match.partNumber;
                         }
-                    } else if (isStock && item.originalQuantity !== undefined) {
-                        // All allocations have been returned or restored back to stock order
-                        comp.quantity = item.originalQuantity;
-                        item.quantity = item.originalQuantity;
-                        if (comp.status === 'DEPLETED') {
-                            comp.status = isOrderApproved ? 'PENDING_OFFER' : 'NEW';
-                        }
-                    }
 
-                    if (!isOrderApproved && comp.status === 'PENDING_OFFER' && !comp.poNumber && !comp.rfpId && !comp.awardId && !comp.procurementStartedAt) {
-                        comp.status = 'NEW';
-                    }
-                    // Cap at 1 component for TRADING to prevent BoM pollution unless split into stock and procurement
-                    const hasStockAllocations = item.components.some(c => c.allocatedFromStockOrderId);
-                    if (!hasStockAllocations && item.components.length > 1) {
-                        item.components = [item.components[0]];
+                        const isStock = isStockOrder(order);
+                        const hasAllocations = (item.allocatedQty || 0) > 0 || (comp.allocatedQty || 0) > 0;
+
+                        // Only sync comp.quantity directly from item.quantity for non-stock orders without allocations
+                        if (!isStock && !hasAllocations) {
+                            if (!comp.allocatedFromStockOrderId && comp.quantity !== getItemEffectiveQty(item)) {
+                                comp.quantity = getItemEffectiveQty(item);
+                            }
+                        } else if (hasAllocations) {
+                            const totalBase = (item.originalQuantity !== undefined ? item.originalQuantity : ((item.quantity || 0) + (item.allocatedQty || comp.allocatedQty || 0)));
+                            if (item.originalQuantity === undefined) item.originalQuantity = totalBase;
+                            const remaining = Math.max(0, totalBase - (item.allocatedQty || comp.allocatedQty || 0));
+                            comp.quantity = remaining;
+                            item.quantity = remaining;
+                            if (remaining <= 0) {
+                                comp.status = 'DEPLETED';
+                            }
+                        } else if (isStock && item.originalQuantity !== undefined) {
+                            // All allocations have been returned or restored back to stock order
+                            comp.quantity = item.originalQuantity;
+                            item.quantity = item.originalQuantity;
+                            if (comp.status === 'DEPLETED') {
+                                comp.status = isOrderApproved ? 'PENDING_OFFER' : 'NEW';
+                            }
+                        }
+
+                        if (!isOrderApproved && comp.status === 'PENDING_OFFER' && !comp.poNumber && !comp.rfpId && !comp.awardId && !comp.procurementStartedAt) {
+                            comp.status = 'NEW';
+                        }
+                        // Cap at 1 component for TRADING to prevent BoM pollution unless split into stock and procurement
+                        const hasStockAllocations = item.components.some(c => c.allocatedFromStockOrderId);
+                        if (!hasStockAllocations && item.components.length > 1) {
+                            item.components = [item.components[0]];
+                        }
                     }
                 }
             }
@@ -3129,6 +3176,54 @@ const addToCollection = (col) => (req, res) => {
     if (['customers', 'suppliers', 'inventory', 'users', 'userGroups', 'settings'].includes(col)) {
         if (!newItem.logs) newItem.logs = [createAuditLog('Entity registered', undefined, user)];
         if (col === 'suppliers' && !newItem.priceList) newItem.priceList = [];
+    }
+
+    if (col === 'ledger') {
+        // If an addition entry is assigned to a specific PO, reflect it into the order's payments
+        if (newItem.type === 'ADDITION' && (newItem.orderId || newItem.poNumber)) {
+            const targetOrder = (db.orders || []).find(o =>
+                (newItem.orderId && o.id === newItem.orderId) ||
+                (newItem.poNumber && (
+                    String(o.customerReferenceNumber || '').trim().toLowerCase() === String(newItem.poNumber).trim().toLowerCase() ||
+                    String(o.internalOrderNumber || '').trim().toLowerCase() === String(newItem.poNumber).trim().toLowerCase()
+                ))
+            );
+
+            if (targetOrder) {
+                if (!targetOrder.payments) targetOrder.payments = [];
+                const paymentIndex = targetOrder.payments.length + 1;
+                const timestamp = Date.now().toString().slice(-4);
+                const orderShortId = (targetOrder.internalOrderNumber || targetOrder.id).replace(/[^\w]/g, '').slice(-6);
+                const receiptNumber = newItem.receiptNumber || `RCV-${orderShortId}-${String(paymentIndex).padStart(2, '0')}-${timestamp}`;
+                const paymentAmt = Number(newItem.amount) || 0;
+
+                targetOrder.payments.push({
+                    amount: paymentAmt,
+                    date: newItem.date || new Date().toISOString(),
+                    user: user || 'System',
+                    memo: newItem.description || `Ledger Entry Payment (${newItem.toAccount || 'General Ledger'})`,
+                    receiptNumber,
+                    ledgerEntryId: newItem.id
+                });
+
+                if (!targetOrder.history) targetOrder.history = [];
+                targetOrder.history.push({
+                    timestamp: new Date().toISOString(),
+                    message: `Payment from Ledger Entry: ${paymentAmt.toLocaleString()} L.E. - ${newItem.description || ''}`,
+                    status: targetOrder.status,
+                    user: user || 'System',
+                    type: 'payment',
+                    amount: paymentAmt,
+                    receiptNumber
+                });
+
+                const settings = resolveSettings(db, isSandbox(req));
+                const orderIdx = db.orders.findIndex(o => o.id === targetOrder.id);
+                if (orderIdx !== -1) {
+                    db.orders[orderIdx] = calculateOrderHealth(targetOrder, settings);
+                }
+            }
+        }
     }
 
     db[col].push(newItem);
@@ -4749,14 +4844,23 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             }
                         }
                     });
-                    // Clear components; processedOrderInternal will recreate the mirrored one automatically
-                    sptItem.components = [];
-                    order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to TRADING. Mirror sync enabled.`, order.status, user));
+                    if (order.blanketOrder) {
+                        if (!sptItem.components) sptItem.components = [];
+                        order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to TRADING (Blanket Order). Trade components sourcing enabled.`, order.status, user));
+                    } else {
+                        // Clear components; processedOrderInternal will recreate the mirrored one automatically
+                        sptItem.components = [];
+                        order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to TRADING. Mirror sync enabled.`, order.status, user));
+                    }
                 } else {
                     if (oldType === 'TRADING') {
-                        // The user switched OUT of TRADING. We must wipe the default mirror entry that was added.
-                        sptItem.components = [];
-                        order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}. Removed TRADING mirror component.`, order.status, user));
+                        if (!order.blanketOrder) {
+                            // The user switched OUT of TRADING in a non-blanket order. Wipe mirror entry.
+                            sptItem.components = [];
+                            order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}. Removed TRADING mirror component.`, order.status, user));
+                        } else {
+                            order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}.`, order.status, user));
+                        }
                     } else {
                         order.logs.push(createAuditLog(`Item ${sptItemIdx + 1} set to ${newType}.`, order.status, user));
                     }
@@ -5782,7 +5886,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 }
                 if (approvalDetails.length > 0) {
-                    order.logs.push(createAuditLog(`Finance Partial Receipt for Dispatch: ${approvalDetails.join(', ')}`, order.status, user));
+                    const hasBypass = Boolean(payload.bypass || (payload.items || []).some(x => x.bypass));
+                    const bypassNote = hasBypass ? ' [Bypassed suggested downpayment limit]' : '';
+                    order.logs.push(createAuditLog(`Delivery Authorization Receipt: ${approvalDetails.join(', ')}${bypassNote}${payload.notes ? ` - ${payload.notes}` : ''}`, order.status, user));
                 }
                 break;
             }

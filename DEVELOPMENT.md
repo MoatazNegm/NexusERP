@@ -96,6 +96,7 @@ db.stub.json             # fresh-install template (commit-worthy; no prod data)
 | Dedicated part usage, order history & stock allocation tracking | `components/PartHistory.tsx` | ~54 KB |
 | Profitability analysis & reporting | `components/ProfitabilityReport.tsx` | ~47 KB |
 | Dispatch, POD, transit tracking | `components/ShipmentModule.tsx` | ~41 KB |
+| Sourcing & delivery authorization (تسليمات / Taslemat) | `components/SourcingModule.tsx` | ~44 KB |
 | CRM (customers, contacts, opportunities) | `components/CRMModule.tsx` | ~40 KB |
 | Order details modal & tracking timeline | `components/OrderDetailsModal.tsx` | ~35 KB |
 | Strategic AI assistant (Gemini + multi-model fallback) | `components/AIAssistant.tsx` | ~29 KB |
@@ -120,7 +121,7 @@ db.stub.json             # fresh-install template (commit-worthy; no prod data)
 
 ## Feature entry points (read these first, then dive in)
 
-When asked to change a feature, land on the row below, not on the file. All line numbers are in the current tree as of v1.0001095.
+When asked to change a feature, land on the row below, not on the file. All line numbers are in the current tree as of v1.0001097.
 
 ### Order Management
 
@@ -132,6 +133,7 @@ When asked to change a feature, land on the row below, not on the file. All line
 - **Effective qty helper (used everywhere revenue/BoM is computed):** `utils.ts` `getItemEffectiveQty`
 - **Contracts (Blanket Orders):** `server.js:3227` `COLLECTIONS` registry has `'contracts'`; `OrderManagement.tsx` 'Blanket Orders' tab; `FinanceModule.tsx` 'contracts' tab renders them via `SortableTable`
 - **Blanket classification rule:** `isOrderBlanket` evaluates only the explicit `blanketOrder: true` flag — outsourcing items or component contracts no longer classify as Blanket Orders. Procurement's "Blanket Orders" tab was renamed to "Outsourcing" to avoid confusion (see i18n keys).
+- **Blanket Order Trading Mode:** Blanket orders (`order.blanketOrder === true`) support the `TRADING` production type with multi-component sourcing. Unlike standard trade orders that enforce a 1:1 mirror component, blanket trade orders allow Technical Reviewers to add arbitrary components with any required quantities without clamping or overwriting.
 - **Internal Stock Orders:** Dedicated classification when customer name is `"internal stock"` or customer reference / PO starts with `"STOCK-"` (`isStockOrder(order)` in `server.js`). Creation defaults: payment SLA = 0 days, applies withholding tax = false, project name = '', blanket contract ID = '', currency = 'L.E.', conversion rate = 1, price per unit = 0. Stock orders are exempt from customer wallet debt calculations, compliance logging violations, and margin blocks.
 - **Sortable columns & Last Edited:** Table supports sorting by `lastEdited` (computed via `getLastEditedInfo(order)` inspecting human user logs while excluding `System`), `dataEntryTimestamp`, `customer`, etc.
 
@@ -235,9 +237,20 @@ When asked to change a feature, land on the row below, not on the file. All line
 - **Customer merge:** `server.js:3167` `POST /api/v1/customers/merge`
 - **Type:** `Customer` in `types.ts`
 
+### Sourcing & Delivery Authorization (تسليمات / Taslemat)
+
+- **Module:** `components/SourcingModule.tsx`
+- **Role:** `sourcing` (mapped in `constants.tsx` and initialized via schema v9 migration in `server.js`).
+- **Dashboard & Authorization:** Sourcing operators inspect orders and line items that have arrived in the Product Hub.
+- **Dual Financial Intelligence:** Each order card displays (1) Order Financial Status (Gross Revenue, Amount Paid, Remaining Balance, Downpayment Coverage %) and (2) Overall Customer Financial Status (Invoiced, Collected, Balance, Prepayment Wallet).
+- **Delivery Clearance:** Operators can authorize deliveries up to downpayment coverage ("Max Paid") or exercise manual discretion ("All in Hub") to bypass the suggested quantity, with explicit reason logging via `approve-dispatch-receipt`.
+
 ### Finance
 
 - **Module:** `components/FinanceModule.tsx` (~349 KB — largest module in the codebase)
+- **General Ledger Combobox (`GeneralLedgerView`):** "To Account" selection combines standard ledger accounts, system customers, and individual customer purchase orders (sorted descending from newest to oldest by date/timestamp).
+- **Multi-Field Real-Time Search:** Search filters across account names, customer names, PO reference numbers, internal order numbers, and project names.
+- **Automatic PO Payment Synchronization (`server.js`):** When an addition entry is saved with a target PO (`orderId` / `poNumber`), the server automatically appends a payment to `order.payments` and records an entry in `order.history`. `companyFinancials` and unified entry views exclude duplicate ledger payments to ensure double-entry precision.
 - **Collapsible order cards** (default closed) + Expand All/Collapse All toolbar control — preserve this UX
 - **Universal multi-query search** supports `project` / `non-project` keywords — preserve
 - **Finance Stock Orders Tab (`stock_orders`):** Dedicated tab isolating internal stock orders from commercial customer receivables, billings, and wallets. Highlights Grand Total Stock Value, active lines, allocated vs remaining stock quantities, and per-line valuation breakdown.
@@ -509,7 +522,7 @@ None of these are required for the app to work — they're quality-of-life impro
 ## Application versioning
 
 - **`APP_VERSION` is defined in `constants.tsx`** (string format).
-- Current base version: `1.0001095`.
+- Current base version: `1.0001097`.
 - **Increment by `0.000001` per update** — every rebuild, no exceptions.
 - Displayed at the bottom of every page in small font via `components/VersionFooter.tsx`.
 
@@ -977,8 +990,8 @@ export default app;
 1. **Never commit `db.json` or any `db.sandbox.*.json`.** They are `.gitignore`d. If already tracked: `git rm --cached db.json` (keep local file), then commit.
 2. **Never commit and push without explicit user instruction.** Step 1 (rebuild) and Step 2 (commit + push) are intentionally separate. See "Build, Run, and Deploy Lifecycle".
 3. **Never `Stop-Process -Name node` or `taskkill /IM node.exe /F`.** Find the specific PID with `Get-NetTCPConnection -LocalPort 5005` and stop that one. Other apps on other ports may be using node.
-4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001095`). Displayed by `components/VersionFooter.tsx`.
-5. **Add a schema migration, never edit `db.json` by hand.** Bump `CURRENT_SCHEMA_VERSION` in `server.js` (currently `8`) and add a function in the `migrations` array. The server runs migrations on startup across live and all sandboxes (`migrateAllSandboxesOnStartup`) and after restore. Business data (orders, customers, etc.) is never touched.
+4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001097`). Displayed by `components/VersionFooter.tsx`.
+5. **Add a schema migration, never edit `db.json` by hand.** Bump `CURRENT_SCHEMA_VERSION` in `server.js` (currently `9`) and add a function in the `migrations` array. The server runs migrations on startup across live and all sandboxes (`migrateAllSandboxesOnStartup`) and after restore. Business data (orders, customers, etc.) is never touched.
 6. **Never call `fetch()` from a component.** Add a method to `services/dataService.ts` and call it.
 7. **Never store sensitive fields in plaintext** — `settings.geminiConfig.apiKey`, `settings.openaiConfig.apiKey`, `settings.emailConfig.password`, `settings.googleDriveConfig.clientSecret`, `settings.googleDriveConfig.refreshToken`, `settings.localStorageConfig.secretKey` are AES-256-CBC encrypted at rest using a key derived from `FACTORY_PASS`. **Do not rotate `FACTORY_PASS` after go-live** — it will brick all existing encrypted values.
 8. **Role changes are three-place:** (a) `types.ts` `UserRole` union, (b) `constants.tsx` `availableRoles` + `roleMappings` defaults, (c) `server.js` migration that adds the role to live `settings` and bumps `CURRENT_SCHEMA_VERSION`. The `settings` array in `db.json` is the runtime authority — the migration is what gets it there.

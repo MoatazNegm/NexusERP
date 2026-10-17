@@ -3,7 +3,7 @@ import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGr
 import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.000001 for every code update
-export const APP_VERSION = '1.0001095';
+export const APP_VERSION = '1.0001097';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
@@ -68,7 +68,7 @@ export const INITIAL_CONFIG: AppConfig = {
     enableDeliveryAlerts: false,
     deliveryAlertGroupIds: [],
     deliveryWarningDays: 5,
-    availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'suppliers', 'shipment'],
+    availableRoles: ['admin', 'management', 'order_management', 'factory', 'procurement', 'finance', 'crm', 'inventory', 'Gov.EInvoice', 'suppliers', 'shipment', 'sourcing'],
     roleMappings: {
       dashboard: ['management'],
       orders: ['order_management'],
@@ -81,7 +81,8 @@ export const INITIAL_CONFIG: AppConfig = {
       crm: ['crm'],
       suppliers: ['procurement', 'suppliers'],
       reporting: ['management'],
-      govEInvoice: ['Gov.EInvoice']
+      govEInvoice: ['Gov.EInvoice'],
+      sourcing: ['sourcing', 'admin', 'management']
     },
     ledgerAccounts: [
       'Transportation', 'Ekramya', 'Handles',
