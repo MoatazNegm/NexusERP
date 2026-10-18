@@ -48,10 +48,19 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [driveDraft, setDriveDraft] = useState<GoogleDriveConfig>(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
   const [driveStatus, setDriveStatus] = useState<{ configured: boolean; connected: boolean; connectedEmail?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
   const [localStorageDraft, setLocalStorageDraft] = useState<LocalStorageConfig>(config.settings.localStorageConfig || { enabled: true, autoUploadExternalSubmissions: true, storageIp: '', apiPort: 9000, consolePort: 9001, accessKey: '', secretKey: '', bucketName: '' });
-  const [tursoUrl, setTursoUrl] = useState(config.settings.tursoUrl || '');
-  const [tursoAuthToken, setTursoAuthToken] = useState(config.settings.tursoAuthToken || '');
+  
+  const DEFAULT_TURSO_CLIENT_CONFIG = {
+    useTurso: true,
+    tursoUrl: 'libsql://qualitycheck-moataznegm.aws-us-west-2.turso.io',
+    tursoAuthToken: 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODM5MzExMjQsImlkIjoiMDE5ZjVhOTQtNTMwMS03YTgwLTk1MDYtOTU3OTljNTAwZWNhIiwia2lkIjoiTUp2cjVTOE5zX0lrVkdNSDdXMERpUVpXaTlsWEhXNWJlX0gxaUstUXl0ZyIsInJpZCI6IjYzNjZjN2IyLTk0NTYtNDAxOS05YTg1LTQzOWE5ZTUwOTk5NCJ9.DWfcpfDucO88Hx5vALyFDEuuznNBh6P4R7wU12OV8DgMpAPyG0vL_7t7PYr6MVoBqQhGflCBney-1W0SAsFLDg'
+  };
+
+  const [tursoUrl, setTursoUrl] = useState(config.settings.tursoUrl || DEFAULT_TURSO_CLIENT_CONFIG.tursoUrl);
+  const [tursoAuthToken, setTursoAuthToken] = useState(config.settings.tursoAuthToken || DEFAULT_TURSO_CLIENT_CONFIG.tursoAuthToken);
   const [showTursoToken, setShowTursoToken] = useState(false);
-  const [useTurso, setUseTurso] = useState(config.settings.useTurso || false);
+  const [useTurso, setUseTurso] = useState(config.settings.useTurso !== undefined ? !!config.settings.useTurso : DEFAULT_TURSO_CLIENT_CONFIG.useTurso);
+  const [tursoStatus, setTursoStatus] = useState<{ configured: boolean; connected: boolean; enabled: boolean; databaseUrl?: string; syncedStatesCount?: number; error?: string } | null>(null);
+  const [isTursoBusy, setIsTursoBusy] = useState(false);
   const [localStorageStatus, setLocalStorageStatus] = useState<{ configured: boolean; reachable: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; storageIp: string; apiPort: number; consolePort: number; bucketName: string; buckets: string[] } | null>(null);
   const [dropboxDraft, setDropboxDraft] = useState<DropboxConfig>({
     ...DEFAULT_DROPBOX_CLIENT_CONFIG,
@@ -476,9 +485,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       folderPath: cfg.folderPath || DEFAULT_DROPBOX_CLIENT_CONFIG.folderPath
     });
     setStorageBackendDraft(config.settings.storageBackend || 'dropbox');
-    if (config.settings.tursoUrl) setTursoUrl(config.settings.tursoUrl);
-    if (config.settings.tursoAuthToken) setTursoAuthToken(config.settings.tursoAuthToken);
-    if (config.settings.useTurso !== undefined) setUseTurso(!!config.settings.useTurso);
+    setTursoUrl(config.settings.tursoUrl || DEFAULT_TURSO_CLIENT_CONFIG.tursoUrl);
+    setTursoAuthToken(config.settings.tursoAuthToken || DEFAULT_TURSO_CLIENT_CONFIG.tursoAuthToken);
+    setUseTurso(config.settings.useTurso !== undefined ? !!config.settings.useTurso : DEFAULT_TURSO_CLIENT_CONFIG.useTurso);
   }, [config.settings.googleDriveConfig, config.settings.localStorageConfig, config.settings.dropboxConfig, config.settings.storageBackend, config.settings.tursoUrl, config.settings.tursoAuthToken, config.settings.useTurso, driveDraftDirty]);
 
   const refreshGoogleDriveStatus = async () => {
@@ -508,11 +517,21 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     }
   };
 
+  const refreshTursoStatus = async () => {
+    try {
+      const status = await dataService.getTursoStatus();
+      setTursoStatus(status);
+    } catch (error: any) {
+      console.warn('Failed to fetch Turso status:', error?.message);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'integrations') {
       refreshGoogleDriveStatus();
       refreshLocalStorageStatus();
       refreshDropboxStatus();
+      refreshTursoStatus();
     }
   }, [activeTab]);
 
@@ -649,18 +668,35 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   };
 
   const saveTursoConfig = async () => {
-    setIsDriveBusy(true);
+    setIsTursoBusy(true);
     try {
       await persistSettings({
         useTurso,
-        tursoUrl: (tursoUrl || '').trim() || config.settings.tursoUrl,
-        tursoAuthToken: (tursoAuthToken || '').trim() || config.settings.tursoAuthToken
+        tursoUrl: (tursoUrl || '').trim() || DEFAULT_TURSO_CLIENT_CONFIG.tursoUrl,
+        tursoAuthToken: (tursoAuthToken || '').trim() || DEFAULT_TURSO_CLIENT_CONFIG.tursoAuthToken
       });
       setMessage({ type: 'success', text: 'Turso DB settings saved successfully. The server will sync in the background.' });
+      refreshTursoStatus();
     } catch (error: any) {
       setMessage({ type: 'error', text: error?.message || 'Failed to save Turso DB settings.' });
     } finally {
-      setIsDriveBusy(false);
+      setIsTursoBusy(false);
+    }
+  };
+
+  const testTursoConfig = async () => {
+    setIsTursoBusy(true);
+    try {
+      const res = await dataService.testTursoConnection({
+        tursoUrl: (tursoUrl || '').trim() || DEFAULT_TURSO_CLIENT_CONFIG.tursoUrl,
+        tursoAuthToken: (tursoAuthToken || '').trim() || DEFAULT_TURSO_CLIENT_CONFIG.tursoAuthToken
+      });
+      setMessage({ type: 'success', text: res.message || 'Successfully connected to Turso database!' });
+      refreshTursoStatus();
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to connect to Turso database.' });
+    } finally {
+      setIsTursoBusy(false);
     }
   };
 
@@ -2134,6 +2170,31 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                 </div>
                 
                 <div className="relative z-10 space-y-4 max-w-2xl">
+                  {tursoStatus && (
+                    <div className={`p-4 rounded-2xl border text-xs flex items-center justify-between ${
+                      tursoStatus.connected 
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                        : 'bg-amber-50 border-amber-200 text-amber-800'
+                    }`}>
+                      <div className="flex items-center gap-3">
+                        <i className={`fa-solid ${tursoStatus.connected ? 'fa-circle-check text-emerald-600' : 'fa-circle-exclamation text-amber-600'} text-base`}></i>
+                        <div>
+                          <p className="font-bold">{tursoStatus.connected ? 'Connected to Turso Cloud' : 'Not Connected'}</p>
+                          <p className="text-[10px] opacity-80">
+                            {tursoStatus.connected 
+                              ? `${tursoStatus.databaseUrl} (${tursoStatus.syncedStatesCount || 0} system states in cloud)`
+                              : (tursoStatus.error || 'Please verify URL and Auth Token')}
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        tursoStatus.connected ? 'bg-emerald-200/60 text-emerald-900' : 'bg-amber-200/60 text-amber-900'
+                      }`}>
+                        {tursoStatus.connected ? 'Active Sync' : 'Offline'}
+                      </span>
+                    </div>
+                  )}
+
                   <label className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 cursor-pointer">
                     <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Turso Sync</span>
                     <input type="checkbox" checked={useTurso} onChange={e => setUseTurso(e.target.checked)} />
@@ -2174,13 +2235,21 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     </>
                   )}
                   
-                  <div className="pt-2">
+                  <div className="pt-2 flex items-center gap-3">
                     <button
                       onClick={saveTursoConfig}
-                      disabled={isDriveBusy}
-                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isDriveBusy ? 'bg-slate-400 cursor-wait' : 'bg-purple-600 hover:bg-purple-700'}`}
+                      disabled={isTursoBusy}
+                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isTursoBusy ? 'bg-slate-400 cursor-wait' : 'bg-purple-600 hover:bg-purple-700'}`}
                     >
                       Save Turso Settings
+                    </button>
+                    <button
+                      type="button"
+                      onClick={testTursoConfig}
+                      disabled={isTursoBusy}
+                      className="px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300"
+                    >
+                      {isTursoBusy ? 'Testing...' : 'Test Connection'}
                     </button>
                   </div>
                 </div>

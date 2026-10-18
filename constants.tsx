@@ -3,7 +3,7 @@ import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGr
 import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.000001 for every code update
-export const APP_VERSION = '1.0001106';
+export const APP_VERSION = '1.0001107';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
@@ -51,9 +51,9 @@ export const INITIAL_CONFIG: AppConfig = {
       folderPath: '/NexusERP_Uploads',
       connectedAccount: 'Moataz Allam'
     },
-    useTurso: false,
-    tursoUrl: '',
-    tursoAuthToken: '',
+    useTurso: true,
+    tursoUrl: 'libsql://qualitycheck-moataznegm.aws-us-west-2.turso.io',
+    tursoAuthToken: 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODM5MzExMjQsImlkIjoiMDE5ZjVhOTQtNTMwMS03YTgwLTk1MDYtOTU3OTljNTAwZWNhIiwia2lkIjoiTUp2cjVTOE5zX0lrVkdNSDdXMERpUVpXaTlsWEhXNWJlX0gxaUstUXl0ZyIsInJpZCI6IjYzNjZjN2IyLTk0NTYtNDAxOS05YTg1LTQzOWE5ZTUwOTk5NCJ9.DWfcpfDucO88Hx5vALyFDEuuznNBh6P4R7wU12OV8DgMpAPyG0vL_7t7PYr6MVoBqQhGflCBney-1W0SAsFLDg',
     emailConfig: {
       smtpServer: 'mail.quickstor.net',
       smtpPort: 465,

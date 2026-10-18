@@ -1188,7 +1188,10 @@ const resolveSettings = (db, isSandboxReq = false) => {
         storageBackend: (dbSettings.storageBackend === 'dropbox' || dbSettings.storageBackend === 'local-storage')
             ? dbSettings.storageBackend
             : (dbSettings.googleDriveConfig?.refreshToken ? 'google-drive' : 'dropbox'),
-        dropboxConfig: effectiveDropbox
+        dropboxConfig: effectiveDropbox,
+        useTurso: (dbSettings.useTurso !== undefined && dbSettings.tursoUrl) ? !!dbSettings.useTurso : true,
+        tursoUrl: (dbSettings.tursoUrl && String(dbSettings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL,
+        tursoAuthToken: (dbSettings.tursoAuthToken && String(dbSettings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN
     };
 
     if (isSandboxReq) {
@@ -8063,6 +8066,64 @@ app.post('/api/v1/integrations/google-drive/upload', uploadGoogleDriveFile.singl
     } catch (err) {
         console.error('[GoogleDrive] Upload failed:', err);
         return res.status(500).json({ error: err.message || 'Google Drive upload failed' });
+    }
+});
+
+// ==================== TURSO INTEGRATION ====================
+
+app.get('/api/v1/integrations/turso/status', async (req, res) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
+        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
+        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
+
+        if (!rawUrl || !authToken) {
+            return res.json({ configured: false, connected: false, enabled: useTurso });
+        }
+
+        const dbUrl = rawUrl.startsWith('libsql://') ? rawUrl.replace(/^libsql:\/\//, 'https://') : rawUrl;
+        const client = createClient({ url: dbUrl, authToken });
+        const result = await client.execute("SELECT count(*) as cnt FROM nexus_state");
+        const count = result.rows[0]?.cnt || 0;
+
+        return res.json({
+            configured: true,
+            connected: true,
+            enabled: useTurso,
+            databaseUrl: rawUrl,
+            syncedStatesCount: count
+        });
+    } catch (err) {
+        return res.json({
+            configured: true,
+            connected: false,
+            enabled: true,
+            error: err.message
+        });
+    }
+});
+
+app.post('/api/v1/integrations/turso/test', bodyParser.json(), async (req, res) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        const rawUrl = req.body?.tursoUrl || (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
+        const authToken = req.body?.tursoAuthToken || (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
+
+        const dbUrl = rawUrl.startsWith('libsql://') ? rawUrl.replace(/^libsql:\/\//, 'https://') : rawUrl;
+        const client = createClient({ url: dbUrl, authToken });
+        const result = await client.execute("SELECT count(*) as cnt FROM nexus_state");
+        const count = result.rows[0]?.cnt || 0;
+
+        return res.json({
+            success: true,
+            message: `Successfully connected to Turso database! Currently holding ${count} synced system states in cloud.`,
+            count
+        });
+    } catch (err) {
+        return res.status(400).json({ error: err.message || 'Failed to connect to Turso database' });
     }
 });
 

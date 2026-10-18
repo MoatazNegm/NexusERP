@@ -761,6 +761,30 @@ class DataService {
     return data as { success: boolean; account: string; email?: string };
   }
 
+  async getTursoStatus() {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/turso/status`, {
+      headers: { ...this.getAuthHeaders(), 'x-app-origin': this.getAppOrigin() }
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to read Turso status');
+    }
+    return response.json() as Promise<{ configured: boolean; connected: boolean; enabled: boolean; databaseUrl?: string; syncedStatesCount?: number; error?: string }>;
+  }
+
+  async testTursoConnection(credentials?: { tursoUrl?: string; tursoAuthToken?: string }) {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/turso/test`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(credentials || {})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to connect to Turso database');
+    }
+    return data as { success: boolean; message: string; count?: number };
+  }
+
   async getDropboxAuthUrl(redirectUri?: string) {
     const response = await fetch(`${BACKEND_URL}/api/v1/integrations/dropbox/auth-url`, {
       method: 'POST',
