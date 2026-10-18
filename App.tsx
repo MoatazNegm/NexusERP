@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { jsPDF } from 'jspdf';
 import { INITIAL_CONFIG, STATUS_CONFIG } from './constants';
 import { OrderManagement } from './components/OrderManagement';
 import { ProcurementModule } from './components/ProcurementModule';
@@ -323,9 +322,10 @@ const App: React.FC = () => {
 
   const canExportDashboardPdf = effectiveRoles.includes('management');
 
-  const handleExportDashboardSummaryPdf = () => {
+  const handleExportDashboardSummaryPdf = async () => {
     if (!canExportDashboardPdf) return;
 
+    const { jsPDF } = await import('jspdf');
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();

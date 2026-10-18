@@ -3,7 +3,9 @@ services:
     name: nexuserp
     runtime: node
     buildCommand: npm install && npm run build
-    startCommand: node server.js
+    startCommand: node --max-old-space-size=450 server.js
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=450

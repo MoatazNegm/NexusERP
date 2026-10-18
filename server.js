@@ -116,7 +116,7 @@ const syncAuthoritativeUsersToSandboxes = (liveDb) => {
 
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 9; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 10; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -197,6 +197,39 @@ const costSheetStorage = multer.diskStorage({
 });
 const uploadCostSheet = multer({ storage: costSheetStorage });
 
+const saveBase64CostSheetToFile = (base64String, req = null) => {
+    if (!base64String || typeof base64String !== 'string' || !base64String.startsWith('data:')) {
+        return base64String;
+    }
+    try {
+        const isLive = !req?.sandboxOwner;
+        const uploadDir = isLive ? path.join(UPLOADS_BASE, 'cost_sheets') : path.join(getSandboxUploadsPath(req.sandboxOwner), 'cost_sheets');
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+        let ext = '.xlsx';
+        const match = base64String.match(/^data:([a-zA-Z0-9-+/.]+);base64,/);
+        if (match) {
+            const mime = match[1];
+            if (mime.includes('pdf')) ext = '.pdf';
+            else if (mime.includes('csv')) ext = '.csv';
+            else if (mime.includes('word')) ext = '.docx';
+        }
+
+        const b64Data = base64String.split(';base64,').pop();
+        const fileName = `cost-sheet-${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
+        const filePath = path.join(uploadDir, fileName);
+
+        fs.writeFileSync(filePath, Buffer.from(b64Data, 'base64'));
+
+        mirrorToSandboxIfApplicable(req, 'cost_sheets', filePath);
+        const relativePath = isLive ? `uploads/cost_sheets/${fileName}` : `uploads/sandbox/${req.sandboxOwner}/cost_sheets/${fileName}`;
+        return relativePath;
+    } catch (err) {
+        console.error('[CostSheet] Failed to persist base64 to disk:', err);
+        return base64String;
+    }
+};
+
 const supplierReceiptStorage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, resolveUploadDir(req, 'supplier_receipts'));
@@ -266,16 +299,25 @@ const getItemEffectiveStatus = (item) => {
     return 'MIXED';
 };
 
+const getCostSheetWorkbook = (input) => {
+    if (!input) return null;
+    if (typeof input === 'object' && input.SheetNames && input.Sheets) return input;
+    try {
+        if (typeof input === 'string' && (input.startsWith('uploads/') || fs.existsSync(input))) {
+            return XLSX.readFile(input);
+        }
+        const cleanBase64 = input.includes(',') ? input.split(',')[1] : input;
+        return XLSX.read(cleanBase64, { type: 'base64' });
+    } catch (e) {
+        return null;
+    }
+};
+
 const parseCostSheetProjectBlocks = (input) => {
     if (!input) return [];
     try {
-        let wb;
-        if (typeof input === 'string' && (input.startsWith('uploads/') || fs.existsSync(input))) {
-            wb = XLSX.readFile(input);
-        } else {
-            const cleanBase64 = input.includes(',') ? input.split(',')[1] : input;
-            wb = XLSX.read(cleanBase64, { type: 'base64' });
-        }
+        const wb = getCostSheetWorkbook(input);
+        if (!wb) return [];
         const sheetName = wb.SheetNames[0];
         const sheet = sheetName ? wb.Sheets[sheetName] : undefined;
         const data = sheet ? XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) : [];
@@ -428,27 +470,24 @@ const extractCostSheetProjectMetrics = (input, projectName) => {
 const extractCostSheetMetrics = (base64Data, projectName) => {
     if (!base64Data) return { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
 
-    // If a projectName is provided, first try matching a project-specific block
-    if (projectName && String(projectName).trim()) {
-        const projMetrics = extractCostSheetProjectMetrics(base64Data, projectName);
-        if (projMetrics) {
-            return {
-                resourceCount: projMetrics.resourceCount,
-                realCost: projMetrics.realCost,
-                invoiceTotal: projMetrics.invoiceTotal,
-                projectName: projMetrics.projectName
-            };
-        }
-    }
-
     try {
-        let wb;
-        if (typeof base64Data === 'string' && (base64Data.startsWith('uploads/') || fs.existsSync(base64Data))) {
-            wb = XLSX.readFile(base64Data);
-        } else {
-            const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-            wb = XLSX.read(cleanBase64, { type: 'base64' });
+        const wb = getCostSheetWorkbook(base64Data);
+        if (!wb) return { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
+
+        // If a projectName is provided, first try matching a project-specific block
+        if (projectName && String(projectName).trim()) {
+            const blocks = parseCostSheetProjectBlocks(wb);
+            const match = findCostSheetProjectBlock(blocks, projectName);
+            if (match) {
+                return {
+                    resourceCount: match.resourceCount,
+                    realCost: match.realCost,
+                    invoiceTotal: match.invoiceTotal,
+                    projectName: match.name
+                };
+            }
         }
+
         const sheetName = wb.SheetNames[0];
         if (!sheetName) return { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
         const sheet = wb.Sheets[sheetName];
@@ -1391,6 +1430,10 @@ const migrations = [
             settings.roleMappings['sourcing'] = ['sourcing', 'admin', 'management'];
         }
         return settings;
+    },
+    // v9 → v10: Purge embedded base64 cost sheets from orders & costSheets array to physical files
+    (settings) => {
+        return settings;
     }
 ];
 
@@ -1522,6 +1565,62 @@ const applySchemaMigrations = (db, targetPath = DB_PATH) => {
                 settings.roleMappings['sourcing'] = ['sourcing', 'admin', 'management'];
             }
             console.log(`[System] v8→v9 migration: Registered 'sourcing' (taslemat) role and navigation mapping.`);
+        }
+        if (version === 10 && Array.isArray(db.orders)) {
+            let extractedFiles = 0;
+            const isLive = targetPath === DB_PATH;
+            const targetSandboxOwner = isLive ? null : path.basename(targetPath).replace('db.sandbox.', '').replace('.json', '');
+            const uploadDir = isLive ? path.join(UPLOADS_BASE, 'cost_sheets') : path.join(getSandboxUploadsPath(targetSandboxOwner), 'cost_sheets');
+
+            const extractAndSaveBase64 = (b64String) => {
+                if (!b64String || typeof b64String !== 'string' || !b64String.startsWith('data:')) return b64String;
+                try {
+                    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+                    let ext = '.xlsx';
+                    const match = b64String.match(/^data:([a-zA-Z0-9-+/.]+);base64,/);
+                    if (match) {
+                        const mime = match[1];
+                        if (mime.includes('pdf')) ext = '.pdf';
+                        else if (mime.includes('csv')) ext = '.csv';
+                        else if (mime.includes('word')) ext = '.docx';
+                    }
+                    const b64Data = b64String.split(';base64,').pop();
+                    const fileName = `cost-sheet-${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
+                    const filePath = path.join(uploadDir, fileName);
+                    fs.writeFileSync(filePath, Buffer.from(b64Data, 'base64'));
+                    extractedFiles++;
+                    return isLive ? `uploads/cost_sheets/${fileName}` : `uploads/sandbox/${targetSandboxOwner}/cost_sheets/${fileName}`;
+                } catch (e) {
+                    console.error('[System] Error extracting base64 cost sheet during v10 migration:', e);
+                    return b64String;
+                }
+            };
+
+            db.orders.forEach(o => {
+                (o.items || []).forEach(it => {
+                    if (it.costSheetFile && it.costSheetFile.startsWith('data:')) {
+                        it.costSheetFile = extractAndSaveBase64(it.costSheetFile);
+                    }
+                    if (Array.isArray(it.costSheets)) {
+                        it.costSheets.forEach(cs => {
+                            if (cs.fileData && cs.fileData.startsWith('data:')) {
+                                cs.fileData = extractAndSaveBase64(cs.fileData);
+                            }
+                        });
+                    }
+                });
+                if (o.costSheetFile && o.costSheetFile.startsWith('data:')) {
+                    o.costSheetFile = extractAndSaveBase64(o.costSheetFile);
+                }
+                if (Array.isArray(o.costSheets)) {
+                    o.costSheets.forEach(cs => {
+                        if (cs.fileData && cs.fileData.startsWith('data:')) {
+                            cs.fileData = extractAndSaveBase64(cs.fileData);
+                        }
+                    });
+                }
+            });
+            if (extractedFiles > 0) console.log(`[System] v9→v10 migration: Purged and extracted ${extractedFiles} base64 cost sheet(s) to physical files in ${isLive ? 'Live' : targetSandboxOwner}.`);
         }
     }
 
@@ -4874,6 +4973,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (ucsItemIdx === -1) throw new Error("Item not found");
                 const ucsItem = order.items[ucsItemIdx];
                 const replaceWrongData = Boolean(payload.replaceWrongData);
+
+                if (payload.costSheetFile && typeof payload.costSheetFile === 'string' && payload.costSheetFile.startsWith('data:')) {
+                    payload.costSheetFile = saveBase64CostSheetToFile(payload.costSheetFile, req);
+                }
 
                 let metrics = { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
                 if (payload.costSheetFile) {

@@ -6,9 +6,6 @@ import { GoogleGenAI } from "@google/genai";
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { STATUS_CONFIG } from '../constants';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
-
 import { AddCustomerModal } from './AddCustomerModal';
 import { SortableTable, ColumnDef } from './SortableTable';
 import { getOrderPoType, getPoTypeConfig } from '../utils';

@@ -5,8 +5,6 @@ import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getIte
 import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
 import { SortableTable, ColumnDef } from './SortableTable';
@@ -2523,19 +2521,35 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
   const downloadCostSheetFile = (fileData: string, fileName: string) => {
     const link = document.createElement('a');
-    link.href = fileData;
+    link.href = fileData.startsWith('uploads/') ? `/${fileData}` : fileData;
     link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const openCostSheetModal = (order: CustomerOrder, targetItem?: CustomerOrderItem | null) => {
+  const openCostSheetModal = async (order: CustomerOrder, targetItem?: CustomerOrderItem | null) => {
     const item = targetItem || (order.items || []).find(i => i.costSheetFile) || (order.items || [])[0];
     if (!item?.costSheetFile) return;
+    let fileData = item.costSheetFile;
+    if (fileData.startsWith('uploads/')) {
+      try {
+        const resp = await fetch(`/${fileData}`);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const reader = new FileReader();
+          fileData = await new Promise((res) => {
+            reader.onload = () => res(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to fetch cost sheet file for preview:', e);
+      }
+    }
     setCostSheetModalData({
       fileName: item.costSheetFileName || `CostSheet-${order.internalOrderNumber || order.customerReferenceNumber}.xlsx`,
-      fileData: item.costSheetFile,
+      fileData: fileData,
       orderTitle: `${order.internalOrderNumber || ''} ${order.customerReferenceNumber ? `(PO: ${order.customerReferenceNumber})` : ''}`
     });
   };
@@ -3116,6 +3130,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false,
         });
         const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = await import('jspdf');
         const pdf = new jsPDF('p', 'mm', 'a4');
         const imgWidth = pdf.internal.pageSize.getWidth();
         const imgHeight = (canvas.height * imgWidth) / canvas.width;
@@ -3157,6 +3172,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           logging: false,
         });
         const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = await import('jspdf');
         const pdf = new jsPDF('p', 'mm', 'a4');
         const imgWidth = pdf.internal.pageSize.getWidth();
         const imgHeight = (canvas.height * imgWidth) / canvas.width;

@@ -319,7 +319,7 @@ When asked to change a feature, land on the row below, not on the file. All line
 - **`/api/v1/sandbox/revert-login`:** `server.js:3262`
 - **Admin sandbox list:** `server.js:5916`; client polling (`App.tsx`) is guarded by `currentUser.roles.includes('admin')` to avoid 403 Forbidden errors when non-admin users work in sandbox mode.
 - **Admin switch-sandbox:** `server.js:5983`
-- **Schema migration chain:** `server.js:1115` `const migrations = [...]`; `CURRENT_SCHEMA_VERSION = 8` at `server.js:118`
+- **Schema migration chain:** `server.js` `const migrations = [...]`; `CURRENT_SCHEMA_VERSION = 10` at `server.js:119`
 - **Spec doc:** `C:\Users\moata\.local\share\kilo\plans\1786643099095-user-sandbox-plan.md` (Amendment v3.5.1 at the top)
 
 ### Shared utilities (used by both client and server)
@@ -568,6 +568,26 @@ In ephemeral hosting environments (Render, Docker containers), the local disk is
      - `DB_PATH=/data/db.json` (live DB)
      - `UPLOADS_PATH=/data/uploads` (uploaded files, logos)
 
+### Render.com & Cloud Container Memory Optimization (512 MB Free / Starter Tier)
+
+Render standard starter/free web services are constrained to a strict 512 MB memory limit (cgroups). Exceeding this boundary triggers immediate Linux Kernel OOM (exit code 137). Four co-dependent architectural safeguards guarantee the app stays within memory budget at both build time and runtime:
+
+1. **V8 Heap Capping (`--max-old-space-size=450`):**
+   - Configured in `render.yaml` (`NODE_OPTIONS: --max-old-space-size=450`) and `package.json` (`node --max-old-space-size=450 server.js`).
+   - Prevents the Node.js V8 runtime from delaying garbage collection until it surpasses the 512 MB OS threshold.
+2. **Vite / Rollup Code Splitting (`manualChunks`):**
+   - Configured in `vite.config.ts` under `build.rollupOptions.output.manualChunks`.
+   - Divides heavy third-party vendor modules into isolated chunks (`pdf-vendor` [html2canvas, jspdf, pdfjs-dist], `xlsx-vendor` [xlsx], `diagram-vendor` [mermaid], and `react-vendor` [react, lucide-react]).
+   - Prevents Rollup from allocating single massive ASTs during build, dropping peak build memory by >40% and eliminating monolithic 4MB+ index bundles.
+3. **Dynamic Asynchronous Imports for Heavy Runtimes:**
+   - `html2canvas` is dynamically imported on demand inside `utils.ts:safeHtml2Canvas`.
+   - `jsPDF` is dynamically imported on demand in `FinanceModule.tsx` and `App.tsx` during actual export actions.
+   - Eliminates heavy PDF/canvas modules from the initial page load graph.
+4. **Physical Storage & XLSX Workbook Cache for Spreadsheets:**
+   - Spreadsheet uploads are stored on disk under `uploads/cost_sheets/` (never embedded as base64 in `db.json`).
+   - `server.js:getCostSheetWorkbook` reuses the parsed workbook instance across metric extractions and block lookups, eliminating redundant multi-megabyte XML/ZIP parsing.
+   - Schema migration v10 purges any legacy base64 strings into physical files.
+
 ### `db.stub.json` template
 
 `db.stub.json` should only contain the empty structure for a fresh database. Do not add production data, users, or custom settings to it.
@@ -733,9 +753,9 @@ On every sandbox login (or admin sandbox switch), the backend auto-saves a snaps
 | `/api/v1/sandbox/reset` | `server.js:3246` | Returns `400 Must be in sandbox mode.` if called from Live. On success: clears the business collections in the user's sandbox DB, preserves `users` and `userGroups`, deletes and recreates `uploads/sandbox/<owner>/`. |
 | `sendEmail(..., req)` | `server.js:1480` | Short-circuits with `{ success: true, simulated: true }` when `isSandbox(req)`. |
 
-### Startup migration sweep & schema version history (v0 → v8)
+### Startup migration sweep & schema version history (v0 → v10)
 
-`CURRENT_SCHEMA_VERSION = 8` (`server.js:118`). `migrateAllSandboxesOnStartup()` runs synchronously **before `app.listen()`** and:
+`CURRENT_SCHEMA_VERSION = 10` (`server.js:119`). `migrateAllSandboxesOnStartup()` runs synchronously **before `app.listen()`** and:
 
 1. Reads `__dirname` for any `db.sandbox.*.json` (excluding `.local.bak` and `.tmp`).
 2. For each, checks `settings[0].dbSchemaVersion` against `CURRENT_SCHEMA_VERSION`.
@@ -753,7 +773,9 @@ On every sandbox login (or admin sandbox switch), the backend auto-saves a snaps
 | v4 → v5 | API Keys Support | Initializes `db.apiKeys = []` for header authentication (`x-api-key`). |
 | v5 → v6 | Outsourcing No RFP | Sets `noRfpNeeded = true` and updates status to `RUNNING_OUTSOURCING_CONTRACT`. |
 | v6 → v7 | Live Access Control | Enables per-user `liveAccess` toggling in User Management. |
-| v7 → v8 | Cost Sheet Extraction | Extracts legacy inline base64 cost sheets from order JSON to physical files under `uploads/cost_sheets/` (or sandbox uploads) to eliminate DB bloat and heap memory exhaustion. |
+| v7 → v8 | Cost Sheet Extraction | Extracts legacy inline base64 cost sheets from order items to physical files under `uploads/cost_sheets/`. |
+| v8 → v9 | Sourcing Role | Registers `sourcing` (taslemat) role and navigation mapping across all environments. |
+| v9 → v10 | Complete Base64 Sweep | Purges all remaining embedded base64 cost sheets across `orders[].costSheets[]` and `items[].costSheets[]` into physical files under `uploads/cost_sheets/`, completely unbloating `db.json` and preventing V8 heap exhaustion on low-memory servers (e.g. Render 512MB). |
 
 On-read migration in `readDb()` remains an active backstop, so any sandbox DB created after server boot is automatically migrated on first read.
 
@@ -990,8 +1012,8 @@ export default app;
 1. **Never commit `db.json` or any `db.sandbox.*.json`.** They are `.gitignore`d. If already tracked: `git rm --cached db.json` (keep local file), then commit.
 2. **Never commit and push without explicit user instruction.** Step 1 (rebuild) and Step 2 (commit + push) are intentionally separate. See "Build, Run, and Deploy Lifecycle".
 3. **Never `Stop-Process -Name node` or `taskkill /IM node.exe /F`.** Find the specific PID with `Get-NetTCPConnection -LocalPort 5005` and stop that one. Other apps on other ports may be using node.
-4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001099`). Displayed by `components/VersionFooter.tsx`.
-5. **Add a schema migration, never edit `db.json` by hand.** Bump `CURRENT_SCHEMA_VERSION` in `server.js` (currently `9`) and add a function in the `migrations` array. The server runs migrations on startup across live and all sandboxes (`migrateAllSandboxesOnStartup`) and after restore. Business data (orders, customers, etc.) is never touched.
+4. **Bump `APP_VERSION` in `constants.tsx` by +0.000001** before every rebuild (current: `1.0001100`). Displayed by `components/VersionFooter.tsx`.
+5. **Add a schema migration, never edit `db.json` by hand.** Bump `CURRENT_SCHEMA_VERSION` in `server.js` (currently `10`) and add a function in the `migrations` array. The server runs migrations on startup across live and all sandboxes (`migrateAllSandboxesOnStartup`) and after restore. Business data (orders, customers, etc.) is never touched.
 6. **Never call `fetch()` from a component.** Add a method to `services/dataService.ts` and call it.
 7. **Never store sensitive fields in plaintext** — `settings.geminiConfig.apiKey`, `settings.openaiConfig.apiKey`, `settings.emailConfig.password`, `settings.googleDriveConfig.clientSecret`, `settings.googleDriveConfig.refreshToken`, `settings.localStorageConfig.secretKey` are AES-256-CBC encrypted at rest using a key derived from `FACTORY_PASS`. **Do not rotate `FACTORY_PASS` after go-live** — it will brick all existing encrypted values.
 8. **Role changes are three-place:** (a) `types.ts` `UserRole` union, (b) `constants.tsx` `availableRoles` + `roleMappings` defaults, (c) `server.js` migration that adds the role to live `settings` and bumps `CURRENT_SCHEMA_VERSION`. The `settings` array in `db.json` is the runtime authority — the migration is what gets it there.

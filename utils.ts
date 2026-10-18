@@ -1,5 +1,5 @@
 import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, DEFAULT_CURRENCY, OrderStatus } from './types';
-import html2canvas, { Options } from 'html2canvas';
+import type { Options } from 'html2canvas';
 
 export const getItemEffectiveQty = (item: CustomerOrderItem): number => {
     const qty = item.alteredQty !== undefined && item.alteredQty !== null ? item.alteredQty : item.quantity;
@@ -267,6 +267,8 @@ export const safeHtml2Canvas = async (element: HTMLElement, options: Partial<Opt
     window.getComputedStyle = createStyleProxy(origWinGetComputedStyle, window);
 
     const userOnClone = options.onclone;
+    const html2canvasModule = await import('html2canvas');
+    const html2canvas = html2canvasModule.default || html2canvasModule;
 
     try {
         return await html2canvas(element, {

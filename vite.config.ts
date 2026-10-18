@@ -38,6 +38,29 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       }
+    },
+    build: {
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('jspdf') || id.includes('html2canvas')) {
+                return 'pdf-vendor';
+              }
+              if (id.includes('xlsx')) {
+                return 'xlsx-vendor';
+              }
+              if (id.includes('mermaid') || id.includes('cytoscape') || id.includes('katex')) {
+                return 'diagram-vendor';
+              }
+              if (id.includes('react') || id.includes('react-dom') || id.includes('react-markdown')) {
+                return 'react-vendor';
+              }
+            }
+          }
+        }
+      }
     }
   };
 });

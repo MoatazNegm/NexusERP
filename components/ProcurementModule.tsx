@@ -2,8 +2,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, ManufacturingComponent, Supplier, OrderStatus, AppConfig, CompStatus, User, getItemEffectiveStatus, CostSheetRecord } from '../types';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
 import { PartHistory } from './PartHistory';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
@@ -970,7 +968,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     }
   };
 
-  const loadCostSheetItem = (item: CustomerOrderItem) => {
+  const loadCostSheetItem = async (item: CustomerOrderItem) => {
     setCostSheetModalSelectedItemId(item.id);
     if (!item.costSheetFile) {
       setCostSheetWorkbook(null);
@@ -984,7 +982,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     }
 
     try {
-      const { workbook, sheetName, cells, rowOffset, colOffset } = parseCostSheetDataUrl(item.costSheetFile, item.costSheetEditableCells, item.costSheetCellColors);
+      let dataToParse = item.costSheetFile;
+      if (dataToParse.startsWith('uploads/')) {
+        const resp = await fetch(`/${dataToParse}`);
+        if (!resp.ok) throw new Error("Could not load cost sheet file from server.");
+        const blob = await resp.blob();
+        const reader = new FileReader();
+        dataToParse = await new Promise((res, rej) => {
+          reader.onload = () => res(reader.result as string);
+          reader.onerror = rej;
+          reader.readAsDataURL(blob);
+        });
+      }
+      const { workbook, sheetName, cells, rowOffset, colOffset } = parseCostSheetDataUrl(dataToParse, item.costSheetEditableCells, item.costSheetCellColors);
       setCostSheetWorkbook(workbook);
       setCostSheetSheetName(sheetName);
       setCostSheetCells(cells);
@@ -992,11 +1002,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       setCostSheetColOffset(colOffset);
       setCostSheetParseError(null);
       setCostSheetFileChanged(false);
-    } catch (err) {
+    } catch (err: any) {
       setCostSheetWorkbook(null);
       setCostSheetSheetName('');
       setCostSheetCells([]);
-      setCostSheetParseError('Unable to parse the attached Excel cost sheet.');
+      setCostSheetParseError(err?.message || 'Unable to parse the attached Excel cost sheet.');
       setCostSheetFileChanged(false);
     }
   };
@@ -1072,8 +1082,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       });
     });
 
-    const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'base64', cellStyles: true })}`;
-    await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, dataUrl, item.costSheetFileName || 'cost-sheet.xlsx', editableCellAddresses, cellColorsMap);
+    const arrayBuffer = XLSX.write(updatedWorkbook, { bookType: 'xlsx', type: 'array', cellStyles: true });
+    const blob = new Blob([arrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const file = new File([blob], item.costSheetFileName || 'cost-sheet.xlsx', { type: blob.type });
+    await dataService.uploadCostSheet(costSheetModalOrder.id, item.id, file, file.name, editableCellAddresses, cellColorsMap);
     setCostSheetFileChanged(false);
   };
 
@@ -1095,28 +1107,22 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     ].join('\n\n'));
   };
 
-  const handleCostSheetFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCostSheetFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !costSheetModalOrder || !costSheetModalSelectedItemId) return;
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      const result = evt.target?.result as string;
-      try {
-        setIsCostSheetUploading(true);
-        const updated = await dataService.uploadCostSheet(costSheetModalOrder.id, costSheetModalSelectedItemId, result, file.name);
-        setCostSheetModalOrder(updated);
-        const updatedItem = updated.items.find(i => i.id === costSheetModalSelectedItemId);
-        if (updatedItem) loadCostSheetItem(updatedItem);
-        await fetchData();
-        warnIfProjectMissingFromCostSheet(costSheetModalOrder, result);
-      } catch (err: any) {
-        alert(err.message || 'Failed to upload cost sheet');
-      } finally {
-        setIsCostSheetUploading(false);
-        if (costSheetFileInputRef.current) costSheetFileInputRef.current.value = '';
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      setIsCostSheetUploading(true);
+      const updated = await dataService.uploadCostSheet(costSheetModalOrder.id, costSheetModalSelectedItemId, file, file.name);
+      setCostSheetModalOrder(updated);
+      const updatedItem = updated.items.find(i => i.id === costSheetModalSelectedItemId);
+      if (updatedItem) await loadCostSheetItem(updatedItem);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to upload cost sheet');
+    } finally {
+      setIsCostSheetUploading(false);
+      if (costSheetFileInputRef.current) costSheetFileInputRef.current.value = '';
+    }
   };
 
   const triggerHeaderCostSheetUpload = (order: CustomerOrder, e?: React.MouseEvent) => {
@@ -1133,27 +1139,21 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     }
   };
 
-  const handleHeaderCostSheetFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleHeaderCostSheetFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !uploadTargetOrder) return;
     const { order, itemId } = uploadTargetOrder;
     const replaceWrongData = Boolean(eraseWrongDataByOrder[order.id]);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      const result = evt.target?.result as string;
-      try {
-        await dataService.uploadCostSheet(order.id, itemId, result, file.name, undefined, undefined, replaceWrongData);
-        await fetchData();
-        alert(`Cost sheet '${file.name}' successfully uploaded for order ${order.internalOrderNumber || order.customerReferenceNumber}.`);
-        warnIfProjectMissingFromCostSheet(order, result);
-      } catch (err: any) {
-        alert(err.message || 'Failed to upload cost sheet.');
-      } finally {
-        setUploadTargetOrder(null);
-        if (headerCostSheetInputRef.current) headerCostSheetInputRef.current.value = '';
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      await dataService.uploadCostSheet(order.id, itemId, file, file.name, undefined, undefined, replaceWrongData);
+      await fetchData();
+      alert(`Cost sheet '${file.name}' successfully uploaded for order ${order.internalOrderNumber || order.customerReferenceNumber}.`);
+    } catch (err: any) {
+      alert(err.message || 'Failed to upload cost sheet.');
+    } finally {
+      setUploadTargetOrder(null);
+      if (headerCostSheetInputRef.current) headerCostSheetInputRef.current.value = '';
+    }
   };
 
   const toggleCostSheetFullscreen = async () => {
@@ -1798,17 +1798,17 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         clonedElement.style.backgroundColor = '#ffffff';
         clonedElement.style.color = '#0f172a';
 
-        const canvas = await html2canvas(clonedElement, {
+        const canvas = await safeHtml2Canvas(clonedElement, {
           scale: 2,
           useCORS: true,
           logging: false,
-          backgroundColor: '#ffffff',
-          allowTaint: true
+          backgroundColor: '#ffffff'
         });
 
         document.body.removeChild(clonedElement);
 
         const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = await import('jspdf');
         const pdf = new jsPDF('p', 'mm', 'a4');
         const pageWidth = pdf.internal.pageSize.getWidth();
         const imgWidth = pageWidth;

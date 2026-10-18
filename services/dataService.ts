@@ -497,6 +497,33 @@ class DataService {
       }
       const data = await response.json();
       finalPath = data.filePath;
+    } else if (typeof costSheetFile === 'string' && costSheetFile.startsWith('data:')) {
+      try {
+        const parts = costSheetFile.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        const bstr = atob(parts[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const blob = new Blob([u8arr], { type: mime });
+        const file = new File([blob], costSheetFileName || 'cost-sheet.xlsx', { type: mime });
+        const formData = new FormData();
+        formData.append('costSheetFile', file);
+        const response = await fetch(`${BACKEND_URL}/api/upload-cost-sheet`, {
+          method: 'POST',
+          headers: this.getAuthHeaders(),
+          body: formData
+        });
+        if (response.ok) {
+          const data = await response.json();
+          finalPath = data.filePath;
+        }
+      } catch (e) {
+        console.warn("Failed to auto-upload base64 cost sheet as binary:", e);
+      }
     }
 
     return this.dispatchAction(orderId, 'upload-cost-sheet', { itemId, costSheetFile: finalPath, costSheetFileName, costSheetEditableCells, costSheetCellColors, replaceWrongData });
