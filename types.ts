@@ -515,7 +515,18 @@ export interface GoogleDriveConfig {
   connectedAt?: string;
 }
 
-export type StorageBackend = 'google-drive' | 'local-storage';
+export type StorageBackend = 'google-drive' | 'local-storage' | 'dropbox';
+
+export interface DropboxConfig {
+  enabled: boolean;
+  autoUploadExternalSubmissions: boolean;
+  appKey: string;
+  appSecret?: string;
+  refreshToken?: string;
+  folderPath: string;
+  connectedAccount?: string;
+  connectedAt?: string;
+}
 
 export interface LocalStorageConfig {
   enabled: boolean;
@@ -559,6 +570,7 @@ export interface AppConfig {
     storageBackend?: StorageBackend;
     googleDriveConfig: GoogleDriveConfig;
     localStorageConfig?: LocalStorageConfig;
+    dropboxConfig?: DropboxConfig;
     useTurso?: boolean;
     tursoUrl?: string;
     tursoAuthToken?: string;

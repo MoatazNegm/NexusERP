@@ -1270,7 +1270,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     try {
       const googleAutoUploadEnabled = !!config.settings.googleDriveConfig?.enabled && !!config.settings.googleDriveConfig?.autoUploadExternalSubmissions;
       const localAutoUploadEnabled = !!config.settings.localStorageConfig?.enabled && !!config.settings.localStorageConfig?.autoUploadExternalSubmissions;
-      const hasAnyAutoUploadTarget = googleAutoUploadEnabled || localAutoUploadEnabled;
+      const dropboxAutoUploadEnabled = !!config.settings.dropboxConfig?.enabled && !!config.settings.dropboxConfig?.autoUploadExternalSubmissions;
+      const hasAnyAutoUploadTarget = googleAutoUploadEnabled || localAutoUploadEnabled || dropboxAutoUploadEnabled;
       const submissionFile = externalSubmissionFile || fileInputRef.current?.files?.[0] || null;
       const snapshotToFile = () => {
         if (!externalSubmissionSnapshot) return null;
@@ -1308,12 +1309,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
       const summarizeUploadTargets = (targets: string[]) => {
         if (targets.length === 0) return 'no storage backends';
-        return targets.map(target => target === 'localStorage' ? 'Local Storage' : 'Google Drive').join(' and ');
+        return targets.map(target => {
+          if (target === 'localStorage') return 'Local Storage';
+          if (target === 'dropbox') return 'Dropbox';
+          return 'Google Drive';
+        }).join(' and ');
       };
 
       const tryStorageUpload = async (orderLike: { id?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) => {
         if (!hasAnyAutoUploadTarget) {
-          return { attempted: false, uploadedTargets: [] as string[], errors: [] as Array<{ target: string; message: string }>, googleDrive: null as any };
+          return { attempted: false, uploadedTargets: [] as string[], errors: [] as Array<{ target: string; message: string }>, googleDrive: null as any, localStorage: null as any, dropbox: null as any };
         }
         const effectiveUploadFile = submissionFile || snapshotToFile() || fallbackOrderFile(orderLike);
         const uploaded = await dataService.uploadExternalSubmission(effectiveUploadFile, {
@@ -1327,7 +1332,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           uploadedTargets: uploaded.uploadedTargets || [],
           errors: uploaded.errors || [],
           googleDrive: uploaded.uploads?.googleDrive || null,
-          localStorage: uploaded.uploads?.localStorage || null
+          localStorage: uploaded.uploads?.localStorage || null,
+          dropbox: uploaded.uploads?.dropbox || null
         };
       };
 

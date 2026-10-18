@@ -737,6 +737,68 @@ class DataService {
     return response.json();
   }
 
+  async getDropboxStatus() {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/dropbox/status`, {
+      headers: { ...this.getAuthHeaders(), 'x-app-origin': this.getAppOrigin() }
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to read Dropbox status');
+    }
+    return response.json() as Promise<{ configured: boolean; connected: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; folderPath: string; appKey: string; appSecretConfigured: boolean; refreshTokenConfigured: boolean; connectedAccount?: string; connectedAt?: string; callbackUrl?: string }>;
+  }
+
+  async testDropbox(credentials?: { appKey?: string; appSecret?: string; refreshToken?: string }) {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/dropbox/test`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(credentials || {})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to connect to Dropbox');
+    }
+    return data as { success: boolean; account: string; email?: string };
+  }
+
+  async getDropboxAuthUrl(redirectUri?: string) {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/dropbox/auth-url`, {
+      method: 'POST',
+      headers: { ...this.getHeaders(), 'x-app-origin': this.getAppOrigin() },
+      body: JSON.stringify({ redirectUri })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to generate Dropbox auth URL');
+    }
+    return data as { url: string };
+  }
+
+  async exchangeDropboxToken(code: string, redirectUri: string) {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/dropbox/exchange-token`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ code, redirectUri })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to authenticate with Dropbox');
+    }
+    return data as { success: boolean; message: string; account?: string };
+  }
+
+  async disconnectDropbox() {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/dropbox/disconnect`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to disconnect Dropbox');
+    }
+    return response.json();
+  }
+
   async uploadExternalSubmission(file: File, metadata: { orderId?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) {
     const formData = new FormData();
     formData.append('file', file);

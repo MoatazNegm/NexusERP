@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend, ApiKey, SandboxMember } from '../types';
+import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend, ApiKey, SandboxMember, DropboxConfig } from '../types';
 
 // Client-side mirror of server.js `sanitizeUsername`. Used for client
 // comparisons only (e.g. "is the current user the sandbox owner?") —
@@ -42,6 +42,11 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [tursoAuthToken, setTursoAuthToken] = useState(config.settings.tursoAuthToken || '');
   const [useTurso, setUseTurso] = useState(config.settings.useTurso || false);
   const [localStorageStatus, setLocalStorageStatus] = useState<{ configured: boolean; reachable: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; storageIp: string; apiPort: number; consolePort: number; bucketName: string; buckets: string[] } | null>(null);
+  const [dropboxDraft, setDropboxDraft] = useState<DropboxConfig>(config.settings.dropboxConfig || { enabled: false, autoUploadExternalSubmissions: true, appKey: '', appSecret: '', refreshToken: '', folderPath: '/NexusERP_Uploads' });
+  const [dropboxStatus, setDropboxStatus] = useState<{ configured: boolean; connected: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; folderPath: string; appKey: string; appSecretConfigured: boolean; refreshTokenConfigured: boolean; connectedAccount?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
+  const [isDropboxBusy, setIsDropboxBusy] = useState(false);
+  const [showDropboxSecret, setShowDropboxSecret] = useState(false);
+  const [showDropboxRefreshToken, setShowDropboxRefreshToken] = useState(false);
   const [isDriveBusy, setIsDriveBusy] = useState(false);
   const [driveDraftDirty, setDriveDraftDirty] = useState(false);
   const [showDriveClientSecret, setShowDriveClientSecret] = useState(false);
@@ -443,8 +448,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     if (driveDraftDirty) return;
     setDriveDraft(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
     setLocalStorageDraft(config.settings.localStorageConfig || { enabled: true, autoUploadExternalSubmissions: true, storageIp: '', apiPort: 9000, consolePort: 9001, accessKey: '', secretKey: '', bucketName: '' });
+    setDropboxDraft(config.settings.dropboxConfig || { enabled: false, autoUploadExternalSubmissions: true, appKey: '', appSecret: '', refreshToken: '', folderPath: '/NexusERP_Uploads' });
     setStorageBackendDraft(config.settings.storageBackend || 'google-drive');
-  }, [config.settings.googleDriveConfig, config.settings.localStorageConfig, config.settings.storageBackend, driveDraftDirty]);
+  }, [config.settings.googleDriveConfig, config.settings.localStorageConfig, config.settings.dropboxConfig, config.settings.storageBackend, driveDraftDirty]);
 
   const refreshGoogleDriveStatus = async () => {
     try {
@@ -464,10 +470,20 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     }
   };
 
+  const refreshDropboxStatus = async () => {
+    try {
+      const status = await dataService.getDropboxStatus();
+      setDropboxStatus(status);
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to fetch Dropbox status.' });
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'integrations') {
       refreshGoogleDriveStatus();
       refreshLocalStorageStatus();
+      refreshDropboxStatus();
     }
   }, [activeTab]);
 
@@ -616,6 +632,100 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       setMessage({ type: 'error', text: error?.message || 'Failed to save Turso DB settings.' });
     } finally {
       setIsDriveBusy(false);
+    }
+  };
+
+  const saveDropboxConfig = async () => {
+    setIsDropboxBusy(true);
+    try {
+      const existing = config.settings.dropboxConfig || { enabled: false, autoUploadExternalSubmissions: true, appKey: '', appSecret: '', refreshToken: '', folderPath: '/NexusERP_Uploads' };
+      const next: DropboxConfig = {
+        ...existing,
+        enabled: !!dropboxDraft.enabled,
+        autoUploadExternalSubmissions: !!dropboxDraft.autoUploadExternalSubmissions,
+        appKey: (dropboxDraft.appKey || '').trim(),
+        appSecret: dropboxDraft.appSecret !== undefined ? dropboxDraft.appSecret.trim() : existing.appSecret,
+        refreshToken: dropboxDraft.refreshToken !== undefined ? dropboxDraft.refreshToken.trim() : existing.refreshToken,
+        folderPath: (dropboxDraft.folderPath || '').trim() || '/NexusERP_Uploads'
+      };
+      await persistSettings({
+        storageBackend: storageBackendDraft,
+        dropboxConfig: next
+      });
+      setDropboxDraft(next);
+      setDriveDraftDirty(false);
+      setMessage({ type: 'success', text: 'Dropbox settings saved successfully.' });
+      await refreshDropboxStatus();
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to save Dropbox settings.' });
+    } finally {
+      setIsDropboxBusy(false);
+    }
+  };
+
+  const handleTestDropbox = async () => {
+    setIsDropboxBusy(true);
+    try {
+      const result = await dataService.testDropbox({
+        appKey: (dropboxDraft.appKey || '').trim(),
+        appSecret: (dropboxDraft.appSecret || '').trim(),
+        refreshToken: (dropboxDraft.refreshToken || '').trim()
+      });
+      setMessage({ type: 'success', text: `Dropbox connection successful! Connected Account: ${result.account || result.email || 'Verified'}` });
+      await refreshDropboxStatus();
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Dropbox connection test failed.' });
+    } finally {
+      setIsDropboxBusy(false);
+    }
+  };
+
+  const connectDropbox = async () => {
+    setIsDropboxBusy(true);
+    try {
+      const result = await dataService.getDropboxAuthUrl();
+      const popup = window.open(result.url, '_blank', 'width=560,height=720');
+      if (!popup) {
+        setMessage({ type: 'error', text: 'Popup blocked by browser. Allow popups and try again.' });
+      } else {
+        setMessage({ type: 'info', text: 'Dropbox authorization window opened. Waiting for completion...' });
+        const timer = window.setInterval(async () => {
+          if (!popup || popup.closed) {
+            window.clearInterval(timer);
+            await refreshDropboxStatus();
+            setMessage({ type: 'success', text: 'Dropbox authorization finished. Status refreshed.' });
+          }
+        }, 800);
+      }
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to start Dropbox OAuth flow.' });
+    } finally {
+      setIsDropboxBusy(false);
+    }
+  };
+
+  const disconnectDropbox = async () => {
+    setIsDropboxBusy(true);
+    try {
+      await dataService.disconnectDropbox();
+      const next = {
+        ...dropboxDraft,
+        refreshToken: '',
+        connectedAccount: '',
+        connectedAt: ''
+      };
+      setDropboxDraft(next);
+      await persistSettings({
+        storageBackend: storageBackendDraft,
+        dropboxConfig: next
+      });
+      setDriveDraftDirty(false);
+      setMessage({ type: 'success', text: 'Dropbox disconnected.' });
+      await refreshDropboxStatus();
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error?.message || 'Failed to disconnect Dropbox.' });
+    } finally {
+      setIsDropboxBusy(false);
     }
   };
 
@@ -1457,7 +1567,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   </h4>
                   <p className="text-xs text-slate-500 mt-1">Choose where externally submitted files are archived after order creation.</p>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <button
                     type="button"
                     onClick={() => {
@@ -1479,6 +1589,20 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   >
                     <div className="text-xs font-black uppercase tracking-widest text-slate-700">Local Storage</div>
                     <p className="text-xs text-slate-500 mt-2">S3-compatible bucket storage such as MinIO using the fixed API and console ports.</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDriveDraftDirty(true);
+                      setStorageBackendDraft('dropbox');
+                    }}
+                    className={`p-5 rounded-2xl border-2 text-left transition-all ${storageBackendDraft === 'dropbox' ? 'border-sky-500 bg-sky-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                  >
+                    <div className="text-xs font-black uppercase tracking-widest text-slate-700 flex items-center gap-2">
+                      <i className="fa-brands fa-dropbox text-sky-600"></i>
+                      Dropbox
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2">Cloud document storage for scanned documents, PDFs, and uploaded sheets.</p>
                   </button>
                 </div>
               </div>
@@ -1752,6 +1876,196 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     >
                       Refresh Status
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {storageBackendDraft === 'dropbox' && (
+                <div className="p-8 bg-white rounded-3xl border border-slate-200 shadow-sm space-y-6">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest flex items-center gap-2">
+                        <i className="fa-brands fa-dropbox text-sky-600"></i>
+                        Dropbox Document Storage
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Store and serve all documents (scanned files, PDFs, cost sheets, supplier receipts, e-invoices, and WHT certificates) via Dropbox cloud storage.
+                      </p>
+                    </div>
+                    <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border ${dropboxStatus?.connected ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                      {dropboxStatus?.connected ? `Connected: ${dropboxStatus.connectedAccount || 'Yes'}` : 'Not Connected'}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Dropbox App Key</label>
+                      <input
+                        className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                        placeholder="e.g. abc123def456ghi"
+                        value={dropboxDraft.appKey || ''}
+                        onChange={e => {
+                          setDriveDraftDirty(true);
+                          setDropboxDraft(prev => ({ ...prev, appKey: e.target.value }));
+                        }}
+                      />
+                      <p className="text-[10px] text-slate-400">Found in your Dropbox App Console under Settings &gt; "App key".</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Dropbox App Secret</label>
+                      <div className="relative">
+                        <input
+                          type={showDropboxSecret ? 'text' : 'password'}
+                          className="w-full p-3 border rounded-xl bg-white font-bold text-sm pr-10"
+                          placeholder={dropboxStatus?.appSecretConfigured ? '•••••••••••••••• (Encrypted in DB)' : 'App secret from Dropbox'}
+                          value={dropboxDraft.appSecret || ''}
+                          onChange={e => {
+                            setDriveDraftDirty(true);
+                            setDropboxDraft(prev => ({ ...prev, appSecret: e.target.value }));
+                          }}
+                        />
+                        <button type="button" onClick={() => setShowDropboxSecret(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-sky-600">
+                          <i className={`fa-solid ${showDropboxSecret ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-slate-400">Found in your Dropbox App Console under Settings &gt; "App secret".</p>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Dropbox Refresh Token</label>
+                      <div className="relative">
+                        <input
+                          type={showDropboxRefreshToken ? 'text' : 'password'}
+                          className="w-full p-3 border rounded-xl bg-white font-bold text-sm pr-10"
+                          placeholder={dropboxStatus?.refreshTokenConfigured ? '•••••••••••••••• (Encrypted in DB)' : 'Paste existing refresh token OR click Connect with Dropbox'}
+                          value={dropboxDraft.refreshToken || ''}
+                          onChange={e => {
+                            setDriveDraftDirty(true);
+                            setDropboxDraft(prev => ({ ...prev, refreshToken: e.target.value }));
+                          }}
+                        />
+                        <button type="button" onClick={() => setShowDropboxRefreshToken(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-sky-600">
+                          <i className={`fa-solid ${showDropboxRefreshToken ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        Can be pasted directly, or automatically generated by clicking <strong>Connect with Dropbox (OAuth)</strong> below.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Target Folder Path in Dropbox</label>
+                      <input
+                        className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
+                        placeholder="e.g. /NexusERP_Uploads"
+                        value={dropboxDraft.folderPath || ''}
+                        onChange={e => {
+                          setDriveDraftDirty(true);
+                          setDropboxDraft(prev => ({ ...prev, folderPath: e.target.value }));
+                        }}
+                      />
+                      <p className="text-[10px] text-slate-400">Folder in Dropbox where uploaded documents and scans will be stored (e.g. /NexusERP_Uploads).</p>
+                    </div>
+
+                    <div className="space-y-3 md:col-span-2">
+                      <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                        <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Dropbox Integration</span>
+                        <input
+                          type="checkbox"
+                          checked={!!dropboxDraft.enabled}
+                          onChange={e => {
+                            setDriveDraftDirty(true);
+                            setDropboxDraft(prev => ({ ...prev, enabled: e.target.checked }));
+                          }}
+                        />
+                      </label>
+                      <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                        <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Auto-Upload External Submissions</span>
+                        <input
+                          type="checkbox"
+                          checked={!!dropboxDraft.autoUploadExternalSubmissions}
+                          onChange={e => {
+                            setDriveDraftDirty(true);
+                            setDropboxDraft(prev => ({ ...prev, autoUploadExternalSubmissions: e.target.checked }));
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      onClick={saveDropboxConfig}
+                      disabled={isDropboxBusy}
+                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-white ${isDropboxBusy ? 'bg-slate-400 cursor-wait' : 'bg-sky-600 hover:bg-sky-700'}`}
+                    >
+                      Save Integration Settings
+                    </button>
+                    <button
+                      onClick={handleTestDropbox}
+                      disabled={isDropboxBusy || (!dropboxDraft.refreshToken && !dropboxStatus?.refreshTokenConfigured)}
+                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border ${isDropboxBusy || (!dropboxDraft.refreshToken && !dropboxStatus?.refreshTokenConfigured) ? 'border-slate-200 text-slate-300 cursor-not-allowed' : 'border-indigo-300 text-indigo-700 hover:bg-indigo-50'}`}
+                    >
+                      Test Connection
+                    </button>
+                    <button
+                      onClick={connectDropbox}
+                      disabled={isDropboxBusy || !dropboxDraft.appKey}
+                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border ${isDropboxBusy || !dropboxDraft.appKey ? 'border-slate-200 text-slate-300 cursor-not-allowed' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}
+                    >
+                      Connect with Dropbox (OAuth)
+                    </button>
+                    <button
+                      onClick={disconnectDropbox}
+                      disabled={isDropboxBusy || !dropboxStatus?.connected}
+                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border ${isDropboxBusy || !dropboxStatus?.connected ? 'border-slate-200 text-slate-300 cursor-not-allowed' : 'border-rose-300 text-rose-700 hover:bg-rose-50'}`}
+                    >
+                      Disconnect
+                    </button>
+                    <button
+                      onClick={refreshDropboxStatus}
+                      disabled={isDropboxBusy}
+                      className="px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-300 text-slate-600 hover:bg-slate-50"
+                    >
+                      Refresh Status
+                    </button>
+                  </div>
+
+                  <div className="p-6 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                    <h5 className="text-[11px] font-black text-slate-700 uppercase tracking-widest flex items-center gap-2">
+                      <i className="fa-brands fa-dropbox text-sky-600"></i>
+                      Dropbox Developer Console Setup Guide
+                    </h5>
+                    <ol className="list-decimal pl-5 text-xs text-slate-600 space-y-2">
+                      <li>
+                        Go to <a href="https://www.dropbox.com/developers/apps" target="_blank" rel="noreferrer" className="text-sky-600 underline font-bold">Dropbox App Console</a> and click <strong>Create app</strong>.
+                      </li>
+                      <li>
+                        Choose <strong>Scoped access</strong> and <strong>Full Dropbox</strong> access. Name your app (e.g. <code>NexusERP-Storage</code>).
+                      </li>
+                      <li>
+                        Under the <strong>Permissions</strong> tab, check and enable the following scopes:
+                        <ul className="list-disc pl-5 mt-1 font-mono text-[11px] text-slate-700">
+                          <li>files.content.write</li>
+                          <li>files.content.read</li>
+                          <li>files.metadata.read</li>
+                          <li>account_info.read</li>
+                        </ul>
+                        Click <strong>Submit</strong> at the bottom of the Permissions tab.
+                      </li>
+                      <li>
+                        Under the <strong>Settings</strong> tab:
+                        <ul className="list-disc pl-5 mt-1 text-[11px] text-slate-600 space-y-1">
+                          <li>Copy <strong>App key</strong> and paste it into the <em>Dropbox App Key</em> field above.</li>
+                          <li>Click <strong>Show</strong> on <strong>App secret</strong>, copy it, and paste it into the <em>Dropbox App Secret</em> field above.</li>
+                          <li>In <strong>Redirect URIs</strong>, add your published Render app callback URL: <code className="bg-slate-200 px-1 py-0.5 rounded font-bold text-slate-800">{dropboxStatus?.callbackUrl || 'https://<your-render-app>.onrender.com/api/v1/integrations/dropbox/callback'}</code></li>
+                        </ul>
+                      </li>
+                      <li>
+                        Save your settings above, then click <strong>Connect with Dropbox (OAuth)</strong> to authorize and link your account automatically, or paste a pre-generated Refresh Token into the field.
+                      </li>
+                    </ol>
                   </div>
                 </div>
               )}

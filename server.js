@@ -6,6 +6,8 @@ import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import https from 'https';
+import { Dropbox } from 'dropbox';
 
 import os from 'os';
 import AdmZip from 'adm-zip';
@@ -116,7 +118,7 @@ const syncAuthoritativeUsersToSandboxes = (liveDb) => {
 
 const SERVER_START_TIME = Date.now();
 const FACTORY_PASS = 'YousefNadody!@#2';
-const CURRENT_SCHEMA_VERSION = 10; // Increment when introducing new schema migrations
+const CURRENT_SCHEMA_VERSION = 11; // Increment when introducing new schema migrations
 const FORCE_SCHEMA_MIGRATION = process.env.FORCE_SCHEMA_MIGRATION === 'true';
 
 const getItemEffectiveQty = (item) => {
@@ -223,6 +225,7 @@ const saveBase64CostSheetToFile = (base64String, req = null) => {
 
         mirrorToSandboxIfApplicable(req, 'cost_sheets', filePath);
         const relativePath = isLive ? `uploads/cost_sheets/${fileName}` : `uploads/sandbox/${req.sandboxOwner}/cost_sheets/${fileName}`;
+        syncUploadToDropbox(req, relativePath, Buffer.from(b64Data, 'base64')).catch(() => {});
         return relativePath;
     } catch (err) {
         console.error('[CostSheet] Failed to persist base64 to disk:', err);
@@ -1012,7 +1015,9 @@ const SENSITIVE_PATHS = [
     ['emailConfig', 'password'],
     ['googleDriveConfig', 'clientSecret'],
     ['googleDriveConfig', 'refreshToken'],
-    ['localStorageConfig', 'secretKey']
+    ['localStorageConfig', 'secretKey'],
+    ['dropboxConfig', 'appSecret'],
+    ['dropboxConfig', 'refreshToken']
 ];
 
 const transformSensitiveFields = (settings, fn) => {
@@ -1049,6 +1054,17 @@ const getLiveAiSettings = () => {
     }
 };
 
+const DEFAULT_DROPBOX_CONFIG = {
+    enabled: false,
+    autoUploadExternalSubmissions: true,
+    appKey: process.env.DROPBOX_APP_KEY || '',
+    appSecret: process.env.DROPBOX_APP_SECRET || '',
+    refreshToken: process.env.DROPBOX_REFRESH_TOKEN || '',
+    folderPath: process.env.DROPBOX_FOLDER_PATH || '/NexusERP_Uploads',
+    connectedAccount: '',
+    connectedAt: ''
+};
+
 const resolveSettings = (db, isSandboxReq = false) => {
     const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
         ? db.settings[0]
@@ -1073,6 +1089,10 @@ const resolveSettings = (db, isSandboxReq = false) => {
         },
         localStorageConfig: {
             ...DEFAULT_LOCAL_STORAGE_CONFIG
+        },
+        dropboxConfig: {
+            ...DEFAULT_DROPBOX_CONFIG,
+            ...(dbSettings.dropboxConfig || {})
         },
         emailConfig: {
             smtpServer: 'mail.quickstor.net',
@@ -1203,6 +1223,119 @@ const uploadBufferToLocalStorage = async ({ buffer, mimeType, fileName, bucketNa
         webViewLink: `${baseUrl}/${targetBucket}/${encodeURIComponent(objectKey)}`,
         webContentLink: `${baseUrl}/${targetBucket}/${encodeURIComponent(objectKey)}`
     };
+};
+
+const getDropboxConfig = (settings) => {
+    const cfg = {
+        ...DEFAULT_DROPBOX_CONFIG,
+        ...(settings?.dropboxConfig || {})
+    };
+    const appKey = String(cfg.appKey || process.env.DROPBOX_APP_KEY || '').trim();
+    const appSecret = String(cfg.appSecret || process.env.DROPBOX_APP_SECRET || '').trim();
+    const refreshToken = String(cfg.refreshToken || process.env.DROPBOX_REFRESH_TOKEN || '').trim();
+    const folderPath = String(cfg.folderPath || process.env.DROPBOX_FOLDER_PATH || '/NexusERP_Uploads').trim().replace(/\/$/, '') || '/NexusERP_Uploads';
+    return {
+        ...cfg,
+        appKey,
+        appSecret,
+        refreshToken,
+        folderPath,
+        configured: !!appKey && !!appSecret && !!refreshToken
+    };
+};
+
+const isDropboxConfigured = (settings) => {
+    const cfg = getDropboxConfig(settings);
+    return !!cfg.enabled && !!cfg.configured;
+};
+
+const getDropboxClient = (settings) => {
+    const cfg = getDropboxConfig(settings);
+    if (!cfg.configured) {
+        throw new Error('Dropbox credentials (appKey, appSecret, refreshToken) are not fully configured.');
+    }
+    return new Dropbox({
+        clientId: cfg.appKey,
+        clientSecret: cfg.appSecret,
+        refreshToken: cfg.refreshToken
+    });
+};
+
+const testDropboxConnection = async (appKey, appSecret, refreshToken) => {
+    const dbx = new Dropbox({ clientId: appKey, clientSecret: appSecret, refreshToken });
+    const check = await dbx.usersGetCurrentAccount();
+    return check.result;
+};
+
+const uploadFileToDropbox = async ({ settings, buffer, relativePath, mimeType }) => {
+    const cfg = getDropboxConfig(settings);
+    const folder = cfg.folderPath;
+    const normRel = relativePath.replace(/\\/g, '/').replace(/^\/?uploads\//, '');
+    const targetPath = `${folder}/${normRel}`;
+
+    const dbx = getDropboxClient(settings);
+    const response = await dbx.filesUpload({
+        path: targetPath,
+        contents: buffer,
+        mode: { '.tag': 'overwrite' }
+    });
+    return response.result;
+};
+
+const downloadFileStreamFromDropbox = async ({ settings, relativePath }) => {
+    const cfg = getDropboxConfig(settings);
+    const folder = cfg.folderPath;
+    const normRel = relativePath.replace(/\\/g, '/').replace(/^\/?uploads\//, '');
+    const targetPath = `${folder}/${normRel}`;
+
+    const dbx = getDropboxClient(settings);
+    await dbx.auth.refreshAccessToken();
+    const accessToken = dbx.auth.getAccessToken();
+
+    return new Promise((resolve) => {
+        const req = https.request('https://content.dropboxapi.com/2/files/download', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Dropbox-API-Arg': JSON.stringify({ path: targetPath })
+            }
+        }, (res) => {
+            if (res.statusCode !== 200) {
+                return resolve(null);
+            }
+            resolve(res);
+        });
+        req.on('error', (err) => {
+            console.error('[Dropbox] Download error:', err.message);
+            resolve(null);
+        });
+        req.end();
+    });
+};
+
+const exchangeDropboxCodeForRefreshToken = async ({ appKey, appSecret, code, redirectUri }) => {
+    const dbx = new Dropbox({ clientId: appKey, clientSecret: appSecret });
+    dbx.auth.setClientId(appKey);
+    dbx.auth.setClientSecret(appSecret);
+    const response = await dbx.auth.getAccessTokenFromCode(redirectUri, code);
+    return response.result.refresh_token;
+};
+
+const syncUploadToDropbox = async (req, relativePath, buffer = null) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        if (isDropboxConfigured(settings)) {
+            const absPath = path.isAbsolute(relativePath) ? relativePath : path.join(__dirname, relativePath);
+            const fileBuf = buffer || (fs.existsSync(absPath) ? fs.readFileSync(absPath) : null);
+            if (fileBuf) {
+                await uploadFileToDropbox({ settings, buffer: fileBuf, relativePath });
+                console.log(`[Dropbox] Automatically synced ${relativePath} to Dropbox (${getDropboxConfig(settings).folderPath})`);
+            }
+        }
+    } catch (err) {
+        console.warn('[Dropbox Sync Warning]', err.message);
+    }
 };
 
 const getBaseUrlFromRequest = (req) => {
@@ -1434,6 +1567,20 @@ const migrations = [
     // v9 → v10: Purge embedded base64 cost sheets from orders & costSheets array to physical files
     (settings) => {
         return settings;
+    },
+    // v10 → v11: Initialize dropboxConfig if missing
+    (settings) => {
+        if (!settings.dropboxConfig) {
+            settings.dropboxConfig = {
+                enabled: false,
+                autoUploadExternalSubmissions: true,
+                appKey: '',
+                appSecret: '',
+                refreshToken: '',
+                folderPath: '/NexusERP_Uploads'
+            };
+        }
+        return settings;
     }
 ];
 
@@ -1621,6 +1768,19 @@ const applySchemaMigrations = (db, targetPath = DB_PATH) => {
                 }
             });
             if (extractedFiles > 0) console.log(`[System] v9→v10 migration: Purged and extracted ${extractedFiles} base64 cost sheet(s) to physical files in ${isLive ? 'Live' : targetSandboxOwner}.`);
+        }
+        if (version === 11) {
+            if (!settings.dropboxConfig) {
+                settings.dropboxConfig = {
+                    enabled: false,
+                    autoUploadExternalSubmissions: true,
+                    appKey: '',
+                    appSecret: '',
+                    refreshToken: '',
+                    folderPath: '/NexusERP_Uploads'
+                };
+            }
+            console.log(`[System] v10→v11 migration: Initialized Dropbox storage settings.`);
         }
     }
 
@@ -2951,7 +3111,53 @@ app.get('/api/log-crash', (req, res) => {
     console.log('\n\nðŸš¨ FRONTEND CRASH ðŸš¨\n', req.query.err, '\n\n');
     res.send('ok');
 });
-app.use('/uploads', express.static(UPLOADS_BASE));
+app.use('/uploads', async (req, res, next) => {
+    const rawPath = decodeURIComponent(req.path || '').replace(/^\/+/, '');
+    if (!rawPath) return res.status(404).json({ error: 'File path required' });
+
+    const localFilePath = path.join(UPLOADS_BASE, rawPath);
+
+    // 1. If file exists locally on disk, serve directly
+    if (fs.existsSync(localFilePath) && fs.statSync(localFilePath).isFile()) {
+        return res.sendFile(localFilePath);
+    }
+
+    // 2. If not on local disk (e.g. Render container restart), check if Dropbox is configured
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        if (isDropboxConfigured(settings)) {
+            const stream = await downloadFileStreamFromDropbox({ settings, relativePath: rawPath });
+            if (stream) {
+                const ext = path.extname(localFilePath).toLowerCase();
+                let contentType = 'application/octet-stream';
+                if (ext === '.pdf') contentType = 'application/pdf';
+                else if (ext === '.xlsx') contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                else if (ext === '.csv') contentType = 'text/csv';
+                else if (ext === '.png') contentType = 'image/png';
+                else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+                else if (ext === '.docx') contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+                res.setHeader('Content-Type', contentType);
+
+                // Cache to local disk for fast subsequent reads
+                try {
+                    const cacheDir = path.dirname(localFilePath);
+                    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+                    const writeCache = fs.createWriteStream(localFilePath);
+                    stream.pipe(writeCache);
+                } catch (_) {}
+
+                return stream.pipe(res);
+            }
+        }
+    } catch (dbxErr) {
+        console.warn(`[Dropbox] Could not retrieve /uploads/${rawPath} from Dropbox:`, dbxErr.message);
+    }
+
+    // 3. File not found locally or on Dropbox
+    return res.status(404).json({ error: 'File not found' });
+});
 
 app.use(express.static(path.join(__dirname, 'dist'), {
     setHeaders: (res, filepath) => {
@@ -3385,6 +3591,12 @@ const updateInCollection = (col) => (req, res) => {
         }
         if (oldItem.localStorageConfig?.secretKey && (!req.body.localStorageConfig?.secretKey || req.body.localStorageConfig.secretKey === '')) {
             merged.localStorageConfig = { ...(merged.localStorageConfig || {}), secretKey: oldItem.localStorageConfig.secretKey };
+        }
+        if (oldItem.dropboxConfig?.appSecret && (!req.body.dropboxConfig?.appSecret || req.body.dropboxConfig.appSecret === '' || req.body.dropboxConfig.appSecret.includes('●'))) {
+            merged.dropboxConfig = { ...(merged.dropboxConfig || {}), appSecret: oldItem.dropboxConfig.appSecret };
+        }
+        if (oldItem.dropboxConfig?.refreshToken && (!req.body.dropboxConfig?.refreshToken || req.body.dropboxConfig.refreshToken === '' || req.body.dropboxConfig.refreshToken.includes('●'))) {
+            merged.dropboxConfig = { ...(merged.dropboxConfig || {}), refreshToken: oldItem.dropboxConfig.refreshToken };
         }
 
         updated = encryptSettings(merged);
@@ -7343,6 +7555,7 @@ app.post('/api/upload-pod', uploadPod.single('podFile'), (req, res) => {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
         mirrorToSandboxIfApplicable(req, 'pod', req.file.path);
+        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -7354,6 +7567,7 @@ app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, re
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
         mirrorToSandboxIfApplicable(req, 'einvoices', req.file.path);
+        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -7365,6 +7579,7 @@ app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) 
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
         mirrorToSandboxIfApplicable(req, 'wht_certificates', req.file.path);
+        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -7376,6 +7591,7 @@ app.post('/api/upload-cost-sheet', uploadCostSheet.single('costSheetFile'), (req
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
         mirrorToSandboxIfApplicable(req, 'cost_sheets', req.file.path);
+        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -7387,6 +7603,7 @@ app.post('/api/upload-supplier-receipt', uploadSupplierReceipt.single('receiptFi
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
         mirrorToSandboxIfApplicable(req, 'supplier_receipts', req.file.path);
+        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
@@ -7668,6 +7885,262 @@ app.post('/api/v1/integrations/google-drive/upload', uploadGoogleDriveFile.singl
     }
 });
 
+// ==================== DROPBOX INTEGRATION ====================
+
+app.get('/api/v1/integrations/dropbox/status', (req, res) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        const cfg = getDropboxConfig(settings);
+        const baseUrl = getBaseUrlFromRequest(req);
+        const callbackUrl = `${baseUrl}/api/v1/integrations/dropbox/callback`;
+        return res.json({
+            enabled: !!cfg.enabled,
+            autoUploadExternalSubmissions: !!cfg.autoUploadExternalSubmissions,
+            configured: !!cfg.configured,
+            connected: !!cfg.refreshToken,
+            folderPath: cfg.folderPath || '/NexusERP_Uploads',
+            appKey: cfg.appKey || '',
+            appSecretConfigured: !!cfg.appSecret,
+            refreshTokenConfigured: !!cfg.refreshToken,
+            connectedAccount: cfg.connectedAccount || '',
+            connectedAt: cfg.connectedAt || '',
+            callbackUrl
+        });
+    } catch (err) {
+        return res.status(500).json({ error: err.message || 'Failed to read Dropbox status' });
+    }
+});
+
+app.post('/api/v1/integrations/dropbox/test', async (req, res) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        const currentCfg = getDropboxConfig(settings);
+        const appKey = (req.body.appKey && req.body.appKey.trim()) || currentCfg.appKey;
+        const appSecret = (req.body.appSecret && req.body.appSecret.trim()) || currentCfg.appSecret;
+        const refreshToken = (req.body.refreshToken && req.body.refreshToken.trim()) || currentCfg.refreshToken;
+
+        if (!appKey || !appSecret || !refreshToken) {
+            return res.status(400).json({ error: 'App Key, App Secret, and Refresh Token are required to test Dropbox connection.' });
+        }
+
+        const account = await testDropboxConnection(appKey, appSecret, refreshToken);
+        const accountName = account?.name?.display_name || account?.email || 'Connected';
+        const email = account?.email || '';
+
+        return res.json({
+            success: true,
+            account: accountName,
+            email
+        });
+    } catch (err) {
+        console.error('[Dropbox] Test connection failed:', err);
+        return res.status(500).json({ error: err.message || 'Dropbox connection test failed' });
+    }
+});
+
+app.post('/api/v1/integrations/dropbox/auth-url', async (req, res) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        const cfg = getDropboxConfig(settings);
+        const appKey = (req.body.appKey && req.body.appKey.trim()) || cfg.appKey;
+        if (!appKey) {
+            return res.status(400).json({ error: 'Dropbox App Key must be configured first.' });
+        }
+        const baseUrl = getBaseUrlFromRequest(req);
+        const redirectUri = req.body.redirectUri || `${baseUrl}/api/v1/integrations/dropbox/callback`;
+
+        const dbx = new Dropbox({ clientId: appKey });
+        const authUrl = await dbx.auth.getAuthenticationUrl(
+            redirectUri,
+            undefined,
+            'code',
+            'offline',
+            null,
+            'none',
+            false
+        );
+        return res.json({ url: authUrl });
+    } catch (err) {
+        console.error('[Dropbox] Auth URL error:', err);
+        return res.status(500).json({ error: err.message || 'Failed to generate Dropbox auth URL' });
+    }
+});
+
+app.post('/api/v1/integrations/dropbox/exchange-token', async (req, res) => {
+    try {
+        const { code, redirectUri } = req.body;
+        if (!code) {
+            return res.status(400).json({ error: 'Authorization code is required.' });
+        }
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        const cfg = getDropboxConfig(settings);
+        const appKey = cfg.appKey;
+        const appSecret = cfg.appSecret;
+        if (!appKey || !appSecret) {
+            return res.status(400).json({ error: 'App Key and App Secret must be saved before exchanging authorization code.' });
+        }
+
+        const baseUrl = getBaseUrlFromRequest(req);
+        const effectiveRedirectUri = redirectUri || `${baseUrl}/api/v1/integrations/dropbox/callback`;
+        const refreshToken = await exchangeDropboxCodeForRefreshToken({
+            appKey,
+            appSecret,
+            code,
+            redirectUri: effectiveRedirectUri
+        });
+
+        let accountName = '';
+        try {
+            const acc = await testDropboxConnection(appKey, appSecret, refreshToken);
+            accountName = acc?.name?.display_name || acc?.email || '';
+        } catch (e) {
+            console.warn('[Dropbox] Failed to fetch account info after exchange:', e.message);
+        }
+
+        if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+            db.settings = [{}];
+        }
+        const prev = settings.dropboxConfig || {};
+        settings.dropboxConfig = {
+            ...prev,
+            refreshToken,
+            connectedAccount: accountName || prev.connectedAccount || '',
+            connectedAt: new Date().toISOString()
+        };
+        db.settings[0] = encryptSettings(settings);
+        writeDb(db, getDbPath(req));
+
+        return res.json({
+            success: true,
+            message: 'Dropbox connected successfully',
+            account: accountName
+        });
+    } catch (err) {
+        console.error('[Dropbox] Exchange token error:', err);
+        return res.status(500).json({ error: err.message || 'Failed to exchange Dropbox authorization code' });
+    }
+});
+
+app.get('/api/v1/integrations/dropbox/callback', async (req, res) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        const cfg = getDropboxConfig(settings);
+
+        const { code, error, error_description } = req.query;
+        if (error) {
+            return res.status(400).send(`Dropbox authorization failed: ${error_description || error}`);
+        }
+        if (!code) {
+            return res.status(400).send('Missing authorization code.');
+        }
+
+        const baseUrl = getBaseUrlFromRequest(req);
+        const redirectUri = `${baseUrl}/api/v1/integrations/dropbox/callback`;
+
+        const refreshToken = await exchangeDropboxCodeForRefreshToken({
+            appKey: cfg.appKey,
+            appSecret: cfg.appSecret,
+            code: String(code),
+            redirectUri
+        });
+
+        let accountName = '';
+        try {
+            const acc = await testDropboxConnection(cfg.appKey, cfg.appSecret, refreshToken);
+            accountName = acc?.name?.display_name || acc?.email || '';
+        } catch (e) {
+            console.warn('[Dropbox] Failed to fetch account info in callback:', e.message);
+        }
+
+        if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+            db.settings = [{}];
+        }
+        const prev = settings.dropboxConfig || {};
+        settings.dropboxConfig = {
+            ...prev,
+            refreshToken,
+            connectedAccount: accountName || prev.connectedAccount || '',
+            connectedAt: new Date().toISOString(),
+            enabled: prev.enabled !== false,
+            autoUploadExternalSubmissions: prev.autoUploadExternalSubmissions !== false
+        };
+        db.settings[0] = encryptSettings(settings);
+        writeDb(db, getDbPath(req));
+
+        return res.send(`<html><body style="font-family: Arial, sans-serif; padding: 24px;"><h3>Dropbox connected successfully.</h3><p>You can close this window and return to Nexus ERP.</p><script>if (window.opener) { window.opener.postMessage({ type: 'DROPBOX_AUTH_SUCCESS' }, '*'); } setTimeout(function(){window.close();},1200);</script></body></html>`);
+    } catch (err) {
+        console.error('[Dropbox] OAuth callback failed:', err);
+        return res.status(500).send(`OAuth callback failed: ${err.message || err}`);
+    }
+});
+
+app.post('/api/v1/integrations/dropbox/disconnect', (req, res) => {
+    try {
+        const db = getDb(req);
+        if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+            db.settings = [{}];
+        }
+        const settings = resolveSettings(db);
+        const prev = settings.dropboxConfig || {};
+        settings.dropboxConfig = {
+            ...prev,
+            refreshToken: '',
+            connectedAccount: '',
+            connectedAt: ''
+        };
+        db.settings[0] = encryptSettings(settings);
+        writeDb(db, getDbPath(req));
+        return res.json({ success: true });
+    } catch (err) {
+        return res.status(500).json({ error: err.message || 'Failed to disconnect Dropbox' });
+    }
+});
+
+app.post('/api/v1/integrations/dropbox/upload', uploadGoogleDriveFile.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file was uploaded.' });
+        }
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        const cfg = getDropboxConfig(settings);
+
+        if (!cfg.enabled) {
+            return res.status(400).json({ error: 'Dropbox integration is disabled in System Core Control.' });
+        }
+        if (!cfg.configured) {
+            return res.status(400).json({ error: 'Dropbox credentials are not fully configured or connected.' });
+        }
+
+        const orderPrefix = req.body.internalOrderNumber ? `${req.body.internalOrderNumber}_` : '';
+        const poPrefix = req.body.customerReferenceNumber ? `${req.body.customerReferenceNumber}_` : '';
+        const finalName = `${orderPrefix}${poPrefix}${req.file.originalname}`;
+
+        const uploaded = await uploadFileToDropbox({
+            settings,
+            buffer: req.file.buffer,
+            relativePath: finalName,
+            mimeType: req.file.mimetype
+        });
+
+        return res.json({
+            success: true,
+            id: uploaded.id,
+            name: uploaded.name,
+            path_display: uploaded.path_display,
+            webViewLink: `https://www.dropbox.com/home${encodeURI(cfg.folderPath)}`
+        });
+    } catch (err) {
+        console.error('[Dropbox] Upload failed:', err);
+        return res.status(500).json({ error: err.message || 'Dropbox upload failed' });
+    }
+});
+
 app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('file'), async (req, res) => {
     try {
         if (!req.file) {
@@ -7681,7 +8154,8 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
         const settings = resolveSettings(db);
         const googleEnabled = !!settings?.googleDriveConfig?.enabled && !!settings?.googleDriveConfig?.autoUploadExternalSubmissions;
         const localEnabled = !!settings?.localStorageConfig?.enabled && !!settings?.localStorageConfig?.autoUploadExternalSubmissions;
-        if (!googleEnabled && !localEnabled) {
+        const dropboxEnabled = !!settings?.dropboxConfig?.enabled && !!settings?.dropboxConfig?.autoUploadExternalSubmissions;
+        if (!googleEnabled && !localEnabled && !dropboxEnabled) {
             return res.status(400).json({ error: 'No enabled storage integration is configured for automatic uploads.' });
         }
 
@@ -7712,8 +8186,8 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
                         folderId: targetFolderId
                     };
                     db.settings[0] = encryptSettings(settings);
-                    writeDb(db, targetPath);
-}
+                    writeDb(db, getDbPath(req));
+                }
 
                 const uploaded = await uploadBufferToGoogleDrive({
                     req,
@@ -7733,6 +8207,29 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
                 };
             } catch (error) {
                 errors.push({ target: 'google-drive', message: error.message || 'Google Drive upload failed' });
+            }
+        }
+
+        if (dropboxEnabled) {
+            try {
+                const cfg = getDropboxConfig(settings);
+                if (!cfg.configured) {
+                    throw new Error('Dropbox is not connected yet.');
+                }
+                const uploaded = await uploadFileToDropbox({
+                    settings,
+                    buffer: req.file.buffer,
+                    relativePath: finalName,
+                    mimeType: req.file.mimetype
+                });
+                uploads.dropbox = {
+                    id: uploaded.id,
+                    name: uploaded.name,
+                    path_display: uploaded.path_display,
+                    webViewLink: `https://www.dropbox.com/home${encodeURI(cfg.folderPath)}`
+                };
+            } catch (error) {
+                errors.push({ target: 'dropbox', message: error.message || 'Dropbox upload failed' });
             }
         }
 

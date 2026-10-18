@@ -3,7 +3,7 @@ import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGr
 import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.000001 for every code update
-export const APP_VERSION = '1.0001100';
+export const APP_VERSION = '1.0001101';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
@@ -41,6 +41,14 @@ export const INITIAL_CONFIG: AppConfig = {
       accessKey: '',
       secretKey: '',
       bucketName: ''
+    },
+    dropboxConfig: {
+      enabled: false,
+      autoUploadExternalSubmissions: true,
+      appKey: '',
+      appSecret: '',
+      refreshToken: '',
+      folderPath: '/NexusERP_Uploads'
     },
     useTurso: false,
     tursoUrl: '',
