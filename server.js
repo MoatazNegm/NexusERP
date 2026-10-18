@@ -759,18 +759,24 @@ const pushToTursoAsync = async (data, dbPath) => {
         const settingsList = data.settings || [];
         const settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
         
-        if (settings && settings.useTurso && settings.tursoUrl && settings.tursoAuthToken) {
+        const useTurso = !!(settings && settings.useTurso) || !!process.env.TURSO_DATABASE_URL;
+        const rawUrl = (settings && settings.tursoUrl) || process.env.TURSO_DATABASE_URL || '';
+        const authToken = (settings && settings.tursoAuthToken) || process.env.TURSO_AUTH_TOKEN || '';
+
+        if (useTurso && rawUrl && authToken) {
             const targetId = isLive ? 'live' : 'sandbox.' + path.basename(dbPath).replace('db.sandbox.', '').replace('.json', '');
             
-            const dbUrl = settings.tursoUrl.startsWith('libsql://') 
-              ? settings.tursoUrl.replace(/^libsql:\/\//, 'https://') 
-              : settings.tursoUrl;
+            const dbUrl = rawUrl.startsWith('libsql://') 
+              ? rawUrl.replace(/^libsql:\/\//, 'https://') 
+              : rawUrl;
               
-            const client = createClient({ url: dbUrl, authToken: settings.tursoAuthToken });
+            const client = createClient({ url: dbUrl, authToken });
+            await client.execute(`CREATE TABLE IF NOT EXISTS nexus_state (id TEXT PRIMARY KEY, json_data TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
             await client.execute({
                 sql: `INSERT INTO nexus_state (id, json_data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json_data=excluded.json_data, updated_at=CURRENT_TIMESTAMP`,
                 args: [targetId, JSON.stringify(data)]
             });
+            console.log(`[Turso] Successfully synced ${targetId} to cloud DB.`);
         }
     } catch (e) {
         console.error(`[Turso Sync Error on ${dbPath}]`, e.message);
@@ -779,18 +785,26 @@ const pushToTursoAsync = async (data, dbPath) => {
 
 const pullFromTursoOnStartup = async () => {
     try {
-        if (!fs.existsSync(DB_PATH)) return;
-        const localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-        const settingsList = localDb.settings || [];
-        const settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
+        let settings = null;
+        if (fs.existsSync(DB_PATH)) {
+            try {
+                const localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+                const settingsList = localDb.settings || [];
+                settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
+            } catch (err) {}
+        }
         
-        if (settings && settings.useTurso && settings.tursoUrl && settings.tursoAuthToken) {
+        const useTurso = !!(settings && settings.useTurso) || !!process.env.TURSO_DATABASE_URL;
+        const rawUrl = (settings && settings.tursoUrl) || process.env.TURSO_DATABASE_URL || '';
+        const authToken = (settings && settings.tursoAuthToken) || process.env.TURSO_AUTH_TOKEN || '';
+
+        if (useTurso && rawUrl && authToken) {
             console.log("[Turso] Cloud Sync enabled. Pulling latest data on startup...");
-            const dbUrl = settings.tursoUrl.startsWith('libsql://') 
-              ? settings.tursoUrl.replace(/^libsql:\/\//, 'https://') 
-              : settings.tursoUrl;
+            const dbUrl = rawUrl.startsWith('libsql://') 
+              ? rawUrl.replace(/^libsql:\/\//, 'https://') 
+              : rawUrl;
               
-            const client = createClient({ url: dbUrl, authToken: settings.tursoAuthToken });
+            const client = createClient({ url: dbUrl, authToken });
             await client.execute(`CREATE TABLE IF NOT EXISTS nexus_state (id TEXT PRIMARY KEY, json_data TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
             
             const res = await client.execute({ sql: `SELECT json_data FROM nexus_state WHERE id = ?`, args: ['live'] });
@@ -1028,6 +1042,9 @@ const transformSensitiveFields = (settings, fn) => {
             copy[parent][key] = fn(copy[parent][key]);
         }
     });
+    if (copy.tursoAuthToken) {
+        copy.tursoAuthToken = fn(copy.tursoAuthToken);
+    }
     return copy;
 };
 
