@@ -38,26 +38,6 @@ const sanitizeUsername = (username) => {
   return cleaned || 'user';
 };
 
-const getSandboxDbPath = (owner) => path.join(__dirname, `db.sandbox.${sanitizeUsername(owner)}.json`);
-const getSandboxLoginSnapshotPath = (owner) => path.join(__dirname, `db.sandbox.${sanitizeUsername(owner)}.login_snapshot.json`);
-const saveSandboxLoginSnapshot = (owner) => {
-  const sandboxPath = getSandboxDbPath(owner);
-  const snapshotPath = getSandboxLoginSnapshotPath(owner);
-  if (fs.existsSync(sandboxPath)) {
-    try {
-      fs.copyFileSync(sandboxPath, snapshotPath);
-      console.log(`[Sandbox] Saved login snapshot for ${owner}`);
-    } catch (e) {
-      console.error(`[Sandbox] Failed to save login snapshot for ${owner}:`, e);
-    }
-  }
-};
-const getSandboxUploadsPath = (owner) => path.join(UPLOADS_BASE, 'sandbox', sanitizeUsername(owner));
-const getDbPath = (req) => req.sandboxDbPath || DB_PATH;
-const isSandbox = (req) => Boolean(req.sandboxDbPath);
-// TTL cache for /api/v1/auth/environments discovery responses (per username)
-const discoveryCache = new Map(); // username -> { data, expiresAt }
-
 import crypto from 'crypto';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
@@ -70,6 +50,102 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, 'uploads')
 if (!fs.existsSync(UPLOADS_BASE)) {
     fs.mkdirSync(UPLOADS_BASE, { recursive: true });
 }
+
+const getSandboxDbPath = (owner) => path.join(__dirname, `db.sandbox.${sanitizeUsername(owner)}.json`);
+const getSandboxLoginSnapshotPath = (owner) => path.join(__dirname, `db.sandbox.${sanitizeUsername(owner)}.login_snapshot.json`);
+const getSandboxUploadsPath = (owner) => path.join(UPLOADS_BASE, 'sandbox', sanitizeUsername(owner));
+const getSandboxLoginSnapshotUploadsPath = (owner) => path.join(UPLOADS_BASE, 'sandbox', `${sanitizeUsername(owner)}_login_snapshot`);
+const getSandboxJournalPath = (owner) => path.join(__dirname, `db.sandbox.${sanitizeUsername(owner)}.journal.json`);
+
+const readSandboxJournal = (owner) => {
+    const journalPath = getSandboxJournalPath(owner);
+    if (fs.existsSync(journalPath)) {
+        try {
+            return JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+        } catch (_) {}
+    }
+    return { loginTime: new Date().toISOString(), addedFiles: [], amendedFiles: [] };
+};
+
+const writeSandboxJournal = (owner, journal) => {
+    try {
+        const journalPath = getSandboxJournalPath(owner);
+        fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), 'utf8');
+    } catch (e) {
+        console.error(`[Sandbox Journal] Failed to write journal for ${owner}:`, e.message);
+    }
+};
+
+const recordSandboxFileChange = (owner, filePath, action = 'add') => {
+    if (!owner) return;
+    try {
+        const journal = readSandboxJournal(owner);
+        const normPath = String(filePath || '').replace(/\\/g, '/');
+        const entry = { path: normPath, timestamp: new Date().toISOString() };
+        if (action === 'add') {
+            if (!journal.addedFiles.some(f => (typeof f === 'string' ? f : f.path) === normPath)) {
+                journal.addedFiles.push(entry);
+            }
+        } else if (action === 'amend') {
+            if (!journal.amendedFiles.some(f => (typeof f === 'string' ? f : f.path) === normPath)) {
+                journal.amendedFiles.push(entry);
+            }
+        }
+        writeSandboxJournal(owner, journal);
+    } catch (e) {
+        console.error(`[Sandbox Journal] Error recording file change for ${owner}:`, e.message);
+    }
+};
+
+const saveSandboxLoginSnapshot = (owner) => {
+    const sanitized = sanitizeUsername(owner);
+    const sandboxPath = getSandboxDbPath(sanitized);
+    const snapshotPath = getSandboxLoginSnapshotPath(sanitized);
+    if (fs.existsSync(sandboxPath)) {
+        try {
+            fs.copyFileSync(sandboxPath, snapshotPath);
+            console.log(`[Sandbox] Saved database login snapshot for ${sanitized}`);
+        } catch (e) {
+            console.error(`[Sandbox] Failed to save DB login snapshot for ${sanitized}:`, e);
+        }
+    }
+    // Snapshot sandbox files & reset session journal
+    try {
+        const sbUploads = getSandboxUploadsPath(sanitized);
+        const sbSnapshotUploads = getSandboxLoginSnapshotUploadsPath(sanitized);
+        if (fs.existsSync(sbSnapshotUploads)) {
+            fs.rmSync(sbSnapshotUploads, { recursive: true, force: true });
+        }
+        if (fs.existsSync(sbUploads)) {
+            fs.cpSync(sbUploads, sbSnapshotUploads, { recursive: true });
+        }
+        writeSandboxJournal(sanitized, { loginTime: new Date().toISOString(), addedFiles: [], amendedFiles: [] });
+        console.log(`[Sandbox] Saved files login snapshot & initialized journal for ${sanitized}`);
+    } catch (e) {
+        console.error(`[Sandbox] Failed to save files login snapshot for ${sanitized}:`, e.message);
+    }
+};
+
+const resolveDocumentDiskPath = (filePath) => {
+    if (!filePath || typeof filePath !== 'string') return null;
+    const directPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
+    if (fs.existsSync(directPath)) return directPath;
+
+    // COW fallback: if path references a sandbox uploads location that hasn't been created/amended,
+    // fall back to the live baseline document
+    const norm = filePath.replace(/\\/g, '/');
+    if (norm.includes('uploads/sandbox/')) {
+        const baseline = norm.replace(/uploads\/sandbox\/[^/]+\//, 'uploads/');
+        const baselineDirect = path.isAbsolute(baseline) ? baseline : path.join(__dirname, baseline);
+        if (fs.existsSync(baselineDirect)) return baselineDirect;
+    }
+    return null;
+};
+
+const getDbPath = (req) => req.sandboxDbPath || DB_PATH;
+const isSandbox = (req) => Boolean(req.sandboxDbPath);
+// TTL cache for /api/v1/auth/environments discovery responses (per username)
+const discoveryCache = new Map(); // username -> { data, expiresAt }
 
 // Synchronize authoritative user accounts, roles, group memberships, and profiles from live db to all sandbox databases
 const syncAuthoritativeUsersToSandboxes = (liveDb) => {
@@ -138,21 +214,15 @@ const isStockOrder = (order) => {
 // uploads/cost_sheets/, uploads/einvoices/) so that all files across the entire app
 // reside in the same unified storage area and can be backed up together.
 const resolveUploadDir = (req, subDir) => {
-    const dir = path.join(UPLOADS_BASE, subDir);
+    const isSb = Boolean(req?.sandboxOwner);
+    const base = isSb ? getSandboxUploadsPath(req.sandboxOwner) : UPLOADS_BASE;
+    const dir = path.join(base, subDir);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     return dir;
 };
 
 const mirrorToSandboxIfApplicable = (req, subDir, filePath) => {
-    if (req.sandboxOwner) {
-        try {
-            const sbDir = path.join(getSandboxUploadsPath(req.sandboxOwner), subDir);
-            if (!fs.existsSync(sbDir)) fs.mkdirSync(sbDir, { recursive: true });
-            fs.copyFileSync(filePath, path.join(sbDir, path.basename(filePath)));
-        } catch (mirrorErr) {
-            console.warn(`[Upload ${subDir}] Sandbox mirror warning:`, mirrorErr.message);
-        }
-    }
+    // Under Copy-On-Write (COW), files are directly written to their respective isolated location
 };
 
 const podStorage = multer.diskStorage({
@@ -225,6 +295,9 @@ const saveBase64CostSheetToFile = (base64String, req = null) => {
 
         mirrorToSandboxIfApplicable(req, 'cost_sheets', filePath);
         const relativePath = isLive ? `uploads/cost_sheets/${fileName}` : `uploads/sandbox/${req.sandboxOwner}/cost_sheets/${fileName}`;
+        if (!isLive && req?.sandboxOwner) {
+            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
+        }
         syncUploadToDropbox(req, relativePath, Buffer.from(b64Data, 'base64')).catch(() => {});
         return relativePath;
     } catch (err) {
@@ -306,8 +379,11 @@ const getCostSheetWorkbook = (input) => {
     if (!input) return null;
     if (typeof input === 'object' && input.SheetNames && input.Sheets) return input;
     try {
-        if (typeof input === 'string' && (input.startsWith('uploads/') || fs.existsSync(input))) {
-            return XLSX.readFile(input);
+        if (typeof input === 'string') {
+            const diskPath = resolveDocumentDiskPath(input);
+            if (diskPath && fs.existsSync(diskPath)) {
+                return XLSX.readFile(diskPath);
+            }
         }
         const cleanBase64 = input.includes(',') ? input.split(',')[1] : input;
         return XLSX.read(cleanBase64, { type: 'base64' });
@@ -3237,47 +3313,76 @@ app.use('/uploads', async (req, res, next) => {
     const rawPath = decodeURIComponent(req.path || '').replace(/^\/+/, '');
     if (!rawPath) return res.status(404).json({ error: 'File path required' });
 
-    const localFilePath = path.join(UPLOADS_BASE, rawPath);
-
-    // 1. If file exists locally on disk, serve directly
-    if (fs.existsSync(localFilePath) && fs.statSync(localFilePath).isFile()) {
-        return res.sendFile(localFilePath);
-    }
-
-    // 2. If not on local disk (e.g. Render container restart), check if Dropbox is configured
-    try {
-        const db = getDb(req);
-        const settings = resolveSettings(db);
-        if (isDropboxConfigured(settings)) {
-            const stream = await downloadFileStreamFromDropbox({ settings, relativePath: rawPath });
-            if (stream) {
-                const ext = path.extname(localFilePath).toLowerCase();
-                let contentType = 'application/octet-stream';
-                if (ext === '.pdf') contentType = 'application/pdf';
-                else if (ext === '.xlsx') contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-                else if (ext === '.csv') contentType = 'text/csv';
-                else if (ext === '.png') contentType = 'image/png';
-                else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
-                else if (ext === '.docx') contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-
-                res.setHeader('Content-Type', contentType);
-
-                // Cache to local disk for fast subsequent reads
-                try {
-                    const cacheDir = path.dirname(localFilePath);
-                    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-                    const writeCache = fs.createWriteStream(localFilePath);
-                    stream.pipe(writeCache);
-                } catch (_) {}
-
-                return stream.pipe(res);
-            }
+    const serveFromDisk = (absPath) => {
+        if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+            res.sendFile(absPath);
+            return true;
         }
-    } catch (dbxErr) {
-        console.warn(`[Dropbox] Could not retrieve /uploads/${rawPath} from Dropbox:`, dbxErr.message);
+        return false;
+    };
+
+    const serveFromDropbox = async (relPath, localCachePath) => {
+        try {
+            const db = getDb(req);
+            const settings = resolveSettings(db);
+            if (isDropboxConfigured(settings)) {
+                const stream = await downloadFileStreamFromDropbox({ settings, relativePath: relPath });
+                if (stream) {
+                    const ext = path.extname(localCachePath).toLowerCase();
+                    let contentType = 'application/octet-stream';
+                    if (ext === '.pdf') contentType = 'application/pdf';
+                    else if (ext === '.xlsx') contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                    else if (ext === '.csv') contentType = 'text/csv';
+                    else if (ext === '.png') contentType = 'image/png';
+                    else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+                    else if (ext === '.docx') contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+                    res.setHeader('Content-Type', contentType);
+                    try {
+                        const cacheDir = path.dirname(localCachePath);
+                        if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+                        const writeCache = fs.createWriteStream(localCachePath);
+                        stream.pipe(writeCache);
+                    } catch (_) {}
+                    stream.pipe(res);
+                    return true;
+                }
+            }
+        } catch (dbxErr) {
+            console.warn(`[Dropbox] Could not retrieve /uploads/${relPath} from Dropbox:`, dbxErr.message);
+        }
+        return false;
+    };
+
+    // 1. If path explicitly requests a sandbox file (e.g. sandbox/<owner>/<subPath>)
+    const sbMatch = rawPath.match(/^sandbox\/([^/]+)\/(.*)$/);
+    if (sbMatch) {
+        const sbLocalPath = path.join(UPLOADS_BASE, rawPath);
+        if (serveFromDisk(sbLocalPath)) return;
+        if (await serveFromDropbox(rawPath, sbLocalPath)) return;
+
+        // COW Fallback: file was not modified in sandbox, serve baseline original!
+        const baselineSubPath = sbMatch[2];
+        const baselineLocalPath = path.join(UPLOADS_BASE, baselineSubPath);
+        if (serveFromDisk(baselineLocalPath)) return;
+        if (await serveFromDropbox(baselineSubPath, baselineLocalPath)) return;
+
+        return res.status(404).json({ error: 'File not found' });
     }
 
-    // 3. File not found locally or on Dropbox
+    // 2. If request is from a sandbox user and requests a non-sandbox path, check if sandbox has an amended version
+    if (req.sandboxOwner) {
+        const sbRelPath = `sandbox/${sanitizeUsername(req.sandboxOwner)}/${rawPath}`;
+        const sbLocalPath = path.join(UPLOADS_BASE, sbRelPath);
+        if (serveFromDisk(sbLocalPath)) return;
+        if (await serveFromDropbox(sbRelPath, sbLocalPath)) return;
+    }
+
+    // 3. Standard live path check
+    const localFilePath = path.join(UPLOADS_BASE, rawPath);
+    if (serveFromDisk(localFilePath)) return;
+    if (await serveFromDropbox(rawPath, localFilePath)) return;
+
     return res.status(404).json({ error: 'File not found' });
 });
 
@@ -4435,33 +4540,91 @@ app.post('/api/v1/wipe', (req, res) => {
   else res.status(500).json({ error: "Wipe failed" });
 });
 
-app.post('/api/v1/sandbox/reset', (req, res) => {
+app.post('/api/v1/sandbox/reset', async (req, res) => {
   if (!isSandbox(req)) return res.status(400).json({ error: "Must be in sandbox mode." });
+  const owner = sanitizeUsername(req.sandboxOwner);
   const currentDb = getDb(req);
   const resetDb = {
     settings: currentDb.settings || [], modules: currentDb.modules || [], userGroups: currentDb.userGroups || [], users: currentDb.users || [],
     orders: [], customers: [], inventory: [], notifications: [], contracts: [], supplierPayments: []
   };
   writeDb(resetDb, getDbPath(req));
-  const uploadsDir = getSandboxUploadsPath(req.sandboxOwner);
+  const uploadsDir = getSandboxUploadsPath(owner);
+  const snapshotUploadsDir = getSandboxLoginSnapshotUploadsPath(owner);
   if (fs.existsSync(uploadsDir)) {
     fs.rmSync(uploadsDir, { recursive: true, force: true });
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
+  if (fs.existsSync(snapshotUploadsDir)) {
+    fs.rmSync(snapshotUploadsDir, { recursive: true, force: true });
+  }
+  writeSandboxJournal(owner, { loginTime: new Date().toISOString(), addedFiles: [], amendedFiles: [] });
+
+  // Clean Dropbox sandbox directory if configured
+  try {
+    const settings = resolveSettings(currentDb);
+    if (isDropboxConfigured(settings)) {
+      const client = getDropboxClient(settings);
+      const folder = getDropboxConfig(settings).folderPath;
+      await client.filesDeleteV2({ path: `${folder}/sandbox/${owner}` });
+    }
+  } catch (_) {}
+
   res.json({ success: true, message: "Sandbox reset successfully." });
 });
 
-app.post('/api/v1/sandbox/revert-login', (req, res) => {
+app.post('/api/v1/sandbox/revert-login', async (req, res) => {
   if (!isSandbox(req)) return res.status(400).json({ error: "Must be in sandbox mode." });
-  const snapshotPath = getSandboxLoginSnapshotPath(req.sandboxOwner);
+  const owner = sanitizeUsername(req.sandboxOwner);
+  const snapshotPath = getSandboxLoginSnapshotPath(owner);
   const sandboxPath = getDbPath(req);
   if (!fs.existsSync(snapshotPath)) {
     return res.status(404).json({ error: "No initial login snapshot found for this sandbox session." });
   }
   try {
+    // 1. Revert DB from login snapshot
     const snapshotDb = readDb(snapshotPath);
     writeDb(snapshotDb, sandboxPath);
-    console.log(`[Sandbox] Reverted sandbox for ${req.sandboxOwner} to login snapshot`);
+
+    // 2. Revert Files from login snapshot & session journal
+    const journal = readSandboxJournal(owner);
+    const sbUploads = getSandboxUploadsPath(owner);
+    const sbSnapshotUploads = getSandboxLoginSnapshotUploadsPath(owner);
+
+    if (fs.existsSync(sbUploads)) {
+      fs.rmSync(sbUploads, { recursive: true, force: true });
+    }
+    if (fs.existsSync(sbSnapshotUploads)) {
+      fs.cpSync(sbSnapshotUploads, sbUploads, { recursive: true });
+    } else {
+      fs.mkdirSync(sbUploads, { recursive: true });
+    }
+
+    // 3. Clean up Dropbox session additions if Dropbox is configured
+    try {
+      const db = getDb(req);
+      const settings = resolveSettings(db);
+      if (isDropboxConfigured(settings) && journal.addedFiles && journal.addedFiles.length > 0) {
+        const client = getDropboxClient(settings);
+        const folder = getDropboxConfig(settings).folderPath;
+        for (const added of journal.addedFiles) {
+          const filePath = typeof added === 'string' ? added : added.path;
+          const norm = filePath.replace(/\\/g, '/').replace(/^\/?uploads\//, '');
+          const targetDbxPath = `${folder}/${norm}`;
+          try {
+            await client.filesDeleteV2({ path: targetDbxPath });
+            console.log(`[Sandbox Revert] Removed session addition from Dropbox: ${targetDbxPath}`);
+          } catch (_) {}
+        }
+      }
+    } catch (dbxRevertErr) {
+      console.warn('[Sandbox Revert] Dropbox cleanup warning:', dbxRevertErr.message);
+    }
+
+    // 4. Reset journal to clean session baseline
+    writeSandboxJournal(owner, { loginTime: new Date().toISOString(), addedFiles: [], amendedFiles: [] });
+
+    console.log(`[Sandbox] Reverted sandbox database and documents for ${owner} to login snapshot`);
     res.json({ success: true, message: "Sandbox reverted to login state successfully." });
   } catch (err) {
     console.error("[Sandbox] Failed to revert to login snapshot:", err);
@@ -7046,13 +7209,14 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       const extractedUploads = path.join(tempDir, 'uploads');
       if (fs.existsSync(extractedUploads)) {
         if (!fs.existsSync(UPLOADS_BASE)) fs.mkdirSync(UPLOADS_BASE, { recursive: true });
-        fs.cpSync(extractedUploads, UPLOADS_BASE, { recursive: true });
+        const specificSandbox = path.join(extractedUploads, 'sandbox', sanitizeUsername(req.sandboxOwner));
         const targetUploads = getSandboxUploadsPath(req.sandboxOwner);
-        if (!fs.existsSync(targetUploads)) fs.mkdirSync(targetUploads, { recursive: true });
-        fs.cpSync(extractedUploads, targetUploads, { recursive: true });
-
-        // Auto-sync restored files to Dropbox in background if configured
-        syncLocalDirectoryToDropbox(targetUploads, req).catch((err) => console.error('[Dropbox Sync Sandbox Restore Error]', err.message));
+        if (fs.existsSync(specificSandbox)) {
+          if (!fs.existsSync(targetUploads)) fs.mkdirSync(targetUploads, { recursive: true });
+          fs.cpSync(specificSandbox, targetUploads, { recursive: true });
+          syncLocalDirectoryToDropbox(targetUploads, req).catch((err) => console.error('[Dropbox Sync Sandbox Restore Error]', err.message));
+        }
+        saveSandboxLoginSnapshot(req.sandboxOwner);
       }
     } else {
       // LIVE RESTORE: Restore live db.json AND all db.sandbox.*.json files AND all uploads
@@ -7738,7 +7902,9 @@ app.post('/api/upload-pod', uploadPod.single('podFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
-        mirrorToSandboxIfApplicable(req, 'pod', req.file.path);
+        if (req.sandboxOwner) {
+            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
+        }
         syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
@@ -7750,7 +7916,9 @@ app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, re
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
-        mirrorToSandboxIfApplicable(req, 'einvoices', req.file.path);
+        if (req.sandboxOwner) {
+            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
+        }
         syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
@@ -7762,7 +7930,9 @@ app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) 
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
-        mirrorToSandboxIfApplicable(req, 'wht_certificates', req.file.path);
+        if (req.sandboxOwner) {
+            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
+        }
         syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
@@ -7774,7 +7944,9 @@ app.post('/api/upload-cost-sheet', uploadCostSheet.single('costSheetFile'), (req
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
-        mirrorToSandboxIfApplicable(req, 'cost_sheets', req.file.path);
+        if (req.sandboxOwner) {
+            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
+        }
         syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
@@ -7786,7 +7958,9 @@ app.post('/api/upload-supplier-receipt', uploadSupplierReceipt.single('receiptFi
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
         const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
-        mirrorToSandboxIfApplicable(req, 'supplier_receipts', req.file.path);
+        if (req.sandboxOwner) {
+            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
+        }
         syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
         res.json({ success: true, filePath: relativePath });
     } catch (err) {
