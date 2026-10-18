@@ -799,6 +799,18 @@ class DataService {
     return response.json();
   }
 
+  async syncDropboxDocuments() {
+    const response = await fetch(`${BACKEND_URL}/api/v1/integrations/dropbox/sync-all`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to sync documents to Dropbox');
+    }
+    return response.json() as Promise<{ success: boolean; count: number; errors: number; message: string }>;
+  }
+
   async uploadExternalSubmission(file: File, metadata: { orderId?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) {
     const formData = new FormData();
     formData.append('file', file);

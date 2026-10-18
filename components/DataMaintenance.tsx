@@ -729,6 +729,20 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     }
   };
 
+  const handleSyncAllToDropbox = async () => {
+    setIsDropboxBusy(true);
+    setMessage({ type: 'info', text: 'Syncing all existing documents to Dropbox in the background...' });
+    try {
+      const res = await dataService.syncDropboxDocuments();
+      setMessage({ type: 'success', text: res.message || `Successfully synced ${res.count} documents to Dropbox!` });
+      await refreshDropboxStatus();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err?.message || 'Failed to sync documents to Dropbox.' });
+    } finally {
+      setIsDropboxBusy(false);
+    }
+  };
+
   const persistSettings = async (settingsPatch: Partial<AppConfig['settings']>) => {
     const mergedSettings = {
       ...config.settings,
@@ -2022,6 +2036,15 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border ${isDropboxBusy || !dropboxStatus?.connected ? 'border-slate-200 text-slate-300 cursor-not-allowed' : 'border-rose-300 text-rose-700 hover:bg-rose-50'}`}
                     >
                       Disconnect
+                    </button>
+                    <button
+                      onClick={handleSyncAllToDropbox}
+                      disabled={isDropboxBusy || !dropboxStatus?.connected}
+                      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border ${isDropboxBusy || !dropboxStatus?.connected ? 'border-slate-200 text-slate-300 cursor-not-allowed' : 'border-sky-400 text-sky-700 hover:bg-sky-50'}`}
+                      title="Upload all existing local documents, PDFs, and cost sheets to Dropbox"
+                    >
+                      <i className="fa-solid fa-cloud-arrow-up mr-1.5"></i>
+                      Sync All Existing Documents
                     </button>
                     <button
                       onClick={refreshDropboxStatus}

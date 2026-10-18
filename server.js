@@ -1338,6 +1338,52 @@ const syncUploadToDropbox = async (req, relativePath, buffer = null) => {
     }
 };
 
+const syncLocalDirectoryToDropbox = async (baseDir, req) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        if (!isDropboxConfigured(settings)) return { count: 0, errors: 0 };
+
+        const filesToSync = [];
+        const walk = (dir) => {
+            if (!fs.existsSync(dir)) return;
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    walk(fullPath);
+                } else if (entry.isFile()) {
+                    const relInsideUploads = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+                    filesToSync.push({ fullPath, relativePath: relInsideUploads });
+                }
+            }
+        };
+        walk(baseDir);
+
+        let count = 0;
+        let errors = 0;
+        for (const file of filesToSync) {
+            try {
+                const buf = fs.readFileSync(file.fullPath);
+                await uploadFileToDropbox({
+                    settings,
+                    buffer: buf,
+                    relativePath: file.relativePath
+                });
+                count++;
+            } catch (err) {
+                console.warn(`[Dropbox Sync] Failed to sync ${file.relativePath}:`, err.message);
+                errors++;
+            }
+        }
+        console.log(`[Dropbox Sync] Completed syncing ${count} files to Dropbox (${errors} errors).`);
+        return { count, errors };
+    } catch (e) {
+        console.error('[Dropbox Sync] Directory sync error:', e);
+        return { count: 0, errors: 1 };
+    }
+};
+
 const getBaseUrlFromRequest = (req) => {
     const appOrigin = String(req.headers['x-app-origin'] || '').trim();
     if (appOrigin) {
@@ -6893,6 +6939,9 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
         const targetUploads = getSandboxUploadsPath(req.sandboxOwner);
         if (!fs.existsSync(targetUploads)) fs.mkdirSync(targetUploads, { recursive: true });
         fs.cpSync(extractedUploads, targetUploads, { recursive: true });
+
+        // Auto-sync restored files to Dropbox in background if configured
+        syncLocalDirectoryToDropbox(extractedUploads, req).catch(() => {});
       }
     } else {
       // LIVE RESTORE: Restore live db.json AND all db.sandbox.*.json files AND all uploads
@@ -6924,6 +6973,9 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       if (fs.existsSync(extractedUploads)) {
         if (!fs.existsSync(UPLOADS_BASE)) fs.mkdirSync(UPLOADS_BASE, { recursive: true });
         fs.cpSync(extractedUploads, UPLOADS_BASE, { recursive: true });
+
+        // Auto-sync restored files to Dropbox in background if configured
+        syncLocalDirectoryToDropbox(extractedUploads, req).catch(() => {});
       }
     }
 
@@ -8138,6 +8190,31 @@ app.post('/api/v1/integrations/dropbox/upload', uploadGoogleDriveFile.single('fi
     } catch (err) {
         console.error('[Dropbox] Upload failed:', err);
         return res.status(500).json({ error: err.message || 'Dropbox upload failed' });
+    }
+});
+
+app.post('/api/v1/integrations/dropbox/sync-all', async (req, res) => {
+    try {
+        const db = getDb(req);
+        const settings = resolveSettings(db);
+        if (!isDropboxConfigured(settings)) {
+            return res.status(400).json({ error: 'Dropbox is not configured or connected.' });
+        }
+        const uploadsDir = isSandbox(req) ? getSandboxUploadsPath(req.sandboxOwner) : UPLOADS_BASE;
+        if (!fs.existsSync(uploadsDir)) {
+            return res.json({ success: true, count: 0, errors: 0, message: 'No local documents found to sync.' });
+        }
+
+        const result = await syncLocalDirectoryToDropbox(uploadsDir, req);
+        return res.json({
+            success: true,
+            count: result.count,
+            errors: result.errors,
+            message: `Successfully synced ${result.count} documents to Dropbox!`
+        });
+    } catch (err) {
+        console.error('[Dropbox] Sync all failed:', err);
+        return res.status(500).json({ error: err.message || 'Failed to sync documents to Dropbox' });
     }
 });
 
