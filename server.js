@@ -1072,20 +1072,34 @@ const getLiveAiSettings = () => {
 };
 
 const DEFAULT_DROPBOX_CONFIG = {
-    enabled: false,
+    enabled: true,
     autoUploadExternalSubmissions: true,
-    appKey: process.env.DROPBOX_APP_KEY || '',
-    appSecret: process.env.DROPBOX_APP_SECRET || '',
-    refreshToken: process.env.DROPBOX_REFRESH_TOKEN || '',
+    appKey: process.env.DROPBOX_APP_KEY || 'lw5j90qgwy8sfg6',
+    appSecret: process.env.DROPBOX_APP_SECRET || 'jmc0lnxik1p7wzp',
+    refreshToken: process.env.DROPBOX_REFRESH_TOKEN || '12vnbWIMpGEAAAAAAAAAAdNDWYsRivoujs86a6cibIImzCRGbzxisjNC--98UmnF',
     folderPath: process.env.DROPBOX_FOLDER_PATH || '/NexusERP_Uploads',
-    connectedAccount: '',
-    connectedAt: ''
+    connectedAccount: 'Moataz Allam',
+    connectedAt: '2026-10-18T10:00:00.000Z'
 };
 
 const resolveSettings = (db, isSandboxReq = false) => {
-    const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
+    const rawDbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0)
         ? db.settings[0]
         : (db.settings || {});
+    const dbSettings = decryptSettings(rawDbSettings);
+
+    const rawDropbox = dbSettings.dropboxConfig || {};
+    const hasCustomCredentials = !!(rawDropbox.refreshToken && String(rawDropbox.refreshToken).trim());
+    const effectiveDropbox = {
+        enabled: (rawDropbox.enabled !== undefined && hasCustomCredentials) ? !!rawDropbox.enabled : true,
+        autoUploadExternalSubmissions: rawDropbox.autoUploadExternalSubmissions !== undefined ? !!rawDropbox.autoUploadExternalSubmissions : true,
+        appKey: (rawDropbox.appKey && String(rawDropbox.appKey).trim()) || DEFAULT_DROPBOX_CONFIG.appKey,
+        appSecret: (rawDropbox.appSecret && String(rawDropbox.appSecret).trim()) || DEFAULT_DROPBOX_CONFIG.appSecret,
+        refreshToken: (rawDropbox.refreshToken && String(rawDropbox.refreshToken).trim()) || DEFAULT_DROPBOX_CONFIG.refreshToken,
+        folderPath: (rawDropbox.folderPath && String(rawDropbox.folderPath).trim()) || DEFAULT_DROPBOX_CONFIG.folderPath,
+        connectedAccount: (rawDropbox.connectedAccount && String(rawDropbox.connectedAccount).trim()) || DEFAULT_DROPBOX_CONFIG.connectedAccount,
+        connectedAt: rawDropbox.connectedAt || DEFAULT_DROPBOX_CONFIG.connectedAt
+    };
 
     const merged = {
         loggingDelayThresholdDays: 1,
@@ -1094,7 +1108,9 @@ const resolveSettings = (db, isSandboxReq = false) => {
         enableRollbackAlerts: true,
         rollbackAlertGroupIds: [],
         thresholdNotifications: {},
-        storageBackend: 'google-drive',
+        storageBackend: (dbSettings.storageBackend === 'dropbox' || dbSettings.storageBackend === 'local-storage')
+            ? dbSettings.storageBackend
+            : (dbSettings.googleDriveConfig?.refreshToken ? 'google-drive' : 'dropbox'),
         googleDriveConfig: {
             enabled: true,
             autoUploadExternalSubmissions: true,
@@ -1106,10 +1122,6 @@ const resolveSettings = (db, isSandboxReq = false) => {
         },
         localStorageConfig: {
             ...DEFAULT_LOCAL_STORAGE_CONFIG
-        },
-        dropboxConfig: {
-            ...DEFAULT_DROPBOX_CONFIG,
-            ...(dbSettings.dropboxConfig || {})
         },
         emailConfig: {
             smtpServer: 'mail.quickstor.net',
@@ -1135,7 +1147,11 @@ const resolveSettings = (db, isSandboxReq = false) => {
             reporting: ['management'],
             govEInvoice: ['Gov.EInvoice']
         },
-        ...dbSettings
+        ...dbSettings,
+        storageBackend: (dbSettings.storageBackend === 'dropbox' || dbSettings.storageBackend === 'local-storage')
+            ? dbSettings.storageBackend
+            : (dbSettings.googleDriveConfig?.refreshToken ? 'google-drive' : 'dropbox'),
+        dropboxConfig: effectiveDropbox
     };
 
     if (isSandboxReq) {
@@ -1145,8 +1161,7 @@ const resolveSettings = (db, isSandboxReq = false) => {
         merged.openaiConfig = liveAi.openaiConfig;
     }
 
-    // Decrypt sensitive fields for internal use
-    return decryptSettings(merged);
+    return merged;
 };
 
 const getGoogleOAuthConfig = (settings) => {
@@ -1243,20 +1258,24 @@ const uploadBufferToLocalStorage = async ({ buffer, mimeType, fileName, bucketNa
 };
 
 const getDropboxConfig = (settings) => {
-    const cfg = {
-        ...DEFAULT_DROPBOX_CONFIG,
-        ...(settings?.dropboxConfig || {})
-    };
-    const appKey = String(cfg.appKey || process.env.DROPBOX_APP_KEY || '').trim();
-    const appSecret = String(cfg.appSecret || process.env.DROPBOX_APP_SECRET || '').trim();
-    const refreshToken = String(cfg.refreshToken || process.env.DROPBOX_REFRESH_TOKEN || '').trim();
-    const folderPath = String(cfg.folderPath || process.env.DROPBOX_FOLDER_PATH || '/NexusERP_Uploads').trim().replace(/\/$/, '') || '/NexusERP_Uploads';
+    const raw = settings?.dropboxConfig || {};
+    const appKey = String((raw.appKey && String(raw.appKey).trim()) || DEFAULT_DROPBOX_CONFIG.appKey || process.env.DROPBOX_APP_KEY || '').trim();
+    const appSecret = String((raw.appSecret && String(raw.appSecret).trim()) || DEFAULT_DROPBOX_CONFIG.appSecret || process.env.DROPBOX_APP_SECRET || '').trim();
+    const refreshToken = String((raw.refreshToken && String(raw.refreshToken).trim()) || DEFAULT_DROPBOX_CONFIG.refreshToken || process.env.DROPBOX_REFRESH_TOKEN || '').trim();
+    const folderPath = String((raw.folderPath && String(raw.folderPath).trim()) || DEFAULT_DROPBOX_CONFIG.folderPath || process.env.DROPBOX_FOLDER_PATH || '/NexusERP_Uploads').trim().replace(/\/$/, '') || '/NexusERP_Uploads';
+    const enabled = (raw.enabled !== undefined && (raw.refreshToken && String(raw.refreshToken).trim())) ? !!raw.enabled : true;
+    const connectedAccount = String((raw.connectedAccount && String(raw.connectedAccount).trim()) || (refreshToken === DEFAULT_DROPBOX_CONFIG.refreshToken ? DEFAULT_DROPBOX_CONFIG.connectedAccount : '')).trim();
+    const connectedAt = String(raw.connectedAt || (refreshToken === DEFAULT_DROPBOX_CONFIG.refreshToken ? DEFAULT_DROPBOX_CONFIG.connectedAt : '')).trim();
+
     return {
-        ...cfg,
+        enabled,
+        autoUploadExternalSubmissions: raw.autoUploadExternalSubmissions !== undefined ? !!raw.autoUploadExternalSubmissions : true,
         appKey,
         appSecret,
         refreshToken,
         folderPath,
+        connectedAccount,
+        connectedAt,
         configured: !!appKey && !!appSecret && !!refreshToken
     };
 };
@@ -1633,15 +1652,13 @@ const migrations = [
     },
     // v10 → v11: Initialize dropboxConfig if missing
     (settings) => {
-        if (!settings.dropboxConfig) {
+        if (!settings.dropboxConfig || !settings.dropboxConfig.refreshToken) {
             settings.dropboxConfig = {
-                enabled: false,
-                autoUploadExternalSubmissions: true,
-                appKey: '',
-                appSecret: '',
-                refreshToken: '',
-                folderPath: '/NexusERP_Uploads'
+                ...DEFAULT_DROPBOX_CONFIG
             };
+        }
+        if (!settings.storageBackend) {
+            settings.storageBackend = 'dropbox';
         }
         return settings;
     }
@@ -1833,15 +1850,13 @@ const applySchemaMigrations = (db, targetPath = DB_PATH) => {
             if (extractedFiles > 0) console.log(`[System] v9→v10 migration: Purged and extracted ${extractedFiles} base64 cost sheet(s) to physical files in ${isLive ? 'Live' : targetSandboxOwner}.`);
         }
         if (version === 11) {
-            if (!settings.dropboxConfig) {
+            if (!settings.dropboxConfig || !settings.dropboxConfig.refreshToken) {
                 settings.dropboxConfig = {
-                    enabled: false,
-                    autoUploadExternalSubmissions: true,
-                    appKey: '',
-                    appSecret: '',
-                    refreshToken: '',
-                    folderPath: '/NexusERP_Uploads'
+                    ...DEFAULT_DROPBOX_CONFIG
                 };
+            }
+            if (!settings.storageBackend) {
+                settings.storageBackend = 'dropbox';
             }
             console.log(`[System] v10→v11 migration: Initialized Dropbox storage settings.`);
         }
@@ -3384,29 +3399,23 @@ const getCollection = (col) => (req, res) => {
     // Decrypt sensitive settings before sending to frontend (inheriting live AI settings in sandboxes)
     if (col === 'settings') {
         const settingsList = db[col] || [];
-        if (isSandbox(req)) {
-            const liveAi = getLiveAiSettings();
-            if (settingsList.length === 0) {
-                const defaultSettings = {
-                    id: 'system_settings',
-                    ...resolveSettings(db, true),
-                    aiProvider: liveAi.aiProvider,
-                    geminiConfig: liveAi.geminiConfig,
-                    openaiConfig: liveAi.openaiConfig
-                };
-                return res.json([decryptSettings(defaultSettings)]);
-            }
-            return res.json(settingsList.map(s => {
-                const merged = {
-                    ...s,
-                    aiProvider: liveAi.aiProvider,
-                    geminiConfig: liveAi.geminiConfig,
-                    openaiConfig: liveAi.openaiConfig
-                };
-                return decryptSettings(merged);
-            }));
+        const resolved = resolveSettings(db, isSandbox(req));
+        if (settingsList.length === 0) {
+            return res.json([resolved]);
         }
-        return res.json((db[col] || []).map(s => decryptSettings(s)));
+        return res.json(settingsList.map(s => {
+            const dec = decryptSettings(s);
+            const liveAi = isSandbox(req) ? getLiveAiSettings() : null;
+            return {
+                ...resolved,
+                ...dec,
+                aiProvider: liveAi ? liveAi.aiProvider : (dec.aiProvider || resolved.aiProvider),
+                geminiConfig: liveAi ? liveAi.geminiConfig : (dec.geminiConfig || resolved.geminiConfig),
+                openaiConfig: liveAi ? liveAi.openaiConfig : (dec.openaiConfig || resolved.openaiConfig),
+                storageBackend: resolved.storageBackend,
+                dropboxConfig: resolved.dropboxConfig
+            };
+        }));
     }
 
     res.json(db[col] || []);
@@ -3428,17 +3437,18 @@ const getItemFromCollection = (col) => (req, res) => {
         return res.json(calculateOrderHealth(item, settings));
     }
     if (col === 'settings') {
-        let s = item;
-        if (isSandbox(req)) {
-            const liveAi = getLiveAiSettings();
-            s = {
-                ...s,
-                aiProvider: liveAi.aiProvider,
-                geminiConfig: liveAi.geminiConfig,
-                openaiConfig: liveAi.openaiConfig
-            };
-        }
-        return res.json(decryptSettings(s));
+        const resolved = resolveSettings(db, isSandbox(req));
+        let dec = item ? decryptSettings(item) : resolved;
+        const liveAi = isSandbox(req) ? getLiveAiSettings() : null;
+        return res.json({
+            ...resolved,
+            ...dec,
+            aiProvider: liveAi ? liveAi.aiProvider : (dec.aiProvider || resolved.aiProvider),
+            geminiConfig: liveAi ? liveAi.geminiConfig : (dec.geminiConfig || resolved.geminiConfig),
+            openaiConfig: liveAi ? liveAi.openaiConfig : (dec.openaiConfig || resolved.openaiConfig),
+            storageBackend: resolved.storageBackend,
+            dropboxConfig: resolved.dropboxConfig
+        });
     }
     res.json(item);
 };
@@ -3660,6 +3670,21 @@ const updateInCollection = (col) => (req, res) => {
         }
         if (oldItem.dropboxConfig?.refreshToken && (!req.body.dropboxConfig?.refreshToken || req.body.dropboxConfig.refreshToken === '' || req.body.dropboxConfig.refreshToken.includes('●'))) {
             merged.dropboxConfig = { ...(merged.dropboxConfig || {}), refreshToken: oldItem.dropboxConfig.refreshToken };
+        }
+        if (oldItem.dropboxConfig?.appKey && (!req.body.dropboxConfig?.appKey || req.body.dropboxConfig.appKey === '')) {
+            merged.dropboxConfig = { ...(merged.dropboxConfig || {}), appKey: oldItem.dropboxConfig.appKey };
+        }
+        if (oldItem.dropboxConfig?.connectedAccount && (!req.body.dropboxConfig?.connectedAccount || req.body.dropboxConfig.connectedAccount === '')) {
+            merged.dropboxConfig = { ...(merged.dropboxConfig || {}), connectedAccount: oldItem.dropboxConfig.connectedAccount };
+        }
+        if (oldItem.tursoAuthToken && (!req.body.tursoAuthToken || req.body.tursoAuthToken === '' || req.body.tursoAuthToken.includes('●'))) {
+            merged.tursoAuthToken = oldItem.tursoAuthToken;
+        }
+        if (oldItem.tursoUrl && (!req.body.tursoUrl || req.body.tursoUrl === '')) {
+            merged.tursoUrl = oldItem.tursoUrl;
+        }
+        if (oldItem.useTurso !== undefined && req.body.useTurso === undefined) {
+            merged.useTurso = oldItem.useTurso;
         }
 
         updated = encryptSettings(merged);
@@ -6806,6 +6831,31 @@ app.post('/api/v1/restore', (req, res) => {
 
     const { _sandboxes, sandboxes, ...cleanDb } = data;
 
+    // Preserve active Dropbox and Turso configuration so restoring older backups never wipes them out
+    try {
+        const existingDb = readDb(getDbPath(req));
+        const existingSettings = resolveSettings(existingDb);
+        if (!cleanDb.settings || !Array.isArray(cleanDb.settings) || cleanDb.settings.length === 0) {
+            cleanDb.settings = [existingDb.settings?.[0] || resolveSettings(existingDb)];
+        } else {
+            const restoredSettings = cleanDb.settings[0];
+            const restoredDbx = restoredSettings.dropboxConfig || {};
+            if (!restoredDbx.refreshToken || !restoredDbx.appKey) {
+                restoredSettings.dropboxConfig = {
+                    ...existingSettings.dropboxConfig,
+                    ...(restoredDbx.enabled !== undefined ? { enabled: restoredDbx.enabled } : {})
+                };
+            }
+            if (existingSettings.tursoUrl && (!restoredSettings.tursoUrl || !restoredSettings.tursoAuthToken)) {
+                restoredSettings.useTurso = existingSettings.useTurso;
+                restoredSettings.tursoUrl = existingSettings.tursoUrl;
+                restoredSettings.tursoAuthToken = existingSettings.tursoAuthToken;
+            }
+        }
+    } catch (preserveErr) {
+        console.warn('[Restore] Cloud settings preservation note:', preserveErr.message);
+    }
+
     // If restoring into a sandbox, merge existing sandbox users + owner + admins into the restored data
     // This ensures nobody loses access after a restore (e.g. restoring live data into user's sandbox)
     if (isSandbox(req)) {
@@ -6965,6 +7015,27 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       const extractedDb = path.join(tempDir, 'db.json');
       if (fs.existsSync(extractedDb)) {
         const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
+        try {
+            const existingDb = readDb(DB_PATH);
+            const existingSettings = resolveSettings(existingDb);
+            if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+                db.settings = [existingDb.settings?.[0] || resolveSettings(existingDb)];
+            } else {
+                const restoredSettings = db.settings[0];
+                const restoredDbx = restoredSettings.dropboxConfig || {};
+                if (!restoredDbx.refreshToken || !restoredDbx.appKey) {
+                    restoredSettings.dropboxConfig = {
+                        ...existingSettings.dropboxConfig,
+                        ...(restoredDbx.enabled !== undefined ? { enabled: restoredDbx.enabled } : {})
+                    };
+                }
+                if (existingSettings.tursoUrl && (!restoredSettings.tursoUrl || !restoredSettings.tursoAuthToken)) {
+                    restoredSettings.useTurso = existingSettings.useTurso;
+                    restoredSettings.tursoUrl = existingSettings.tursoUrl;
+                    restoredSettings.tursoAuthToken = existingSettings.tursoAuthToken;
+                }
+            }
+        } catch (pe) {}
         applySchemaMigrations(db, DB_PATH);
         if (!db.contracts) db.contracts = [];
         writeDb(db, DB_PATH);
@@ -7997,6 +8068,23 @@ app.post('/api/v1/integrations/dropbox/test', async (req, res) => {
         const account = await testDropboxConnection(appKey, appSecret, refreshToken);
         const accountName = account?.name?.display_name || account?.email || 'Connected';
         const email = account?.email || '';
+
+        // Persist connected account and credentials to database settings
+        if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+            db.settings = [{}];
+        }
+        const prev = settings.dropboxConfig || {};
+        settings.dropboxConfig = {
+            ...prev,
+            enabled: prev.enabled !== false,
+            appKey,
+            appSecret,
+            refreshToken,
+            connectedAccount: accountName,
+            connectedAt: new Date().toISOString()
+        };
+        db.settings[0] = encryptSettings(settings);
+        writeDb(db, getDbPath(req));
 
         return res.json({
             success: true,

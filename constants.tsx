@@ -3,7 +3,7 @@ import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGr
 import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.000001 for every code update
-export const APP_VERSION = '1.0001103';
+export const APP_VERSION = '1.0001104';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
@@ -23,7 +23,7 @@ export const INITIAL_CONFIG: AppConfig = {
     aiProvider: 'gemini',
     openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
     geminiConfig: { apiKey: '', modelName: 'gemini-3.5-flash' },
-    storageBackend: 'google-drive',
+    storageBackend: 'dropbox',
     googleDriveConfig: {
       enabled: true,
       autoUploadExternalSubmissions: true,
@@ -43,12 +43,13 @@ export const INITIAL_CONFIG: AppConfig = {
       bucketName: ''
     },
     dropboxConfig: {
-      enabled: false,
+      enabled: true,
       autoUploadExternalSubmissions: true,
-      appKey: '',
-      appSecret: '',
-      refreshToken: '',
-      folderPath: '/NexusERP_Uploads'
+      appKey: 'lw5j90qgwy8sfg6',
+      appSecret: 'jmc0lnxik1p7wzp',
+      refreshToken: '12vnbWIMpGEAAAAAAAAAAdNDWYsRivoujs86a6cibIImzCRGbzxisjNC--98UmnF',
+      folderPath: '/NexusERP_Uploads',
+      connectedAccount: 'Moataz Allam'
     },
     useTurso: false,
     tursoUrl: '',

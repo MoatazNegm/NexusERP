@@ -34,15 +34,33 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-3.5-flash' });
   const [aiDraftOpenAI, setAiDraftOpenAI] = useState(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
-  const [storageBackendDraft, setStorageBackendDraft] = useState<StorageBackend>(config.settings.storageBackend || 'google-drive');
+  const DEFAULT_DROPBOX_CLIENT_CONFIG: DropboxConfig = {
+    enabled: true,
+    autoUploadExternalSubmissions: true,
+    appKey: 'lw5j90qgwy8sfg6',
+    appSecret: 'jmc0lnxik1p7wzp',
+    refreshToken: '12vnbWIMpGEAAAAAAAAAAdNDWYsRivoujs86a6cibIImzCRGbzxisjNC--98UmnF',
+    folderPath: '/NexusERP_Uploads',
+    connectedAccount: 'Moataz Allam'
+  };
+
+  const [storageBackendDraft, setStorageBackendDraft] = useState<StorageBackend>(config.settings.storageBackend || 'dropbox');
   const [driveDraft, setDriveDraft] = useState<GoogleDriveConfig>(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
   const [driveStatus, setDriveStatus] = useState<{ configured: boolean; connected: boolean; connectedEmail?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
   const [localStorageDraft, setLocalStorageDraft] = useState<LocalStorageConfig>(config.settings.localStorageConfig || { enabled: true, autoUploadExternalSubmissions: true, storageIp: '', apiPort: 9000, consolePort: 9001, accessKey: '', secretKey: '', bucketName: '' });
   const [tursoUrl, setTursoUrl] = useState(config.settings.tursoUrl || '');
   const [tursoAuthToken, setTursoAuthToken] = useState(config.settings.tursoAuthToken || '');
+  const [showTursoToken, setShowTursoToken] = useState(false);
   const [useTurso, setUseTurso] = useState(config.settings.useTurso || false);
   const [localStorageStatus, setLocalStorageStatus] = useState<{ configured: boolean; reachable: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; storageIp: string; apiPort: number; consolePort: number; bucketName: string; buckets: string[] } | null>(null);
-  const [dropboxDraft, setDropboxDraft] = useState<DropboxConfig>(config.settings.dropboxConfig || { enabled: false, autoUploadExternalSubmissions: true, appKey: '', appSecret: '', refreshToken: '', folderPath: '/NexusERP_Uploads' });
+  const [dropboxDraft, setDropboxDraft] = useState<DropboxConfig>({
+    ...DEFAULT_DROPBOX_CLIENT_CONFIG,
+    ...(config.settings.dropboxConfig || {}),
+    appKey: config.settings.dropboxConfig?.appKey || DEFAULT_DROPBOX_CLIENT_CONFIG.appKey,
+    appSecret: config.settings.dropboxConfig?.appSecret || DEFAULT_DROPBOX_CLIENT_CONFIG.appSecret,
+    refreshToken: config.settings.dropboxConfig?.refreshToken || DEFAULT_DROPBOX_CLIENT_CONFIG.refreshToken,
+    folderPath: config.settings.dropboxConfig?.folderPath || DEFAULT_DROPBOX_CLIENT_CONFIG.folderPath
+  });
   const [dropboxStatus, setDropboxStatus] = useState<{ configured: boolean; connected: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; folderPath: string; appKey: string; appSecretConfigured: boolean; refreshTokenConfigured: boolean; connectedAccount?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
   const [isDropboxBusy, setIsDropboxBusy] = useState(false);
   const [showDropboxSecret, setShowDropboxSecret] = useState(false);
@@ -448,9 +466,20 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     if (driveDraftDirty) return;
     setDriveDraft(config.settings.googleDriveConfig || { enabled: true, autoUploadExternalSubmissions: true, clientId: '', clientSecret: '', redirectUri: '', folderName: '', folderId: '' });
     setLocalStorageDraft(config.settings.localStorageConfig || { enabled: true, autoUploadExternalSubmissions: true, storageIp: '', apiPort: 9000, consolePort: 9001, accessKey: '', secretKey: '', bucketName: '' });
-    setDropboxDraft(config.settings.dropboxConfig || { enabled: false, autoUploadExternalSubmissions: true, appKey: '', appSecret: '', refreshToken: '', folderPath: '/NexusERP_Uploads' });
-    setStorageBackendDraft(config.settings.storageBackend || 'google-drive');
-  }, [config.settings.googleDriveConfig, config.settings.localStorageConfig, config.settings.dropboxConfig, config.settings.storageBackend, driveDraftDirty]);
+    const cfg = config.settings.dropboxConfig || {};
+    setDropboxDraft({
+      ...DEFAULT_DROPBOX_CLIENT_CONFIG,
+      ...cfg,
+      appKey: cfg.appKey || DEFAULT_DROPBOX_CLIENT_CONFIG.appKey,
+      appSecret: cfg.appSecret || DEFAULT_DROPBOX_CLIENT_CONFIG.appSecret,
+      refreshToken: cfg.refreshToken || DEFAULT_DROPBOX_CLIENT_CONFIG.refreshToken,
+      folderPath: cfg.folderPath || DEFAULT_DROPBOX_CLIENT_CONFIG.folderPath
+    });
+    setStorageBackendDraft(config.settings.storageBackend || 'dropbox');
+    if (config.settings.tursoUrl) setTursoUrl(config.settings.tursoUrl);
+    if (config.settings.tursoAuthToken) setTursoAuthToken(config.settings.tursoAuthToken);
+    if (config.settings.useTurso !== undefined) setUseTurso(!!config.settings.useTurso);
+  }, [config.settings.googleDriveConfig, config.settings.localStorageConfig, config.settings.dropboxConfig, config.settings.storageBackend, config.settings.tursoUrl, config.settings.tursoAuthToken, config.settings.useTurso, driveDraftDirty]);
 
   const refreshGoogleDriveStatus = async () => {
     try {
@@ -624,8 +653,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     try {
       await persistSettings({
         useTurso,
-        tursoUrl: (tursoUrl || '').trim(),
-        tursoAuthToken: (tursoAuthToken || '').trim()
+        tursoUrl: (tursoUrl || '').trim() || config.settings.tursoUrl,
+        tursoAuthToken: (tursoAuthToken || '').trim() || config.settings.tursoAuthToken
       });
       setMessage({ type: 'success', text: 'Turso DB settings saved successfully. The server will sync in the background.' });
     } catch (error: any) {
@@ -638,15 +667,16 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const saveDropboxConfig = async () => {
     setIsDropboxBusy(true);
     try {
-      const existing = config.settings.dropboxConfig || { enabled: false, autoUploadExternalSubmissions: true, appKey: '', appSecret: '', refreshToken: '', folderPath: '/NexusERP_Uploads' };
+      const existing = config.settings.dropboxConfig || DEFAULT_DROPBOX_CLIENT_CONFIG;
       const next: DropboxConfig = {
         ...existing,
-        enabled: !!dropboxDraft.enabled,
+        enabled: dropboxDraft.enabled !== undefined ? !!dropboxDraft.enabled : true,
         autoUploadExternalSubmissions: !!dropboxDraft.autoUploadExternalSubmissions,
-        appKey: (dropboxDraft.appKey || '').trim(),
-        appSecret: dropboxDraft.appSecret !== undefined ? dropboxDraft.appSecret.trim() : existing.appSecret,
-        refreshToken: dropboxDraft.refreshToken !== undefined ? dropboxDraft.refreshToken.trim() : existing.refreshToken,
-        folderPath: (dropboxDraft.folderPath || '').trim() || '/NexusERP_Uploads'
+        appKey: (dropboxDraft.appKey || '').trim() || DEFAULT_DROPBOX_CLIENT_CONFIG.appKey,
+        appSecret: dropboxDraft.appSecret !== undefined && dropboxDraft.appSecret.trim() ? dropboxDraft.appSecret.trim() : (existing.appSecret || DEFAULT_DROPBOX_CLIENT_CONFIG.appSecret),
+        refreshToken: dropboxDraft.refreshToken !== undefined && dropboxDraft.refreshToken.trim() ? dropboxDraft.refreshToken.trim() : (existing.refreshToken || DEFAULT_DROPBOX_CLIENT_CONFIG.refreshToken),
+        folderPath: (dropboxDraft.folderPath || '').trim() || '/NexusERP_Uploads',
+        connectedAccount: existing.connectedAccount || DEFAULT_DROPBOX_CLIENT_CONFIG.connectedAccount
       };
       await persistSettings({
         storageBackend: storageBackendDraft,
@@ -667,9 +697,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     setIsDropboxBusy(true);
     try {
       const result = await dataService.testDropbox({
-        appKey: (dropboxDraft.appKey || '').trim(),
-        appSecret: (dropboxDraft.appSecret || '').trim(),
-        refreshToken: (dropboxDraft.refreshToken || '').trim()
+        appKey: (dropboxDraft.appKey || '').trim() || DEFAULT_DROPBOX_CLIENT_CONFIG.appKey,
+        appSecret: (dropboxDraft.appSecret || '').trim() || DEFAULT_DROPBOX_CLIENT_CONFIG.appSecret,
+        refreshToken: (dropboxDraft.refreshToken || '').trim() || DEFAULT_DROPBOX_CLIENT_CONFIG.refreshToken
       });
       setMessage({ type: 'success', text: `Dropbox connection successful! Connected Account: ${result.account || result.email || 'Verified'}` });
       await refreshDropboxStatus();
@@ -2123,13 +2153,23 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       </div>
                       <div className="space-y-2">
                         <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Auth Token</label>
-                        <input
-                          type="password"
-                          value={tursoAuthToken}
-                          onChange={e => setTursoAuthToken(e.target.value)}
-                          placeholder="ey..."
-                          className="w-full p-3 border rounded-xl bg-white font-bold text-sm"
-                        />
+                        <div className="relative">
+                          <input
+                            type={showTursoToken ? 'text' : 'password'}
+                            value={tursoAuthToken}
+                            onChange={e => setTursoAuthToken(e.target.value)}
+                            placeholder={config.settings.tursoAuthToken ? '•••••••••••••••• (Encrypted in DB)' : 'Paste Turso auth token (ey...)'}
+                            className="w-full p-3 border rounded-xl bg-white font-bold text-sm pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowTursoToken(v => !v)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-purple-600"
+                          >
+                            <i className={`fa-solid ${showTursoToken ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400">Database auth token is automatically encrypted with AES-256-CBC at rest and in backups.</p>
                       </div>
                     </>
                   )}
