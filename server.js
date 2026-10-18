@@ -753,15 +753,18 @@ const readDb = (customPath = null) => {
 
 const { createClient } = require('@libsql/client/web');
 
+const DEFAULT_TURSO_URL = 'libsql://qualitycheck-moataznegm.aws-us-west-2.turso.io';
+const DEFAULT_TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODM5MzExMjQsImlkIjoiMDE5ZjVhOTQtNTMwMS03YTgwLTk1MDYtOTU3OTljNTAwZWNhIiwia2lkIjoiTUp2cjVTOE5zX0lrVkdNSDdXMERpUVpXaTlsWEhXNWJlX0gxaUstUXl0ZyIsInJpZCI6IjYzNjZjN2IyLTk0NTYtNDAxOS05YTg1LTQzOWE5ZTUwOTk5NCJ9.DWfcpfDucO88Hx5vALyFDEuuznNBh6P4R7wU12OV8DgMpAPyG0vL_7t7PYr6MVoBqQhGflCBney-1W0SAsFLDg';
+
 const pushToTursoAsync = async (data, dbPath) => {
     try {
         const isLive = (dbPath === DB_PATH);
         const settingsList = data.settings || [];
         const settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
         
-        const useTurso = !!(settings && settings.useTurso) || !!process.env.TURSO_DATABASE_URL;
-        const rawUrl = (settings && settings.tursoUrl) || process.env.TURSO_DATABASE_URL || '';
-        const authToken = (settings && settings.tursoAuthToken) || process.env.TURSO_AUTH_TOKEN || '';
+        const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
+        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
+        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
 
         if (useTurso && rawUrl && authToken) {
             const targetId = isLive ? 'live' : 'sandbox.' + path.basename(dbPath).replace('db.sandbox.', '').replace('.json', '');
@@ -786,20 +789,21 @@ const pushToTursoAsync = async (data, dbPath) => {
 const pullFromTursoOnStartup = async () => {
     try {
         let settings = null;
+        let localDb = null;
         if (fs.existsSync(DB_PATH)) {
             try {
-                const localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+                localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
                 const settingsList = localDb.settings || [];
                 settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
             } catch (err) {}
         }
         
-        const useTurso = !!(settings && settings.useTurso) || !!process.env.TURSO_DATABASE_URL;
-        const rawUrl = (settings && settings.tursoUrl) || process.env.TURSO_DATABASE_URL || '';
-        const authToken = (settings && settings.tursoAuthToken) || process.env.TURSO_AUTH_TOKEN || '';
+        const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
+        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
+        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
 
         if (useTurso && rawUrl && authToken) {
-            console.log("[Turso] Cloud Sync enabled. Pulling latest data on startup...");
+            console.log("[Turso] Cloud Sync enabled. Checking latest data from cloud on startup...");
             const dbUrl = rawUrl.startsWith('libsql://') 
               ? rawUrl.replace(/^libsql:\/\//, 'https://') 
               : rawUrl;
@@ -809,17 +813,50 @@ const pullFromTursoOnStartup = async () => {
             
             const res = await client.execute({ sql: `SELECT json_data FROM nexus_state WHERE id = ?`, args: ['live'] });
             if (res.rows.length > 0 && res.rows[0].json_data) {
-                fs.writeFileSync(DB_PATH, res.rows[0].json_data, 'utf8');
-                console.log("[Turso] Live database successfully restored from cloud.");
+                try {
+                    const remoteData = JSON.parse(res.rows[0].json_data);
+                    const localOrdersCount = (localDb?.orders || []).length;
+                    const remoteOrdersCount = (remoteData?.orders || []).length;
+                    if (remoteOrdersCount >= localOrdersCount || !localDb || localOrdersCount === 0) {
+                        fs.writeFileSync(DB_PATH, res.rows[0].json_data, 'utf8');
+                        console.log(`[Turso] Live database successfully restored from cloud (${remoteOrdersCount} orders).`);
+                    } else {
+                        console.log(`[Turso] Local database has more orders (${localOrdersCount}) than cloud (${remoteOrdersCount}). Preserving local data and syncing to cloud.`);
+                        pushToTursoAsync(localDb, DB_PATH);
+                    }
+                } catch (parseErr) {
+                    fs.writeFileSync(DB_PATH, res.rows[0].json_data, 'utf8');
+                }
             }
             
             const allRes = await client.execute(`SELECT id, json_data FROM nexus_state WHERE id LIKE 'sandbox.%'`);
+            const cloudSbIds = new Set();
             for (const row of allRes.rows) {
                 if (row.id && row.json_data) {
-                    const sbOwner = row.id.replace('sandbox.', '');
+                    cloudSbIds.add(row.id);
+                    const sbOwner = row.id.replace(/^sandbox\./, '');
                     const sbPath = path.join(__dirname, `db.sandbox.${sbOwner}.json`);
-                    fs.writeFileSync(sbPath, row.json_data, 'utf8');
-                    console.log(`[Turso] Sandbox ${sbOwner} successfully restored from cloud.`);
+                    try {
+                        const localExists = fs.existsSync(sbPath);
+                        if (!localExists) {
+                            fs.writeFileSync(sbPath, row.json_data, 'utf8');
+                            console.log(`[Turso] Sandbox ${sbOwner} successfully restored from cloud.`);
+                        }
+                    } catch (e) {}
+                }
+            }
+
+            // Sync any local sandboxes that are missing in cloud
+            const localSbFiles = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
+            for (const file of localSbFiles) {
+                const sbOwner = file.replace(/^db\.sandbox\./, '').replace(/\.json$/, '');
+                const targetId = `sandbox.${sbOwner}`;
+                if (!cloudSbIds.has(targetId)) {
+                    try {
+                        const localSbData = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+                        pushToTursoAsync(localSbData, path.join(__dirname, file));
+                        console.log(`[Turso] Pushed missing local sandbox ${targetId} to cloud.`);
+                    } catch (e) {}
                 }
             }
         }
@@ -1380,6 +1417,10 @@ const syncLocalDirectoryToDropbox = async (baseDir, req) => {
         const settings = resolveSettings(db);
         if (!isDropboxConfigured(settings)) return { count: 0, errors: 0 };
 
+        const prefix = (isSandbox(req) && baseDir !== UPLOADS_BASE && req?.sandboxOwner) 
+            ? `sandbox/${sanitizeUsername(req.sandboxOwner)}/` 
+            : '';
+
         const filesToSync = [];
         const walk = (dir) => {
             if (!fs.existsSync(dir)) return;
@@ -1389,7 +1430,7 @@ const syncLocalDirectoryToDropbox = async (baseDir, req) => {
                 if (entry.isDirectory()) {
                     walk(fullPath);
                 } else if (entry.isFile()) {
-                    const relInsideUploads = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+                    const relInsideUploads = prefix + path.relative(baseDir, fullPath).replace(/\\/g, '/');
                     filesToSync.push({ fullPath, relativePath: relInsideUploads });
                 }
             }
@@ -7008,7 +7049,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
         fs.cpSync(extractedUploads, targetUploads, { recursive: true });
 
         // Auto-sync restored files to Dropbox in background if configured
-        syncLocalDirectoryToDropbox(extractedUploads, req).catch(() => {});
+        syncLocalDirectoryToDropbox(targetUploads, req).catch((err) => console.error('[Dropbox Sync Sandbox Restore Error]', err.message));
       }
     } else {
       // LIVE RESTORE: Restore live db.json AND all db.sandbox.*.json files AND all uploads
@@ -7062,8 +7103,8 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
         if (!fs.existsSync(UPLOADS_BASE)) fs.mkdirSync(UPLOADS_BASE, { recursive: true });
         fs.cpSync(extractedUploads, UPLOADS_BASE, { recursive: true });
 
-        // Auto-sync restored files to Dropbox in background if configured
-        syncLocalDirectoryToDropbox(extractedUploads, req).catch(() => {});
+        // Auto-sync restored files from permanent UPLOADS_BASE to Dropbox in background if configured
+        syncLocalDirectoryToDropbox(UPLOADS_BASE, req).catch((err) => console.error('[Dropbox Sync Restore Error]', err.message));
       }
     }
 
