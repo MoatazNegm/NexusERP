@@ -700,10 +700,12 @@ const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 
     // currency via the per-order conversionRate so the P/L threshold check is
     // apples-to-apples. conversionRate defaults to 1 for legacy / L.E. orders.
     const safeRate = (Number.isFinite(Number(conversionRate)) && Number(conversionRate) > 0) ? Number(conversionRate) : 1;
-    const totalCostInOrderCurrency = totalCost * safeRate;
+    // R22 (C23): procurement costs are already in L.E.; only the revenue (order currency x rate = L.E.) is converted.
+    const totalCostInOrderCurrency = totalCost;
+    const totalRevenueLE = totalRevenue * safeRate;
 
-    const marginAmt = totalRevenue - totalCostInOrderCurrency;
-    const markupPct = totalCostInOrderCurrency > 0 ? (marginAmt / totalCostInOrderCurrency) * 100 : (totalRevenue > 0 ? 100 : 0);
+    const marginAmt = totalRevenueLE - totalCostInOrderCurrency;
+    const markupPct = totalCostInOrderCurrency > 0 ? (marginAmt / totalCostInOrderCurrency) * 100 : (totalRevenueLE > 0 ? 100 : 0);
 
     // Priority 1: Margin Protection (only when costs have been identified, exempting blanket orders)
     if (hasComponents && isMarginBreach(totalCostInOrderCurrency, markupPct, minMargin, isBlanketOrder)) return OrderStatus.NEGATIVE_MARGIN;
@@ -763,9 +765,11 @@ const canIssuePoForOrder = (order, minMargin) => {
     // currency before computing markup so the threshold is in the order's
     // native units.
     const safeRate = (Number.isFinite(Number(order.conversionRate)) && Number(order.conversionRate) > 0) ? Number(order.conversionRate) : 1;
-    const totalCostInOrderCurrency = totalCost * safeRate;
+    // R22 (C23): costs are L.E.; convert the revenue side only.
+    const totalCostInOrderCurrency = totalCost;
+    const totalRevenueLE = totalRevenue * safeRate;
 
-    const markupPct = totalCostInOrderCurrency > 0 ? ((totalRevenue - totalCostInOrderCurrency) / totalCostInOrderCurrency) * 100 : (totalRevenue > 0 ? 100 : 0);
+    const markupPct = totalCostInOrderCurrency > 0 ? ((totalRevenueLE - totalCostInOrderCurrency) / totalCostInOrderCurrency) * 100 : (totalRevenueLE > 0 ? 100 : 0);
     return markupPct >= minMargin;
 };
 
@@ -2294,9 +2298,14 @@ const reconcileInventory = (oldOrder, newOrder, db) => {
         if (!order) return map;
         (order.items || []).forEach(item => {
             (item.components || []).forEach(comp => {
-                if (comp.inventoryItemId && (comp.status === 'RECEIVED' || comp.status === 'RESERVED' || comp.source === 'STOCK') && comp.source !== 'CONSUMED') {
+                if (comp.inventoryItemId && ((comp.status === 'RECEIVED' && !isStockOrder(order)) || comp.status === 'RESERVED' || comp.source === 'STOCK') && comp.source !== 'CONSUMED') {
                     const current = map.get(comp.inventoryItemId) || 0;
-                    map.set(comp.inventoryItemId, current + (comp.quantity || 0));
+                    // R23: the consumed part has left stock, so it is no longer reserved
+                    map.set(comp.inventoryItemId, current + Math.max(0, (comp.quantity || 0) - (comp.consumedQty || 0)));
+                } else if (comp.inventoryItemId && comp.source === 'PROCUREMENT' && !isStockOrder(order) && (comp.receivedQty || 0) > 0 && !['CANCELLED', 'ORDERED_FOR_STOCK', 'Manufactured'].includes(comp.status)) {
+                    // R22 (C11): a partly received procured component is reserved for the order for the received part, at receipt.
+                    const current = map.get(comp.inventoryItemId) || 0;
+                    map.set(comp.inventoryItemId, current + Math.min(comp.receivedQty || 0, comp.quantity || 0));
                 }
             });
         });
@@ -2353,7 +2362,8 @@ const handleStockReceipts = (oldOrder, newOrder, db) => {
             if (comp.status === 'RECEIVED' && oldStatus !== 'RECEIVED' && comp.inventoryItemId) {
                 const invItem = (db.inventory || []).find(inv => inv.id === comp.inventoryItemId);
                 if (invItem) {
-                    const qty = Number(comp.quantity) || 0;
+                    const qty = Math.max(0, (Number(comp.quantity) || 0) - (Number(comp.stockBooked) || 0));
+                    comp.stockBooked = Number(comp.quantity) || 0;
                     const cost = Number(comp.unitCost) || 0;
 
                     invItem.quantityInStock = (Number(invItem.quantityInStock) || 0) + qty;
@@ -2667,7 +2677,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     // Check if ANY procurement component in driving items still needs action
                     const anyStillInProcurement = drivingItems.some(item =>
                         (item.components || []).some(comp =>
-                            comp.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)
+                            comp.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED'].includes(comp.status) && (comp.receivedQty || 0) < (comp.quantity || 0)
                         )
                     );
 
@@ -2738,8 +2748,10 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             (order.items || []).forEach(item => {
                 (item.components || []).forEach(comp => {
                     // Deduct from stock if linked to inventory and not yet consumed
-                    // Allow both STOCK and PROCUREMENT sources to be consumed if they have an inventory ID
-                    if (comp.inventoryItemId && db.inventory && comp.source !== 'CONSUMED') {
+                    // R23 (C12): production start no longer consumes everything. Components stay reserved; the
+                    // factory consumes only what production uses (register-manufacturing / consume-factory-component),
+                    // and what is left is released to free stock.
+                    if (false && comp.inventoryItemId && db.inventory && comp.source !== 'CONSUMED') {
                         const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
                         if (invItem) {
                             const consumedQty = comp.quantity || 0;
@@ -2782,12 +2794,13 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     if (comp.inventoryItemId && db.inventory && comp.source !== 'CONSUMED') {
                         const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
                         if (invItem) {
-                            const consumedQty = comp.quantity || 0;
+                            const consumedQty = Math.max(0, (comp.quantity || 0) - (comp.consumedQty || 0));
                             const currentStock = invItem.quantityInStock !== undefined ? invItem.quantityInStock : (invItem.quantity || 0);
 
                             invItem.quantityInStock = Math.max(0, currentStock - consumedQty);
                             // quantityReserved will be handled by reconcileInventory side-effect
                             if (invItem.quantity !== undefined) delete invItem.quantity;
+                            comp.consumedQty = comp.quantity || 0;
                             
                             comp.source = 'CONSUMED';
                             console.log(`[Inventory] [AUTO_MFG_FINISH] Consumed ${consumedQty} of ${invItem.sku}.`);
@@ -4372,6 +4385,51 @@ app.post('/api/v1/customers/:id/advance-payment', (req, res) => {
     }
 });
 
+// R23 (C17): REFUND - the ledger user pays the customer's general-wallet credit out to the customer (wallet -> Bank).
+// No sale was recognised on an advance, so no revenue/expense account is involved.
+app.post('/api/v1/customers/:id/refund', (req, res) => {
+    try {
+        const db = getDb(req);
+        const user = req.headers['x-user'] || 'System';
+        const { amount, memo, orderId } = req.body || {};
+        const amt = Math.round((parseFloat(amount) + Number.EPSILON) * 100) / 100;
+        if (!amt || isNaN(amt) || amt <= 0) return res.status(400).json({ error: "Positive refund amount is required" });
+        const customer = (db.customers || []).find(c => c.id === req.params.id || c.name === req.params.id);
+        if (!customer) return res.status(404).json({ error: "Customer not found" });
+        customer.walletBalances = customer.walletBalances || {};
+        const bal = customer.walletBalances[SELF_WALLET_KEY] || 0;
+        if (bal + 0.005 < amt) return res.status(400).json({ error: `Insufficient general wallet credit: ${bal.toFixed(2)}, refund ${amt.toFixed(2)}` });
+        const ord = orderId ? (db.orders || []).find(o => o.id === orderId || o.internalOrderNumber === orderId) : null;
+        customer.walletBalances[SELF_WALLET_KEY] = Math.round((bal - amt) * 100) / 100;
+        ledgerPush(db, { type: 'REFUND', amount: amt, description: `Customer Refund: ${customer.name}${ord ? ` - PO ${ord.internalOrderNumber}` : ''} - ${memo || 'Refund of general wallet credit'}`, category: 'Customer Refunds', fromAccount: acctLabel(customer.name, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: customer.name, orderId: ord ? ord.id : undefined, poNumber: ord ? ord.internalOrderNumber : undefined }, user);
+        writeDb(db, getDbPath(req));
+        return res.json(computeCustomerWallet(customer, db.orders || []));
+    } catch (err) {
+        res.status(500).json({ error: err.message || "Failed to record customer refund" });
+    }
+});
+
+// R23 (C17): a refund received from a supplier reduces the supplier advance (debit Bank, credit supplier advance).
+app.post('/api/v1/supplierRefunds', (req, res) => {
+    try {
+        const db = getDb(req);
+        const user = req.headers['x-user'] || 'System';
+        const { supplierId, amount, memo, date, orderId, poNumber } = req.body || {};
+        const amt = Math.round((parseFloat(amount) + Number.EPSILON) * 100) / 100;
+        if (!supplierId || !amt || isNaN(amt) || amt <= 0) return res.status(400).json({ error: "supplierId and a positive amount are required" });
+        const supplier = (db.suppliers || []).find(s => s.id === supplierId);
+        if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+        const rec = { id: `sp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, supplierId, supplierName: supplier.name, amount: -amt, isRefund: true, date: date ? new Date(date).toISOString() : new Date().toISOString(), memo: memo || 'Supplier refund received', user, orderId: orderId || undefined, poNumber: poNumber || undefined, unallocatedAdvance: 0, allocations: [] };
+        if (!db.supplierPayments) db.supplierPayments = [];
+        db.supplierPayments.push(rec);
+        ledgerPush(db, { type: 'ADDITION', amount: amt, description: `Supplier Refund received: ${supplier.name} - ${memo || 'Refund'}`, category: 'Supplier Refund', fromAccount: `Supplier ${supplier.name} / Advance`, toAccount: 'Bank Account', orderId: orderId || undefined, poNumber: poNumber || undefined }, user);
+        writeDb(db, getDbPath(req));
+        return res.status(201).json(rec);
+    } catch (err) {
+        res.status(500).json({ error: err.message || "Failed to record supplier refund" });
+    }
+});
+
 // --- RESTFUL API USER GUIDE ---
 app.get('/api/v1/user-guide', (req, res) => {
     const format = String(req.query.format || 'markdown').toLowerCase();
@@ -4677,9 +4735,11 @@ app.post('/api/v1/inventory/adjust', (req, res) => {
     const item = db.inventory.find(it => (id && it.id === id) || (sku && String(it.sku || '').trim().toLowerCase() === String(sku).trim().toLowerCase()));
     if (!item) return res.status(404).json({ error: "Inventory item not found" });
 
-    const oldQty = Number(item.quantity) || 0;
+    // TR11: the stock level lives in quantityInStock (quantity is the legacy field); adjusting only the legacy field changed nothing.
+    const oldQty = Number(item.quantityInStock !== undefined ? item.quantityInStock : item.quantity) || 0;
     const newQty = Math.max(0, oldQty + numDelta);
-    item.quantity = newQty;
+    item.quantityInStock = newQty;
+    if (item.quantity !== undefined) delete item.quantity;
     item.logs = item.logs || [];
     item.logs.push(createAuditLog(`Stock level adjusted from ${oldQty} to ${newQty} (delta: ${numDelta > 0 ? '+' : ''}${numDelta}). Reason: ${reason || 'Manual API adjustment'}`, undefined, user));
 
@@ -5071,6 +5131,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             comp.inventoryItemId = invItem.id;
             const currentStock = invItem.quantityInStock !== undefined ? invItem.quantityInStock : (invItem.quantity || 0);
             invItem.quantityInStock = currentStock + qtyToIncr;
+            // R21 (C08): remember what was already booked to stock for this component, so handleStockReceipts
+            // does not add the full quantity a second time when the component status becomes RECEIVED.
+            comp.stockBooked = (Number(comp.stockBooked) || 0) + qtyToIncr;
             // Migrate legacy
             if (invItem.quantity !== undefined) delete invItem.quantity;
             invItem.lastCost = comp.unitCost || invItem.lastCost || 0;
@@ -5326,6 +5389,19 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         const oldOrder = JSON.parse(JSON.stringify(order));
 
         if (!/rollback|reject|hold/.test(String(action))) touchByTechReview(order, user, db, `acted on the order (${action})`);
+        // R23 (C18): a normal PO takes whole quantities only; blanket orders (and their call-offs) may carry fractions.
+        {
+            const qtyActions = ['receive-component', 'receive-hub-partial', 'approve-dispatch-receipt', 'release-delivery', 'ship-items', 'confirm-delivery', 'register-manufacturing'];
+            const isBlanketLike = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
+            if (qtyActions.includes(action) && !isBlanketLike && payload) {
+                const qs = [];
+                if (payload.qty !== undefined) qs.push(payload.qty);
+                (payload.items || []).forEach(x => x && x.qty !== undefined && qs.push(x.qty));
+                (payload.receipts || []).forEach(x => x && x.qty !== undefined && qs.push(x.qty));
+                const bad = qs.find(q => Number.isFinite(Number(q)) && Math.abs(Number(q) - Math.round(Number(q))) > 1e-9);
+                if (bad !== undefined) throw new Error(`Fractional quantity ${bad} is not allowed on a normal PO (whole units only).`);
+            }
+        }
         switch (action) {
             case 'finalize-study':
                 if (order.items.some(it => !it.isAccepted)) throw new Error("All items must be accepted before finalizing study");
@@ -5643,6 +5719,18 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     });
                 });
+                // R23 (C17): money the customer paid on a cancelled order becomes credit in the customer GENERAL wallet.
+                {
+                    const paidOnOrder = Math.round((order.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
+                    const cust = (db.customers || []).find(c => c.name === order.customerName);
+                    if (paidOnOrder > 0 && cust && !order.paymentMovedToWallet) {
+                        cust.walletBalances = cust.walletBalances || {};
+                        cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + paidOnOrder) * 100) / 100;
+                        order.paymentMovedToWallet = paidOnOrder;
+                        ledgerPush(db, { type: 'TRANSFER', amount: paidOnOrder, description: `Cancelled PO ${oldInternal}: paid amount moved to customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', oldInternal), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id, poNumber: oldInternal }, user);
+                        order.logs.push(createAuditLog(`Paid amount ${paidOnOrder.toLocaleString()} L.E. moved to the customer general wallet (credit).`, order.status, user));
+                    }
+                }
                 order.logs.push(createAuditLog(`ORDER REJECTED: ${payload?.reason || 'Business decision'}. PO renamed from ${oldInternal} to ${order.internalOrderNumber}`, order.status, user));
                 break;
 
@@ -5897,8 +5985,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.logs.push(createAuditLog(`Trading Component Receipt: ${qtyToProcess} ${compToReceive.unit} of ${compToReceive.description} moved directly to Hub (Total Hub: ${item.hubReceivedQty}/${getItemEffectiveQty(item)})`, order.status, user));
 
                     // Check if all trading components are received and move to hub
-                    const allTradingCompsReceived = item.components?.every(comp => (comp.receivedQty || 0) >= (comp.quantity || 0)) || false;
-                    if (allTradingCompsReceived && item.hubReceivedQty >= getItemEffectiveQty(item)) {
+                    // C06/TR11: warehouse stock allocated to the line (source STOCK) is available at once; only the procured parts must be received.
+                    const compReady = (comp) => comp.source === 'STOCK' || ['RESERVED', 'RECEIVED', 'IN_STOCK', 'Manufactured'].includes(comp.status) || (comp.receivedQty || 0) >= (comp.quantity || 0);
+                    const allTradingCompsReceived = item.components?.every(compReady) || false;
+                    const allTradingItemsReady = order.items.filter(i => i.productionType === 'TRADING').every(i => (i.components || []).every(compReady));
+                    if (allTradingCompsReceived && allTradingItemsReady) {
+                        order.items.filter(i => i.productionType === 'TRADING').forEach(i => { i.hubReceivedQty = getItemEffectiveQty(i); });
+                    }
+                    if (allTradingCompsReceived && allTradingItemsReady && item.hubReceivedQty >= getItemEffectiveQty(item)) {
                         // Transition order status if appropriate
                         if (order.status === 'WAITING_SUPPLIERS') {
                             // Check if all driving items are ready
@@ -5952,6 +6046,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             case 'add-component': {
                 // Atomically add a component to an item with optional stock reservation
+                // R21 (C21): an order rolled back to Logged is locked until Order Management updates it.
+                if (order.rolledBackToLogged) throw new Error("Order was rolled back to Logged: it cannot be edited until Order Management updates it.");
                 const acItemIdx = order.items.findIndex(i => i.id === payload.itemId);
                 if (acItemIdx === -1) throw new Error("Item not found");
                 const acItem = order.items[acItemIdx];
@@ -6392,6 +6488,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!order.payments || !order.payments[payload.index]) throw new Error("Payment index not found");
                 const [removed] = order.payments.splice(payload.index, 1);
                 order.logs.push(createAuditLog(`Payment of ${removed.amount} VOIDED: ${payload.reason || 'Correction'}`, order.status, user));
+                // R21 (C13): a voided cash payment needs a reversing ledger entry (bank back to the order account).
+                if (!removed.transfer && Number(removed.amount) > 0) {
+                    ledgerPush(db, { type: 'DEDUCTION', amount: Number(removed.amount), description: `Payment VOIDED: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.reason || 'Correction'}`, category: 'Customer Payment Reversal', fromAccount: 'Bank Account', toAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
+                }
                 break;
 
             case 'toggle-hold':
@@ -6596,29 +6696,48 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 mItem.manufacturedQty = prevQty + actualPayloadQty;
                 order.logs.push(createAuditLog(`Manufactured ${actualPayloadQty} ${mItem.unit} of ${mItem.description} (${mItem.manufacturedQty}/${targetQty})`, order.status, user));
 
+                // R23 (C12): consume the components in proportion to what was manufactured (only what production uses)
+                if (mItem.productionType === 'MANUFACTURING') {
+                    const effQ = getItemEffectiveQty(mItem) || targetQty || 0;
+                    (mItem.components || []).forEach(comp => {
+                        if (!comp.inventoryItemId || comp.source === 'CONSUMED' || !db.inventory) return;
+                        const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
+                        if (!invItem) return;
+                        const wanted = Math.min(comp.quantity || 0, Number(((comp.quantity || 0) * Math.min(1, mItem.manufacturedQty / (effQ || 1))).toFixed(3)));
+                        const delta = Number((wanted - (comp.consumedQty || 0)).toFixed(3));
+                        if (delta > 0) {
+                            const cur = invItem.quantityInStock !== undefined ? invItem.quantityInStock : (invItem.quantity || 0);
+                            invItem.quantityInStock = Math.max(0, cur - delta);
+                            if (invItem.quantity !== undefined) delete invItem.quantity;
+                            comp.consumedQty = (comp.consumedQty || 0) + delta;
+                            if (comp.consumedQty >= (comp.quantity || 0) - 0.0005) comp.source = 'CONSUMED';
+                        }
+                    });
+                }
+
                 // Component Release Logic: If fully manufactured and user confirmed release
-                if (mItem.manufacturedQty >= targetQty && payload.confirmRelease) {
+                // R22 (C02): outsourced lines consume nothing from the factory, so there is nothing to release (it zeroed cost, COGS and profit).
+                if (mItem.manufacturedQty >= targetQty && payload.confirmRelease && mItem.productionType !== 'OUTSOURCING') {
                     (mItem.components || []).forEach(comp => {
                         const allocated = comp.quantity || 0;
                         const consumed = comp.consumedQty || 0;
                         const remaining = Math.max(0, allocated - consumed);
 
                         if (remaining > 0) {
-                            if (comp.source === 'STOCK' && comp.inventoryItemId) {
-                                // Release reservation
-                                const invItem = (db.inventory || []).find(inv => inv.id === comp.inventoryItemId);
-                                if (invItem) {
-                                    invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - remaining);
-                                    invItem.lastUpdated = new Date().toISOString();
-                                }
-                            } else if (comp.source === 'PROCUREMENT' && (comp.status === 'RESERVED' || comp.status === 'RECEIVED')) {
-                                // Return procurement to general stock
-                                updateInventoryItem(db, comp, 'RECEIVE', order, remaining);
+                            // R23 (C12): the unused part was never consumed, so it is still in stock; releasing it only drops
+                            // the reservation (reconcileInventory does that when comp.quantity is reduced to the consumed part).
+                            let releasedHere = false;
+                            if ((comp.source === 'STOCK' && comp.inventoryItemId) ||
+                                (comp.source === 'PROCUREMENT' && (comp.status === 'RESERVED' || comp.status === 'RECEIVED'))) {
+                                releasedHere = true;
                             }
                             
-                            // Adjust quantity to match consumed to preserve history
-                            comp.quantity = consumed;
-                            order.logs.push(createAuditLog(`[Factory] Released ${remaining.toFixed(2)} units of ${comp.description} back to stock.`, order.status, user));
+                            // R21 (C02): adjust quantity only for components really released back to stock.
+                            // Outsourced/other components have no consumption basis; zeroing them lost quantity, cost, COGS and profit.
+                            if (releasedHere) {
+                                comp.quantity = consumed;
+                                order.logs.push(createAuditLog(`[Factory] Released ${remaining.toFixed(2)} units of ${comp.description} back to stock.`, order.status, user));
+                            }
                         }
                     });
                 }
@@ -6834,6 +6953,19 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
 
                         oItem.deliveredQty = delivered + dItem.qty;
+                        // TR11: goods delivered from warehouse stock leave the warehouse (on hand and reserved fall)
+                        if (oItem.productionType === 'TRADING' && !isStockOrder(order)) {
+                            let leftToTake = dItem.qty;
+                            (oItem.components || []).forEach(sc => {
+                                if (sc.source !== 'STOCK' || !sc.inventoryItemId || leftToTake <= 0) return;
+                                const take = Math.min(leftToTake, (sc.quantity || 0) - (sc.consumedQty || 0));
+                                if (take <= 0) return;
+                                const invS = (db.inventory || []).find(x => x.id === sc.inventoryItemId);
+                                if (invS) invS.quantityInStock = (invS.quantityInStock !== undefined ? invS.quantityInStock : (invS.quantity || 0)) - take;
+                                sc.consumedQty = (sc.consumedQty || 0) + take;
+                                leftToTake -= take;
+                            });
+                        }
                         deliveryDetails.push(`${dItem.qty} ${oItem.unit} of ${oItem.description}`);
                     }
                 }
@@ -7089,7 +7221,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const requestedQty = Number(payload.allocateQty) || 0;
                 if (requestedQty <= 0) throw new Error("Allocation quantity must be greater than zero");
 
+                // R21 (C16): stock that is on hand, in transit (ordered, not yet received) or ordered as stock may be allocated.
+                // The part of the request above what the stock order holds is no longer dropped silently: it becomes a procurement remainder.
+                if (stockQty <= 0) throw new Error("Nothing left to allocate in this stock order component");
                 const allocateQty = Math.min(requestedQty, stockQty);
+                const stockStatusBefore = stockComp.status; // C16: classify the source before a drain turns it DEPLETED
                 const remainingStockQty = Number((stockQty - allocateQty).toFixed(3));
 
                 // 1. Update source stock order
@@ -7135,7 +7271,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 }
 
-                const isStockSource = stockComp.source === 'STOCK' || stockComp.status === 'RECEIVED' || stockComp.status === 'IN_STOCK';
+                const isStockSource = stockComp.source === 'STOCK' || stockStatusBefore === 'RECEIVED' || stockStatusBefore === 'IN_STOCK';
                 const newCompId = `c_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
                 const newComp = {
                     id: newCompId,
@@ -7145,7 +7281,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     unitCost: Number(stockComp.unitCost) || 0,
                     taxPercent: stockComp.taxPercent !== undefined ? stockComp.taxPercent : 14,
                     source: isStockSource ? 'STOCK' : (stockComp.source || 'PROCUREMENT'),
-                    status: isStockSource ? 'RESERVED' : (stockComp.status || 'PENDING_OFFER'),
+                    status: isStockSource ? 'RESERVED' : (stockStatusBefore || 'PENDING_OFFER'),
                     supplierId: stockComp.supplierId,
                     supplierName: stockComp.supplierName,
                     supplierPartNumber: stockComp.supplierPartNumber,
@@ -7168,7 +7304,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 targetItem.components.push(newComp);
 
                 // 3. If remainder requested beyond available stock, add remainder procurement component
-                const remainderQty = Number(payload.remainderQty) || 0;
+                const remainderQty = payload.remainderQty !== undefined && payload.remainderQty !== null
+                    ? (Number(payload.remainderQty) || 0)
+                    : Math.max(0, Number((requestedQty - allocateQty).toFixed(3)));
                 if (remainderQty > 0) {
                     const remainderComp = {
                         id: `c_${Date.now() + 1}_${Math.random().toString(36).substr(2, 5)}`,
@@ -9184,11 +9322,14 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
                     const matchesSupplier = isAll || selectedIds.includes(comp.supplierId);
                     if (matchesSupplier && (comp.source === 'PROCUREMENT' || comp.source === 'CONSUMED') &&
                         !['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)) {
-                        const totalCost = (comp.quantity || 0) * (comp.unitCost || 0);
+                        // R21: the supplier ledger is on the GROSS basis (net + tax), because suppliers are paid gross.
+                        const ledgerTaxMul = 1 + ((comp.taxPercent !== undefined && comp.taxPercent !== null ? Number(comp.taxPercent) : 14) / 100);
+                        const grossUnitCost = (comp.unitCost || 0) * ledgerTaxMul;
+                        const totalCost = (comp.quantity || 0) * grossUnitCost;
                         const receivedQty = comp.receivedQty || 0;
-                        const deliveredValue = receivedQty * (comp.unitCost || 0);
+                        const deliveredValue = receivedQty * grossUnitCost;
                         const pendingQty = Math.max(0, (comp.quantity || 0) - receivedQty);
-                        const pendingValue = pendingQty * (comp.unitCost || 0);
+                        const pendingValue = pendingQty * grossUnitCost;
 
                         components.push({
                             componentId: comp.id,
@@ -9200,6 +9341,7 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
                             poNumber: comp.poNumber,
                             quantity: comp.quantity,
                             unitCost: comp.unitCost,
+                            grossUnitCost,
                             totalCost,
                             receivedQty,
                             deliveredValue,
