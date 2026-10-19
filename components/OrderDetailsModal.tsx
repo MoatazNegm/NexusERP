@@ -142,6 +142,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [expandedTab, setExpandedTab] = useState<'bom' | 'logs'>('bom');
   const [isOverdue, setIsOverdue] = useState(false);
+  const [orderWallet, setOrderWallet] = useState<any>(null);
   
   // Hard Delete State
   const [showHardDeleteConfirm, setShowHardDeleteConfirm] = useState(false);
@@ -161,6 +162,12 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
     };
     checkOverdue();
   }, [order.customerName]);
+
+  const canSeeWallet = currentUser?.roles?.some((r: string) => ['admin', 'management', 'finance'].includes(r));
+  useEffect(() => {
+    if (!canSeeWallet || !order.id) return;
+    dataService.getOrderWallet(order.id).then(setOrderWallet).catch(() => setOrderWallet(null));
+  }, [order.id, order.payments?.length]);
 
   const totalSalesValue = order.items.reduce((s, i) => s + (getItemEffectiveQty(i) * i.pricePerUnit), 0);
   const isFinanceBlocked = order.status === OrderStatus.IN_HOLD || isOverdue;
@@ -301,6 +308,17 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                 </p>
               </div>
             </div>
+          </div>
+        )}
+
+        {orderWallet && (
+          <div data-testid="order-wallet" className="bg-emerald-50 border-b border-emerald-100 px-6 py-3 flex flex-wrap items-center gap-x-8 gap-y-1 text-[11px] font-bold uppercase tracking-wide text-emerald-900">
+            <span><i className="fa-solid fa-wallet mr-2"></i>Order wallet</span>
+            <span>Committed: {Number(orderWallet.committed).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>Paid: {Number(orderWallet.paid).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>Settlement: {Number(orderWallet.settlement).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>Balance: {Number(orderWallet.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>Project: {orderWallet.projectName}</span>
           </div>
         )}
 

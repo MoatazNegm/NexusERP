@@ -147,6 +147,11 @@ class DataService {
 
   async getCustomers() { return this.get<Customer>('customers'); }
   async getProjectWallets(): Promise<ProjectWallet[]> { return this.get<ProjectWallet>('project-wallets'); }
+  async getOrderWallet(orderId: string): Promise<any> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/orders/${encodeURIComponent(orderId)}/wallet`, { headers: this.getAuthHeaders() });
+    if (!res.ok) throw new Error(`Failed to fetch order wallet: ${res.statusText}`);
+    return await res.json();
+  }
   async isCustomerOverdue(customerName: string): Promise<boolean> {
     const customers = await this.getCustomers();
     const cust = customers.find(c => c.name === customerName);
