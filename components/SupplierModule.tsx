@@ -90,7 +90,7 @@ export const SupplierModule: React.FC<SupplierModuleProps> = ({ currentUser, use
     setEditingPartForm({
       partNumber: p.partNumber,
       description: p.description,
-      price: p.price,
+      price: p.price ?? p.unitCost ?? 0,
       currency: p.currency || 'L.E.'
     });
   };
@@ -902,7 +902,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
                   <tr key={p.id || p.partNumber} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4 font-mono text-xs text-blue-600 font-bold">{p.partNumber || <span className="text-slate-300 italic">None</span>}</td>
                     <td className="px-6 py-4 font-bold text-slate-700">{p.description}</td>
-                    <td className="px-6 py-4 text-right font-black text-slate-900">{p.price?.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">{p.currency || 'L.E.'}</span></td>
+                    <td className="px-6 py-4 text-right font-black text-slate-900">{(p.price ?? p.unitCost ?? 0).toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">{p.currency || 'L.E.'}</span></td>
                     <td className="px-6 py-4 text-xs font-bold text-slate-600">
                       <span className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 inline-block font-mono">
                         {p.originalSupplierName || 'Unknown'}
@@ -1210,7 +1210,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
                               <tr key={p.id || p.partNumber} className="hover:bg-slate-50/50 transition-colors group">
                                 <td className="px-6 py-4 font-mono text-xs text-blue-600 font-bold">{p.partNumber || <span className="text-slate-300 italic">None</span>}</td>
                                 <td className="px-6 py-4 font-bold text-slate-700">{p.description}</td>
-                                <td className="px-6 py-4 text-right font-black text-slate-900">{p.price.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">{p.currency}</span></td>
+                                <td className="px-6 py-4 text-right font-black text-slate-900">{(p.price ?? p.unitCost ?? 0).toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">{p.currency}</span></td>
                                 {canEdit ? (
                                   <td className="px-6 py-4 text-right whitespace-nowrap">
                                     <div className="flex items-center justify-end gap-2">
@@ -1427,7 +1427,7 @@ Sample rows: ${JSON.stringify(sampleRows)}
                       </td>
                       <td className="px-6 py-4 text-right font-bold text-slate-700">{h.quantity} <span className="text-[9px] text-slate-400 font-normal">{h.unit || ''}</span></td>
                       <td className="px-6 py-4 text-right">
-                        <div className="font-black text-slate-900">{h.price?.toLocaleString()} <span className="text-[9px] text-slate-400 font-normal">L.E.</span></div>
+                        <div className="font-black text-slate-900">{(h.price ?? h.unitCost ?? 0).toLocaleString()} <span className="text-[9px] text-slate-400 font-normal">L.E.</span></div>
                       </td>
                       <td className="px-6 py-4 text-center">
                         <span className="px-2.5 py-1 rounded-full text-[8px] font-black uppercase bg-slate-100 text-slate-700 border border-slate-200">

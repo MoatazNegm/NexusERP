@@ -172,6 +172,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const today = new Date().toISOString().split('T')[0];
   const getDatePlusDays = (dateStr: string, days: number) => {
     const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return String(dateStr || '-');
     d.setDate(d.getDate() + days);
     return d.toISOString().split('T')[0];
   };

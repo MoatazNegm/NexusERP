@@ -3228,6 +3228,10 @@ app.use((req, res, next) => {
         }
     }
 
+    // A request that asks for a sandbox but carries no identity must never fall through to the live DB.
+    if (sandboxOwner && !username && !/\/(login|auth\/)/.test(req.path) && req.path.startsWith('/api/')) {
+        return res.status(401).json({ error: 'Authentication required for sandbox requests.' });
+    }
     req.user = username || null;
     req.roles = [];
     req.sandboxDbPath = null;
@@ -3748,6 +3752,9 @@ const addToCollection = (col) => (req, res) => {
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     const user = req.headers['x-user'] || 'System';
 
+    if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
+        return res.status(400).json({ error: 'Invalid orderDate.' });
+    }
     if (col === 'orders') {
         const itemValidationError = validateOrderItems(req.body.items, req.body.customerName, req.body.customerReferenceNumber || req.body.customerPoNumber);
         if (itemValidationError) {
@@ -3897,6 +3904,9 @@ const updateInCollection = (col) => (req, res) => {
     const user = req.headers['x-user'] || 'System';
     const oldItem = db[col][index];
     let updated = { ...oldItem, ...req.body };
+    if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
+        return res.status(400).json({ error: 'Invalid orderDate.' });
+    }
 
     if (col === 'users' && !isAdminUser(req)) {
         // Non-admins may only edit their own record and may never change roles (live and sandbox alike).
