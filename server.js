@@ -3592,6 +3592,22 @@ const computeOrderWallet = (order, orders = []) => {
     };
 };
 
+// --- TECHNICAL REVIEW TOUCH RULE ---
+// A PO is LOGGED as soon as it is entered; the moment a technical-review user (a member of a
+// group with canApproveTechReview, other than a plain admin) touches it, it moves to TECHNICAL_REVIEW.
+const isTechReviewUser = (username, db) => {
+    const u = (db.users || []).find(x => String(x.username || '').toLowerCase() === String(username || '').toLowerCase());
+    if (!u || (u.roles || []).includes('admin')) return false;
+    return (db.userGroups || []).some(g => (u.groupIds || []).includes(g.id) && g.permissions && g.permissions.canApproveTechReview);
+};
+const touchByTechReview = (order, username, db, how) => {
+    if (!order || order.status !== OrderStatus.LOGGED || !isTechReviewUser(username, db)) return false;
+    order.status = OrderStatus.TECHNICAL_REVIEW;
+    if (!order.logs) order.logs = [];
+    order.logs.push(createAuditLog(`Technical review user ${username} ${how}: status moved from LOGGED to TECHNICAL_REVIEW`, OrderStatus.TECHNICAL_REVIEW, username));
+    return true;
+};
+
 // --- GENERIC CRUD ---
 const getCollection = (col) => (req, res) => {
     const db = getDb(req);
@@ -3645,6 +3661,7 @@ const getItemFromCollection = (col) => (req, res) => {
         return res.json(computeCustomerWallet(item, db.orders || []));
     }
     if (col === 'orders') {
+        if (touchByTechReview(item, req.headers['x-user'], db, 'opened the order')) writeDb(db, getDbPath(req));
         const settings = resolveSettings(db, isSandbox(req));
         return res.json(withBlanketDrawdown(calculateOrderHealth(item, settings), db.orders || []));
     }
@@ -5172,6 +5189,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         // Save a copy of the order BEFORE any modifications for proper reconciliation
         const oldOrder = JSON.parse(JSON.stringify(order));
 
+        if (!/rollback|reject|hold/.test(String(action))) touchByTechReview(order, user, db, `acted on the order (${action})`);
         switch (action) {
             case 'finalize-study':
                 if (order.items.some(it => !it.isAccepted)) throw new Error("All items must be accepted before finalizing study");
