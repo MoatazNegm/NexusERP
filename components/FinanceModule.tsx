@@ -1962,7 +1962,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
         const generalWallet = Number(c.walletBalance || 0);
         const projectWalletsTotal = Object.values(c.walletBalances || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-        const combinedWalletBalance = generalWallet + projectWalletsTotal;
+        // walletBalance already holds the total of all wallet buckets (general + project), so adding them again double counts
+        const combinedWalletBalance = Math.max(generalWallet, projectWalletsTotal);
 
         let status: 'ar_due' | 'credit_balance' | 'settled' | 'no_orders' = 'no_orders';
         if (cOrders.length > 0) {
@@ -8581,7 +8582,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     const generalWallet = Number(customerObj?.walletBalance || 0);
                     const projName = getOrderProjectName(paymentOrder);
                     const projectWallet = Number(customerObj?.walletBalances?.[projName] || 0);
-                    const totalCustomerWallet = generalWallet + projectWallet;
+                    // walletBalance is already the total of all buckets; the server draws on that total
+                    const totalCustomerWallet = Math.max(generalWallet, projectWallet);
 
                     if (totalCustomerWallet <= 0) return null;
 
@@ -9180,7 +9182,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               <div className="flex justify-between items-center text-slate-600">
                 <span>{language === 'ar' ? 'رصيد المحفظة الحالي:' : 'Current Wallet Balance:'}</span>
                 <span className="font-mono font-bold text-emerald-700">
-                  {((advanceModalCustomer.walletBalance || 0) + Object.values(advanceModalCustomer.walletBalances || {}).reduce((s, v) => s + (Number(v) || 0), 0)).toLocaleString()} {language === 'ar' ? 'ج.م' : 'L.E.'}
+                  {Math.max(Number(advanceModalCustomer.walletBalance || 0), Object.values(advanceModalCustomer.walletBalances || {}).reduce((s, v) => s + (Number(v) || 0), 0)).toLocaleString()} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </span>
               </div>
             </div>
