@@ -829,10 +829,23 @@ const readDb = (customPath = null) => {
 
 const { createClient } = require('@libsql/client/web');
 
-const DEFAULT_TURSO_URL = 'libsql://qualitycheck-moataznegm.aws-us-west-2.turso.io';
+// R14/R15: secrets come from the environment or from files outside the code and outside the app data
+// (like Render/Vercel). Never log the values.
+const readSecretFile = (envName, defaults = []) => {
+  const cands = [process.env[envName], ...defaults].filter(Boolean);
+  for (const f of cands) {
+    try { const v = fs.readFileSync(f, 'utf8').trim(); if (v) return v; } catch {}
+  }
+  return '';
+};
+const DEFAULT_TURSO_URL = process.env.TURSO_URL || 'libsql://qualitycheck-moataznegm.aws-us-west-2.turso.io';
 // Stored encrypted (same AES cipher as sensitive settings); decrypted when the app runs.
 const DEFAULT_TURSO_TOKEN_ENC = 'ENC:7b199f79ba5138cb3a2a0f25c96e4ff9:09904da1f42393069ad8f0faba483e7cdf4f56ceaf520b863e523b068de3c96cf6d9d44748acb248fe3ad88c268e339ce34151c4ba8cef5d5d85d05bf60099c5d8cf05f245003f495f5f95e02bc65e10b81914320ca6b3f10d5debabbaf47ea47f5319943033a624b9334e8f3dd3482f07ff29f6e1872b5b80cfe78af89fd75347bc429deeff377bde4cd1181af6fe213929ff982a99b486854959f8f0216c4dd38e1b19f12c1d1bd61fb848bb3fbf7290841f5d069172b66c3a8daa438f1cbe865227c0011be974588457e1d0c5213b6afd99fdf1f9d28ca23bde499213f71abdc75b22aff88c4a7883d25e542b7e0e903178070cea1a897643e7d635549849815240464712b4d784d7db5fc9d13ab853594714f424ac66830ad4422883908aa4968d517cef71d6591fd4fad5ace1d634a053468da83f59be38cfb033a8c29b07137fce78106f6cc3e772b2c1fd3dc42e58b360d21e0bb6818c44e3c91a5f76';
-const getDefaultTursoToken = () => decryptValue(DEFAULT_TURSO_TOKEN_ENC);
+// Order: TURSO_TOKEN env, TURSO_TOKEN_FILE (or /secrets/turso.token, /run/secrets/turso_token), then the encrypted
+// built-in fallback (to be removed once every deployment has a token file).
+const getDefaultTursoToken = () => process.env.TURSO_TOKEN
+  || readSecretFile('TURSO_TOKEN_FILE', ['/secrets/turso.token', '/run/secrets/turso_token'])
+  || decryptValue(DEFAULT_TURSO_TOKEN_ENC);
 
 const pushToTursoAsync = async (data, dbPath) => {
     try {
@@ -1034,10 +1047,30 @@ const verifyApiKey = (key, stored) => {
 // admin revoke / disable actions propagate quickly. The cache is also
 // invalidated synchronously by every CRUD endpoint below.
 const apiKeyCache = { lastLoaded: 0, list: [], ttlMs: 5_000 };
+// R14: fixed keys from NEXUS_API_KEYS (JSON) or NEXUS_API_KEYS_FILE (JSON file, default /secrets/nexus_api_keys.json
+// or /run/secrets/nexus_api_keys). Entry: {name, username, key, allowLive?, roles?}. Read-only, never stored in a db.
+const envKeyCache = { sig: '', list: [] };
+const loadEnvApiKeys = () => {
+    let raw = process.env.NEXUS_API_KEYS || '';
+    if (!raw) raw = readSecretFile('NEXUS_API_KEYS_FILE', ['/secrets/nexus_api_keys.json', '/run/secrets/nexus_api_keys']);
+    if (!raw) return [];
+    if (raw === envKeyCache.sig) return envKeyCache.list;
+    let list = [];
+    try {
+        const arr = JSON.parse(raw);
+        list = (Array.isArray(arr) ? arr : []).filter(e => e && e.key && e.username).map((e, i) => ({
+            id: `env_key_${i}`, name: e.name || `env-key-${i}`, username: String(e.username), roles: Array.isArray(e.roles) ? e.roles : [],
+            allowLive: e.allowLive === true, keyHash: hashApiKey(String(e.key)), prefix: String(e.key).slice(0, 6) + '...',
+            createdAt: null, createdBy: 'environment', lastUsedAt: null, enabled: true, fromEnvironment: true
+        }));
+    } catch (e) { console.error('[API Keys] NEXUS_API_KEYS / file is not valid JSON; ignored.'); }
+    envKeyCache.sig = raw; envKeyCache.list = list;
+    return list;
+};
 const loadApiKeyCache = () => {
     try {
         const liveDb = readDb(DB_PATH);
-        apiKeyCache.list = Array.isArray(liveDb.apiKeys) ? liveDb.apiKeys : [];
+        apiKeyCache.list = [...(Array.isArray(liveDb.apiKeys) ? liveDb.apiKeys : []), ...loadEnvApiKeys()];
     } catch (e) {
         // Don't crash the request path on a transient read failure — return
         // an empty cache and let the next refresh retry.
