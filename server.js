@@ -3786,6 +3786,9 @@ const addToCollection = (col) => (req, res) => {
         }
     }
 
+    if (col === 'users' && !isAdminUser(req)) {
+        return res.status(403).json({ error: "Admin privileges are required to create users." });
+    }
     if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
 
     if (col === 'orders') {
@@ -3895,6 +3898,15 @@ const updateInCollection = (col) => (req, res) => {
     const oldItem = db[col][index];
     let updated = { ...oldItem, ...req.body };
 
+    if (col === 'users' && !isAdminUser(req)) {
+        // Non-admins may only edit their own record and may never change roles (live and sandbox alike).
+        const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
+        const isSelf = caller && String(oldItem.username || '').toLowerCase() === caller;
+        const rolesChanged = req.body.roles !== undefined && JSON.stringify(req.body.roles) !== JSON.stringify(oldItem.roles);
+        if (!isSelf || rolesChanged) {
+            return res.status(403).json({ error: "Admin privileges are required to modify users or roles." });
+        }
+    }
     if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
 
     // Encrypt sensitive settings before storing with preservation guards for empty fields
@@ -4051,6 +4063,9 @@ const deleteFromCollection = (col) => (req, res) => {
         }
     }
 
+    if (col === 'users' && !isAdminUser(req)) {
+        return res.status(403).json({ error: "Admin privileges are required to delete users." });
+    }
     db[col] = db[col].filter(it => it.id !== req.params.id);
     if (writeDb(db, getDbPath(req))) {
         if (col === 'users' || col === 'userGroups') {
