@@ -2312,8 +2312,10 @@ const reconcileInventory = (oldOrder, newOrder, db) => {
         return map;
     };
 
-    const oldMap = getReservedMap(oldOrder);
-    const newMap = getReservedMap(newOrder);
+    // R24: a rejected/cancelled order already released its reservations at the rejection; do not release them again on reopen.
+    const wasRejected = !!(oldOrder && oldOrder.status === OrderStatus.REJECTED);
+    const oldMap = wasRejected ? new Map() : getReservedMap(oldOrder);
+    const newMap = (wasRejected && newOrder && newOrder.status === OrderStatus.REJECTED) ? new Map() : getReservedMap(newOrder);
 
     // Find all unique IDs
     const allIds = new Set([...oldMap.keys(), ...newMap.keys()]);
@@ -2540,7 +2542,9 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                         const hasAllocations = (item.allocatedQty || 0) > 0 || (comp.allocatedQty || 0) > 0;
 
                         // Only sync comp.quantity directly from item.quantity for non-stock orders without allocations
-                        if (!isStock && !hasAllocations) {
+                        // A PO amended by extension keeps its amended quantity; the leftover is a separate component.
+                        const hasExtensionSplit = item.components.some(c => c.isExtension || c.splitFromExtensionPo);
+                        if (!isStock && !hasAllocations && !hasExtensionSplit) {
                             if (!comp.allocatedFromStockOrderId && comp.quantity !== getItemEffectiveQty(item)) {
                                 comp.quantity = getItemEffectiveQty(item);
                             }
@@ -2566,7 +2570,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                             comp.status = 'NEW';
                         }
                         // Cap at 1 component for TRADING to prevent BoM pollution unless split into stock and procurement
-                        const hasStockAllocations = item.components.some(c => c.allocatedFromStockOrderId);
+                        const hasStockAllocations = item.components.some(c => c.allocatedFromStockOrderId || c.isExtension || c.splitFromExtensionPo);
                         if (!hasStockAllocations && item.components.length > 1) {
                             item.components = [item.components[0]];
                         }
@@ -4419,7 +4423,7 @@ app.post('/api/v1/supplierRefunds', (req, res) => {
         if (!supplierId || !amt || isNaN(amt) || amt <= 0) return res.status(400).json({ error: "supplierId and a positive amount are required" });
         const supplier = (db.suppliers || []).find(s => s.id === supplierId);
         if (!supplier) return res.status(404).json({ error: "Supplier not found" });
-        const rec = { id: `sp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, supplierId, supplierName: supplier.name, amount: -amt, isRefund: true, date: date ? new Date(date).toISOString() : new Date().toISOString(), memo: memo || 'Supplier refund received', user, orderId: orderId || undefined, poNumber: poNumber || undefined, unallocatedAdvance: 0, allocations: [] };
+        const rec = { id: `sp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, supplierId, supplierName: supplier.name, amount: -amt, isRefund: true, date: date ? new Date(date).toISOString() : new Date().toISOString(), memo: memo || 'Supplier refund received', user, orderId: orderId || undefined, poNumber: poNumber || undefined, unallocatedAdvance: -amt, allocations: [] };
         if (!db.supplierPayments) db.supplierPayments = [];
         db.supplierPayments.push(rec);
         ledgerPush(db, { type: 'ADDITION', amount: amt, description: `Supplier Refund received: ${supplier.name} - ${memo || 'Refund'}`, category: 'Supplier Refund', fromAccount: `Supplier ${supplier.name} / Advance`, toAccount: 'Bank Account', orderId: orderId || undefined, poNumber: poNumber || undefined }, user);
@@ -5250,6 +5254,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     });
 
                     console.log(`[Inventory Release] Released Component to Free Stock: ${comp.description} (${receivedQty} ${comp.unit}). Stock: ${invItem.quantityInStock}, Rsrv: ${invItem.quantityReserved}`);
+                    // The supplier delivered these goods: the supplier ledger keeps counting them as delivered.
+                    comp.releasedToStockQty = (Number(comp.releasedToStockQty) || 0) + receivedQty;
                     comp.receivedQty = 0;
                     delete comp.inventoryItemId;
                 }
@@ -5296,7 +5302,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             }
 
             // Case 2: System Extension & Amendment superseding original PO
-            const calculatedNewPoQty = Math.max(receivedQty, Math.round(paidUnits * 1000) / 1000);
+            // R23 (C18): fractional quantities are rejected on a normal PO, so the paid-units quantity is taken in whole units.
+            const calculatedNewPoQty = Math.max(receivedQty, Math.floor(paidUnits + 1e-9));
             const newPoQty = Math.min(originalQty, calculatedNewPoQty);
             const leftoverQty = Math.max(0, originalQty - newPoQty);
 
@@ -6489,7 +6496,17 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const [removed] = order.payments.splice(payload.index, 1);
                 order.logs.push(createAuditLog(`Payment of ${removed.amount} VOIDED: ${payload.reason || 'Correction'}`, order.status, user));
                 // R21 (C13): a voided cash payment needs a reversing ledger entry (bank back to the order account).
-                if (!removed.transfer && Number(removed.amount) > 0) {
+                const movedToWallet = Number(order.paymentMovedToWallet) || 0;
+                const custW = movedToWallet > 0 ? (db.customers || []).find(c => c.name === order.customerName) : null;
+                if (custW && !removed.transfer && Number(removed.amount) > 0) {
+                    // R24 (C17): the paid amount of this cancelled order already sits in the customer general wallet; voiding it
+                    // refunds the customer from that credit (wallet -> Bank, REFUND, no P&L) instead of reversing a bank-to-order entry.
+                    const take = Math.min(Number(removed.amount), movedToWallet);
+                    custW.walletBalances = custW.walletBalances || {};
+                    custW.walletBalances[SELF_WALLET_KEY] = Math.round(((custW.walletBalances[SELF_WALLET_KEY] || 0) - take) * 100) / 100;
+                    order.paymentMovedToWallet = Math.round((movedToWallet - take) * 100) / 100;
+                    ledgerPush(db, { type: 'REFUND', amount: take, description: `Payment VOIDED (cancelled PO ${order.internalOrderNumber}): refunded from customer general wallet - ${payload.reason || 'Correction'}`, category: 'Customer Refunds', fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
+                } else if (!removed.transfer && Number(removed.amount) > 0) {
                     ledgerPush(db, { type: 'DEDUCTION', amount: Number(removed.amount), description: `Payment VOIDED: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.reason || 'Correction'}`, category: 'Customer Payment Reversal', fromAccount: 'Bank Account', toAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
                 }
                 break;
@@ -6555,7 +6572,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                                     const invItem = (db.inventory || []).find(i => i.id === comp.inventoryItemId);
                                     if (invItem) {
                                         if (comp.status === 'RESERVED' || comp.status === 'AVAILABLE') {
-                                            invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - qtyDelta);
+                                            // R24: reconcileInventory lowers the reservation when comp.quantity drops; a direct decrement here released it twice (negative reserved).
                                         } else if (['RECEIVED', 'IN_STOCK', 'CONSUMED', 'Manufactured'].includes(comp.status)) {
                                             if (comp.consumedQty && comp.consumedQty > 0) {
                                                 const overConsumed = Math.min(qtyDelta, comp.consumedQty);
@@ -9325,10 +9342,12 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
                         // R21: the supplier ledger is on the GROSS basis (net + tax), because suppliers are paid gross.
                         const ledgerTaxMul = 1 + ((comp.taxPercent !== undefined && comp.taxPercent !== null ? Number(comp.taxPercent) : 14) / 100);
                         const grossUnitCost = (comp.unitCost || 0) * ledgerTaxMul;
-                        const totalCost = (comp.quantity || 0) * grossUnitCost;
-                        const receivedQty = comp.receivedQty || 0;
+                        // The quantity allocated away to another order is still owed to / received from the supplier.
+                        const ledgerQty = (comp.quantity || 0) + (comp.allocatedQty || 0);
+                        const totalCost = ledgerQty * grossUnitCost;
+                        const receivedQty = (comp.receivedQty || 0) + (comp.releasedToStockQty || 0);
                         const deliveredValue = receivedQty * grossUnitCost;
-                        const pendingQty = Math.max(0, (comp.quantity || 0) - receivedQty);
+                        const pendingQty = Math.max(0, ledgerQty - receivedQty);
                         const pendingValue = pendingQty * grossUnitCost;
 
                         components.push({
