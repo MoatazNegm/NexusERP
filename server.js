@@ -830,7 +830,9 @@ const readDb = (customPath = null) => {
 const { createClient } = require('@libsql/client/web');
 
 const DEFAULT_TURSO_URL = 'libsql://qualitycheck-moataznegm.aws-us-west-2.turso.io';
-const DEFAULT_TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODM5MzExMjQsImlkIjoiMDE5ZjVhOTQtNTMwMS03YTgwLTk1MDYtOTU3OTljNTAwZWNhIiwia2lkIjoiTUp2cjVTOE5zX0lrVkdNSDdXMERpUVpXaTlsWEhXNWJlX0gxaUstUXl0ZyIsInJpZCI6IjYzNjZjN2IyLTk0NTYtNDAxOS05YTg1LTQzOWE5ZTUwOTk5NCJ9.DWfcpfDucO88Hx5vALyFDEuuznNBh6P4R7wU12OV8DgMpAPyG0vL_7t7PYr6MVoBqQhGflCBney-1W0SAsFLDg';
+// Stored encrypted (same AES cipher as sensitive settings); decrypted when the app runs.
+const DEFAULT_TURSO_TOKEN_ENC = 'ENC:7b199f79ba5138cb3a2a0f25c96e4ff9:09904da1f42393069ad8f0faba483e7cdf4f56ceaf520b863e523b068de3c96cf6d9d44748acb248fe3ad88c268e339ce34151c4ba8cef5d5d85d05bf60099c5d8cf05f245003f495f5f95e02bc65e10b81914320ca6b3f10d5debabbaf47ea47f5319943033a624b9334e8f3dd3482f07ff29f6e1872b5b80cfe78af89fd75347bc429deeff377bde4cd1181af6fe213929ff982a99b486854959f8f0216c4dd38e1b19f12c1d1bd61fb848bb3fbf7290841f5d069172b66c3a8daa438f1cbe865227c0011be974588457e1d0c5213b6afd99fdf1f9d28ca23bde499213f71abdc75b22aff88c4a7883d25e542b7e0e903178070cea1a897643e7d635549849815240464712b4d784d7db5fc9d13ab853594714f424ac66830ad4422883908aa4968d517cef71d6591fd4fad5ace1d634a053468da83f59be38cfb033a8c29b07137fce78106f6cc3e772b2c1fd3dc42e58b360d21e0bb6818c44e3c91a5f76';
+const getDefaultTursoToken = () => decryptValue(DEFAULT_TURSO_TOKEN_ENC);
 
 const pushToTursoAsync = async (data, dbPath) => {
     try {
@@ -839,7 +841,7 @@ const pushToTursoAsync = async (data, dbPath) => {
         const settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
         
         const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
-        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
+        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
         const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
 
         if (useTurso && rawUrl && authToken) {
@@ -875,7 +877,7 @@ const pullFromTursoOnStartup = async () => {
         }
         
         const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
-        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
+        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
         const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
 
         if (useTurso && rawUrl && authToken) {
@@ -1267,7 +1269,7 @@ const resolveSettings = (db, isSandboxReq = false) => {
         dropboxConfig: effectiveDropbox,
         useTurso: (dbSettings.useTurso !== undefined && dbSettings.tursoUrl) ? !!dbSettings.useTurso : true,
         tursoUrl: (dbSettings.tursoUrl && String(dbSettings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL,
-        tursoAuthToken: (dbSettings.tursoAuthToken && String(dbSettings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN
+        tursoAuthToken: (dbSettings.tursoAuthToken && String(dbSettings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken()
     };
 
     if (isSandboxReq) {
@@ -8320,7 +8322,7 @@ app.get('/api/v1/integrations/turso/status', async (req, res) => {
         const db = getDb(req);
         const settings = resolveSettings(db);
         const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
-        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
+        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
         const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
 
         if (!rawUrl || !authToken) {
@@ -8354,7 +8356,7 @@ app.post('/api/v1/integrations/turso/test', bodyParser.json(), async (req, res) 
         const db = getDb(req);
         const settings = resolveSettings(db);
         const rawUrl = req.body?.tursoUrl || (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
-        const authToken = req.body?.tursoAuthToken || (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || DEFAULT_TURSO_TOKEN;
+        const authToken = req.body?.tursoAuthToken || (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
 
         const dbUrl = rawUrl.startsWith('libsql://') ? rawUrl.replace(/^libsql:\/\//, 'https://') : rawUrl;
         const client = createClient({ url: dbUrl, authToken });
