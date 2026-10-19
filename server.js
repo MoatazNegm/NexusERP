@@ -4201,13 +4201,77 @@ app.post('/api/v1/customers/merge', (req, res) => {
     }
 });
 
+// --- LEDGER / CUSTOMER SUB-ACCOUNTS ---
+// Money moves from an account to an account. A customer has: SELF (money not tied to any activity),
+// one PROJECT account per project and one ORDER account per PO. Every cash movement and every
+// transfer between accounts is logged in db.ledger (transfers are type TRANSFER and net zero in cash totals).
+const SELF_WALLET_KEY = '(General Advance / Future Orders)';
+const acctLabel = (customerName, kind, ref) => kind === 'ORDER' ? `Customer ${customerName} / PO ${ref}` : kind === 'PROJECT' ? `Customer ${customerName} / Project ${ref}` : `Customer ${customerName} / Self`;
+const ledgerPush = (db, e, user) => {
+    if (!db.ledger) db.ledger = [];
+    db.ledger.push({ id: `led_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, date: new Date().toISOString(), user, ...e });
+};
+
+app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
+    try {
+        const db = getDb(req);
+        const user = req.headers['x-user'] || 'System';
+        const { from, to, amount, memo } = req.body || {};
+        const amt = Math.round((parseFloat(amount) + Number.EPSILON) * 100) / 100;
+        if (!amt || isNaN(amt) || amt <= 0) return res.status(400).json({ error: "Positive transfer amount is required" });
+        if (!from || !to || !from.type || !to.type) return res.status(400).json({ error: "from and to accounts {type: SELF|PROJECT|ORDER, ref} are required" });
+        const customer = (db.customers || []).find(c => c.id === req.params.id || c.name === req.params.id);
+        if (!customer) return res.status(404).json({ error: "Customer not found" });
+        customer.walletBalances = customer.walletBalances || {};
+        const find = a => {
+            const t = String(a.type).toUpperCase();
+            if (t === 'SELF') return { t, key: SELF_WALLET_KEY, ref: 'Self' };
+            if (t === 'PROJECT') { if (!a.ref) throw new Error("Project account needs a ref (project name)"); return { t, key: String(a.ref).trim(), ref: String(a.ref).trim() }; }
+            if (t === 'ORDER') {
+                const o = (db.orders || []).find(x => x.customerName === customer.name && (x.id === a.ref || x.internalOrderNumber === a.ref));
+                if (!o) throw new Error(`Order ${a.ref} not found for this customer`);
+                return { t, order: o, ref: o.internalOrderNumber };
+            }
+            throw new Error(`Unknown account type ${a.type}`);
+        };
+        const src = find(from), dst = find(to);
+        if (src.t === dst.t && (src.key || src.order?.id) === (dst.key || dst.order?.id)) return res.status(400).json({ error: "Source and target accounts are the same" });
+        // source balance check
+        if (src.t === 'ORDER') {
+            const paid = (src.order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+            if (paid + 0.005 < amt) return res.status(400).json({ error: `Insufficient balance: order ${src.ref} holds ${paid.toFixed(2)}, transfer ${amt.toFixed(2)}` });
+        } else if ((customer.walletBalances[src.key] || 0) + 0.005 < amt) {
+            return res.status(400).json({ error: `Insufficient balance: account holds ${(customer.walletBalances[src.key] || 0).toFixed(2)}, transfer ${amt.toFixed(2)}` });
+        }
+        const now = new Date().toISOString();
+        const note = `Account transfer ${amt.toFixed(2)}: ${acctLabel(customer.name, src.t, src.ref)} -> ${acctLabel(customer.name, dst.t, dst.ref)}${memo ? ' - ' + memo : ''}`;
+        const touchOrder = (o, delta) => {
+            o.payments = o.payments || [];
+            o.payments.push({ amount: delta, date: now, user, memo: note, receiptNumber: `TRF-${String(Date.now()).slice(-6)}`, transfer: true });
+            o.logs = o.logs || [];
+            o.logs.push(createAuditLog(note, o.status, user));
+        };
+        let walletDelta = 0;
+        if (src.t === 'ORDER') touchOrder(src.order, -amt); else { customer.walletBalances[src.key] = Math.round(((customer.walletBalances[src.key] || 0) - amt) * 100) / 100; walletDelta -= amt; }
+        if (dst.t === 'ORDER') touchOrder(dst.order, amt); else { customer.walletBalances[dst.key] = Math.round(((customer.walletBalances[dst.key] || 0) + amt) * 100) / 100; walletDelta += amt; }
+        customer.walletBalance = Math.round(((customer.walletBalance || 0) + walletDelta) * 100) / 100;
+        customer.logs = customer.logs || [];
+        customer.logs.push(createAuditLog(note, 'WALLET_TRANSFER', user));
+        ledgerPush(db, { type: 'TRANSFER', amount: amt, description: note, category: 'Account Transfer', fromAccount: acctLabel(customer.name, src.t, src.ref), toAccount: acctLabel(customer.name, dst.t, dst.ref), customerName: customer.name }, user);
+        writeDb(db, getDbPath(req));
+        return res.json({ ok: true, amount: amt, from: acctLabel(customer.name, src.t, src.ref), to: acctLabel(customer.name, dst.t, dst.ref), wallet: computeCustomerWallet(customer, db.orders || []) });
+    } catch (err) {
+        res.status(400).json({ error: err.message || "Transfer failed" });
+    }
+});
+
 // Record customer advance deposit / unearned prepayment for future orders
 app.post('/api/v1/customers/:id/advance-payment', (req, res) => {
     try {
         const db = getDb(req);
         const user = req.headers['x-user'] || 'System';
         const { id } = req.params;
-        const { amount, memo, date, projectName } = req.body;
+        const { amount, memo, date, projectName, orderId: targetOrderId } = req.body;
         const numAmt = parseFloat(amount);
         if (!numAmt || isNaN(numAmt) || numAmt <= 0) {
             return res.status(400).json({ error: "Positive payment amount is required" });
@@ -4238,6 +4302,8 @@ app.post('/api/v1/customers/:id/advance-payment', (req, res) => {
             category: 'Customer Advance',
             fromAccount: 'Customer Deposit',
             toAccount: 'Bank Account',
+            customerName: customer.name,
+            account: acctLabel(customer.name, projKey === SELF_WALLET_KEY ? 'SELF' : 'PROJECT', projKey === SELF_WALLET_KEY ? 'Self' : projKey),
             user
         });
 
@@ -6388,10 +6454,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                 const totalPaid = (order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
 
+                let walletUsedForLedger = 0;
                 if (payload.fromWallet && payload.amount > 0) {
                     const customer = (db.customers || []).find(c => c.name === order.customerName);
                     if (customer && (customer.walletBalance || 0) > 0) {
                         const deductAmt = Math.min(payload.amount, customer.walletBalance);
+                        walletUsedForLedger = deductAmt;
                         customer.walletBalance = Math.max(0, (customer.walletBalance || 0) - deductAmt);
                         if (customer.walletBalances) {
                             for (const key of Object.keys(customer.walletBalances)) {
@@ -6404,6 +6472,17 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                         order.logs.push(createAuditLog(`Applied ${deductAmt.toLocaleString()} L.E. from Customer Wallet balance. Remaining wallet: ${customer.walletBalance.toLocaleString()} L.E.`, order.status, user));
                     }
+                }
+
+                {
+                    // Ledger: new cash from the customer is an ADDITION to the bank; the part taken from the
+                    // customer's wallet is only an account transfer (wallet -> this PO), no new cash.
+                    const payAmt = Number(payload.amount) || 0;
+                    const fromWalletAmt = Math.min(payAmt, Number(walletUsedForLedger) || 0);
+                    const cashAmt = Math.round((payAmt - fromWalletAmt) * 100) / 100;
+                    const poAcct = acctLabel(order.customerName, 'ORDER', order.internalOrderNumber);
+                    if (cashAmt > 0) ledgerPush(db, { type: 'ADDITION', amount: cashAmt, description: `Customer Payment: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.memo || 'Regular payment'}`, category: 'Customer Payment', fromAccount: poAcct, toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, receiptNumber }, user);
+                    if (fromWalletAmt > 0) ledgerPush(db, { type: 'TRANSFER', amount: fromWalletAmt, description: `Wallet applied to PO ${order.internalOrderNumber}`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: poAcct, customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, receiptNumber }, user);
                 }
 
                 const fullyPaid = isOrderFullyPaid(order);
@@ -6811,6 +6890,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     customer.walletBalances = customer.walletBalances || {};
                     customer.walletBalances[projectKey] = (customer.walletBalances[projectKey] || 0) + walletAdjustment;
                     customer.walletBalance = (customer.walletBalance || 0) + walletAdjustment;
+                    if (walletAdjustment !== 0) {
+                        const blanketAcct = acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), projAcct = acctLabel(order.customerName, 'PROJECT', projectKey);
+                        ledgerPush(db, { type: 'TRANSFER', amount: Math.abs(walletAdjustment), description: `Blanket settlement ${settlingOrder.internalOrderNumber}: ${walletAdjustment > 0 ? 'credit' : 'debit'} between blanket PO and project wallet`, category: 'Account Transfer', fromAccount: walletAdjustment > 0 ? blanketAcct : projAcct, toAccount: walletAdjustment > 0 ? projAcct : blanketAcct, customerName: order.customerName, orderId: order.id }, user);
+                    }
 
                     if (walletAdjustment > 0) {
                         // Order was cheaper - credit customer wallet
@@ -6866,6 +6949,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     cust.walletBalances = cust.walletBalances || {};
                     cust.walletBalances[projectKey] = (cust.walletBalances[projectKey] || 0) + surplus;
                     cust.walletBalance = (cust.walletBalance || 0) + surplus;
+                    ledgerPush(db, { type: 'TRANSFER', amount: surplus, description: `Blanket close ${order.internalOrderNumber}: payment surplus to project wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'PROJECT', projectKey), customerName: order.customerName, orderId: order.id }, user);
                 }
                 order.contractClosed = true;
                 order.closedDeliveredGross = deliveredGross;
