@@ -3453,6 +3453,25 @@ const calculateOrderHealth = (order, settings) => {
     return { ...order, isOverdue };
 };
 
+// --- BLANKET DRAWDOWN HELPER ---
+// drawn = total quantity called off (excess included); remaining = max(0, blanket - drawn);
+// excess = max(0, drawn - blanket). Added per blanket item (matched by description) and per order.
+const withBlanketDrawdown = (order, orders = []) => {
+    if (!order || !order.blanketOrder) return order;
+    const refs = [order.id, order.internalOrderNumber].filter(Boolean);
+    const calls = orders.filter(o => o.blanketContractId && refs.includes(o.blanketContractId) && o.status !== OrderStatus.REJECTED);
+    const key = d => String(d || '').trim().toLowerCase();
+    let tb = 0, td = 0;
+    const items = (order.items || []).map(it => {
+        const blanketQty = Number(it.quantity) || 0;
+        let drawn = 0;
+        calls.forEach(c => (c.items || []).forEach(ci => { if (key(ci.description) === key(it.description)) drawn += Number(getItemEffectiveQty(ci)) || 0; }));
+        tb += blanketQty; td += drawn;
+        return { ...it, drawnQty: drawn, remainingQty: Math.max(0, blanketQty - drawn), excessQty: Math.max(0, drawn - blanketQty) };
+    });
+    return { ...order, items, drawnQty: td, remainingQty: Math.max(0, tb - td), excessQty: Math.max(0, td - tb) };
+};
+
 // --- CUSTOMER WALLET HELPER ---
 // Calculates customer wallet balances (per-project and aggregate total).
 // Blanket orders where the customer has not been invoiced or has not paid yet
@@ -3495,6 +3514,9 @@ const computeCustomerWallet = (customer, orders = []) => {
     custBlanketOrders.forEach(o => {
         // If the blanket order is fulfilled/settled, its settlement difference is already in projectBalances
         if (o.status === OrderStatus.FULFILLED) return;
+        // Call-off (settling) orders of a blanket contract add nothing to the wallet: the open
+        // blanket commitment already covers them, and any excess is a receivable, not wallet debt.
+        if (o.blanketContractId && !o.blanketOrder) return;
 
         let orderGross = 0;
         let orderCost = 0;
@@ -3542,7 +3564,8 @@ const getCollection = (col) => (req, res) => {
 
     if (col === 'orders') {
         const settings = resolveSettings(db, isSandbox(req));
-        return res.json((db[col] || []).map(o => calculateOrderHealth(o, settings)));
+        const allOrders = db[col] || [];
+        return res.json(allOrders.map(o => withBlanketDrawdown(calculateOrderHealth(o, settings), allOrders)));
     }
 
     // Decrypt sensitive settings before sending to frontend (inheriting live AI settings in sandboxes)
@@ -3583,7 +3606,7 @@ const getItemFromCollection = (col) => (req, res) => {
     }
     if (col === 'orders') {
         const settings = resolveSettings(db, isSandbox(req));
-        return res.json(calculateOrderHealth(item, settings));
+        return res.json(withBlanketDrawdown(calculateOrderHealth(item, settings), db.orders || []));
     }
     if (col === 'settings') {
         const resolved = resolveSettings(db, isSandbox(req));
@@ -6651,6 +6674,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const settlingOrderIndex = db.orders.findIndex(o => o.id === payload.settlingOrderId);
                 if (settlingOrderIndex === -1) throw new Error("Settling order not found");
                 const settlingOrder = db.orders[settlingOrderIndex];
+
+                // Each call-off is settled once and credits its own amount (cumulative over distinct
+                // call-offs). Settling the same call-off again changes nothing (idempotent).
+                order.settledCallOffs = order.settledCallOffs || {};
+                if (Object.prototype.hasOwnProperty.call(order.settledCallOffs, settlingOrder.id)) {
+                    order.logs.push(createAuditLog(`Blanket settlement repeated for ${settlingOrder.internalOrderNumber}: already settled, no wallet change.`, order.status, user));
+                    break;
+                }
                 
                 // Calculate the difference between the two orders per line item
                 let totalDifference = 0;
@@ -6687,6 +6718,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     // If totalDifference > 0 (settling was more expensive): customer owes DEBT (walletAdjustment < 0)
                     // If totalDifference = 0: exact match
                     const walletAdjustment = -totalDifference;
+                    order.settledCallOffs[settlingOrder.id] = walletAdjustment;
                     const projectKey = String((order.projectName || settlingOrder.projectName || '').trim()) || '(No Project)';
                     customer.walletBalances = customer.walletBalances || {};
                     customer.walletBalances[projectKey] = (customer.walletBalances[projectKey] || 0) + walletAdjustment;
@@ -6713,6 +6745,44 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 } else {
                     throw new Error(`Customer ${order.customerName} not found for wallet credit`);
                 }
+                break;
+            }
+            case 'close-blanket-order': {
+                // Finance closes a blanket order that was delivered LESS than the blanket quantity, when the
+                // customer's payments cover the delivered GROSS value (VAT included). Payments above the
+                // delivered gross become customer credit (advance) for the project.
+                if (!order.blanketOrder) throw new Error("Only blanket orders can be closed via this action");
+                {
+                    const uname = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
+                    const liveU = uname ? (readDb(DB_PATH).users || []).find(u => String(u.username || '').toLowerCase() === uname) : null;
+                    const uRoles = liveU ? (liveU.roles || []) : (Array.isArray(req.roles) ? req.roles : null);
+                    if (uRoles && !uRoles.includes('finance') && !uRoles.includes('admin')) throw new Error("Only finance users can close a blanket order");
+                }
+                if (order.contractClosed) throw new Error("Blanket order is already closed");
+                const refs = [order.id, order.internalOrderNumber].filter(Boolean);
+                const calls = db.orders.filter(o => o.blanketContractId && refs.includes(o.blanketContractId) && o.status !== OrderStatus.REJECTED);
+                let deliveredGross = 0;
+                calls.forEach(o => (o.items || []).forEach(it => {
+                    const r2c = x => Math.round((x + Number.EPSILON) * 100) / 100;
+                    const lineNet = r2c((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0));
+                    deliveredGross += lineNet + r2c(lineNet * (it.taxPercent || 0) / 100);
+                }));
+                deliveredGross = Math.round(deliveredGross * 100) / 100;
+                const paidAll = [order, ...calls].reduce((t, o) => t + (o.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0), 0);
+                const roundedPaid = Math.round(paidAll * 100) / 100;
+                if (roundedPaid + 0.005 < deliveredGross) throw new Error(`Payments ${roundedPaid.toFixed(2)} do not cover the delivered gross value ${deliveredGross.toFixed(2)}.`);
+                const surplus = Math.round((roundedPaid - deliveredGross) * 100) / 100;
+                const cust = db.customers.find(c => c.name === order.customerName);
+                if (surplus > 0 && cust) {
+                    const projectKey = String((order.projectName || '').trim()) || '(No Project)';
+                    cust.walletBalances = cust.walletBalances || {};
+                    cust.walletBalances[projectKey] = (cust.walletBalances[projectKey] || 0) + surplus;
+                    cust.walletBalance = (cust.walletBalance || 0) + surplus;
+                }
+                order.contractClosed = true;
+                order.closedDeliveredGross = deliveredGross;
+                order.status = OrderStatus.FULFILLED;
+                order.logs.push(createAuditLog(`Blanket order closed by finance: delivered gross ${deliveredGross.toFixed(2)}, payments ${roundedPaid.toFixed(2)}${surplus > 0 ? `, surplus ${surplus.toFixed(2)} credited to customer` : ''}.`, order.status, user));
                 break;
             }
             case 'financial-request': {
