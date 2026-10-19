@@ -4585,6 +4585,7 @@ app.get('/api/v1/procurement/unique-po-number', (req, res) => {
     res.json({ poNumber });
 });
 
+const r2c = x => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
 app.get('/api/v1/reports/orders', (req, res) => {
     const db = getDb(req);
     const { startDate, endDate, statuses, query } = req.query;
@@ -4608,8 +4609,19 @@ app.get('/api/v1/reports/orders', (req, res) => {
 
     const settings = resolveSettings(db, isSandbox(req));
     const enrichedOrders = orders.map(o => calculateOrderHealth(o, settings));
-    const totalRevenue = enrichedOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
-    const totalRealCost = enrichedOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0);
+    // Revenue (net) and real cost are computed from the lines; only FULFILLED orders count.
+    enrichedOrders.forEach(o => {
+        let net = 0, cost = 0;
+        (o.items || []).forEach(it => {
+            net += r2c((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0));
+            (it.components || []).forEach(c => { cost += (Number(c.unitCost) || 0) * (Number(c.quantity) || Number(c.receivedQty) || Number(c.consumedQty) || (c.source === 'CONSUMED' ? (Number(getItemEffectiveQty(it)) || 0) : 0)); });
+        });
+        o.totalPrice = r2c(net);
+        o.totalRealCost = r2c(cost);
+    });
+    const fulfilledOrders = enrichedOrders.filter(o => o.status === OrderStatus.FULFILLED);
+    const totalRevenue = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0));
+    const totalRealCost = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0));
     const count = enrichedOrders.length;
 
     res.json({
