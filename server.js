@@ -3554,6 +3554,44 @@ const computeCustomerWallet = (customer, orders = []) => {
     };
 };
 
+// --- ORDER WALLET HELPER ---
+// Wallet of a single order: what the customer committed to (gross), what was paid, the balance
+// (paid - committed, negative = debt) and any settlement credit/debit from settled call-offs.
+// Rejected orders and call-offs of a blanket contract carry no wallet of their own.
+const computeOrderWallet = (order, orders = []) => {
+    if (!order) return null;
+    let gross = 0, cost = 0;
+    (order.items || []).forEach(it => {
+        gross += (getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
+        (it.components || []).forEach(c => { cost += (c.quantity || 0) * (c.unitCost || 0); });
+    });
+    if (order.appliesWithholdingTax) gross *= 0.99;
+    const paid = (order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+    const commitment = gross > 0 ? gross : cost;
+    const settlement = Object.values(order.settledCallOffs || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+    const isCallOff = Boolean(order.blanketContractId) && !order.blanketOrder;
+    const rejected = order.status === OrderStatus.REJECTED;
+    let projectName = String((order.projectName || '').trim());
+    if (!projectName && order.blanketContractId) {
+        const parent = orders.find(p => (p.id === order.blanketContractId || p.internalOrderNumber === order.blanketContractId || p.customerReferenceNumber === order.blanketContractId) && p.status !== OrderStatus.REJECTED);
+        if (parent && parent.projectName) projectName = String(parent.projectName).trim();
+    }
+    const r = x => Math.round(x * 100) / 100;
+    return {
+        orderId: order.id,
+        internalOrderNumber: order.internalOrderNumber,
+        customerName: order.customerName,
+        projectName: projectName || '(No Project)',
+        status: order.status,
+        blanketOrder: Boolean(order.blanketOrder),
+        callOffOf: isCallOff ? order.blanketContractId : undefined,
+        committed: rejected || isCallOff ? 0 : r(commitment),
+        paid: rejected ? 0 : r(paid),
+        settlement: r(settlement),
+        walletBalance: rejected || isCallOff ? 0 : r(paid - commitment + settlement)
+    };
+};
+
 // --- GENERIC CRUD ---
 const getCollection = (col) => (req, res) => {
     const db = getDb(req);
@@ -3973,6 +4011,24 @@ const deleteFromCollection = (col) => (req, res) => {
 };
 
 // --- ROUTES ---
+app.get('/api/v1/order-wallets', (req, res) => {
+    const db = getDb(req);
+    const orders = db.orders || [];
+    const { customerName, projectName } = req.query;
+    let list = orders.map(o => computeOrderWallet(o, orders));
+    if (customerName) list = list.filter(w => w.customerName === customerName);
+    if (projectName) list = list.filter(w => w.projectName === String(projectName).trim());
+    res.json(list);
+});
+
+app.get('/api/v1/orders/:id/wallet', (req, res) => {
+    const db = getDb(req);
+    const orders = db.orders || [];
+    const order = orders.find(o => o.id === req.params.id || o.internalOrderNumber === req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    res.json(computeOrderWallet(order, orders));
+});
+
 app.get('/api/v1/project-wallets', (req, res) => {
     const db = getDb(req);
     const orders = db.orders || [];
