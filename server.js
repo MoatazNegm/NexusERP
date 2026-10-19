@@ -5771,7 +5771,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         if (newComp.quantity > available) {
                             throw new Error(`Insufficient stock: only ${available} ${invItem.unit} available (${invItem.quantityInStock} in stock, ${invItem.quantityReserved || 0} reserved)`);
                         }
-                        invItem.quantityReserved = (invItem.quantityReserved || 0) + newComp.quantity;
+                        // Reservation is applied once by reconcileInventory after the action.
                         invItem.lastUpdated = new Date().toISOString();
                     }
                 }
@@ -5816,7 +5816,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (rcComp.source === 'STOCK' && rcComp.inventoryItemId && ['RESERVED', 'AVAILABLE'].includes(rcComp.status)) {
                     const invItem = (db.inventory || []).find(i => i.id === rcComp.inventoryItemId);
                     if (invItem) {
-                        invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - rcComp.quantity);
+                        // Release is applied once by reconcileInventory after the action.
                         invItem.lastUpdated = new Date().toISOString();
                     }
                 }
