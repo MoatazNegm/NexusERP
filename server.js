@@ -3936,6 +3936,12 @@ const updateInCollection = (col) => (req, res) => {
         return res.status(400).json({ error: 'Invalid orderDate.' });
     }
 
+    if (col === 'orders' && req.body.items !== undefined && !(updated.blanketOrder || updated.contractId || updated.blanketContractId)) {
+        // R23 (C18): a normal PO takes whole quantities only; blanket orders and their call-offs may carry fractions.
+        const badQ = (updated.items || []).map(i => Number(i.quantity)).find(q => Number.isFinite(q) && Math.abs(q - Math.round(q)) > 1e-9);
+        if (badQ !== undefined) return res.status(400).json({ error: `Rejected: fraction ${badQ} is not allowed on a normal order (whole units only).` });
+    }
+
     if (col === 'users' && !isAdminUser(req)) {
         // Non-admins may only edit their own record and may never change roles (live and sandbox alike).
         const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
@@ -4525,6 +4531,10 @@ app.put('/api/v1/orders/:id/items/:itemId', (req, res) => {
     if (itemIdx === -1) return res.status(404).json({ error: "Order item not found" });
 
     const oldItem = order.items[itemIdx];
+    if (req.body.quantity !== undefined && !(order.blanketOrder || order.contractId || order.blanketContractId)) {
+        const q_ = Number(req.body.quantity);
+        if (Number.isFinite(q_) && Math.abs(q_ - Math.round(q_)) > 1e-9) return res.status(400).json({ error: `Rejected: fraction ${q_} is not allowed on a normal order (whole units only).` });
+    }
     order.items[itemIdx] = { ...oldItem, ...req.body };
     order.logs = order.logs || [];
     order.logs.push(createAuditLog(`Line item updated: ${order.items[itemIdx].description || oldItem.description}`, order.status, user));
@@ -7116,7 +7126,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     );
                     
                     if (originalItem) {
-                        const originalTotal = (originalItem.quantity || 1) * (originalItem.pricePerUnit || 0);
+                        const originalTotal = (settlingItem.quantity || 1) * (originalItem.pricePerUnit || 0); // blanket price x the quantity this call-off drew
                         const settlingTotal = (settlingItem.quantity || 1) * (settlingItem.pricePerUnit || 0);
                         const diff = settlingTotal - originalTotal;
                         totalDifference += diff;
@@ -7165,8 +7175,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                     
                     // Mark both orders as settled
-                    order.status = OrderStatus.FULFILLED;
-                    settlingOrder.status = OrderStatus.FULFILLED;
+                    settlingOrder.status = OrderStatus.FULFILLED; // the blanket contract stays open for further call-offs
                     
                 } else {
                     throw new Error(`Customer ${order.customerName} not found for wallet credit`);
