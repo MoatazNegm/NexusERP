@@ -242,6 +242,13 @@ const limitedUpload = (storage) => {
     }) };
 };
 
+// R25 (CX18): the stored path of an upload is 'uploads/<subdir>/<file>' (served by /uploads) even when UPLOADS_PATH is outside the app folder;
+// path.relative(__dirname, ...) gave '../data/uploads/...' there and the links in the screens opened nothing.
+const storedUploadPath = (absPath) => {
+    const rel = path.relative(UPLOADS_BASE, absPath).replace(/\\/g, '/');
+    return rel.startsWith('..') ? path.relative(__dirname, absPath).replace(/\\/g, '/') : 'uploads/' + rel;
+};
+
 const podStorage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, resolveUploadDir(req, 'pod'));
@@ -8525,7 +8532,7 @@ app.post('/api/v1/seed-users', (req, res) => {
 app.post('/api/upload-pod', uploadPod.single('podFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        const relativePath = storedUploadPath(req.file.path);
         if (req.sandboxOwner) {
             recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
         }
@@ -8539,7 +8546,7 @@ app.post('/api/upload-pod', uploadPod.single('podFile'), (req, res) => {
 app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        const relativePath = storedUploadPath(req.file.path);
         if (req.sandboxOwner) {
             recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
         }
@@ -8553,7 +8560,7 @@ app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, re
 app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        const relativePath = storedUploadPath(req.file.path);
         if (req.sandboxOwner) {
             recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
         }
@@ -8567,7 +8574,7 @@ app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) 
 app.post('/api/upload-cost-sheet', uploadCostSheet.single('costSheetFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        const relativePath = storedUploadPath(req.file.path);
         if (req.sandboxOwner) {
             recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
         }
@@ -8581,7 +8588,7 @@ app.post('/api/upload-cost-sheet', uploadCostSheet.single('costSheetFile'), (req
 app.post('/api/upload-supplier-receipt', uploadSupplierReceipt.single('receiptFile'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = path.relative(__dirname, req.file.path).replace(/\\/g, '/');
+        const relativePath = storedUploadPath(req.file.path);
         if (req.sandboxOwner) {
             recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
         }
