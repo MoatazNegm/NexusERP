@@ -643,7 +643,18 @@ const extractCostSheetMetrics = (base64Data, projectName) => {
     }
 };
 
-const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1, isBlanketOrder = false, isStock = false) => {
+// Margin release memory: a management release holds only while revenue, cost, rate and threshold stay as they were.
+const marginReleaseSig = (items, minMargin, conversionRate) => {
+    let rev = 0, cost = 0;
+    (items || []).forEach(it => {
+        rev += ((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0));
+        (it.components || []).forEach(c => { cost += ((c.quantity || 0) * (c.unitCost || 0)); });
+    });
+    const rate = (Number.isFinite(Number(conversionRate)) && Number(conversionRate) > 0) ? Number(conversionRate) : 1;
+    return `${rev.toFixed(2)}|${cost.toFixed(2)}|${rate}|${Number(minMargin)}`;
+};
+
+const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 1, isBlanketOrder = false, isStock = false, releasedSig = null) => {
     let totalRevenue = 0;
     let totalCost = 0;
     let hasComponents = false;
@@ -708,7 +719,8 @@ const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 
     const markupPct = totalCostInOrderCurrency > 0 ? (marginAmt / totalCostInOrderCurrency) * 100 : (totalRevenueLE > 0 ? 100 : 0);
 
     // Priority 1: Margin Protection (only when costs have been identified, exempting blanket orders)
-    if (hasComponents && isMarginBreach(totalCostInOrderCurrency, markupPct, minMargin, isBlanketOrder)) return OrderStatus.NEGATIVE_MARGIN;
+    const releasedHold = Boolean(releasedSig) && releasedSig === marginReleaseSig(items, minMargin, conversionRate);
+    if (hasComponents && !releasedHold && isMarginBreach(totalCostInOrderCurrency, markupPct, minMargin, isBlanketOrder)) return OrderStatus.NEGATIVE_MARGIN;
 
     // Priority 2: Technical Workflow Transition
     if ((hasActiveTechReview || anyAccepted) && currentStatus === OrderStatus.LOGGED) {
@@ -770,6 +782,7 @@ const canIssuePoForOrder = (order, minMargin) => {
     const totalRevenueLE = totalRevenue * safeRate;
 
     const markupPct = totalCostInOrderCurrency > 0 ? ((totalRevenueLE - totalCostInOrderCurrency) / totalCostInOrderCurrency) * 100 : (totalRevenueLE > 0 ? 100 : 0);
+    if (order.marginReleasedSig && order.marginReleasedSig === marginReleaseSig(order.items, minMargin, order.conversionRate)) return true;
     return markupPct >= minMargin;
 };
 
@@ -2242,7 +2255,7 @@ const reconcileOrdersMarginOnThresholdChange = (db, oldMinMargin, newMinMargin, 
 
         const isBlanket = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
         const isStock = isStockOrder(order);
-        nextStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate, isBlanket, isStock);
+        nextStatus = evaluateMarginStatus(order.items, newMinMargin, oldStatus || OrderStatus.LOGGED, order.conversionRate, isBlanket, isStock, order.marginReleasedSig);
 
         if (nextStatus !== oldStatus) {
             order.status = nextStatus;
@@ -2638,7 +2651,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
         let nextStatus = order.status || OrderStatus.LOGGED;
         const isBlanket = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
         const isStock = isStockOrder(order);
-        nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate, isBlanket, isStock);
+        nextStatus = evaluateMarginStatus(order.items, minMargin, order.status || OrderStatus.LOGGED, order.conversionRate, isBlanket, isStock, order.marginReleasedSig);
 
         if (nextStatus !== order.status) {
             const old = order.status || 'NEW';
@@ -6524,6 +6537,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             case 'release-margin':
                 if (order.status !== OrderStatus.NEGATIVE_MARGIN) throw new Error("Order does not have a margin block");
                 order.status = OrderStatus.WAITING_SUPPLIERS; // Return to procurement flow
+                {
+                    const dbS = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
+                    let mm = dbS.minimumMarginPct || 15;
+                    const cu = db.customers.find(c => c.name === order.customerName);
+                    if (cu && cu.minimumMarginPct !== undefined && cu.minimumMarginPct !== null) mm = cu.minimumMarginPct;
+                    order.marginReleasedSig = marginReleaseSig(order.items, mm, order.conversionRate); // release holds until price, cost, rate or threshold changes
+                }
                 order.logs.push(createAuditLog(`Margin block manually bypassed: ${payload?.reason || 'Management overrides'}`, order.status, user));
                 break;
 
