@@ -4872,7 +4872,10 @@ app.get('/api/v1/reports/orders', (req, res) => {
             net += r2c((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0));
             (it.components || []).forEach(c => { cost += (Number(c.unitCost) || 0) * (Number(c.quantity) || Number(c.receivedQty) || Number(c.consumedQty) || (c.source === 'CONSUMED' ? (Number(getItemEffectiveQty(it)) || 0) : 0)); });
         });
-        o.totalPrice = r2c(net);
+        // CX11 (R22): revenue of a foreign-currency order is converted to L.E. at the order's own rate; costs are L.E. already.
+        const fxRate = (o.currency && o.currency !== 'L.E.' && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
+        o.totalPriceOrderCurrency = r2c(net);
+        o.totalPrice = r2c(net * fxRate);
         o.totalRealCost = r2c(cost);
     });
     const fulfilledOrders = enrichedOrders.filter(o => o.status === OrderStatus.FULFILLED);
