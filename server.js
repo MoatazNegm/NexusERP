@@ -6414,7 +6414,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             comp.supplierId = payload.supplierId;
                             comp.supplierName = payload.supplierName;
                             comp.unitCost = targetComponent.unitCost || 0;
-                            comp.taxPercent = payload.taxPercent || 14;
+                            { const tpIn = (targetComponent.taxPercent !== undefined && targetComponent.taxPercent !== null && targetComponent.taxPercent !== '') ? targetComponent.taxPercent : payload.taxPercent; const tpNum = Number(tpIn); comp.taxPercent = (tpIn === undefined || tpIn === null || tpIn === '' || !Number.isFinite(tpNum)) ? 14 : tpNum; } // CX13: a typed 0 percent stays 0
                             comp.leadTimeDays = payload.leadTimeDays;
                             comp.statusUpdatedAt = new Date().toISOString();
                             updatedCount++;
