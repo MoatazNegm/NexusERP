@@ -7019,7 +7019,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     if (order.einvoiceRequested && !order.einvoiceFile) {
                         order.status = OrderStatus.DELIVERED;
                     } else if (fullyPaid) {
-                        order.status = OrderStatus.FULFILLED;
+                        // same rule as the payment path: FULFILLED needs the Gov. e-invoice, otherwise WAITING_GOVE
+                        const hasGovEInv = Boolean(order.einvoiceFile) || (order.logs || []).some(log => log.message && log.message.includes('Gov. E-Invoice Attached'));
+                        order.status = hasGovEInv ? OrderStatus.FULFILLED : OrderStatus.WAITING_GOVE;
                     } else {
                         // All delivered but not paid -> move to DELIVERED status
                         order.status = OrderStatus.DELIVERED;
