@@ -6535,6 +6535,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
 
             case 'release-margin':
+                if (!isAdminUser(req) && !(req.roles || []).includes('management')) throw new Error("Only management can release a margin block");
                 if (order.status !== OrderStatus.NEGATIVE_MARGIN) throw new Error("Order does not have a margin block");
                 order.status = OrderStatus.WAITING_SUPPLIERS; // Return to procurement flow
                 {
