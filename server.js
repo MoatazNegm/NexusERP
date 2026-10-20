@@ -7216,7 +7216,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 // Financial Request for a blanket contract: logs the request on the
                 // blanket order and (optionally) on the linked settling order so the
                 // finance team has a full audit trail. Does not change order status.
-                if (!order.blanketOrder) throw new Error("Only blanket contracts can issue a financial request via this action");
+                if (!order.blanketOrder) throw new Error("Rejected: financial requests work on blanket contracts only");
                 const memo = (payload && payload.memo) ? String(payload.memo).trim() : '';
                 const requestedAmount = (payload && payload.amount) ? Number(payload.amount) : null;
                 const financeReqRef = `FINREQ-${order.internalOrderNumber || order.id}-${Date.now().toString().slice(-6)}`;
