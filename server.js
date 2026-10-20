@@ -7500,6 +7500,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
 app.get('/api/v1/backup', (req, res) => {
     const db = getDb(req);
+    // CX10: a backup must always restore; add the collections the restore requires when the database has none yet.
+    for (const col of ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'settings', 'modules']) {
+        if (!db[col]) db[col] = [];
+    }
     if (!isSandbox(req)) {
         // In Live ERP: Bundle all sandboxes so JSON export captures them
         const sandboxes = {};
