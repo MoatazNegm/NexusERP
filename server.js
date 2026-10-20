@@ -130,6 +130,11 @@ const resolveDocumentDiskPath = (filePath) => {
     if (!filePath || typeof filePath !== 'string') return null;
     const directPath = path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
     if (fs.existsSync(directPath)) return directPath;
+    // Uploads live under UPLOADS_PATH when it is set (e.g. /data/uploads): a stored 'uploads/...' path is relative to its parent.
+    if (!path.isAbsolute(filePath) && /^uploads[\\/]/.test(filePath)) {
+        const upl = path.join(path.dirname(UPLOADS_BASE), filePath);
+        if (fs.existsSync(upl)) return upl;
+    }
 
     // COW fallback: if path references a sandbox uploads location that hasn't been created/amended,
     // fall back to the live baseline document
@@ -138,6 +143,7 @@ const resolveDocumentDiskPath = (filePath) => {
         const baseline = norm.replace(/uploads\/sandbox\/[^/]+\//, 'uploads/');
         const baselineDirect = path.isAbsolute(baseline) ? baseline : path.join(__dirname, baseline);
         if (fs.existsSync(baselineDirect)) return baselineDirect;
+        if (!path.isAbsolute(baseline)) { const b2 = path.join(path.dirname(UPLOADS_BASE), baseline); if (fs.existsSync(b2)) return b2; }
     }
     return null;
 };
@@ -5842,6 +5848,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (ucsItemIdx === -1) throw new Error("Item not found");
                 const ucsItem = order.items[ucsItemIdx];
                 const replaceWrongData = Boolean(payload.replaceWrongData);
+                if (payload.costSheetFile) {
+                    // CX06: only spreadsheet/document files are accepted; an empty or executable file is rejected.
+                    const ucsName = String(payload.costSheetFileName || '').toLowerCase();
+                    if (ucsName && !/\.(xlsx|xls|xlsm|csv|ods|pdf|docx?|png|jpe?g)$/.test(ucsName)) throw new Error(`Rejected: file type not allowed (${payload.costSheetFileName}).`);
+                    if (typeof payload.costSheetFile === 'string' && payload.costSheetFile.startsWith('data:') && (payload.costSheetFile.split(';base64,').pop() || '').length === 0) throw new Error('Rejected: the cost sheet file is empty.');
+                }
 
                 if (payload.costSheetFile && typeof payload.costSheetFile === 'string' && payload.costSheetFile.startsWith('data:')) {
                     payload.costSheetFile = saveBase64CostSheetToFile(payload.costSheetFile, req);
@@ -5935,7 +5947,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const dcsItem = order.items[dcsItemIdx];
 
                 if (!dcsItem.costSheets || dcsItem.costSheets.length <= 1) {
-                    throw new Error("Cannot delete the only cost sheet record — at least one must remain.");
+                    throw new Error("Cannot delete the only cost sheet record - at least one must remain.");
                 }
 
                 const recIdx = dcsItem.costSheets.findIndex(r => r.id === payload.recordId);
@@ -5998,7 +6010,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                 // Stock internal orders are ALWAYS components for warehouse stock, never customer trading products
                 const isTradingItem = !isStockOrder(order) && item.productionType === 'TRADING' && compToReceive.status !== 'ORDERED_FOR_STOCK' && !compToReceive.forStock;
-                if (!isTradingItem) {
+                // CX06: an outsourced service (e.g. a manpower month) is received per period; it is never warehouse stock.
+                const isServiceReceipt = !isStockOrder(order) && item.productionType === 'OUTSOURCING';
+                if (isServiceReceipt) {
+                    // no inventory movement for a service
+                } else if (!isTradingItem) {
                     updateInventoryItem(db, compToReceive, 'RECEIVE', order, qtyToProcess);
                 } else {
                     if (compToReceive.inventoryItemId) {
@@ -6014,7 +6030,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 // CX03: goods ordered for stock go to the warehouse (inventory) only; they never count as the customer's hub quantity.
                 const forStockComp = !isStockOrder(order) && item.productionType === 'TRADING' && (compToReceive.status === 'ORDERED_FOR_STOCK' || compToReceive.forStock);
                 // Special handling for external customer trading items - move directly to hub
-                if (forStockComp) {
+                if (isServiceReceipt) {
+                    // the value of a received period is fixed at the unit cost valid when it was received (a later cost sheet changes only the open periods)
+                    compToReceive.receivedValueNet = Math.round(((compToReceive.receivedValueNet || 0) + qtyToProcess * (Number(compToReceive.unitCost) || 0)) * 100) / 100;
+                    compToReceive.statusUpdatedAt = new Date().toISOString();
+                    order.logs.push(createAuditLog(`Service Receipt: ${qtyToProcess} ${compToReceive.unit || 'period'} of ${compToReceive.description} received (Total received: ${compToReceive.receivedQty}/${totalOrdered}); not stocked in the warehouse.`, order.status, user));
+                } else if (forStockComp) {
                     order.logs.push(createAuditLog(`Stock Component Receipt: ${qtyToProcess} ${compToReceive.unit || 'pcs'} of ${compToReceive.description} received into Warehouse Stock (ordered for stock)`, order.status, user));
                 } else if (!isStockOrder(order) && item.productionType === 'TRADING') {
                     // For trading items, automatically move received quantity to hub
@@ -9403,7 +9424,7 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
                         const ledgerQty = (comp.quantity || 0) + (comp.allocatedQty || 0);
                         const totalCost = ledgerQty * grossUnitCost;
                         const receivedQty = (comp.receivedQty || 0) + (comp.releasedToStockQty || 0);
-                        const deliveredValue = receivedQty * grossUnitCost;
+                        const deliveredValue = (comp.receivedValueNet !== undefined && comp.receivedValueNet !== null) ? comp.receivedValueNet * ledgerTaxMul : receivedQty * grossUnitCost;
                         const pendingQty = Math.max(0, ledgerQty - receivedQty);
                         const pendingValue = pendingQty * grossUnitCost;
 
