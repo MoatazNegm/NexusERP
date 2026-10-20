@@ -4895,6 +4895,18 @@ app.get('/api/v1/reports/orders', (req, res) => {
     });
 });
 
+// CX14: a tax settlement entry needs a positive numeric amount and the finance role (management alone is refused).
+app.post('/api/v1/ledger', (req, res, next) => {
+    const body = req.body || {};
+    if (String(body.category || '') !== 'Tax Settlement') return next();
+    const amt = Number(body.amount);
+    if (body.amount === undefined || body.amount === null || body.amount === '' || !Number.isFinite(amt)) return res.status(400).json({ error: 'Refused: Amount must be a number' });
+    if (!(amt > 0)) return res.status(400).json({ error: 'Refused: Amount must be greater than zero' });
+    const roles = Array.isArray(req.roles) ? req.roles : [];
+    if (roles.length && !roles.includes('finance') && !roles.includes('admin')) return res.status(403).json({ error: 'Refused: tax settlements are finance' });
+    return next();
+});
+
 const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules', 'ledger', 'contracts'];
 COLLECTIONS.forEach(col => {
     app.get(`/api/v1/${col}`, getCollection(col));

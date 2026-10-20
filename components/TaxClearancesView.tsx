@@ -173,11 +173,13 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
         });
       });
 
+      // CX14 (R22 C23): only revenue is in the order currency; the supplier cost and its input VAT are already L.E.
+      // The output VAT is therefore converted to L.E. at the order rate, the input VAT is never multiplied.
       const rate = Number(o.conversionRate) || 1;
-      inputTax = inputTax * rate;
       const grossRevenue = netRevenue + outputTax;
       const whtAmount = o.appliesWithholdingTax ? grossRevenue * 0.01 : 0;
       const targetRevenue = grossRevenue - whtAmount;
+      outputTax = outputTax * rate;
       const netTaxObligation = Math.max(0, outputTax - inputTax);
 
       const isInvoiced = [
