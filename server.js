@@ -388,7 +388,7 @@ const getCostSheetWorkbook = (input) => {
         if (typeof input === 'string') {
             const diskPath = resolveDocumentDiskPath(input);
             if (diskPath && fs.existsSync(diskPath)) {
-                return XLSX.readFile(diskPath);
+                return XLSX.read(fs.readFileSync(diskPath), { type: "buffer" });
             }
         }
         const cleanBase64 = input.includes(',') ? input.split(',')[1] : input;
