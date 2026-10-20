@@ -4877,6 +4877,8 @@ app.get('/api/v1/reports/orders', (req, res) => {
         o.totalPriceOrderCurrency = r2c(net);
         o.totalPrice = r2c(net * fxRate);
         o.totalRealCost = r2c(cost);
+        // CX12: a cancelled (rejected) order carries no revenue and no cost in the report rows.
+        if (o.status === OrderStatus.REJECTED) { o.totalPrice = 0; o.totalPriceOrderCurrency = 0; o.totalRealCost = 0; }
     });
     const fulfilledOrders = enrichedOrders.filter(o => o.status === OrderStatus.FULFILLED);
     const totalRevenue = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0));
