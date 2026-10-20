@@ -7150,6 +7150,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         ledgerPush(db, { type: 'TRANSFER', amount: Math.abs(walletAdjustment), description: `Blanket settlement ${settlingOrder.internalOrderNumber}: ${walletAdjustment > 0 ? 'credit' : 'debit'} between blanket PO and project wallet`, category: 'Account Transfer', fromAccount: walletAdjustment > 0 ? blanketAcct : projAcct, toAccount: walletAdjustment > 0 ? projAcct : blanketAcct, customerName: order.customerName, orderId: order.id }, user);
                     }
 
+                    order.logs.push(createAuditLog(`Blanket order settlement finalized. Customer ${customer.name} wallet: ${customer.walletBalance.toLocaleString()} ${order.currency}`, order.status, user));
                     if (walletAdjustment > 0) {
                         // Order was cheaper - credit customer wallet
                         order.logs.push(createAuditLog(`Blanket order settled: Settling order ${settlingOrder.internalOrderNumber} was ${walletAdjustment.toLocaleString()} ${order.currency} less than original. Credited to customer wallet for project "${projectKey}" (new balance: ${customer.walletBalance.toLocaleString()} ${order.currency}).`, order.status, user));
@@ -7167,7 +7168,6 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.status = OrderStatus.FULFILLED;
                     settlingOrder.status = OrderStatus.FULFILLED;
                     
-                    order.logs.push(createAuditLog(`Blanket order settlement finalized. Customer ${customer.name} wallet: ${customer.walletBalance.toLocaleString()} ${order.currency}`, order.status, user));
                 } else {
                     throw new Error(`Customer ${order.customerName} not found for wallet credit`);
                 }
@@ -7223,7 +7223,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const amountText = requestedAmount && Number.isFinite(requestedAmount)
                     ? ` for ${requestedAmount.toLocaleString()} ${order.currency || 'L.E.'}`
                     : '';
-                const auditMessage = `Financial Request logged: ${financeReqRef} for blanket contract ${order.internalOrderNumber}${amountText}${memo ? ` — ${memo}` : ''}. Request is now visible in Finance Operations.`;
+                const auditMessage = `Financial request: ${memo || 'no text'} (${financeReqRef} for blanket contract ${order.internalOrderNumber}${amountText}). Request is now visible in Finance Operations.`;
 
                 if (!order.logs) order.logs = [];
                 order.logs.push(createAuditLog(auditMessage, order.status, user));
