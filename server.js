@@ -843,13 +843,10 @@ const readSecretFile = (envName, defaults = []) => {
   return '';
 };
 const DEFAULT_TURSO_URL = process.env.TURSO_URL || 'libsql://qualitycheck-moataznegm.aws-us-west-2.turso.io';
-// Stored encrypted (same AES cipher as sensitive settings); decrypted when the app runs.
-const DEFAULT_TURSO_TOKEN_ENC = 'ENC:7b199f79ba5138cb3a2a0f25c96e4ff9:09904da1f42393069ad8f0faba483e7cdf4f56ceaf520b863e523b068de3c96cf6d9d44748acb248fe3ad88c268e339ce34151c4ba8cef5d5d85d05bf60099c5d8cf05f245003f495f5f95e02bc65e10b81914320ca6b3f10d5debabbaf47ea47f5319943033a624b9334e8f3dd3482f07ff29f6e1872b5b80cfe78af89fd75347bc429deeff377bde4cd1181af6fe213929ff982a99b486854959f8f0216c4dd38e1b19f12c1d1bd61fb848bb3fbf7290841f5d069172b66c3a8daa438f1cbe865227c0011be974588457e1d0c5213b6afd99fdf1f9d28ca23bde499213f71abdc75b22aff88c4a7883d25e542b7e0e903178070cea1a897643e7d635549849815240464712b4d784d7db5fc9d13ab853594714f424ac66830ad4422883908aa4968d517cef71d6591fd4fad5ace1d634a053468da83f59be38cfb033a8c29b07137fce78106f6cc3e772b2c1fd3dc42e58b360d21e0bb6818c44e3c91a5f76';
-// Order: TURSO_TOKEN env, TURSO_TOKEN_FILE (or /secrets/turso.token, /run/secrets/turso_token), then the encrypted
-// built-in fallback (to be removed once every deployment has a token file).
+// Order: TURSO_TOKEN env, then TURSO_TOKEN_FILE (or /secrets/turso.token, /run/secrets/turso_token). No secret lives in the code;
+// Turso and Dropbox are off by default (local-storage) until a deployment turns them on.
 const getDefaultTursoToken = () => process.env.TURSO_TOKEN
-  || readSecretFile('TURSO_TOKEN_FILE', ['/secrets/turso.token', '/run/secrets/turso_token'])
-  || decryptValue(DEFAULT_TURSO_TOKEN_ENC);
+  || readSecretFile('TURSO_TOKEN_FILE', ['/secrets/turso.token', '/run/secrets/turso_token']);
 
 const pushToTursoAsync = async (data, dbPath) => {
     try {
@@ -859,7 +856,7 @@ const pushToTursoAsync = async (data, dbPath) => {
         
         const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
         const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
-        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
+        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : false;
 
         if (useTurso && rawUrl && authToken) {
             const targetId = isLive ? 'live' : 'sandbox.' + path.basename(dbPath).replace('db.sandbox.', '').replace('.json', '');
@@ -895,7 +892,7 @@ const pullFromTursoOnStartup = async () => {
         
         const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
         const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
-        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
+        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : false;
 
         if (useTurso && rawUrl && authToken) {
             console.log("[Turso] Cloud Sync enabled. Checking latest data from cloud on startup...");
@@ -1226,9 +1223,9 @@ const getLiveAiSettings = () => {
 const DEFAULT_DROPBOX_CONFIG = {
     enabled: true,
     autoUploadExternalSubmissions: true,
-    appKey: process.env.DROPBOX_APP_KEY || 'lw5j90qgwy8sfg6',
-    appSecret: process.env.DROPBOX_APP_SECRET || 'jmc0lnxik1p7wzp',
-    refreshToken: process.env.DROPBOX_REFRESH_TOKEN || '12vnbWIMpGEAAAAAAAAAAdNDWYsRivoujs86a6cibIImzCRGbzxisjNC--98UmnF',
+    appKey: process.env.DROPBOX_APP_KEY || '',
+    appSecret: process.env.DROPBOX_APP_SECRET || '',
+    refreshToken: process.env.DROPBOX_REFRESH_TOKEN || '',
     folderPath: process.env.DROPBOX_FOLDER_PATH || '/NexusERP_Uploads',
     connectedAccount: 'Moataz Allam',
     connectedAt: '2026-10-18T10:00:00.000Z'
@@ -1243,8 +1240,8 @@ const resolveSettings = (db, isSandboxReq = false) => {
     const rawDropbox = dbSettings.dropboxConfig || {};
     const hasCustomCredentials = !!(rawDropbox.refreshToken && String(rawDropbox.refreshToken).trim());
     const effectiveDropbox = {
-        enabled: (rawDropbox.enabled !== undefined && hasCustomCredentials) ? !!rawDropbox.enabled : true,
-        autoUploadExternalSubmissions: rawDropbox.autoUploadExternalSubmissions !== undefined ? !!rawDropbox.autoUploadExternalSubmissions : true,
+        enabled: (rawDropbox.enabled !== undefined && hasCustomCredentials) ? !!rawDropbox.enabled : false,
+        autoUploadExternalSubmissions: rawDropbox.autoUploadExternalSubmissions !== undefined ? !!rawDropbox.autoUploadExternalSubmissions : false,
         appKey: (rawDropbox.appKey && String(rawDropbox.appKey).trim()) || DEFAULT_DROPBOX_CONFIG.appKey,
         appSecret: (rawDropbox.appSecret && String(rawDropbox.appSecret).trim()) || DEFAULT_DROPBOX_CONFIG.appSecret,
         refreshToken: (rawDropbox.refreshToken && String(rawDropbox.refreshToken).trim()) || DEFAULT_DROPBOX_CONFIG.refreshToken,
@@ -1262,7 +1259,7 @@ const resolveSettings = (db, isSandboxReq = false) => {
         thresholdNotifications: {},
         storageBackend: (dbSettings.storageBackend === 'dropbox' || dbSettings.storageBackend === 'local-storage')
             ? dbSettings.storageBackend
-            : (dbSettings.googleDriveConfig?.refreshToken ? 'google-drive' : 'dropbox'),
+            : (dbSettings.googleDriveConfig?.refreshToken ? 'google-drive' : 'local-storage'),
         googleDriveConfig: {
             enabled: true,
             autoUploadExternalSubmissions: true,
@@ -1302,9 +1299,9 @@ const resolveSettings = (db, isSandboxReq = false) => {
         ...dbSettings,
         storageBackend: (dbSettings.storageBackend === 'dropbox' || dbSettings.storageBackend === 'local-storage')
             ? dbSettings.storageBackend
-            : (dbSettings.googleDriveConfig?.refreshToken ? 'google-drive' : 'dropbox'),
+            : (dbSettings.googleDriveConfig?.refreshToken ? 'google-drive' : 'local-storage'),
         dropboxConfig: effectiveDropbox,
-        useTurso: (dbSettings.useTurso !== undefined && dbSettings.tursoUrl) ? !!dbSettings.useTurso : true,
+        useTurso: (dbSettings.useTurso !== undefined && dbSettings.tursoUrl) ? !!dbSettings.useTurso : false,
         tursoUrl: (dbSettings.tursoUrl && String(dbSettings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL,
         tursoAuthToken: (dbSettings.tursoAuthToken && String(dbSettings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken()
     };
@@ -8706,7 +8703,7 @@ app.get('/api/v1/integrations/turso/status', async (req, res) => {
         const settings = resolveSettings(db);
         const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
         const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
-        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : true;
+        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : false;
 
         if (!rawUrl || !authToken) {
             return res.json({ configured: false, connected: false, enabled: useTurso });
