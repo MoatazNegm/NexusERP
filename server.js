@@ -5791,6 +5791,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
                 // Release all received components and trading items in Hub to general warehouse component stock
                 transferReceivedItemsToFreeStock(order, db, `Order Rejection: ${payload?.reason || 'Business decision'}`, user);
+                // CX12: supplier POs of the cancelled order that received nothing are cancelled (supplier commitment drops).
+                order.items.forEach(item => {
+                    (item.components || []).forEach(comp => {
+                        if (comp.source === 'PROCUREMENT' && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_OUTSOURCING_CONTRACT'].includes(comp.status) && !(Number(comp.receivedQty) > 0) && comp.poNumber) {
+                            try { executeComponentPoCancelOrExtension(item, comp, `Order cancelled: ${payload?.reason || 'Business decision'}`, false); } catch (e) { comp.status = 'CANCELLED'; comp.cancelReason = 'Order cancelled'; comp.statusUpdatedAt = new Date().toISOString(); }
+                        }
+                    });
+                });
                 // Release any remaining reserved inventory back to free stock
                 order.items.forEach(item => {
                     (item.components || []).forEach(comp => {
