@@ -926,7 +926,7 @@ class DataService {
   }
 
   async settleBlanketOrder(blanketOrderId: string, settlingOrderId: string) {
-    return this.dispatchAction(blanketOrderId, 'settle-blanket-order', { settlingOrderId });
+    return this.dispatchAction(blanketOrderId, 'close-blanket-order', { settlingOrderId }); // R27: settling = finance closes the contract
   }
 
   async financialRequest(blanketOrderId: string, memo?: string, amount?: number, settlingOrderId?: string) {

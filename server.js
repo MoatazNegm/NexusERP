@@ -7212,90 +7212,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             }
 
             case 'settle-blanket-order': {
-                // Blanket order settlement logic:
-                // Compare the delivered order's total with the matching logged order(s)
-                // If the new order has a different price (lower/higher), settle the difference as wallet credit
-                if (!order.blanketOrder) throw new Error("Only blanket orders can be settled via this action");
-                if (!payload.settlingOrderId) throw new Error("settlingOrderId is required to settle a blanket order");
-                
-                const settlingOrderIndex = db.orders.findIndex(o => o.id === payload.settlingOrderId);
-                if (settlingOrderIndex === -1) throw new Error("Settling order not found");
-                const settlingOrder = db.orders[settlingOrderIndex];
-
-                // Each call-off is settled once and credits its own amount (cumulative over distinct
-                // call-offs). Settling the same call-off again changes nothing (idempotent).
-                order.settledCallOffs = order.settledCallOffs || {};
-                if (Object.prototype.hasOwnProperty.call(order.settledCallOffs, settlingOrder.id)) {
-                    order.logs.push(createAuditLog(`Blanket settlement repeated for ${settlingOrder.internalOrderNumber}: already settled, no wallet change.`, order.status, user));
-                    break;
-                }
-                
-                // Calculate the difference between the two orders per line item
-                let totalDifference = 0;
-                let settlementDetails = [];
-                
-                settlingOrder.items.forEach(settlingItem => {
-                    // Find a matching item by description from the original blanket order
-                    const originalItem = order.items.find(oi => 
-                        String(oi.description || '').trim().toLowerCase() === String(settlingItem.description || '').trim().toLowerCase()
-                    );
-                    
-                    if (originalItem) {
-                        const originalTotal = (settlingItem.quantity || 1) * (originalItem.pricePerUnit || 0); // blanket price x the quantity this call-off drew
-                        const settlingTotal = (settlingItem.quantity || 1) * (settlingItem.pricePerUnit || 0);
-                        const diff = settlingTotal - originalTotal;
-                        totalDifference += diff;
-                        settlementDetails.push({
-                            description: settlingItem.description,
-                            originalPrice: originalItem.pricePerUnit,
-                            settlingPrice: settlingItem.pricePerUnit,
-                            qty: settlingItem.quantity || 1,
-                            diff
-                        });
-                    }
-                });
-                
-                // Apply wallet adjustment to customer
-                const customer = db.customers.find(c => c.name === order.customerName);
-                if (customer) {
-                    if (!customer.walletBalance) customer.walletBalance = 0;
-                    
-                    // walletAdjustment = originalTotal - settlingTotal (-totalDifference)
-                    // If totalDifference < 0 (settling was cheaper): customer has CREDIT (walletAdjustment > 0)
-                    // If totalDifference > 0 (settling was more expensive): customer owes DEBT (walletAdjustment < 0)
-                    // If totalDifference = 0: exact match
-                    const walletAdjustment = -totalDifference;
-                    order.settledCallOffs[settlingOrder.id] = walletAdjustment;
-                    const projectKey = String((order.projectName || settlingOrder.projectName || '').trim()) || '(No Project)';
-                    customer.walletBalances = customer.walletBalances || {};
-                    customer.walletBalances[projectKey] = (customer.walletBalances[projectKey] || 0) + walletAdjustment;
-                    customer.walletBalance = (customer.walletBalance || 0) + walletAdjustment;
-                    if (walletAdjustment !== 0) {
-                        const blanketAcct = acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), projAcct = acctLabel(order.customerName, 'PROJECT', projectKey);
-                        ledgerPush(db, { type: 'TRANSFER', amount: Math.abs(walletAdjustment), description: `Blanket settlement ${settlingOrder.internalOrderNumber}: ${walletAdjustment > 0 ? 'credit' : 'debit'} between blanket PO and project wallet`, category: 'Account Transfer', fromAccount: walletAdjustment > 0 ? blanketAcct : projAcct, toAccount: walletAdjustment > 0 ? projAcct : blanketAcct, customerName: order.customerName, orderId: order.id }, user);
-                    }
-
-                    order.logs.push(createAuditLog(`Blanket order settlement finalized. Customer ${customer.name} wallet: ${customer.walletBalance.toLocaleString()} ${order.currency}`, order.status, user));
-                    if (walletAdjustment > 0) {
-                        // Order was cheaper - credit customer wallet
-                        order.logs.push(createAuditLog(`Blanket order settled: Settling order ${settlingOrder.internalOrderNumber} was ${walletAdjustment.toLocaleString()} ${order.currency} less than original. Credited to customer wallet for project "${projectKey}" (new balance: ${customer.walletBalance.toLocaleString()} ${order.currency}).`, order.status, user));
-                        settlingOrder.logs.push(createAuditLog(`Settlement completed: ${walletAdjustment.toLocaleString()} ${order.currency} wallet credit applied from blanket order ${order.internalOrderNumber}`, settlingOrder.status, user));
-                    } else if (walletAdjustment < 0) {
-                        // Settling order cost more - debit customer wallet (unpaid debt)
-                        const debtAmt = Math.abs(walletAdjustment);
-                        order.logs.push(createAuditLog(`Blanket order settled: Settling order ${settlingOrder.internalOrderNumber} was ${debtAmt.toLocaleString()} ${order.currency} more than original. Debited from customer wallet for project "${projectKey}" as unpaid debt (new balance: ${customer.walletBalance.toLocaleString()} ${order.currency}).`, order.status, user));
-                        settlingOrder.logs.push(createAuditLog(`Settlement completed: ${debtAmt.toLocaleString()} ${order.currency} debt recorded to customer wallet from blanket order ${order.internalOrderNumber}`, settlingOrder.status, user));
-                    } else {
-                        order.logs.push(createAuditLog(`Blanket order settled: Exact match with ${settlingOrder.internalOrderNumber}. No wallet adjustment needed.`, order.status, user));
-                    }
-                    
-                    // Mark both orders as settled
-                    settlingOrder.status = OrderStatus.FULFILLED; // the blanket contract stays open for further call-offs
-                    
-                } else {
-                    throw new Error(`Customer ${order.customerName} not found for wallet credit`);
-                }
-                break;
+                // R27: there is no automatic settlement or credit calculation. Settling a blanket order is the
+                // human decision of a finance user and is done with 'close-blanket-order'.
+                throw new Error("Blanket settlement is a finance decision: use the close action (the paid-minus-delivered difference goes to the customer general wallet)");
             }
             case 'close-blanket-order': {
                 // Finance closes a blanket order that was delivered LESS than the blanket quantity, when the
@@ -7320,20 +7239,20 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 deliveredGross = Math.round(deliveredGross * 100) / 100;
                 const paidAll = [order, ...calls].reduce((t, o) => t + (o.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0), 0);
                 const roundedPaid = Math.round(paidAll * 100) / 100;
-                if (roundedPaid + 0.005 < deliveredGross) throw new Error(`Payments ${roundedPaid.toFixed(2)} do not cover the delivered gross value ${deliveredGross.toFixed(2)}.`);
-                const surplus = Math.round((roundedPaid - deliveredGross) * 100) / 100;
+                // R27: closing is a finance decision. Whether the customer paid more or less than the delivered gross value,
+                // the difference (paid - delivered gross) is booked to the customer GENERAL wallet; the order keeps its history.
+                const diff = Math.round((roundedPaid - deliveredGross) * 100) / 100;
                 const cust = db.customers.find(c => c.name === order.customerName);
-                if (surplus > 0 && cust) {
-                    const projectKey = String((order.projectName || '').trim()) || '(No Project)';
+                if (diff !== 0 && cust) {
                     cust.walletBalances = cust.walletBalances || {};
-                    cust.walletBalances[projectKey] = (cust.walletBalances[projectKey] || 0) + surplus;
-                    cust.walletBalance = (cust.walletBalance || 0) + surplus;
-                    ledgerPush(db, { type: 'TRANSFER', amount: surplus, description: `Blanket close ${order.internalOrderNumber}: payment surplus to project wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'PROJECT', projectKey), customerName: order.customerName, orderId: order.id }, user);
+                    cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + diff) * 100) / 100;
+                    cust.walletBalance = (cust.walletBalance || 0) + diff;
+                    ledgerPush(db, { type: 'TRANSFER', amount: Math.abs(diff), description: `Blanket close ${order.internalOrderNumber}: ${diff > 0 ? 'overpayment credited to' : 'underpayment debited from'} the customer general wallet`, category: 'Account Transfer', fromAccount: diff > 0 ? acctLabel(order.customerName, 'ORDER', order.internalOrderNumber) : acctLabel(order.customerName, 'GENERAL'), toAccount: diff > 0 ? acctLabel(order.customerName, 'GENERAL') : acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id }, user);
                 }
                 order.contractClosed = true;
                 order.closedDeliveredGross = deliveredGross;
                 order.status = OrderStatus.FULFILLED;
-                order.logs.push(createAuditLog(`Blanket order closed by finance: delivered gross ${deliveredGross.toFixed(2)}, payments ${roundedPaid.toFixed(2)}${surplus > 0 ? `, surplus ${surplus.toFixed(2)} credited to customer` : ''}.`, order.status, user));
+                order.logs.push(createAuditLog(`Blanket order closed by finance: delivered gross ${deliveredGross.toFixed(2)}, payments ${roundedPaid.toFixed(2)}${diff !== 0 ? `, difference ${diff.toFixed(2)} booked to the customer general wallet` : ''}.`, order.status, user));
                 break;
             }
             case 'financial-request': {
