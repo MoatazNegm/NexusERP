@@ -4912,7 +4912,7 @@ app.get('/api/v1/reports/orders', (req, res) => {
     });
     // R29: a blanket contract counts as current in the report; its revenue and cost follow PAID money (not fulfilment).
     // Revenue = customer payments received on the contract; cost = supplier payments for the contract and its call-offs
-    // (plus ledger expenses booked to them). The call-offs carry no revenue/cost of their own in the totals.
+    // (plus ledger expenses booked to them). The call-off rows keep their line values but are left out of the totals (their money is in the contract).
     const isBlanketRoot = (o) => Boolean(o.blanketOrder) && !o.blanketContractId;
     const blanketIdsOf = (root) => (db.orders || []).filter(x => x.id === root.id || (x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber))).map(x => x.id);
     enrichedOrders.forEach(o => {
@@ -4929,9 +4929,9 @@ app.get('/api/v1/reports/orders', (req, res) => {
             // plus company payments from other general accounts booked to the contract (salaries, transportation, ...)
             (db.ledger || []).forEach(l => { if ((l.type === 'COST' || l.type === 'EXPENSE') && l.category !== 'Supplier Payment' && ids.has(l.orderId)) cost += Number(l.amount) || 0; });
             o.totalPrice = r2c(rev); o.totalPriceOrderCurrency = r2c(rev); o.totalRealCost = r2c(cost); o.reportBasis = 'PAID';
-        } else if (o.blanketContractId) { o.totalPrice = 0; o.totalPriceOrderCurrency = 0; o.totalRealCost = 0; o.reportBasis = 'BLANKET_CALL_OFF'; }
+        } else if (o.blanketContractId) { o.reportBasis = 'BLANKET_CALL_OFF'; }
     });
-    const fulfilledOrders = enrichedOrders.filter(o => o.status === OrderStatus.FULFILLED || o.reportBasis === 'PAID');
+    const fulfilledOrders = enrichedOrders.filter(o => (o.status === OrderStatus.FULFILLED && o.reportBasis !== 'BLANKET_CALL_OFF') || o.reportBasis === 'PAID');
     const totalRevenue = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0));
     const totalRealCost = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0));
     const count = enrichedOrders.length;
