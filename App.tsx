@@ -271,6 +271,9 @@ const App: React.FC = () => {
     const blanketRevenueByCurrency: Record<string, number> = {};
     let totalCost = 0;
     let blanketCost = 0;
+    // CX17: the margin compares revenue and cost in L.E.: revenue is converted with the order rate, component costs are L.E. already.
+    let marginRevenue = 0;
+    let blanketMarginRevenue = 0;
     const open = orders.filter(o => ![OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status));
 
     open.forEach(o => {
@@ -280,12 +283,14 @@ const App: React.FC = () => {
       if (o.blanketOrder) {
         o.items.forEach(it => {
           blanketRevenueByCurrency[orderCurrency] = (blanketRevenueByCurrency[orderCurrency] || 0) + (getItemEffectiveQty(it) * it.pricePerUnit);
-          it.components?.forEach(c => blanketCost += ((c.quantity || 0) * (c.unitCost || 0)) * convRate);
+          blanketMarginRevenue += getItemEffectiveQty(it) * it.pricePerUnit * convRate;
+          it.components?.forEach(c => blanketCost += ((c.quantity || 0) * (c.unitCost || 0)));
         });
       } else {
         o.items.forEach(it => {
           revenueByCurrency[orderCurrency] = (revenueByCurrency[orderCurrency] || 0) + (getItemEffectiveQty(it) * it.pricePerUnit);
-          it.components?.forEach(c => totalCost += ((c.quantity || 0) * (c.unitCost || 0)) * convRate);
+          marginRevenue += getItemEffectiveQty(it) * it.pricePerUnit * convRate;
+          it.components?.forEach(c => totalCost += ((c.quantity || 0) * (c.unitCost || 0)));
         });
       }
     });
@@ -312,8 +317,8 @@ const App: React.FC = () => {
       blanketRevenueByCurrency,
       totalCost,
       blanketCost,
-      blanketMarginPct: blanketTotalRevenue > 0 ? ((blanketTotalRevenue - blanketCost) / blanketTotalRevenue) * 100 : 0,
-      marginPct: totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : 0,
+      blanketMarginPct: blanketMarginRevenue > 0 ? ((blanketMarginRevenue - blanketCost) / blanketMarginRevenue) * 100 : 0,
+      marginPct: marginRevenue > 0 ? ((marginRevenue - totalCost) / marginRevenue) * 100 : 0,
       statusCounts,
       negativeMarginOrders,
       riskCount: orders.filter(o => (o.status === OrderStatus.NEGATIVE_MARGIN && !o.blanketOrder && !o.contractId && !o.blanketContractId) || o.status === OrderStatus.IN_HOLD).length
@@ -472,10 +477,13 @@ const App: React.FC = () => {
       (order.items || []).forEach(item => {
         orderValue += (item.quantity || 0) * (item.pricePerUnit || 0);
         (item.components || []).forEach(comp => {
-          const supplierName = comp.supplierId || 'Unassigned Supplier';
+          // CX17: only components given to a supplier count; the supplier is shown by name and the spend is the gross committed (net + VAT).
+          const supplierName = comp.supplierName || comp.supplierId;
+          if (!supplierName || comp.status === 'CANCELLED') return;
           const prevSupplier = supplierSummaryMap.get(supplierName) || { components: 0, spendByCurrency: {} as Record<string, number> };
           const prevSpend = prevSupplier.spendByCurrency[orderCurrency] || 0;
-          prevSupplier.spendByCurrency[orderCurrency] = prevSpend + ((comp.quantity || 0) * (comp.unitCost || 0));
+          const compNet = (comp.quantity || 0) * (comp.unitCost || 0);
+          prevSupplier.spendByCurrency[orderCurrency] = prevSpend + compNet + compNet * ((comp.taxPercent ?? 14) / 100);
           prevSupplier.components += 1;
           supplierSummaryMap.set(supplierName, prevSupplier);
         });
