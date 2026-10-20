@@ -4247,6 +4247,12 @@ app.post('/api/v1/customers/merge', (req, res) => {
         secondaryIds.forEach(id => {
             const idx = db.customers.findIndex(c => c.id === id);
             if (idx !== -1) {
+                // CX02: the secondary's wallet (general advance, project and order accounts) moves to the primary; it must not vanish with the record.
+                const sec = db.customers[idx];
+                primary.walletBalances = primary.walletBalances || {};
+                Object.entries(sec.walletBalances || {}).forEach(([k, v]) => { primary.walletBalances[k] = Math.round(((primary.walletBalances[k] || 0) + (Number(v) || 0)) * 100) / 100; });
+                primary.walletBalance = Math.round(((Number(primary.walletBalance) || 0) + (Number(sec.walletBalance) || 0)) * 100) / 100;
+                (sec.logs || []).forEach(l => { primary.logs = primary.logs || []; primary.logs.push(l); });
                 secondaryNames.push(db.customers[idx].name);
                 deletedIds.push(id);
                 db.customers.splice(idx, 1);
@@ -4617,6 +4623,9 @@ app.post('/api/v1/suppliers/:id/parts', (req, res) => {
     }
 
     supplier.priceList = supplier.priceList || [];
+    // CX02: a part number exists once per supplier.
+    const pnNew = String(req.body.partNumber || '').trim().toLowerCase();
+    if (pnNew && supplier.priceList.some(p => String(p.partNumber || '').trim().toLowerCase() === pnNew)) return res.status(400).json({ error: `Part ${req.body.partNumber} already exists for this supplier` });
     const part = {
         id: req.body.id || `part_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         partNumber: String(req.body.partNumber || '').trim(),
@@ -6279,6 +6288,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!payload.components || !Array.isArray(payload.components)) throw new Error("components array required");
                 // rfpSupplierIds can be empty array (meaning show all suppliers) or have IDs
                 const rfpSupplierIds = Array.isArray(payload.rfpSupplierIds) ? payload.rfpSupplierIds : [];
+                // CX02: no RFP goes to a blacklisted supplier (blocked).
+                const blk = (db.suppliers || []).filter(s => rfpSupplierIds.includes(s.id) && s.isBlacklisted);
+                if (blk.length) throw new Error(`Cannot send RFP: supplier ${blk.map(s => s.name).join(', ')} is blacklisted`);
 
                 let updatedCount = 0;
                 order.items.forEach(item => {
