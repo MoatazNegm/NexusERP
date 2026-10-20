@@ -7082,7 +7082,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     // Stay in DELIVERED until paid
                 }
 
-                order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}${fullyDel && !fullyPaid_ ? ' (Awaiting full payment to FULFILL)' : ''}`, order.status, user));
+                if (order.status !== OrderStatus.FULFILLED) order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}${fullyDel && !fullyPaid_ ? ' (Awaiting full payment to FULFILL)' : ''}`, order.status, user));
                 break;
             }
 
