@@ -1161,6 +1161,32 @@ const isAdminUser = (req) => {
   return !!user && (user.roles || []).includes('admin');
 };
 
+
+// CX09: narrow role gate for dispatch actions. Enforced only when the caller's roles are known
+// (sandbox / API key); admin and management are always allowed.
+const ACTION_ROLE_GATES = {
+  'toggle-acceptance': { roles: ['planning'], msg: 'technical review is for tech1/planner1' },
+  'finalize-study': { roles: ['planning'], msg: 'technical review is for tech1/planner1' },
+  'send-rfp-batch': { roles: ['procurement', 'sourcing'], msg: 'procurement role required' },
+  'award-tender-batch': { roles: ['procurement', 'sourcing'], msg: 'procurement role required' },
+  'issue-po-batch': { roles: ['procurement', 'sourcing'], msg: 'procurement role required' },
+  'receive-component': { roles: ['inventory', 'warehouse', 'sourcing', 'logistics'], msg: 'reception is for inv1' },
+  'receive-hub-partial': { roles: ['inventory', 'warehouse', 'sourcing', 'logistics'], msg: 'reception is for inv1' },
+  'issue-invoice': { roles: ['finance'], msg: 'invoicing is finance' },
+  'record-payment': { roles: ['finance'], msg: 'wrong role: payments are finance' },
+  'approve-dispatch-receipt': { roles: ['finance'], msg: 'wrong role: dispatch receipt approval is finance' },
+  'reject-order': { roles: ['order_management', 'planning', 'sales'], msg: 'no permission to cancel / delete' },
+  'hard-delete-order': { roles: [], msg: 'no permission to cancel / delete' },
+};
+const actionRoleDenied = (req, action) => {
+  const gate = ACTION_ROLE_GATES[action];
+  const roles = req.roles || [];
+  if (!gate || roles.length === 0) return null;
+  if (roles.includes('admin') || roles.includes('management')) return null;
+  if (roles.some(r => gate.roles.includes(r))) return null;
+  return 'refused: ' + gate.msg;
+};
+
 // --- AES-256-CBC CIPHER FOR SENSITIVE SETTINGS ---
 const CIPHER_KEY = crypto.createHash('sha256').update(FACTORY_PASS).digest(); // 32 bytes
 const CIPHER_PREFIX = 'ENC:';
@@ -5447,6 +5473,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (bad !== undefined) throw new Error(`Fractional quantity ${bad} is not allowed on a normal PO (whole units only).`);
             }
         }
+        { const denied = actionRoleDenied(req, action); if (denied) return res.status(403).json({ error: denied }); }
         switch (action) {
             case 'finalize-study':
                 if (order.items.some(it => !it.isAccepted)) throw new Error("All items must be accepted before finalizing study");
@@ -9272,6 +9299,7 @@ app.get('/api/v1/supplierPayments', (req, res) => {
 // POST record a supplier payment with FIFO allocation & General Ledger reflection
 app.post('/api/v1/supplierPayments', (req, res) => {
     try {
+        { const r = req.roles || []; if (r.length && !r.some(x => ['admin','management','finance'].includes(x))) return res.status(403).json({ error: 'refused: wrong role: payments are finance' }); }
         const db = getDb(req);
         const user = req.headers['x-user'] || 'System';
         const { supplierId, amount, memo, date, receiptFile, orderId, poNumber } = req.body;
