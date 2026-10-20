@@ -6794,7 +6794,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (mItem.productionType === 'MANUFACTURING') {
                     const effQ = getItemEffectiveQty(mItem) || targetQty || 0;
                     (mItem.components || []).forEach(comp => {
-                        if (!comp.inventoryItemId || comp.source === 'CONSUMED' || !db.inventory) return;
+                        if (!comp.inventoryItemId || comp.source === 'CONSUMED' || !db.inventory || comp.manualConsumption) return; // CX07: what the factory consumed by hand is final; no proportional top-up
                         const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
                         if (!invItem) return;
                         const wanted = Math.min(comp.quantity || 0, Number(((comp.quantity || 0) * Math.min(1, mItem.manufacturedQty / (effQ || 1))).toFixed(3)));
@@ -6875,6 +6875,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
 
                 cfcComp.consumedQty = cfcAlreadyConsumed + cfcConsumedQty;
+                cfcComp.manualConsumption = true;
                 order.logs.push(createAuditLog(
                     `[Factory] Consumed ${cfcConsumedQty.toFixed(2)} units of ${cfcComp.description}. (${cfcComp.consumedQty.toFixed(2)}/${cfcTotalAllocated} total)`,
                     order.status,
