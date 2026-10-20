@@ -3816,6 +3816,18 @@ const addToCollection = (col) => (req, res) => {
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     const user = req.headers['x-user'] || 'System';
 
+    // CX16: two records created in the same millisecond must never share an id.
+    if (!req.body.id) { let n_ = 0; const base_ = newItem.id; while (db[col].some(x => x.id === newItem.id)) newItem.id = `${base_}_${++n_}`; }
+    // CX16: a customer or supplier name is unique (case and surrounding/inner spaces ignored).
+    if ((col === 'customers' || col === 'suppliers') && typeof req.body.name === 'string') {
+        const normName = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+        const nn = normName(req.body.name);
+        if (!nn) return res.status(400).json({ error: 'Refused: name is required' });
+        if ((db[col] || []).some(x => normName(x.name) === nn)) {
+            return res.status(400).json({ error: `Refused: duplicate name already exists ("${String(req.body.name).trim()}")` });
+        }
+    }
+
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
         return res.status(400).json({ error: 'Invalid orderDate.' });
     }
@@ -5789,6 +5801,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 else throw new Error("Database write failed");
 
             case 'reject-order':
+                // CX16: a rejected order cannot be rejected again.
+                if (order.status === OrderStatus.REJECTED) throw new Error('Refused: order already rejected');
                 const today = new Date().toISOString().split('T')[0];
                 const oldInternal = order.internalOrderNumber || '';
                 const oldCustRef = order.customerReferenceNumber || '';
@@ -6984,6 +6998,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
 
             case 'issue-invoice':
+                // CX16: an invoice is issued once; a repeat is refused and not logged.
+                if (order.invoiceNumber) throw new Error(`Refused: already invoiced (${order.invoiceNumber})`);
                 order.status = OrderStatus.INVOICED;
                 if (!order.invoiceNumber) {
                     const datePart = new Date().toISOString().slice(2, 10).replace(/-/g, '');
@@ -7155,10 +7171,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             case 'attach-einvoice': {
                 if (!payload.einvoiceFile) throw new Error("E-Invoice file is required.");
+                const sameEinv = order.einvoiceFile === payload.einvoiceFile;
                 order.einvoiceFile = payload.einvoiceFile;
 
                 const fullyDel = isOrderFullyDelivered(order);
                 const fullyPaid_ = isOrderFullyPaid(order);
+                // CX16: the same e-invoice reference attached again is stored once and not logged again.
+                if (sameEinv && (order.status === OrderStatus.FULFILLED || !(fullyDel && fullyPaid_))) break;
                 if (fullyDel && fullyPaid_) {
                     order.status = OrderStatus.FULFILLED;
                     order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}. All requirements met - Order FULFILLED.`, order.status, user));
