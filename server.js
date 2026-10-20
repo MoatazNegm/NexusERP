@@ -3292,6 +3292,10 @@ app.use((req, res, next) => {
     if (sandboxOwner && !username && !/\/(login|auth\/)/.test(req.path) && req.path.startsWith('/api/')) {
         return res.status(401).json({ error: 'Authentication required for sandbox requests.' });
     }
+    // CX09: a write with no identity at all (no key, no x-user, no sandbox owner) is refused.
+    if (!username && !sandboxOwner && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method) && req.path.startsWith('/api/v1/') && !/\/(login|change-password)\b|\/auth\//.test(req.path)) {
+        return res.status(401).json({ error: 'Authentication required.' });
+    }
     req.user = username || null;
     req.roles = [];
     req.sandboxDbPath = null;
