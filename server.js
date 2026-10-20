@@ -9326,7 +9326,7 @@ app.post('/api/v1/supplierPayments', (req, res) => {
             order.items.forEach(item => {
                 (item.components || []).forEach(comp => {
                     if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId &&
-                        ['ORDERED', 'ORDERED_FOR_STOCK', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(comp.status)) {
+                        ['ORDERED', 'ORDERED_FOR_STOCK', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(String(comp.status || '').toUpperCase())) {
                         const isTarget = Boolean((orderId && order.id === orderId) || (poNumber && comp.poNumber === poNumber));
                         const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
                         const netCost = (comp.quantity || 0) * (comp.unitCost || 0);
