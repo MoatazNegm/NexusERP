@@ -231,6 +231,17 @@ const mirrorToSandboxIfApplicable = (req, subDir, filePath) => {
     // Under Copy-On-Write (COW), files are directly written to their respective isolated location
 };
 
+// R25 (CX18): uploads larger than 10 MB are refused by the server too (the form checks it in the browser only).
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const limitedUpload = (storage) => {
+    const m = multer({ storage, limits: { fileSize: MAX_UPLOAD_BYTES } });
+    return { single: (field) => (req, res, next) => m.single(field)(req, res, (err) => {
+        if (!err) return next();
+        if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ success: false, error: 'File exceeds the 10 MB limit' });
+        return res.status(400).json({ success: false, error: 'Upload failed: ' + err.message });
+    }) };
+};
+
 const podStorage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, resolveUploadDir(req, 'pod'));
@@ -240,7 +251,7 @@ const podStorage = multer.diskStorage({
         cb(null, 'pod-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
-const uploadPod = multer({ storage: podStorage });
+const uploadPod = limitedUpload(podStorage);
 
 const einvoiceStorage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -251,7 +262,7 @@ const einvoiceStorage = multer.diskStorage({
         cb(null, 'einvoice-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
-const uploadEInvoice = multer({ storage: einvoiceStorage });
+const uploadEInvoice = limitedUpload(einvoiceStorage);
 
 const whtStorage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -262,7 +273,7 @@ const whtStorage = multer.diskStorage({
         cb(null, 'wht-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
-const uploadWht = multer({ storage: whtStorage });
+const uploadWht = limitedUpload(whtStorage);
 
 const costSheetStorage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -321,7 +332,7 @@ const supplierReceiptStorage = multer.diskStorage({
         cb(null, 'supplier-receipt-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
-const uploadSupplierReceipt = multer({ storage: supplierReceiptStorage });
+const uploadSupplierReceipt = limitedUpload(supplierReceiptStorage);
 
 const uploadGoogleDriveFile = multer({ storage: multer.memoryStorage() });
 
