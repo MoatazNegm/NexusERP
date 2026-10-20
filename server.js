@@ -7195,19 +7195,19 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const fullyDel = isOrderFullyDelivered(order);
                 const fullyPaid_ = isOrderFullyPaid(order);
                 // CX16: the same e-invoice reference attached again is stored once and not logged again.
-                if (sameEinv && (order.status === OrderStatus.FULFILLED || !(fullyDel && fullyPaid_))) break;
+                const einvLog = (msg) => { if (sameEinv && (order.logs || []).some(l => l.message === msg)) return; order.logs.push(createAuditLog(msg, order.status, user)); };
                 if (fullyDel && fullyPaid_) {
                     order.status = OrderStatus.FULFILLED;
-                    order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}. All requirements met - Order FULFILLED.`, order.status, user));
+                    einvLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}. All requirements met - Order FULFILLED.`);
                 } else if (order.status === OrderStatus.WAITING_GOVE && fullyDel && fullyPaid_) {
                     // If order was waiting for Gov.E invoice and all conditions are now met
                     order.status = OrderStatus.FULFILLED;
-                    order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}. Order was waiting for Gov.E invoice - now FULFILLED.`, order.status, user));
+                    einvLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}. Order was waiting for Gov.E invoice - now FULFILLED.`);
                 } else if (fullyDel && order.status === OrderStatus.DELIVERED) {
                     // Stay in DELIVERED until paid
                 }
 
-                if (order.status !== OrderStatus.FULFILLED) order.logs.push(createAuditLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}${fullyDel && !fullyPaid_ ? ' (Awaiting full payment to FULFILL)' : ''}`, order.status, user));
+                if (order.status !== OrderStatus.FULFILLED) einvLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}${fullyDel && !fullyPaid_ ? ' (Awaiting full payment to FULFILL)' : ''}`);
                 break;
             }
 
