@@ -4910,7 +4910,28 @@ app.get('/api/v1/reports/orders', (req, res) => {
         // CX12: a cancelled (rejected) order carries no revenue and no cost in the report rows.
         if (o.status === OrderStatus.REJECTED) { o.totalPrice = 0; o.totalPriceOrderCurrency = 0; o.totalRealCost = 0; }
     });
-    const fulfilledOrders = enrichedOrders.filter(o => o.status === OrderStatus.FULFILLED);
+    // R29: a blanket contract counts as current in the report; its revenue and cost follow PAID money (not fulfilment).
+    // Revenue = customer payments received on the contract; cost = supplier payments for the contract and its call-offs
+    // (plus ledger expenses booked to them). The call-offs carry no revenue/cost of their own in the totals.
+    const isBlanketRoot = (o) => Boolean(o.blanketOrder) && !o.blanketContractId;
+    const blanketIdsOf = (root) => (db.orders || []).filter(x => x.id === root.id || (x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber))).map(x => x.id);
+    enrichedOrders.forEach(o => {
+        if (o.status === OrderStatus.REJECTED) return;
+        if (isBlanketRoot(o)) {
+            const ids = new Set(blanketIdsOf(o));
+            const rev = (db.orders || []).filter(x => ids.has(x.id)).reduce((t, x) => t + (x.payments || []).reduce((a, p) => a + (Number(p.amount) || 0), 0), 0);
+            let cost = 0;
+            const grp = (db.orders || []).filter(x => ids.has(x.id));
+            const compIds = new Set(), poNums = new Set();
+            grp.forEach(x => (x.items || []).forEach(it => (it.components || []).forEach(c => { if (c.id) compIds.add(c.id); if (c.poNumber) poNums.add(c.poNumber); })));
+            // company payments to the PO financial account (supplier payments of the contract and its call-offs)
+            (db.supplierPayments || []).forEach(sp => { if (ids.has(sp.orderId) || (sp.poNumber && poNums.has(sp.poNumber)) || (sp.allocations || []).some(al => compIds.has(al.componentId))) cost += Number(sp.amount) || 0; });
+            // plus company payments from other general accounts booked to the contract (salaries, transportation, ...)
+            (db.ledger || []).forEach(l => { if ((l.type === 'COST' || l.type === 'EXPENSE') && l.category !== 'Supplier Payment' && ids.has(l.orderId)) cost += Number(l.amount) || 0; });
+            o.totalPrice = r2c(rev); o.totalPriceOrderCurrency = r2c(rev); o.totalRealCost = r2c(cost); o.reportBasis = 'PAID';
+        } else if (o.blanketContractId) { o.totalPrice = 0; o.totalPriceOrderCurrency = 0; o.totalRealCost = 0; o.reportBasis = 'BLANKET_CALL_OFF'; }
+    });
+    const fulfilledOrders = enrichedOrders.filter(o => o.status === OrderStatus.FULFILLED || o.reportBasis === 'PAID');
     const totalRevenue = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0));
     const totalRealCost = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0));
     const count = enrichedOrders.length;
