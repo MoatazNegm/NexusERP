@@ -2555,7 +2555,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                         // A PO amended by extension keeps its amended quantity; the leftover is a separate component.
                         const hasExtensionSplit = item.components.some(c => c.isExtension || c.splitFromExtensionPo);
                         if (!isStock && !hasAllocations && !hasExtensionSplit) {
-                            if (!comp.allocatedFromStockOrderId && comp.quantity !== getItemEffectiveQty(item)) {
+                            if (!comp.allocatedFromStockOrderId && comp.source !== 'STOCK' && !comp.forStock && comp.quantity !== getItemEffectiveQty(item)) {
                                 comp.quantity = getItemEffectiveQty(item);
                             }
                         } else if (hasAllocations) {
@@ -2580,7 +2580,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                             comp.status = 'NEW';
                         }
                         // Cap at 1 component for TRADING to prevent BoM pollution unless split into stock and procurement
-                        const hasStockAllocations = item.components.some(c => c.allocatedFromStockOrderId || c.isExtension || c.splitFromExtensionPo);
+                        const hasStockAllocations = item.components.some(c => c.allocatedFromStockOrderId || c.isExtension || c.splitFromExtensionPo || c.source === 'STOCK' || c.forStock || c.status === 'ORDERED_FOR_STOCK');
                         if (!hasStockAllocations && item.components.length > 1) {
                             item.components = [item.components[0]];
                         }
@@ -2724,7 +2724,8 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                                     }
 
                                     // Update inventory: Remove from reserved since item is now committed to order
-                                    if (comp.inventoryItemId && db.inventory) {
+                                    // CX03: warehouse stock allocated to the line stays reserved until the delivery consumes it (it must not look free while it waits in the hub).
+                                    if (comp.inventoryItemId && db.inventory && comp.source !== 'STOCK') {
                                         const invItem = db.inventory.find(inv => inv.id === comp.inventoryItemId);
                                         if (invItem) {
                                             const qtyToUnreserve = comp.quantity || 0;
@@ -4761,6 +4762,8 @@ app.post('/api/v1/inventory/adjust', (req, res) => {
     // TR11: the stock level lives in quantityInStock (quantity is the legacy field); adjusting only the legacy field changed nothing.
     const oldQty = Number(item.quantityInStock !== undefined ? item.quantityInStock : item.quantity) || 0;
     const newQty = Math.max(0, oldQty + numDelta);
+    // CX03: an adjustment may not take the stock below the quantity already reserved for orders.
+    if (numDelta < 0 && newQty < (Number(item.quantityReserved) || 0)) return res.status(400).json({ error: `Rejected: adjustment would leave ${newQty} on hand, below the ${Number(item.quantityReserved) || 0} reserved for orders` });
     item.quantityInStock = newQty;
     if (item.quantity !== undefined) delete item.quantity;
     item.logs = item.logs || [];
@@ -5984,7 +5987,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (qtyToProcess > leftToReceive) throw new Error(`Cannot receive more than ordered (Left: ${leftToReceive})`);
 
                 // Stock internal orders are ALWAYS components for warehouse stock, never customer trading products
-                const isTradingItem = !isStockOrder(order) && item.productionType === 'TRADING';
+                const isTradingItem = !isStockOrder(order) && item.productionType === 'TRADING' && compToReceive.status !== 'ORDERED_FOR_STOCK' && !compToReceive.forStock;
                 if (!isTradingItem) {
                     updateInventoryItem(db, compToReceive, 'RECEIVE', order, qtyToProcess);
                 } else {
@@ -5998,8 +6001,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                 compToReceive.receivedQty = alreadyReceived + qtyToProcess;
 
+                // CX03: goods ordered for stock go to the warehouse (inventory) only; they never count as the customer's hub quantity.
+                const forStockComp = !isStockOrder(order) && item.productionType === 'TRADING' && (compToReceive.status === 'ORDERED_FOR_STOCK' || compToReceive.forStock);
                 // Special handling for external customer trading items - move directly to hub
-                if (!isStockOrder(order) && item.productionType === 'TRADING') {
+                if (forStockComp) {
+                    order.logs.push(createAuditLog(`Stock Component Receipt: ${qtyToProcess} ${compToReceive.unit || 'pcs'} of ${compToReceive.description} received into Warehouse Stock (ordered for stock)`, order.status, user));
+                } else if (!isStockOrder(order) && item.productionType === 'TRADING') {
                     // For trading items, automatically move received quantity to hub
                     item.hubReceivedQty = (item.hubReceivedQty || 0) + qtyToProcess;
 
@@ -6012,7 +6019,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                     // Check if all trading components are received and move to hub
                     // C06/TR11: warehouse stock allocated to the line (source STOCK) is available at once; only the procured parts must be received.
-                    const compReady = (comp) => comp.source === 'STOCK' || ['RESERVED', 'RECEIVED', 'IN_STOCK', 'Manufactured'].includes(comp.status) || (comp.receivedQty || 0) >= (comp.quantity || 0);
+                    const compReady = (comp) => comp.source === 'STOCK' || comp.status === 'ORDERED_FOR_STOCK' || comp.forStock || ['RESERVED', 'RECEIVED', 'IN_STOCK', 'Manufactured'].includes(comp.status) || (comp.receivedQty || 0) >= (comp.quantity || 0);
                     const allTradingCompsReceived = item.components?.every(compReady) || false;
                     const allTradingItemsReady = order.items.filter(i => i.productionType === 'TRADING').every(i => (i.components || []).every(compReady));
                     if (allTradingCompsReceived && allTradingItemsReady) {
@@ -6214,6 +6221,15 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (ucItemIdx === -1) throw new Error("Item not found");
                 const ucComp = order.items[ucItemIdx].components?.find(c => c.id === payload.compId);
                 if (!ucComp) throw new Error("Component not found");
+                // CX03: raising a stock reservation needs free stock for the extra quantity.
+                if (ucComp.source === 'STOCK' && ucComp.inventoryItemId && payload.updates && Number(payload.updates.quantity) > (Number(ucComp.quantity) || 0)) {
+                    const ucInv = (db.inventory || []).find(i => i.id === ucComp.inventoryItemId);
+                    if (ucInv) {
+                        const ucFree = (Number(ucInv.quantityInStock) || 0) - (Number(ucInv.quantityReserved) || 0);
+                        const ucExtra = Number(payload.updates.quantity) - (Number(ucComp.quantity) || 0);
+                        if (ucExtra > ucFree) throw new Error(`Rejected: insufficient free stock: only ${ucFree} free (${ucInv.quantityInStock} in stock, ${ucInv.quantityReserved || 0} reserved), ${ucExtra} more needed`);
+                    }
+                }
                 Object.assign(ucComp, payload.updates);
                 
                 // Build detailed audit log message for procurement-related updates
