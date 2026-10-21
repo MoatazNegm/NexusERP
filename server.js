@@ -9586,7 +9586,8 @@ const allocatedPerComponent = (db, supplierId) => {
 const poComponentEntries = (db, supplierId, { orderId, poNumber, componentId } = {}) => {
     const out = [];
     (db.orders || []).forEach(order => (order.items || []).forEach(item => (item.components || []).forEach(comp => {
-        if (comp.source !== 'PROCUREMENT' || comp.supplierId !== supplierId) return;
+        // a fully consumed procured component keeps its PO and supplier (source turns CONSUMED), so payments to that PO still allocate to it
+        if (!(comp.source === 'PROCUREMENT' || (comp.source === 'CONSUMED' && comp.poNumber)) || comp.supplierId !== supplierId) return;
         if (NOT_COMMITTED_STATUSES.includes(String(comp.status || '').toUpperCase())) return;
         const hit = (componentId && comp.id === componentId) || (!componentId && ((orderId && order.id === orderId) || (poNumber && comp.poNumber === poNumber)));
         if (!hit) return;
