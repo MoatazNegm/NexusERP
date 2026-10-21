@@ -691,7 +691,11 @@ const evaluateMarginStatus = (items, minMargin, currentStatus, conversionRate = 
         if (it.components && it.components.length > 0) {
             hasComponents = true;
             
-            if (it.productionType === 'MANUFACTURING' || it.productionType === 'OUTSOURCING') {
+            if (it.productionType === 'OUTSOURCING' && !it.techTouched) {
+                // R30 ruling 19:12: an outsourcing order created by sales stays LOGGED; only a technical-user touch (set-production-type, accept, or costed components) moves it.
+                const touchedComps = it.components.some(c => c.unitCost > 0 || c.supplierId || c.source === 'STOCK' || (c.status && c.status !== 'PENDING_OFFER' && c.status !== 'NEW'));
+                if (touchedComps) hasActiveTechReview = true;
+            } else if (it.productionType === 'MANUFACTURING' || it.productionType === 'OUTSOURCING') {
                 hasActiveTechReview = true;
             } else {
                 const isModified = it.components.length > 1 || it.components.some(c => 
@@ -6042,6 +6046,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const oldType = sptItem.productionType || 'TRADING';
                 
                 sptItem.productionType = newType;
+                sptItem.techTouched = true;
                 
                 if (order.status === OrderStatus.LOGGED) {
                     order.status = OrderStatus.TECHNICAL_REVIEW;
