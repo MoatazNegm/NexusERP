@@ -2804,11 +2804,12 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     const rfpPathUndelivered = false && outsourcingItems.some(item => // R30 ruling 19:00: an outsourcing order is never WAITING_SUPPLIERS for undelivered items
                         (item.components || []).some(comp => comp.source === 'PROCUREMENT' && comp.noRfpNeeded === false && (Number(comp.receivedQty) || 0) < (Number(comp.quantity) || 0))
                     );
-                    if (!anyNeedsRfp && !rfpPathUndelivered && order.status === OrderStatus.WAITING_SUPPLIERS) {
+                    // R30 ruling 19:24 (option A): an outsourcing order never holds WAITING_SUPPLIERS, RFP path or not.
+                    if (order.status === OrderStatus.WAITING_SUPPLIERS) {
                         const old = order.status;
                         order.status = OrderStatus.RUNNING_OUTSOURCING_CONTRACT;
                         order.logs.push(createAuditLog(`[AUTO] Outsourcing contract active. Status moved from ${old} to ${order.status}`, order.status, 'System'));
-                    } else if (anyNeedsRfp && order.status === OrderStatus.RUNNING_OUTSOURCING_CONTRACT) {
+                    } else if (false && anyNeedsRfp && order.status === OrderStatus.RUNNING_OUTSOURCING_CONTRACT) {
                         const old = order.status;
                         order.status = OrderStatus.WAITING_SUPPLIERS;
                         order.logs.push(createAuditLog(`[AUTO] Outsourcing contract requires RFP. Status moved from ${old} to ${order.status}`, order.status, 'System'));
@@ -5747,7 +5748,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const anyNeedsRfp = allProcComps.some(c => !c.noRfpNeeded && ['NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(c.status));
                 const anyRunningOutsourcing = allProcComps.some(c => c.status === 'RUNNING_OUTSOURCING_CONTRACT' || (c.noRfpNeeded && (c.contractNumber || order.items.some(i => i.productionType === 'OUTSOURCING'))));
 
-                if (!anyNeedsRfp && anyRunningOutsourcing) {
+                const fnPureOutsourcing = (order.items || []).length > 0 && order.items.every(i => i.productionType === 'OUTSOURCING'); // R30 19:24
+                if ((!anyNeedsRfp && anyRunningOutsourcing) || fnPureOutsourcing) {
                     order.status = OrderStatus.RUNNING_OUTSOURCING_CONTRACT;
                 } else {
                     order.status = OrderStatus.WAITING_SUPPLIERS;
@@ -6853,7 +6855,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             case 'release-margin':
                 if (!isAdminUser(req) && !(req.roles || []).includes('management')) throw new Error("Only management can release a margin block");
                 if (order.status !== OrderStatus.NEGATIVE_MARGIN) throw new Error("Order does not have a margin block");
-                order.status = OrderStatus.WAITING_SUPPLIERS; // Return to procurement flow
+                order.status = ((order.items || []).length > 0 && order.items.every(i => i.productionType === 'OUTSOURCING')) ? OrderStatus.RUNNING_OUTSOURCING_CONTRACT : OrderStatus.WAITING_SUPPLIERS; // Return to procurement flow (R30 19:24: outsourcing never WAITING_SUPPLIERS)
                 {
                     const dbS = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
                     let mm = dbS.minimumMarginPct || 15;
