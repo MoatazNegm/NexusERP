@@ -4910,19 +4910,22 @@ app.get('/api/v1/reports/orders', (req, res) => {
         // CX12: a cancelled (rejected) order carries no revenue and no cost in the report rows.
         if (o.status === OrderStatus.REJECTED) { o.totalPrice = 0; o.totalPriceOrderCurrency = 0; o.totalRealCost = 0; }
     });
-    // R29: a blanket contract counts as current in the report; its revenue and cost follow PAID money (not fulfilment).
+    // R29 (revenue part superseded 2026-10-21: revenue is the NET call-off line total; cost stays on company payments): a blanket contract counts as current in the report.
     // Revenue = customer payments received on the contract; cost = supplier payments for the contract and its call-offs
     // (plus ledger expenses booked to them). The call-off rows keep their line values but are left out of the totals (their money is in the contract).
     const isBlanketRoot = (o) => Boolean(o.blanketOrder) && !o.blanketContractId;
     // OS04 ruling (2026-10-21): a blanket OUTSOURCING contract reports revenue as the total of its net line values and cost from its components (not paid money).
+    // User ruling 2026-10-21: revenue shown by the app is always the NET total of line values; payments stay in wallet/cash/AR figures only.
     const isOutsourcingBlanket = (o) => isBlanketRoot(o) && (o.items || []).length > 0 && (o.items || []).every(it => it.productionType === 'OUTSOURCING');
+    // Blanket revenue = NET total of the line values actually called off (call-off lines; the contract's own lines when nothing was called off yet).
+    const blanketNetRevenue = (root) => { const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber) && x.status !== OrderStatus.REJECTED); return r2c(co.length ? co.reduce((t, x) => t + (Number(x.totalPrice) || 0), 0) : (Number(root.totalPrice) || 0)); };
     const blanketIdsOf = (root) => (db.orders || []).filter(x => x.id === root.id || (x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber))).map(x => x.id);
     enrichedOrders.forEach(o => {
         if (o.status === OrderStatus.REJECTED) return;
-        if (isOutsourcingBlanket(o)) { o.reportBasis = 'LINES'; }
+        if (isOutsourcingBlanket(o)) { o.reportBasis = 'LINES'; const nr = blanketNetRevenue(o); o.totalPrice = nr; o.totalPriceOrderCurrency = nr; }
         else if (isBlanketRoot(o)) {
             const ids = new Set(blanketIdsOf(o));
-            const rev = (db.orders || []).filter(x => ids.has(x.id)).reduce((t, x) => t + (x.payments || []).reduce((a, p) => a + (Number(p.amount) || 0), 0), 0);
+            const rev = blanketNetRevenue(o); // user ruling 2026-10-21: revenue is the NET total of line values; payments stay in wallet/cash figures
             let cost = 0;
             const grp = (db.orders || []).filter(x => ids.has(x.id));
             const compIds = new Set(), poNums = new Set();
