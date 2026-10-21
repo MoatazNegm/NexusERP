@@ -2795,7 +2795,12 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     const anyNeedsRfp = outsourcingItems.some(item =>
                         (item.components || []).some(comp => comp.noRfpNeeded === false && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status))
                     );
-                    if (!anyNeedsRfp && order.status === OrderStatus.WAITING_SUPPLIERS) {
+                    // R30 ruling 16:20: outside blanket outsourcing the order stays WAITING_SUPPLIERS until every supplier item is received (component statuses are independent).
+                    const blLike = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
+                    const rfpPathUndelivered = !blLike && outsourcingItems.some(item =>
+                        (item.components || []).some(comp => comp.source === 'PROCUREMENT' && comp.noRfpNeeded === false && (Number(comp.receivedQty) || 0) < (Number(comp.quantity) || 0))
+                    );
+                    if (!anyNeedsRfp && !rfpPathUndelivered && order.status === OrderStatus.WAITING_SUPPLIERS) {
                         const old = order.status;
                         order.status = OrderStatus.RUNNING_OUTSOURCING_CONTRACT;
                         order.logs.push(createAuditLog(`[AUTO] Outsourcing contract active. Status moved from ${old} to ${order.status}`, order.status, 'System'));
@@ -6478,8 +6483,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
                 Object.assign(ucComp, payload.updates);
                 // X the order on the supplier path: WAITING_SUPPLIERS until the last item is delivered.
-                // R30 ruling (clarified): BLANKET orders of type trade/manufacturing stay WAITING_SUPPLIERS until the last item is received; outsourcing blankets stay RUNNING_OUTSOURCING_CONTRACT.
-                const ucBlanketGoods = Boolean(order.blanketOrder || order.contractId || order.blanketContractId) && (order.items || []).some(i => i.productionType !== 'OUTSOURCING');
+                // R30 ruling 16:20: non-blanket orders and blanket trade/manufacturing orders are WAITING_SUPPLIERS until all items are received; only blanket outsourcing stays RUNNING_OUTSOURCING_CONTRACT.
+                const ucBlanketLike = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
+                const ucBlanketGoods = !(ucBlanketLike && (order.items || []).every(i => i.productionType === 'OUTSOURCING'));
                 if (ucBlanketGoods && payload.updates && payload.updates.noRfpNeeded === false && order.status === OrderStatus.RUNNING_OUTSOURCING_CONTRACT) {
                     order.status = OrderStatus.WAITING_SUPPLIERS;
                     order.logs.push(createAuditLog('[AUTO] No RFP Needed un-ticked. Status moved from RUNNING_OUTSOURCING_CONTRACT to WAITING_SUPPLIERS', order.status, 'System'));
