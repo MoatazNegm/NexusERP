@@ -2664,7 +2664,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                 } else {
                     item.components.forEach(comp => {
                         if (comp.noRfpNeeded === undefined) comp.noRfpNeeded = true;
-                        if (isOrderApproved && comp.noRfpNeeded && (comp.status === 'PENDING_OFFER' || !comp.status || comp.status === 'NEW')) {
+                        if (isOrderApproved && comp.noRfpNeeded && comp.source !== 'STOCK' && (comp.status === 'PENDING_OFFER' || !comp.status || comp.status === 'NEW')) {
                             comp.status = 'RUNNING_OUTSOURCING_CONTRACT';
                         }
                     });
@@ -5724,7 +5724,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     (item.components || []).forEach(comp => {
                         if (isOutsourcing || comp.contractNumber) {
                             if (comp.noRfpNeeded === undefined) comp.noRfpNeeded = true;
-                            if (comp.noRfpNeeded && ['NEW', 'PENDING_OFFER'].includes(comp.status)) {
+                            if (comp.noRfpNeeded && comp.source !== 'STOCK' && ['NEW', 'PENDING_OFFER'].includes(comp.status)) {
                                 comp.status = 'RUNNING_OUTSOURCING_CONTRACT';
                             }
                             if (item.workingResourceCount) comp.workingResourceCount = item.workingResourceCount;
@@ -6155,7 +6155,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     comp.realCost = ucsItem.realCost;
                     comp.invoiceTotal = ucsItem.invoiceTotal;
                     if (metrics.realCost > 0) comp.unitCost = metrics.realCost;
-                    if (comp.noRfpNeeded === undefined || comp.noRfpNeeded) {
+                    if (comp.source !== 'STOCK' && (comp.noRfpNeeded === undefined || comp.noRfpNeeded)) {
                         comp.noRfpNeeded = true;
                         comp.status = 'RUNNING_OUTSOURCING_CONTRACT';
                         comp.statusUpdatedAt = new Date().toISOString();
@@ -6513,6 +6513,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 }
                 Object.assign(ucComp, payload.updates);
+                if (ucComp.source === 'STOCK' && ['NEW', 'PENDING_OFFER', 'RUNNING_OUTSOURCING_CONTRACT'].includes(ucComp.status)) ucComp.status = 'RESERVED'; // R30: a part taken from stock is RESERVED
                 // X the order on the supplier path: WAITING_SUPPLIERS until the last item is delivered.
                 // R30 ruling 16:20: non-blanket orders and blanket trade/manufacturing orders are WAITING_SUPPLIERS until all items are received; only blanket outsourcing stays RUNNING_OUTSOURCING_CONTRACT.
                 const ucBlanketLike = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
