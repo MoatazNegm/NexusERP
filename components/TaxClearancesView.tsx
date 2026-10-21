@@ -1024,6 +1024,8 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
                                 {language === 'ar' ? 'تم التخليص' : 'Cleared'}
                               </a>
                             ) : (
+                              <div className="flex flex-col items-center gap-1">
+                              <span className="text-[9px] font-black uppercase text-amber-600">{language === 'ar' ? 'في انتظار الشهادة' : 'Waiting for certificate'}</span>
                               <label className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-black text-white rounded-xl text-[9px] font-black uppercase cursor-pointer transition-all shadow-2xs">
                                 <i className={`fa-solid ${uploadingOrderId === co.order.id ? 'fa-spinner fa-spin' : 'fa-upload'}`}></i>
                                 <span>{language === 'ar' ? 'رفع ن.41' : 'Upload'}</span>
@@ -1035,6 +1037,7 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
                                   onChange={e => handleUploadWHT(co.order.id, e)}
                                 />
                               </label>
+                              </div>
                             )
                           ) : (
                             <span className="text-[9px] text-slate-400 font-medium">

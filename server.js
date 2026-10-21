@@ -4330,6 +4330,8 @@ app.get('/api/v1/ar', (req, res) => {
 app.get('/api/v1/wht-missing', (req, res) => {
     const db = getDb(req);
     const out = computeMissingWht(db.orders || []);
+    // User ruling 2026-10-21 (22:45): the 1% leaves the wallet to the tax-authority account automatically; the Tax view shows it DONE with a certificate, otherwise WAITING_CERTIFICATE.
+    out.all = (db.orders || []).filter(o => o.appliesWithholdingTax && o.status !== OrderStatus.REJECTED && orderWhtAmount(o) > 0).map(o => ({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, amount: orderWhtAmount(o), status: o.whtCertificateFile ? 'DONE' : 'WAITING_CERTIFICATE' }));
     const { customerName } = req.query;
     if (customerName) { out.items = out.items.filter(r => r.customerName === customerName); out.total = r2w(out.items.reduce((a, r) => a + r.amount, 0)); out.overdueCount = out.items.filter(i => i.overdue).length; }
     res.json(out);
