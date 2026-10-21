@@ -6804,6 +6804,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 // Release any received quantity to free warehouse stock
                 transferReceivedItemsToFreeStock(order, db, `PO Revert to Award: ${revertReason}`, user, comp.id);
 
+                // The PO is void: what was allocated to it goes back to the supplier general wallet as an unallocated advance (no refund action; finance may allocate it again).
+                (db.supplierPayments || []).forEach(sp => {
+                    const mine = (sp.allocations || []).filter(x => x.componentId === comp.id);
+                    if (!mine.length) return;
+                    const back = mine.reduce((t, x) => t + (Number(x.amount) || 0), 0);
+                    sp.allocations = sp.allocations.filter(x => x.componentId !== comp.id);
+                    sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) + back) * 100) / 100;
+                });
                 comp.status = 'AWARDED';
                 comp.statusUpdatedAt = new Date().toISOString();
                 comp.revertedPoNumber = oldPoNumber;
