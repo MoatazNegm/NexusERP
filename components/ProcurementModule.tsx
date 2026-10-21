@@ -696,6 +696,7 @@ const getCompLimit = (status: CompStatus, settings: any) => {
     case 'AWARDED': return settings.issuePoLimitHrs;
     case 'ORDERED': return settings.orderedLimitHrs;
     case 'WAITING_CONTRACT_START': return settings.orderedLimitHrs;
+    case 'RUNNING_CONTRACT': return settings.orderedLimitHrs;
     default: return 0;
   }
 };
@@ -1483,7 +1484,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
             } as ManufacturingComponent];
 
         itemComps.forEach(c => {
-          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED', 'RUNNING_OUTSOURCING_CONTRACT'].includes(c.status || '')) {
+          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED', 'RUNNING_OUTSOURCING_CONTRACT'].includes(c.status || '')) {
             // Auto-cleanup: If contract end date passed more than 1 month ago, treat as finished and remove from active list
             if (c.contractStartDate && c.contractDuration) {
               const endDate = calculateContractEndDate(c.contractStartDate, c.contractDuration);
@@ -3745,7 +3746,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           end.setHours(0, 0, 0, 0);
 
                           if (today < start) return 'WAITING_CONTRACT_START';
-                          if (today >= start && today <= end) return 'RUNNING';
+                          if (today >= start && today <= end) return 'RUNNING_CONTRACT';
                           return 'GRACE_PERIOD';
                         })();
 
@@ -3754,14 +3755,14 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             <div className="flex gap-4 items-center w-full">
                               <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg shadow-inner ${
                                 dynamicStatus === 'RUNNING_OUTSOURCING_CONTRACT' ? 'bg-purple-50 text-purple-600 border border-purple-200' :
-                                dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'bg-emerald-50 text-emerald-600' :
+                                dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING_CONTRACT' ? 'bg-emerald-50 text-emerald-600' :
                                 dynamicStatus === 'WAITING_CONTRACT_START' ? 'bg-purple-50 text-purple-600' :
                                 dynamicStatus === 'AWARDED' ? 'bg-amber-50 text-amber-600' :
                                 dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-50 text-rose-600' : 'bg-white text-blue-500 shadow-sm'
                                 }`}>
                                 <i className={`fa-solid ${
                                   dynamicStatus === 'RUNNING_OUTSOURCING_CONTRACT' ? 'fa-handshake-angle' :
-                                  dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'fa-truck-fast' :
+                                  dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING_CONTRACT' ? 'fa-truck-fast' :
                                   dynamicStatus === 'WAITING_CONTRACT_START' ? 'fa-calendar-check' :
                                   dynamicStatus === 'AWARDED' ? 'fa-file-signature' :
                                   dynamicStatus === 'GRACE_PERIOD' ? 'fa-hourglass-end' : 'fa-diagram-project'
@@ -3778,7 +3779,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   {c.supplierPartNumber && <span className="text-[10px] font-black text-amber-600 font-mono tracking-widest uppercase border border-amber-200 bg-amber-50 px-1 rounded">MFR P/N: {c.supplierPartNumber}</span>}
                                   {dynamicStatus !== 'RUNNING_OUTSOURCING_CONTRACT' && (
                                     <span className={`px-2 py-0.5 text-[8px] font-black rounded uppercase ${
-                                      dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING' ? 'bg-emerald-600 text-white' :
+                                      dynamicStatus === 'ORDERED' || dynamicStatus === 'RUNNING_CONTRACT' ? 'bg-emerald-600 text-white' :
                                       dynamicStatus === 'WAITING_CONTRACT_START' ? 'bg-purple-600 text-white' :
                                       dynamicStatus === 'AWARDED' ? 'bg-amber-600 text-white' :
                                       dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
@@ -4169,7 +4170,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       </button>
                                     </div>
                                   )}
-                                  {['WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '') && activeTab === 'outsourcing' && (
+                                  {['WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(c.status || '') && activeTab === 'outsourcing' && (
                                     <div className="flex items-center gap-2 pt-2 border-t border-slate-100 w-full justify-end">
                                       <button
                                         onClick={() => {
@@ -5697,7 +5698,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                             </div>
                             <div className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded mt-1.5 w-fit border ${rec.status === 'ORDERED' ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : rec.status === 'WAITING_CONTRACT_START' ? 'text-purple-600 bg-purple-50 border-purple-100' : 'text-amber-600 bg-amber-50 border-amber-100'
                               }`}>
-                              {rec.status === 'ORDERED' ? t('procurement.resolution.poIssued') : rec.status === 'WAITING_CONTRACT_START' ? t('procurement.resolution.awaitingContractStart') : t('procurement.resolution.awardedPendingPO')}
+                              {rec.status === 'ORDERED' ? t('procurement.resolution.poIssued') : rec.status === 'WAITING_CONTRACT_START' ? t('procurement.resolution.awaitingContractStart') : rec.status === 'RUNNING_CONTRACT' ? t('procurement.resolution.runningContract') : t('procurement.resolution.awardedPendingPO')}
                             </div>
                           </div>
                         </div>
