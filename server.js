@@ -5056,7 +5056,7 @@ app.get('/api/v1/reports/orders', (req, res) => {
 
     const settings = resolveSettings(db, isSandbox(req));
     const enrichedOrders = orders.map(o => calculateOrderHealth(o, settings));
-    // Revenue (net) and real cost are computed from the lines; only FULFILLED orders count.
+    // Revenue (net) and real cost are computed from the lines; DELIVERED, WAITING_GOVE and FULFILLED orders count.
     enrichedOrders.forEach(o => {
         let net = 0, cost = 0;
         (o.items || []).forEach(it => {
@@ -5093,7 +5093,7 @@ app.get('/api/v1/reports/orders', (req, res) => {
             o.totalPrice = r2c(rev); o.totalPriceOrderCurrency = r2c(rev); o.totalRealCost = r2c(cost); o.reportBasis = 'LINES';
         } else if (o.blanketContractId) { o.reportBasis = 'BLANKET_CALL_OFF'; }
     });
-    const fulfilledOrders = enrichedOrders.filter(o => (o.status === OrderStatus.FULFILLED && o.reportBasis !== 'BLANKET_CALL_OFF') || o.reportBasis === 'LINES');
+    const fulfilledOrders = enrichedOrders.filter(o => ([OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE, OrderStatus.FULFILLED].includes(o.status) && o.reportBasis !== 'BLANKET_CALL_OFF') || o.reportBasis === 'LINES');
     const totalRevenue = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0));
     const totalRealCost = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0));
     const count = enrichedOrders.length;

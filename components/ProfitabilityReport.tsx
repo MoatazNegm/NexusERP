@@ -63,8 +63,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
   };
 
   // --- LOGIC FOR TAB 1: FINANCIAL AUDIT (ORIGINAL) ---
-  const auditOpenOrders = useMemo(() => orders.filter(o => o.status !== OrderStatus.FULFILLED && o.status !== OrderStatus.REJECTED), [orders]);
-  const auditFulfilledOrders = useMemo(() => orders.filter(o => o.status === OrderStatus.FULFILLED), [orders]);
+  const auditOpenOrders = useMemo(() => orders.filter(o => ![OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE, OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)), [orders]);
+  const auditFulfilledOrders = useMemo(() => orders.filter(o => [OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE, OrderStatus.FULFILLED].includes(o.status)), [orders]);
 
   const processAuditData = (orderList: CustomerOrder[]) => {
     return orderList.map(order => {
