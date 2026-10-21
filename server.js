@@ -391,7 +391,7 @@ const getItemEffectiveStatus = (item) => {
     // If any component still needs procurement action
     if (statuses.some(s => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'].includes(s))) return 'WAITING_SUPPLIERS';
     // If all components are reserved/received (ready to manufacture)
-    if (statuses.every(s => ['RESERVED', 'RECEIVED', 'CANCELLED', 'ORDERED_FOR_STOCK'].includes(s))) return 'WAITING_FACTORY';
+    if (statuses.every(s => ['RESERVED', 'RECEIVED', 'RUNNING_CONTRACT', 'CANCELLED', 'ORDERED_FOR_STOCK'].includes(s))) return 'WAITING_FACTORY';
     // If any are actively being manufactured
     if (statuses.some(s => s === 'IN_MANUFACTURING')) return 'MANUFACTURING';
     // If all are manufactured
@@ -814,6 +814,12 @@ const canIssuePoForOrder = (order, minMargin) => {
     return markupPct >= minMargin;
 };
 
+const orderWhtAmount = (order) => {
+    let net = 0;
+    (order.items || []).forEach(it => { net += Math.round(((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) + Number.EPSILON) * 100) / 100; });
+    return Math.round(net) / 100;
+};
+
 const isOrderFullyPaid = (order) => {
     if (!order.payments) return false;
     const totalPaid = order.payments.reduce((s, p) => s + (p.amount || 0), 0);
@@ -824,7 +830,7 @@ const isOrderFullyPaid = (order) => {
 
     let targetRevenue = revenue;
     if (order.appliesWithholdingTax) {
-        targetRevenue = revenue * 0.99; // Deduct 1% WHT
+        targetRevenue = revenue - orderWhtAmount(order); // the customer keeps 1% of the NET amount: that part is cleared in the Tax tab
     }
 
     return totalPaid >= (targetRevenue - 0.01); // 0.01 for floating point precision
@@ -3658,7 +3664,7 @@ const orderCommitmentGross = (order) => {
         gross += (getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
         (it.components || []).forEach(c => { cost += (c.quantity || 0) * (c.unitCost || 0); });
     });
-    if (order.appliesWithholdingTax) gross *= 0.99;
+    // User ruling 2026-10-21 (22:08): the 1% withholding is not part of revenue, AR or AP; it is a separate Tax-tab line (base = NET).
     return r2w(gross > 0 ? gross : cost);
 };
 
@@ -3736,9 +3742,7 @@ const computeMissingWht = (orders = [], today = new Date().toISOString().slice(0
     const items = [];
     orders.forEach(o => {
         if (!o.appliesWithholdingTax || o.whtCertificateFile || o.status === OrderStatus.REJECTED || (o.blanketOrder && !o.blanketContractId && false)) return;
-        let gross = 0;
-        (o.items || []).forEach(it => { gross += (getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100)); });
-        const amount = r2w(gross * 0.01);
+        const amount = orderWhtAmount(o);
         if (!(amount > 0)) return;
         const deadline = whtDeadlineFor(o);
         items.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, amount, date: (o.orderDate || o.createdAt || '').toString().slice(0, 10), deadline, overdue: today > deadline });
@@ -3807,9 +3811,9 @@ const sweepContractStarts = (db, todayStr) => {
             if (c.status !== 'WAITING_CONTRACT_START' || !c.contractStartDate) return;
             const d = String(c.contractStartDate).slice(0, 10);
             if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d > todayStr) return;
-            c.status = 'RECEIVED';
+            c.status = 'RUNNING_CONTRACT';
             c.statusUpdatedAt = new Date().toISOString();
-            (o.logs = o.logs || []).push(createAuditLog(`Contract start date ${d} reached: ${c.description || c.id} (Contract: ${c.contractNumber || c.componentNumber || 'N/A'}) is now RECEIVED.`, o.status, { name: 'System', username: 'system' }));
+            (o.logs = o.logs || []).push(createAuditLog(`Contract start date ${d} reached: ${c.description || c.id} (Contract: ${c.contractNumber || c.componentNumber || 'N/A'}) is now RUNNING_CONTRACT.`, o.status, { name: 'System', username: 'system' }));
             changed = true;
         }));
     });
@@ -6049,6 +6053,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 
                 sptItem.productionType = newType;
                 sptItem.techTouched = true;
+                // User ruling 2026-10-21 (22:08): an OUTSOURCING line is an outsourcing request, not a set of components; its single procurement entry is the request form.
+                if (newType === 'OUTSOURCING') (sptItem.components || []).forEach(c => { if (c.source === 'PROCUREMENT') c.isOutsourcingRequest = true; });
                 
                 if (order.status === OrderStatus.LOGGED) {
                     order.status = OrderStatus.TECHNICAL_REVIEW;
@@ -6331,6 +6337,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.logs.push(createAuditLog(`Component Receipt: Received ${qtyToProcess} ${compToReceive.unit || 'pcs'} of ${compToReceive.description} into ${targetDest} (Total received: ${compToReceive.receivedQty}/${totalOrdered})`, order.status, user));
                 }
 
+                sweepSupplierAdvances(db, compToReceive.supplierId);
                 // Auto-fulfill Internal Stock orders when all components are delivered to stock
                 if (isStockOrder(order)) {
                     const allComps = (order.items || []).flatMap(it => it.components || []);
@@ -6368,6 +6375,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const acItem = order.items[acItemIdx];
                 if (!acItem.components) acItem.components = [];
 
+                if (acItem.productionType === 'OUTSOURCING') throw new Error("Rejected: an outsourcing line has no components; fill in its outsourcing request instead.");
                 const newComp = {
                     id: `comp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
                     ...payload.component,
@@ -6708,7 +6716,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const targets = [];
                 order.items.forEach(item => {
                     item.components?.forEach(comp => {
-                        if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                        if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
                             targets.push({ item, comp });
                         }
                     });
@@ -6748,7 +6756,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (payload.sendPoId) {
                     order.items.forEach(item => {
                         item.components?.forEach(comp => {
-                            if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                            if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
                                 targets.push({ item, comp });
                             }
                         });
@@ -6791,7 +6799,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (itemIdx === -1) throw new Error("Item not found");
                 const comp = order.items[itemIdx].components?.find(c => c.id === payload.componentId);
                 if (!comp) throw new Error("Component not found");
-                if (!['ORDERED', 'WAITING_CONTRACT_START', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                if (!['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
                     throw new Error("Component is not in a PO or received status");
                 }
                 const oldStatus = comp.status;
@@ -6998,6 +7006,21 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     if (fromWalletAmt > 0) ledgerPush(db, { type: 'TRANSFER', amount: fromWalletAmt, description: `Wallet applied to PO ${order.internalOrderNumber}`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: poAcct, customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, receiptNumber }, user);
                 }
 
+                // User ruling 2026-10-21 (21:45): no refund action. A customer payment above the PO gross moves to the customer GENERAL wallet; the PO keeps exactly its commitment.
+                if (!order.blanketOrder && !order.blanketContractId) {
+                    const gross = orderCommitmentGross(order);
+                    const surplus = Math.round((totalPaid - (Number(order.surplusMovedToWallet) || 0) - gross) * 100) / 100;
+                    const custS = (db.customers || []).find(c => c.name === order.customerName);
+                    if (gross > 0 && surplus > 0.004 && custS) {
+                        custS.walletBalances = custS.walletBalances || {};
+                        custS.walletBalances[SELF_WALLET_KEY] = Math.round(((custS.walletBalances[SELF_WALLET_KEY] || 0) + surplus) * 100) / 100;
+                        custS.walletBalance = (custS.walletBalance || 0) + surplus;
+                        order.surplusMovedToWallet = Math.round(((Number(order.surplusMovedToWallet) || 0) + surplus) * 100) / 100;
+                        ledgerPush(db, { type: 'TRANSFER', amount: surplus, description: `PO ${order.internalOrderNumber}: payment above the PO gross credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', '') });
+                        order.logs.push(createAuditLog(`Payment above the PO gross: ${surplus.toFixed(2)} moved to the customer general wallet (no refund action).`, order.status, user));
+                    }
+                }
+
                 const fullyPaid = isOrderFullyPaid(order);
                 const fullyDelivered = isOrderFullyDelivered(order);
                 const isLateStage = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE].includes(order.status);
@@ -7022,7 +7045,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 } else {
                     let revenue = 0;
                     order.items.forEach(it => revenue += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));
-                    let targetRevenue = revenue * (order.appliesWithholdingTax ? 0.99 : 1);
+                    let targetRevenue = revenue - (order.appliesWithholdingTax ? orderWhtAmount(order) : 0);
                     order.logs.push(createAuditLog(`Payment of ${payload.amount} recorded. Bal: ${Math.max(0, targetRevenue - totalPaid).toLocaleString()}`, order.status, user));
                 }
                 break;
@@ -9461,6 +9484,34 @@ app.get('/api/v1/supplierPayments', (req, res) => {
     res.json(db.supplierPayments || []);
 });
 
+// User ruling 2026-10-21 (21:45): supplier money already paid sits as an unallocated advance (the supplier general wallet) until a PO component can take it;
+// it is applied to eligible components (FIFO) as soon as they are ORDERED or received. Liabilities stay exactly as ordered; only the excess over the PO stays in the wallet.
+const sweepSupplierAdvances = (db, supplierId) => {
+    if (!supplierId || !db.supplierPayments) return;
+    const entries = [];
+    (db.orders || []).forEach(order => (order.items || []).forEach(item => (item.components || []).forEach(comp => {
+        if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId && ['ORDERED', 'ORDERED_FOR_STOCK', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(String(comp.status || '').toUpperCase())) {
+            const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
+            entries.push({ componentId: comp.id, orderId: order.id, orderNumber: order.internalOrderNumber, itemDescription: comp.description, totalCost: (comp.quantity || 0) * (comp.unitCost || 0) * (1 + taxRate / 100), at: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp });
+        }
+    })));
+    entries.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    const alloc = {};
+    db.supplierPayments.filter(sp => sp.supplierId === supplierId).forEach(sp => (sp.allocations || []).forEach(a => { alloc[a.componentId] = (alloc[a.componentId] || 0) + a.amount; }));
+    db.supplierPayments.filter(sp => sp.supplierId === supplierId && !sp.isRefund && sp.unallocatedAdvance > 0.004).forEach(sp => {
+        for (const e of entries) {
+            if (sp.unallocatedAdvance <= 0.004) break;
+            const open = e.totalCost - (alloc[e.componentId] || 0);
+            if (open <= 0.004) continue;
+            const take = Math.round(Math.min(open, sp.unallocatedAdvance) * 100) / 100;
+            sp.allocations = sp.allocations || [];
+            sp.allocations.push({ componentId: e.componentId, orderId: e.orderId, orderNumber: e.orderNumber, itemDescription: e.itemDescription, amount: take });
+            alloc[e.componentId] = (alloc[e.componentId] || 0) + take;
+            sp.unallocatedAdvance = Math.round((sp.unallocatedAdvance - take) * 100) / 100;
+        }
+    });
+};
+
 // POST record a supplier payment with FIFO allocation & General Ledger reflection
 app.post('/api/v1/supplierPayments', (req, res) => {
     try {
@@ -9475,13 +9526,14 @@ app.post('/api/v1/supplierPayments', (req, res) => {
         const supplier = (db.suppliers || []).find(s => s.id === supplierId);
         if (!supplier) return res.status(404).json({ error: "Supplier not found" });
 
+        sweepSupplierAdvances(db, supplierId);
         // Gather all PROCUREMENT components for this supplier across all orders
         const componentEntries = [];
         (db.orders || []).forEach(order => {
             order.items.forEach(item => {
                 (item.components || []).forEach(comp => {
                     if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId &&
-                        ['ORDERED', 'ORDERED_FOR_STOCK', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(String(comp.status || '').toUpperCase())) {
+                        ['ORDERED', 'ORDERED_FOR_STOCK', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(String(comp.status || '').toUpperCase())) {
                         const isTarget = Boolean((orderId && order.id === orderId) || (poNumber && comp.poNumber === poNumber));
                         const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
                         const netCost = (comp.quantity || 0) * (comp.unitCost || 0);
