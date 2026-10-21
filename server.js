@@ -3639,6 +3639,8 @@ const orderProjectName = (order, orders = []) => {
     }
     return proj;
 };
+// R30 (23:00, OS09): wallets and costs are shown in L.E.; a foreign-currency order's customer money (typed in the order currency) is converted at the order rate.
+const orderFx = (o) => (o && o.currency && o.currency !== 'L.E.' && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
 // x: money received from the customer on this PO (account transfers in/out of the PO included)
 const orderPaidIn = (order) => {
     const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
@@ -3679,7 +3681,7 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = []) => 
         projectBalances[k] = r2w((projectBalances[k] || 0) + (Number(bal) || 0));
     });
     orders.filter(o => o.customerName === customer.name).forEach(o => {
-        const net = r2w(orderPaidIn(o) - orderPaidOut(o, supplierPayments));
+        const net = r2w(r2w(orderPaidIn(o) * orderFx(o)) - orderPaidOut(o, supplierPayments));
         if (!net) return;
         const key = orderProjectName(o, orders) || '(No Project)';
         projectBalances[key] = r2w((projectBalances[key] || 0) + net);
@@ -3697,7 +3699,7 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = []) => 
 const computeOrderWallet = (order, orders = [], supplierPayments = []) => {
     if (!order) return null;
     const isCallOff = Boolean(order.blanketContractId) && !order.blanketOrder;
-    const x = orderPaidIn(order);
+    const x = r2w(orderPaidIn(order) * orderFx(order)); // wallet in L.E.
     const y = orderPaidOut(order, supplierPayments);
     return {
         orderId: order.id,
@@ -3939,9 +3941,17 @@ const validateOrderItems = (items, customerName, customerPoNumber = '') => {
     return null;
 };
 
+// R30 (23:00): units cannot be partitioned: every quantity is a whole number, blanket orders and call-offs included.
+const firstFraction = (vals) => (vals || []).map(Number).find(q => Number.isFinite(q) && Math.abs(q - Math.round(q)) > 1e-9);
+const orderFraction = (o) => {
+    const q = [];
+    (o.items || []).forEach(i => { if (i && i.quantity !== undefined) q.push(i.quantity); (i && i.components || []).forEach(c => c && c.quantity !== undefined && q.push(c.quantity)); });
+    return firstFraction(q);
+};
 const addToCollection = (col) => (req, res) => {
     const db = getDb(req);
     if (!db[col]) db[col] = [];
+    if (col === 'orders') { const fq_ = orderFraction(req.body || {}); if (fq_ !== undefined) return res.status(400).json({ error: `Rejected: fraction ${fq_} is not allowed (whole units only).` }); }
 
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     const user = req.headers['x-user'] || 'System';
@@ -4114,10 +4124,9 @@ const updateInCollection = (col) => (req, res) => {
         return res.status(400).json({ error: 'Invalid orderDate.' });
     }
 
-    if (col === 'orders' && req.body.items !== undefined && !(updated.blanketOrder || updated.contractId || updated.blanketContractId)) {
-        // R23 (C18): a normal PO takes whole quantities only; blanket orders and their call-offs may carry fractions.
-        const badQ = (updated.items || []).map(i => Number(i.quantity)).find(q => Number.isFinite(q) && Math.abs(q - Math.round(q)) > 1e-9);
-        if (badQ !== undefined) return res.status(400).json({ error: `Rejected: fraction ${badQ} is not allowed on a normal order (whole units only).` });
+    if (col === 'orders' && req.body.items !== undefined) {
+        const badQ = orderFraction(updated);
+        if (badQ !== undefined) return res.status(400).json({ error: `Rejected: fraction ${badQ} is not allowed (whole units only).` });
     }
 
     if (col === 'users' && !isAdminUser(req)) {
@@ -4695,6 +4704,7 @@ app.post('/api/v1/orders/:id/items', (req, res) => {
     if (!order) return res.status(404).json({ error: "Order not found" });
 
     const item = req.body;
+    if (firstFraction([item.quantity]) !== undefined) return res.status(400).json({ error: `Rejected: fraction ${item.quantity} is not allowed (whole units only).` });
     if (!item.description || !item.unit) {
         return res.status(400).json({ error: "Item description and unit are required" });
     }
@@ -4736,7 +4746,7 @@ app.put('/api/v1/orders/:id/items/:itemId', (req, res) => {
     if (itemIdx === -1) return res.status(404).json({ error: "Order item not found" });
 
     const oldItem = order.items[itemIdx];
-    if (req.body.quantity !== undefined && !(order.blanketOrder || order.contractId || order.blanketContractId)) {
+    if (req.body.quantity !== undefined) {
         const q_ = Number(req.body.quantity);
         if (Number.isFinite(q_) && Math.abs(q_ - Math.round(q_)) > 1e-9) return res.status(400).json({ error: `Rejected: fraction ${q_} is not allowed on a normal order (whole units only).` });
     }
@@ -5076,8 +5086,11 @@ app.get('/api/v1/reports/orders', (req, res) => {
     const totalRealCost = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0));
     const count = enrichedOrders.length;
 
+    const revenueByCurrency = {};
+    fulfilledOrders.forEach(o => { const cur = o.currency || 'L.E.'; revenueByCurrency[cur] = r2c((revenueByCurrency[cur] || 0) + (Number(o.totalPriceOrderCurrency) || 0)); });
     res.json({
         count,
+        revenueByCurrency,
         totalRevenue,
         totalRealCost,
         grossProfit: totalRevenue - totalRealCost,
@@ -5669,18 +5682,20 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         const oldOrder = JSON.parse(JSON.stringify(order));
 
         if (!/rollback|reject|hold/.test(String(action))) touchByTechReview(order, user, db, `acted on the order (${action})`);
-        // R23 (C18): a normal PO takes whole quantities only; blanket orders (and their call-offs) may carry fractions.
-        {
-            const qtyActions = ['receive-component', 'receive-hub-partial', 'approve-dispatch-receipt', 'release-delivery', 'ship-items', 'confirm-delivery', 'register-manufacturing'];
-            const isBlanketLike = Boolean(order.blanketOrder || order.contractId || order.blanketContractId);
-            if (qtyActions.includes(action) && !isBlanketLike && payload) {
-                const qs = [];
-                if (payload.qty !== undefined) qs.push(payload.qty);
-                (payload.items || []).forEach(x => x && x.qty !== undefined && qs.push(x.qty));
-                (payload.receipts || []).forEach(x => x && x.qty !== undefined && qs.push(x.qty));
-                const bad = qs.find(q => Number.isFinite(Number(q)) && Math.abs(Number(q) - Math.round(Number(q))) > 1e-9);
-                if (bad !== undefined) throw new Error(`Fractional quantity ${bad} is not allowed on a normal PO (whole units only).`);
-            }
+        // R30 (23:00): whole units only, everywhere a quantity is entered (blanket orders and call-offs too).
+        if (payload) {
+            const qs = [];
+            ['qty', 'quantity', 'newQty', 'allocateQty', 'remainderQty'].forEach(k => payload[k] !== undefined && payload[k] !== null && qs.push(payload[k]));
+            ['items', 'receipts', 'lines'].forEach(k => (Array.isArray(payload[k]) ? payload[k] : []).forEach(x => x && ['qty', 'quantity', 'deliveredQty', 'shipQty'].forEach(f => x[f] !== undefined && qs.push(x[f]))));
+            if (payload.updates && payload.updates.quantity !== undefined) qs.push(payload.updates.quantity);
+            if (payload.component && payload.component.quantity !== undefined) qs.push(payload.component.quantity);
+            const bad = firstFraction(qs);
+            if (bad !== undefined) throw new Error(`Fractional quantity ${bad} is not allowed (whole units only).`);
+        }
+        // R30 (23:00): a LOGGED / cancelled order has nothing manufactured or reserved, so production, invoice and delivery are refused.
+        if ([OrderStatus.LOGGED, OrderStatus.REJECTED, OrderStatus.TECHNICAL_REVIEW, OrderStatus.NEGATIVE_MARGIN].includes(order.status) &&
+            ['start-production', 'register-manufacturing', 'consume-factory-component', 'finish-production', 'receive-hub', 'receive-hub-partial', 'issue-invoice', 'approve-dispatch-receipt', 'release-delivery', 'ship-items', 'confirm-delivery', 'request-einvoice', 'attach-einvoice'].includes(action) && !isStockOrder(order)) {
+            throw new Error(`Refused: ${action} is not possible on an order in ${order.status} status (nothing manufactured or reserved).`);
         }
         { const denied = actionRoleDenied(req, action); if (denied) return res.status(403).json({ error: denied }); }
         switch (action) {
@@ -5849,6 +5864,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
 
                     item.components = [];
+                    item.manufacturedQty = 0; item.hubReceivedQty = 0;
                     item.isAccepted = false;
                     delete item.technicalReviewStatus;
                     delete item.bomConfigured;
@@ -6002,12 +6018,25 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     });
                 });
+                // R30 (23:00): manufactured products of a cancelled order go to free stock (no customer); unused components are stocked with no PO.
+                order.items.forEach(item => {
+                    const madeQty = Math.max(0, (Number(item.manufacturedQty) || 0) - (Number(item.deliveredQty) || 0));
+                    if (item.productionType !== 'TRADING' && item.productionType !== 'OUTSOURCING' && madeQty > 0) {
+                        const fSku = item.orderNumber || item.sku || `FG-${item.id}`;
+                        let fInv = (db.inventory || []).find(i => (i.sku && i.sku === fSku) || (i.description && i.description === item.description));
+                        if (fInv) { fInv.quantityInStock = (Number(fInv.quantityInStock) || 0) + madeQty; fInv.lastUpdated = new Date().toISOString(); delete fInv.orderRef; delete fInv.poNumber; }
+                        else { (db.inventory = db.inventory || []).push({ id: `inv_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, sku: fSku, description: item.description, quantityInStock: madeQty, quantityReserved: 0, category: 'Finished goods', unit: item.unit || 'pcs', lastCost: Number(item.realCost) || 0, minStockLevel: 0, lastUpdated: new Date().toISOString() }); }
+                        order.logs.push(createAuditLog(`Cancelled order: ${madeQty} ${item.unit || 'pcs'} of ${item.description} moved to free stock (no customer).`, order.status, user));
+                    }
+                    item.manufacturedQty = 0; item.hubReceivedQty = 0;
+                });
                 // Release any remaining reserved inventory back to free stock
                 order.items.forEach(item => {
                     (item.components || []).forEach(comp => {
                         if (['RESERVED', 'RECEIVED'].includes(comp.status)) {
                             updateInventoryItem(db, comp, 'RELEASE', order);
                             comp.status = 'IN_STOCK'; // Or specific status indicating released
+                            delete comp.poNumber; delete comp.supplierId; delete comp.supplierName; comp.receivedQty = 0;
                         }
                     });
                 });
@@ -6017,9 +6046,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const cust = (db.customers || []).find(c => c.name === order.customerName);
                     if (paidOnOrder > 0 && cust && !order.paymentMovedToWallet) {
                         cust.walletBalances = cust.walletBalances || {};
-                        cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + paidOnOrder) * 100) / 100;
+                        cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + paidOnOrder * orderFx(order)) * 100) / 100;
                         order.paymentMovedToWallet = paidOnOrder;
-                        ledgerPush(db, { type: 'TRANSFER', amount: paidOnOrder, description: `Cancelled PO ${oldInternal}: paid amount moved to customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', oldInternal), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id, poNumber: oldInternal }, user);
+                        ledgerPush(db, { type: 'TRANSFER', amount: Math.round(paidOnOrder * orderFx(order) * 100) / 100, description: `Cancelled PO ${oldInternal}: paid amount moved to customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', oldInternal), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id, poNumber: oldInternal }, user);
                         order.logs.push(createAuditLog(`Paid amount ${paidOnOrder.toLocaleString()} L.E. moved to the customer general wallet (credit).`, order.status, user));
                     }
                 }
@@ -7005,8 +7034,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const fromWalletAmt = Math.min(payAmt, Number(walletUsedForLedger) || 0);
                     const cashAmt = Math.round((payAmt - fromWalletAmt) * 100) / 100;
                     const poAcct = acctLabel(order.customerName, 'ORDER', order.internalOrderNumber);
-                    if (cashAmt > 0) ledgerPush(db, { type: 'ADDITION', amount: cashAmt, description: `Customer Payment: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.memo || 'Regular payment'}`, category: 'Customer Payment', fromAccount: poAcct, toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, receiptNumber }, user);
-                    if (fromWalletAmt > 0) ledgerPush(db, { type: 'TRANSFER', amount: fromWalletAmt, description: `Wallet applied to PO ${order.internalOrderNumber}`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: poAcct, customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, receiptNumber }, user);
+                    if (cashAmt > 0) ledgerPush(db, { type: 'ADDITION', amount: Math.round(cashAmt * orderFx(order) * 100) / 100, description: `Customer Payment: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.memo || 'Regular payment'}`, category: 'Customer Payment', fromAccount: poAcct, toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, receiptNumber }, user);
+                    if (fromWalletAmt > 0) ledgerPush(db, { type: 'TRANSFER', amount: Math.round(fromWalletAmt * orderFx(order) * 100) / 100, description: `Wallet applied to PO ${order.internalOrderNumber}`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: poAcct, customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, receiptNumber }, user);
                 }
 
                 // User ruling 2026-10-21 (21:45): no refund action. A customer payment above the PO gross moves to the customer GENERAL wallet; the PO keeps exactly its commitment.
@@ -7016,10 +7045,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const custS = (db.customers || []).find(c => c.name === order.customerName);
                     if (gross > 0 && surplus > 0.004 && custS) {
                         custS.walletBalances = custS.walletBalances || {};
-                        custS.walletBalances[SELF_WALLET_KEY] = Math.round(((custS.walletBalances[SELF_WALLET_KEY] || 0) + surplus) * 100) / 100;
-                        custS.walletBalance = (custS.walletBalance || 0) + surplus;
+                        custS.walletBalances[SELF_WALLET_KEY] = Math.round(((custS.walletBalances[SELF_WALLET_KEY] || 0) + surplus * orderFx(order)) * 100) / 100;
+                        custS.walletBalance = (custS.walletBalance || 0) + surplus * orderFx(order);
                         order.surplusMovedToWallet = Math.round(((Number(order.surplusMovedToWallet) || 0) + surplus) * 100) / 100;
-                        ledgerPush(db, { type: 'TRANSFER', amount: surplus, description: `PO ${order.internalOrderNumber}: payment above the PO gross credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', '') });
+                        ledgerPush(db, { type: 'TRANSFER', amount: Math.round(surplus * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: payment above the PO gross credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', '') });
                         order.logs.push(createAuditLog(`Payment above the PO gross: ${surplus.toFixed(2)} moved to the customer general wallet (no refund action).`, order.status, user));
                     }
                 }
@@ -7029,8 +7058,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const whtA = orderWhtAmount(order);
                     if (whtA > 0) {
                         const poAcctW = acctLabel(order.customerName, 'ORDER', order.internalOrderNumber);
-                        ledgerPush(db, { type: 'TRANSFER', amount: whtA, description: `PO ${order.internalOrderNumber}: 1% withholding credited with the payment (full payment shown ${(orderCommitmentGross(order)).toFixed(2)})`, category: 'Withholding Tax', fromAccount: `Customer ${order.customerName} / Withholding held by customer`, toAccount: poAcctW, orderId: order.id }, user);
-                        ledgerPush(db, { type: 'TRANSFER', amount: whtA, description: `PO ${order.internalOrderNumber}: 1% withholding to the tax-authority account (waiting for the certificate)`, category: 'Withholding Tax', fromAccount: poAcctW, toAccount: 'Tax Authority / Withholding', orderId: order.id }, user);
+                        ledgerPush(db, { type: 'TRANSFER', amount: Math.round(whtA * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: 1% withholding credited with the payment (full payment shown ${(orderCommitmentGross(order)).toFixed(2)})`, category: 'Withholding Tax', fromAccount: `Customer ${order.customerName} / Withholding held by customer`, toAccount: poAcctW, orderId: order.id }, user);
+                        ledgerPush(db, { type: 'TRANSFER', amount: Math.round(whtA * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: 1% withholding to the tax-authority account (waiting for the certificate)`, category: 'Withholding Tax', fromAccount: poAcctW, toAccount: 'Tax Authority / Withholding', orderId: order.id }, user);
                         order.whtLedgerBooked = true;
                     }
                 }
@@ -7234,7 +7263,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const randomPart = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
                     order.invoiceNumber = `INV-${datePart}-${randomPart}`;
                 }
-                order.logs.push(createAuditLog(`Official Tax Invoice Generated: ${order.invoiceNumber}`, order.status, user));
+                {
+                    // R30 (23:00, OS09): the Gov E-Invoice is issued in L.E. after conversion at the order rate.
+                    const fxI = orderFx(order); let netI = 0, vatI = 0;
+                    (order.items || []).forEach(it => { const l = (getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0); netI += l; vatI += l * ((it.taxPercent || 0) / 100); });
+                    order.invoiceCurrency = 'L.E.'; order.invoiceRate = fxI;
+                    order.invoiceNetLE = Math.round(netI * fxI * 100) / 100; order.invoiceVatLE = Math.round(vatI * fxI * 100) / 100; order.invoiceGrossLE = Math.round((netI + vatI) * fxI * 100) / 100;
+                }
+                order.logs.push(createAuditLog(`Official Tax Invoice Generated: ${order.invoiceNumber}${orderFx(order) !== 1 ? ` (invoice in L.E. at rate ${orderFx(order)}: gross ${order.invoiceGrossLE})` : ''}`, order.status, user));
                 break;
 
             case 'approve-dispatch-receipt': {
