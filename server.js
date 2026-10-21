@@ -4914,10 +4914,13 @@ app.get('/api/v1/reports/orders', (req, res) => {
     // Revenue = customer payments received on the contract; cost = supplier payments for the contract and its call-offs
     // (plus ledger expenses booked to them). The call-off rows keep their line values but are left out of the totals (their money is in the contract).
     const isBlanketRoot = (o) => Boolean(o.blanketOrder) && !o.blanketContractId;
+    // OS04 ruling (2026-10-21): a blanket OUTSOURCING contract reports revenue as the total of its net line values and cost from its components (not paid money).
+    const isOutsourcingBlanket = (o) => isBlanketRoot(o) && (o.items || []).length > 0 && (o.items || []).every(it => it.productionType === 'OUTSOURCING');
     const blanketIdsOf = (root) => (db.orders || []).filter(x => x.id === root.id || (x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber))).map(x => x.id);
     enrichedOrders.forEach(o => {
         if (o.status === OrderStatus.REJECTED) return;
-        if (isBlanketRoot(o)) {
+        if (isOutsourcingBlanket(o)) { o.reportBasis = 'LINES'; }
+        else if (isBlanketRoot(o)) {
             const ids = new Set(blanketIdsOf(o));
             const rev = (db.orders || []).filter(x => ids.has(x.id)).reduce((t, x) => t + (x.payments || []).reduce((a, p) => a + (Number(p.amount) || 0), 0), 0);
             let cost = 0;
@@ -4931,7 +4934,7 @@ app.get('/api/v1/reports/orders', (req, res) => {
             o.totalPrice = r2c(rev); o.totalPriceOrderCurrency = r2c(rev); o.totalRealCost = r2c(cost); o.reportBasis = 'PAID';
         } else if (o.blanketContractId) { o.reportBasis = 'BLANKET_CALL_OFF'; }
     });
-    const fulfilledOrders = enrichedOrders.filter(o => (o.status === OrderStatus.FULFILLED && o.reportBasis !== 'BLANKET_CALL_OFF') || o.reportBasis === 'PAID');
+    const fulfilledOrders = enrichedOrders.filter(o => (o.status === OrderStatus.FULFILLED && o.reportBasis !== 'BLANKET_CALL_OFF') || o.reportBasis === 'PAID' || o.reportBasis === 'LINES');
     const totalRevenue = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0));
     const totalRealCost = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0));
     const count = enrichedOrders.length;
