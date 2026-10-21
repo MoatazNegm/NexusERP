@@ -7072,7 +7072,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const whtA = orderWhtAmount(order);
                     if (whtA > 0) {
                         const poAcctW = acctLabel(order.customerName, 'ORDER', order.internalOrderNumber);
-                        ledgerPush(db, { type: 'TRANSFER', amount: Math.round(whtA * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: 1% withholding credited with the payment (full payment shown ${(orderCommitmentGross(order)).toFixed(2)})`, category: 'Withholding Tax', fromAccount: `Customer ${order.customerName} / Withholding held by customer`, toAccount: poAcctW, orderId: order.id }, user);
+                        ledgerPush(db, { type: 'TRANSFER', amount: Math.round(orderCommitmentGross(order) * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: full payment shown in the PO account incl. the 1% withholding (withholding ${whtA.toFixed(2)}; full payment shown ${(orderCommitmentGross(order)).toFixed(2)})`, category: 'Withholding Tax', fromAccount: `Customer ${order.customerName} / Withholding held by customer`, toAccount: poAcctW, orderId: order.id }, user);
                         ledgerPush(db, { type: 'TRANSFER', amount: Math.round(whtA * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: 1% withholding to the tax-authority account (waiting for the certificate)`, category: 'Withholding Tax', fromAccount: poAcctW, toAccount: 'Tax Authority / Withholding', orderId: order.id }, user);
                         order.whtLedgerBooked = true;
                     }
