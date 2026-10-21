@@ -3815,6 +3815,26 @@ const getCollection = (col) => (req, res) => {
     const db = getDb(req);
     if (col === 'users') return res.json((db[col] || []).map(({ password, ...u }) => u));
 
+    if (col === 'inventory') {
+        // R30 ruling 19:06: incoming = ordered from a supplier (PO issued) and not yet received, per warehouse item
+        const incMap = new Map();
+        (db.orders || []).forEach(o => {
+            if (isStockOrder(o) && false) return;
+            if ([OrderStatus.REJECTED, OrderStatus.FULFILLED].includes(o.status)) return;
+            (o.items || []).forEach(it => {
+                if (it.productionType === 'OUTSOURCING') return;
+                (it.components || []).forEach(c => {
+                    if (c.source !== 'PROCUREMENT' || !['ORDERED', 'ORDERED_FOR_STOCK', 'PARTIALLY_RECEIVED'].includes(c.status)) return;
+                    const left = (Number(c.quantity) || 0) - (Number(c.receivedQty) || 0);
+                    if (left <= 0) return;
+                    const key = String(c.description || '').trim().toLowerCase();
+                    incMap.set(key, (incMap.get(key) || 0) + left);
+                });
+            });
+        });
+        return res.json((db[col] || []).map(i => ({ ...i, quantityIncoming: incMap.get(String(i.description || '').trim().toLowerCase()) || 0 })));
+    }
+
     if (col === 'customers') {
         const orders = db.orders || [];
         return res.json((db[col] || []).map(c => computeCustomerWallet(c, orders, db.supplierPayments || [])));
@@ -5415,7 +5435,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         (order.items || []).forEach(item => {
             // 1. Customer Trading Items received to Product Hub (move from Product Stock to Component Stock)
             const isTrading = item.productionType === 'TRADING';
-            const hubQty = Number(item.hubReceivedQty) || 0;
+            const hubQty = Math.max(0, (Number(item.hubReceivedQty) || 0) - (item.components || []).filter(c => c.viaWarehouse && (!specificCompId || c.id === specificCompId)).reduce((a, c) => a + Math.max(0, (Number(c.receivedQty) || 0)), 0));
             if (isTrading && hubQty > 0 && (!specificCompId || (item.components || []).some(c => c.id === specificCompId))) {
                 const sku = item.orderNumber || (item.components && item.components[0]?.componentNumber) || (item.components && item.components[0]?.supplierPartNumber) || `SKU-${Date.now()}`;
                 const desc = item.description || (item.components && item.components[0]?.description) || 'Trading Item';
@@ -6236,6 +6256,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     // no inventory movement for a service
                 } else if (!isTradingItem) {
                     updateInventoryItem(db, compToReceive, 'RECEIVE', order, qtyToProcess);
+                } else if (compToReceive.source === 'PROCUREMENT') {
+                    // R30 ruling 19:06: a supplier part always enters the warehouse (on hand grows) and stays reserved for the order it was bought for.
+                    updateInventoryItem(db, compToReceive, 'RECEIVE', order, qtyToProcess);
+                    compToReceive.viaWarehouse = true;
                 } else {
                     if (compToReceive.inventoryItemId) {
                         if (db.inventory) {
@@ -6263,7 +6287,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                     // Mark component as manufactured since trading items skip manufacturing
                     if (compToReceive.receivedQty >= totalOrdered) {
-                        compToReceive.status = 'Manufactured';
+                        compToReceive.status = compToReceive.viaWarehouse ? 'RESERVED' : 'Manufactured';
                     }
 
                     order.logs.push(createAuditLog(`Trading Component Receipt: ${qtyToProcess} ${compToReceive.unit} of ${compToReceive.description} moved directly to Hub (Total Hub: ${item.hubReceivedQty}/${getItemEffectiveQty(item)})`, order.status, user));
@@ -7282,7 +7306,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         if (oItem.productionType === 'TRADING' && !isStockOrder(order)) {
                             let leftToTake = dItem.qty;
                             (oItem.components || []).forEach(sc => {
-                                if (sc.source !== 'STOCK' || !sc.inventoryItemId || leftToTake <= 0) return;
+                                if ((sc.source !== 'STOCK' && !sc.viaWarehouse) || !sc.inventoryItemId || leftToTake <= 0) return;
                                 const take = Math.min(leftToTake, (sc.quantity || 0) - (sc.consumedQty || 0));
                                 if (take <= 0) return;
                                 const invS = (db.inventory || []).find(x => x.id === sc.inventoryItemId);
