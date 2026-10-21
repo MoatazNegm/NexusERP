@@ -3611,7 +3611,9 @@ const orderProjectName = (order, orders = []) => {
 const orderPaidIn = (order) => {
     const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
     // a cancelled (rejected) PO keeps no customer money: what was paid moved to the customer general wallet
-    return order.status === OrderStatus.REJECTED ? Math.max(0, r2w(paid - (Number(order.paymentMovedToWallet) || 0))) : paid;
+    if (order.status === OrderStatus.REJECTED) return Math.max(0, r2w(paid - (Number(order.paymentMovedToWallet) || 0)));
+    // a closed blanket order's overpayment was moved to the customer general wallet (the payment records stay for the reports)
+    return r2w(paid - (Number(order.surplusMovedToWallet) || 0));
 };
 // y: money the company paid to suppliers for this PO (gross); supplier refunds are negative payments
 const orderPaidOut = (order, supplierPayments = []) => {
@@ -7338,8 +7340,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     cust.walletBalances = cust.walletBalances || {};
                     cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + diff) * 100) / 100;
                     cust.walletBalance = (cust.walletBalance || 0) + diff;
-                    order.payments = order.payments || [];
-                    order.payments.push({ amount: -diff, date: new Date().toISOString(), user, memo: `Blanket close ${order.internalOrderNumber}: overpayment moved to the customer general wallet`, receiptNumber: `TRF-${String(Date.now()).slice(-6)}`, transfer: true });
+                    order.surplusMovedToWallet = diff;
                     ledgerPush(db, { type: 'TRANSFER', amount: diff, description: `Blanket close ${order.internalOrderNumber}: overpayment credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id }, user);
                 }
                 order.contractClosed = true;
