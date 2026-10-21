@@ -2795,15 +2795,11 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     const anyNeedsRfp = outsourcingItems.some(item =>
                         (item.components || []).some(comp => comp.noRfpNeeded === false && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status))
                     );
-                    // R30 ruling (2026-10-21 15:33): an order whose supplier path went through RFP/award/PO stays WAITING_SUPPLIERS until the LAST item is delivered.
-                    const rfpPathUndelivered = outsourcingItems.some(item =>
-                        (item.components || []).some(comp => comp.source === 'PROCUREMENT' && comp.noRfpNeeded === false && (Number(comp.receivedQty) || 0) < (Number(comp.quantity) || 0))
-                    );
-                    if (!anyNeedsRfp && !rfpPathUndelivered && order.status === OrderStatus.WAITING_SUPPLIERS) {
+                    if (!anyNeedsRfp && order.status === OrderStatus.WAITING_SUPPLIERS) {
                         const old = order.status;
                         order.status = OrderStatus.RUNNING_OUTSOURCING_CONTRACT;
                         order.logs.push(createAuditLog(`[AUTO] Outsourcing contract active. Status moved from ${old} to ${order.status}`, order.status, 'System'));
-                    } else if ((anyNeedsRfp || rfpPathUndelivered) && order.status === OrderStatus.RUNNING_OUTSOURCING_CONTRACT) {
+                    } else if (anyNeedsRfp && order.status === OrderStatus.RUNNING_OUTSOURCING_CONTRACT) {
                         const old = order.status;
                         order.status = OrderStatus.WAITING_SUPPLIERS;
                         order.logs.push(createAuditLog(`[AUTO] Outsourcing contract requires RFP. Status moved from ${old} to ${order.status}`, order.status, 'System'));
@@ -6481,8 +6477,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 }
                 Object.assign(ucComp, payload.updates);
-                // R30 ruling: un-ticking "No RFP needed" puts the order on the supplier path: WAITING_SUPPLIERS until the last item is delivered.
-                if (payload.updates && payload.updates.noRfpNeeded === false && order.status === OrderStatus.RUNNING_OUTSOURCING_CONTRACT) {
+                // X the order on the supplier path: WAITING_SUPPLIERS until the last item is delivered.
+                // R30 ruling (clarified): BLANKET orders of type trade/manufacturing stay WAITING_SUPPLIERS until the last item is received; outsourcing blankets stay RUNNING_OUTSOURCING_CONTRACT.
+                const ucBlanketGoods = Boolean(order.blanketOrder || order.contractId || order.blanketContractId) && (order.items || []).some(i => i.productionType !== 'OUTSOURCING');
+                if (ucBlanketGoods && payload.updates && payload.updates.noRfpNeeded === false && order.status === OrderStatus.RUNNING_OUTSOURCING_CONTRACT) {
                     order.status = OrderStatus.WAITING_SUPPLIERS;
                     order.logs.push(createAuditLog('[AUTO] No RFP Needed un-ticked. Status moved from RUNNING_OUTSOURCING_CONTRACT to WAITING_SUPPLIERS', order.status, 'System'));
                 }
