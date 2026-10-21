@@ -6399,6 +6399,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 }
 
+                if (newComp.source === 'STOCK' && acItem.productionType === 'OUTSOURCING' && (!newComp.status || newComp.status === 'NEW')) newComp.status = 'RESERVED'; // R30: stock part of an outsourcing item is RESERVED
                 acItem.components.push(newComp);
                 
                 // Build detailed audit log message for procurement components
