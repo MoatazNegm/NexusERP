@@ -3653,7 +3653,6 @@ const orderPaidOut = (order, supplierPayments = []) => {
     (supplierPayments || []).forEach(sp => {
         const allocs = (sp.allocations || []).filter(a => a.orderId === order.id || (a.orderNumber && a.orderNumber === order.internalOrderNumber));
         if (allocs.length) allocs.forEach(a => { y += Number(a.amount) || 0; });
-        else if (!(sp.allocations || []).length && ((sp.orderId && sp.orderId === order.id) || (sp.poNumber && sp.poNumber === order.internalOrderNumber))) y += Number(sp.amount) || 0;
     });
     return r2w(y);
 };
@@ -3755,7 +3754,6 @@ const computePayables = (db) => {
     const allocPerComp = {}, allocPerOrder = {};
     sps.forEach(sp => {
         (sp.allocations || []).forEach(a => { allocPerComp[a.componentId] = (allocPerComp[a.componentId] || 0) + (Number(a.amount) || 0); });
-        if (!(sp.allocations || []).length && sp.orderId) allocPerOrder[sp.orderId] = (allocPerOrder[sp.orderId] || 0) + (Number(sp.amount) || 0);
     });
     const supName = id => (db.suppliers || []).find(s => s.id === id)?.name || 'Unknown';
     const rows = [];
@@ -5556,9 +5554,6 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         allocFound = true;
                     }
                 });
-                if (!allocFound && (!sp.allocations || sp.allocations.length === 0) && sp.orderId === order.id && (sp.poNumber === targetComp.poNumber || !sp.poNumber)) {
-                    paid += (sp.amount || 0);
-                }
             }
         });
         return Math.round(paid * 100) / 100;
@@ -6338,8 +6333,6 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const targetDest = isStockOrder(order) ? 'Warehouse Stock' : 'Reserved for Order';
                     order.logs.push(createAuditLog(`Component Receipt: Received ${qtyToProcess} ${compToReceive.unit || 'pcs'} of ${compToReceive.description} into ${targetDest} (Total received: ${compToReceive.receivedQty}/${totalOrdered})`, order.status, user));
                 }
-
-                sweepSupplierAdvances(db, compToReceive.supplierId);
                 // Auto-fulfill Internal Stock orders when all components are delivered to stock
                 if (isStockOrder(order)) {
                     const allComps = (order.items || []).flatMap(it => it.components || []);
@@ -7020,6 +7013,17 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         order.surplusMovedToWallet = Math.round(((Number(order.surplusMovedToWallet) || 0) + surplus) * 100) / 100;
                         ledgerPush(db, { type: 'TRANSFER', amount: surplus, description: `PO ${order.internalOrderNumber}: payment above the PO gross credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', '') });
                         order.logs.push(createAuditLog(`Payment above the PO gross: ${surplus.toFixed(2)} moved to the customer general wallet (no refund action).`, order.status, user));
+                    }
+                }
+
+                // User ruling 2026-10-21 (22:52): the project wallet first shows the FULL payment incl. the 1% withholding, then the 1% goes to the tax-authority account (display lines only; wallet totals unchanged).
+                if (order.appliesWithholdingTax && !order.whtLedgerBooked && isOrderFullyPaid(order)) {
+                    const whtA = orderWhtAmount(order);
+                    if (whtA > 0) {
+                        const poAcctW = acctLabel(order.customerName, 'ORDER', order.internalOrderNumber);
+                        ledgerPush(db, { type: 'TRANSFER', amount: whtA, description: `PO ${order.internalOrderNumber}: 1% withholding credited with the payment (full payment shown ${(orderCommitmentGross(order)).toFixed(2)})`, category: 'Withholding Tax', fromAccount: `Customer ${order.customerName} / Withholding held by customer`, toAccount: poAcctW, orderId: order.id }, user);
+                        ledgerPush(db, { type: 'TRANSFER', amount: whtA, description: `PO ${order.internalOrderNumber}: 1% withholding to the tax-authority account (waiting for the certificate)`, category: 'Withholding Tax', fromAccount: poAcctW, toAccount: 'Tax Authority / Withholding', orderId: order.id }, user);
+                        order.whtLedgerBooked = true;
                     }
                 }
 
@@ -9480,38 +9484,74 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
 
 // ==================== SUPPLIER PAYMENTS ====================
 
+// Finance-only: allocate (part of) an unallocated supplier payment to a PO / order / component.
+app.post('/api/v1/supplierPayments/:id/allocate', (req, res) => {
+    try {
+        { const r = req.roles || []; if (r.length && !r.some(x => ['admin','management','finance'].includes(x))) return res.status(403).json({ error: 'refused: wrong role: allocating payments is finance' }); }
+        const db = getDb(req);
+        const sp = (db.supplierPayments || []).find(x => x.id === req.params.id);
+        if (!sp || sp.isRefund) return res.status(404).json({ error: 'Supplier payment not found' });
+        const { poNumber, orderId, componentId } = req.body || {};
+        if (!poNumber && !orderId && !componentId) return res.status(400).json({ error: 'poNumber, orderId or componentId is required' });
+        const free = Number(sp.unallocatedAdvance) || 0;
+        const want = req.body && req.body.amount !== undefined ? Number(req.body.amount) : free;
+        if (!(want > 0)) return res.status(400).json({ error: 'a positive amount is required' });
+        if (want > free + 0.004) return res.status(400).json({ error: `refused: only ${free.toFixed(2)} of this payment is unallocated` });
+        const entries = poComponentEntries(db, sp.supplierId, { orderId, poNumber, componentId });
+        if (!entries.length) return res.status(400).json({ error: 'refused: no issued PO component of this supplier matches' });
+        const r = allocateToEntries(db, sp.supplierId, entries, want);
+        if (!r.allocations.length) return res.status(400).json({ error: 'refused: the PO is already fully covered' });
+        const done = Math.round((want - r.rest) * 100) / 100;
+        sp.allocations = (sp.allocations || []).concat(r.allocations);
+        sp.unallocatedAdvance = Math.round((free - done) * 100) / 100;
+        writeDb(db, getDbPath(req));
+        res.json(sp);
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to allocate supplier payment' });
+    }
+});
+
 // GET all supplier payments
 app.get('/api/v1/supplierPayments', (req, res) => {
     const db = getDb(req);
     res.json(db.supplierPayments || []);
 });
 
-// User ruling 2026-10-21 (21:45): supplier money already paid sits as an unallocated advance (the supplier general wallet) until a PO component can take it;
-// it is applied to eligible components (FIFO) as soon as they are ORDERED or received. Liabilities stay exactly as ordered; only the excess over the PO stays in the wallet.
-const sweepSupplierAdvances = (db, supplierId) => {
-    if (!supplierId || !db.supplierPayments) return;
-    const entries = [];
-    (db.orders || []).forEach(order => (order.items || []).forEach(item => (item.components || []).forEach(comp => {
-        if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId && ['ORDERED', 'ORDERED_FOR_STOCK', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(String(comp.status || '').toUpperCase())) {
-            const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
-            entries.push({ componentId: comp.id, orderId: order.id, orderNumber: order.internalOrderNumber, itemDescription: comp.description, totalCost: (comp.quantity || 0) * (comp.unitCost || 0) * (1 + taxRate / 100), at: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp });
-        }
-    })));
-    entries.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+// User ruling 2026-10-21 (22:52): the FINANCE user decides to which wallet a supplier payment goes. A payment that names a PO / order is allocated to that PO's components
+// (oldest first inside it); a payment that names none stays an unallocated advance (supplier general wallet) until finance uses the Allocate action. No automatic allocation elsewhere.
+const NOT_COMMITTED_STATUSES = ['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'];
+const allocatedPerComponent = (db, supplierId) => {
     const alloc = {};
-    db.supplierPayments.filter(sp => sp.supplierId === supplierId).forEach(sp => (sp.allocations || []).forEach(a => { alloc[a.componentId] = (alloc[a.componentId] || 0) + a.amount; }));
-    db.supplierPayments.filter(sp => sp.supplierId === supplierId && !sp.isRefund && sp.unallocatedAdvance > 0.004).forEach(sp => {
-        for (const e of entries) {
-            if (sp.unallocatedAdvance <= 0.004) break;
-            const open = e.totalCost - (alloc[e.componentId] || 0);
-            if (open <= 0.004) continue;
-            const take = Math.round(Math.min(open, sp.unallocatedAdvance) * 100) / 100;
-            sp.allocations = sp.allocations || [];
-            sp.allocations.push({ componentId: e.componentId, orderId: e.orderId, orderNumber: e.orderNumber, itemDescription: e.itemDescription, amount: take });
-            alloc[e.componentId] = (alloc[e.componentId] || 0) + take;
-            sp.unallocatedAdvance = Math.round((sp.unallocatedAdvance - take) * 100) / 100;
-        }
-    });
+    (db.supplierPayments || []).filter(sp => sp.supplierId === supplierId).forEach(sp => (sp.allocations || []).forEach(a => { alloc[a.componentId] = (alloc[a.componentId] || 0) + (Number(a.amount) || 0); }));
+    return alloc;
+};
+const poComponentEntries = (db, supplierId, { orderId, poNumber, componentId } = {}) => {
+    const out = [];
+    (db.orders || []).forEach(order => (order.items || []).forEach(item => (item.components || []).forEach(comp => {
+        if (comp.source !== 'PROCUREMENT' || comp.supplierId !== supplierId) return;
+        if (NOT_COMMITTED_STATUSES.includes(String(comp.status || '').toUpperCase())) return;
+        const hit = (componentId && comp.id === componentId) || (!componentId && ((orderId && order.id === orderId) || (poNumber && comp.poNumber === poNumber)));
+        if (!hit) return;
+        const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
+        out.push({ componentId: comp.id, orderId: order.id, orderNumber: order.internalOrderNumber, itemDescription: comp.description, poNumber: comp.poNumber, totalCost: (comp.quantity || 0) * (comp.unitCost || 0) * (1 + taxRate / 100), at: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp });
+    })));
+    out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    return out;
+};
+// allocate up to `amount` of an unallocated pool to the given entries; returns { allocations, rest }
+const allocateToEntries = (db, supplierId, entries, amount) => {
+    const prev = allocatedPerComponent(db, supplierId);
+    let rest = Math.round(amount * 100) / 100; const allocations = [];
+    for (const e of entries) {
+        if (rest <= 0.004) break;
+        const open = Math.round((e.totalCost - (prev[e.componentId] || 0)) * 100) / 100;
+        if (open <= 0.004) continue;
+        const take = Math.round(Math.min(open, rest) * 100) / 100;
+        allocations.push({ componentId: e.componentId, orderId: e.orderId, orderNumber: e.orderNumber, itemDescription: e.itemDescription, amount: take });
+        prev[e.componentId] = (prev[e.componentId] || 0) + take;
+        rest = Math.round((rest - take) * 100) / 100;
+    }
+    return { allocations, rest };
 };
 
 // POST record a supplier payment with FIFO allocation & General Ledger reflection
@@ -9527,73 +9567,13 @@ app.post('/api/v1/supplierPayments', (req, res) => {
 
         const supplier = (db.suppliers || []).find(s => s.id === supplierId);
         if (!supplier) return res.status(404).json({ error: "Supplier not found" });
-
-        sweepSupplierAdvances(db, supplierId);
-        // Gather all PROCUREMENT components for this supplier across all orders
-        const componentEntries = [];
-        (db.orders || []).forEach(order => {
-            order.items.forEach(item => {
-                (item.components || []).forEach(comp => {
-                    if (comp.source === 'PROCUREMENT' && comp.supplierId === supplierId &&
-                        ['ORDERED', 'ORDERED_FOR_STOCK', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED', 'IN_MANUFACTURING', 'MANUFACTURED'].includes(String(comp.status || '').toUpperCase())) {
-                        const isTarget = Boolean((orderId && order.id === orderId) || (poNumber && comp.poNumber === poNumber));
-                        const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
-                        const netCost = (comp.quantity || 0) * (comp.unitCost || 0);
-                        const grossCost = netCost * (1 + (taxRate / 100));
-
-                        componentEntries.push({
-                            componentId: comp.id,
-                            orderId: order.id,
-                            orderNumber: order.internalOrderNumber,
-                            itemDescription: comp.description,
-                            poNumber: comp.poNumber,
-                            totalCost: grossCost,
-                            procurementStartedAt: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp,
-                            isTarget
-                        });
-                    }
-                });
-            });
-        });
-
-        // Sort: target PO components first, then FIFO by procurement start date
-        componentEntries.sort((a, b) => {
-            if (a.isTarget && !b.isTarget) return -1;
-            if (!a.isTarget && b.isTarget) return 1;
-            return new Date(a.procurementStartedAt).getTime() - new Date(b.procurementStartedAt).getTime();
-        });
-
-        // Calculate already-allocated amounts per component from previous payments
-        const previousAllocations = {};
-        (db.supplierPayments || []).forEach(payment => {
-            if (payment.supplierId === supplierId) {
-                (payment.allocations || []).forEach(alloc => {
-                    previousAllocations[alloc.componentId] = (previousAllocations[alloc.componentId] || 0) + alloc.amount;
-                });
-            }
-        });
-
-        // FIFO allocate the new payment
-        let remaining = amount;
-        const allocations = [];
-        for (const entry of componentEntries) {
-            if (remaining <= 0) break;
-            const alreadyAllocated = previousAllocations[entry.componentId] || 0;
-            const unallocated = Math.max(0, entry.totalCost - alreadyAllocated);
-            if (unallocated <= 0) continue;
-
-            const allocAmount = Math.min(remaining, unallocated);
-            allocations.push({
-                componentId: entry.componentId,
-                orderId: entry.orderId,
-                orderNumber: entry.orderNumber,
-                itemDescription: entry.itemDescription,
-                amount: Math.round(allocAmount * 100) / 100
-            });
-            remaining -= allocAmount;
+        // Allocation = the PO / order the finance user named when paying; nothing named = unallocated advance (supplier general wallet)
+        let allocations = [], unallocatedAdvance = Number(amount);
+        if (orderId || poNumber) {
+            const r = allocateToEntries(db, supplierId, poComponentEntries(db, supplierId, { orderId, poNumber }), Number(amount));
+            allocations = r.allocations; unallocatedAdvance = r.rest;
         }
-
-        const unallocatedAdvance = remaining > 0 ? Math.round(remaining * 100) / 100 : 0;
+        unallocatedAdvance = unallocatedAdvance > 0 ? Math.round(unallocatedAdvance * 100) / 100 : 0;
 
         // Create the payment record
         const paymentRecord = {

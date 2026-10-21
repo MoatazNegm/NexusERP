@@ -375,6 +375,15 @@ class DataService {
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Payment failed'); }
     return res.json();
   }
+  async allocateSupplierPayment(paymentId: string, target: { poNumber?: string; orderId?: string; componentId?: string }, amount?: number) {
+    const res = await fetch(`${BACKEND_URL}/api/v1/supplierPayments/${paymentId}/allocate`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ ...target, amount })
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Allocation failed'); }
+    return res.json();
+  }
   async alterLineItemQty(orderId: string, itemId: string, newQty: number, reason: string) {
     return this.dispatchAction(orderId, 'alter-line-item-qty', { itemId, newQty, reason });
   }

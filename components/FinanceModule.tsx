@@ -5713,6 +5713,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
           )}
 
+          {/* UNALLOCATED SUPPLIER PAYMENTS: finance decides the wallet (PO) of a payment that named none */}
+          {(supplierPayments || []).filter(sp => !sp.isRefund && (sp.unallocatedAdvance || 0) > 0.004).length > 0 && (
+            <div className="mt-6 p-4 rounded-2xl border border-amber-200 bg-amber-50">
+              <div className="text-[11px] font-black uppercase tracking-widest text-amber-700 mb-2">{language === 'ar' ? 'مدفوعات موردين غير مخصصة' : 'Unallocated supplier payments'}</div>
+              {(supplierPayments || []).filter(sp => !sp.isRefund && (sp.unallocatedAdvance || 0) > 0.004).map(sp => (
+                <div key={sp.id} className="flex flex-wrap items-center gap-2 py-1 text-xs">
+                  <span className="font-bold">{sp.supplierName}</span>
+                  <span className="font-mono">{Number(sp.unallocatedAdvance).toLocaleString()}</span>
+                  <input id={`alloc-po-${sp.id}`} className="border border-slate-300 rounded px-2 py-1 text-xs" placeholder={language === 'ar' ? 'رقم أمر الشراء' : 'PO number'} />
+                  <button className="px-3 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-black uppercase" onClick={async () => {
+                    const el = document.getElementById(`alloc-po-${sp.id}`) as HTMLInputElement | null;
+                    const po = el?.value?.trim();
+                    if (!po) return;
+                    try { await dataService.allocateSupplierPayment(sp.id, { poNumber: po }); fetchData(); } catch (e: any) { alert(e.message); }
+                  }}>{language === 'ar' ? 'تخصيص' : 'Allocate'}</button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* PAYMENT POPUP MODAL (WITH FILE UPLOAD, OVERPAYMENT DETECTION & DOUBLE CONFIRMATION) */}
           {supplierPoPaymentModal && (
             <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
