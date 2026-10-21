@@ -3594,121 +3594,148 @@ const withBlanketDrawdown = (order, orders = []) => {
     return { ...order, items, drawnQty: td, remainingQty: Math.max(0, tb - td), excessQty: Math.max(0, td - tb) };
 };
 
-// --- CUSTOMER WALLET HELPER ---
-// Calculates customer wallet balances (per-project and aggregate total).
-// Blanket orders where the customer has not been invoiced or has not paid yet
-// generate a negative wallet balance (debt: paid - commitment) until paid/settled.
-// Rejected orders are strictly ignored and must never affect wallets.
-const computeCustomerWallet = (customer, orders = []) => {
-    if (!customer) return customer;
-
-    // Collect all valid project names from non-rejected blanket orders across all orders
-    const validProjects = new Set();
-    orders.forEach(o => {
-        if (o.status === OrderStatus.REJECTED) return;
-        if (o.blanketOrder || o.contractId || o.blanketContractId) {
-            let proj = String((o.projectName || '').trim());
-            if (!proj && o.blanketContractId) {
-                const parent = orders.find(p => (p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId) && p.status !== OrderStatus.REJECTED);
-                if (parent && parent.projectName) proj = String(parent.projectName).trim();
-            }
-            if (proj) validProjects.add(proj);
-        }
-    });
-
-    const projectBalances = {};
-    if (customer.walletBalances) {
-        Object.entries(customer.walletBalances).forEach(([proj, bal]) => {
-            const trimmed = proj.trim();
-            if (validProjects.has(trimmed) || trimmed.startsWith('(') || !validProjects.size) {
-                projectBalances[trimmed] = Number(bal) || 0;
-            }
-        });
+// --- WALLET HELPERS (R30, user ruling 2026-10-21) ---
+// A wallet is money actually PAID, gross including VAT: customer payments (x) minus company payments to suppliers (y),
+// per project, per PO and per customer. Commitments are not in the wallet; they are shown as Accounts Receivable
+// (/api/v1/ar, per customer / PO / project) and Accounts Payable (/api/v1/ap, per supplier / PO / project).
+const r2w = x => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
+const orderProjectName = (order, orders = []) => {
+    let proj = String((order.projectName || '').trim());
+    if (!proj && order.blanketContractId) {
+        const parent = orders.find(p => (p.id === order.blanketContractId || p.internalOrderNumber === order.blanketContractId || p.customerReferenceNumber === order.blanketContractId) && p.status !== OrderStatus.REJECTED);
+        if (parent && parent.projectName) proj = String(parent.projectName).trim();
     }
-
-    // Active blanket orders for this customer (strictly not rejected)
-    const custBlanketOrders = orders.filter(o =>
-        o.customerName === customer.name &&
-        Boolean(o.blanketOrder || o.contractId || o.blanketContractId) &&
-        o.status !== OrderStatus.REJECTED
-    );
-
-    custBlanketOrders.forEach(o => {
-        // If the blanket order is fulfilled/settled, its settlement difference is already in projectBalances
-        if (o.status === OrderStatus.FULFILLED) return;
-        // Call-off (settling) orders of a blanket contract add nothing to the wallet: the open
-        // blanket commitment already covers them, and any excess is a receivable, not wallet debt.
-        if (o.blanketContractId && !o.blanketOrder) return;
-
-        let orderGross = 0;
-        let orderCost = 0;
-        (o.items || []).forEach(it => {
-            orderGross += (getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
-            (it.components || []).forEach(c => {
-                orderCost += (c.quantity || 0) * (c.unitCost || 0);
-            });
-        });
-        if (o.appliesWithholdingTax) orderGross *= 0.99;
-
-        const paid = (o.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-        const commitment = orderGross > 0 ? orderGross : orderCost;
-
-        // When not invoiced or not fully paid, customer owes the unpaid amount (negative wallet / debt)
-        if (commitment > 0) {
-            const balanceDelta = paid - commitment; // Negative if paid < commitment (debt)
-            let proj = String((o.projectName || '').trim());
-            if (!proj && o.blanketContractId) {
-                const parent = orders.find(p => (p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId) && p.status !== OrderStatus.REJECTED);
-                if (parent && parent.projectName) proj = String(parent.projectName).trim();
-            }
-            const projectKey = proj || '(No Project)';
-            projectBalances[projectKey] = (projectBalances[projectKey] || 0) + balanceDelta;
-        }
-    });
-
-    const totalBalance = Object.values(projectBalances).reduce((sum, val) => sum + (Number(val) || 0), 0);
-    return {
-        ...customer,
-        walletBalance: Math.round(totalBalance * 100) / 100,
-        walletBalances: projectBalances
-    };
+    return proj;
 };
-
-// --- ORDER WALLET HELPER ---
-// Wallet of a single order: what the customer committed to (gross), what was paid, the balance
-// (paid - committed, negative = debt) and any settlement credit/debit from settled call-offs.
-// Rejected orders and call-offs of a blanket contract carry no wallet of their own.
-const computeOrderWallet = (order, orders = []) => {
-    if (!order) return null;
+// x: money received from the customer on this PO (account transfers in/out of the PO included)
+const orderPaidIn = (order) => {
+    const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
+    // a cancelled (rejected) PO keeps no customer money: what was paid moved to the customer general wallet
+    return order.status === OrderStatus.REJECTED ? Math.max(0, r2w(paid - (Number(order.paymentMovedToWallet) || 0))) : paid;
+};
+// y: money the company paid to suppliers for this PO (gross); supplier refunds are negative payments
+const orderPaidOut = (order, supplierPayments = []) => {
+    let y = 0;
+    (supplierPayments || []).forEach(sp => {
+        const allocs = (sp.allocations || []).filter(a => a.orderId === order.id || (a.orderNumber && a.orderNumber === order.internalOrderNumber));
+        if (allocs.length) allocs.forEach(a => { y += Number(a.amount) || 0; });
+        else if (!(sp.allocations || []).length && ((sp.orderId && sp.orderId === order.id) || (sp.poNumber && sp.poNumber === order.internalOrderNumber))) y += Number(sp.amount) || 0;
+    });
+    return r2w(y);
+};
+const orderCommitmentGross = (order) => {
+    if (order.blanketOrder && order.contractClosed && order.closedDeliveredGross !== undefined) return r2w(order.closedDeliveredGross);
     let gross = 0, cost = 0;
     (order.items || []).forEach(it => {
         gross += (getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100));
         (it.components || []).forEach(c => { cost += (c.quantity || 0) * (c.unitCost || 0); });
     });
     if (order.appliesWithholdingTax) gross *= 0.99;
-    const paid = (order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-    const commitment = gross > 0 ? gross : cost;
-    const settlement = Object.values(order.settledCallOffs || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+    return r2w(gross > 0 ? gross : cost);
+};
+
+// --- CUSTOMER WALLET HELPER ---
+// Customer wallet = money held for the customer outside any PO (stored general/project advances) plus the money
+// paid on each non-rejected PO (x) minus the money the company paid for it (y), per project and in total.
+// Rejected orders are strictly ignored (their paid amount was moved to the general wallet when they were cancelled).
+const computeCustomerWallet = (customer, orders = [], supplierPayments = []) => {
+    if (!customer) return customer;
+    const projectBalances = {};
+    Object.entries(customer.walletBalances || {}).forEach(([proj, bal]) => {
+        const k = proj.trim();
+        projectBalances[k] = r2w((projectBalances[k] || 0) + (Number(bal) || 0));
+    });
+    orders.filter(o => o.customerName === customer.name).forEach(o => {
+        const net = r2w(orderPaidIn(o) - orderPaidOut(o, supplierPayments));
+        if (!net) return;
+        const key = orderProjectName(o, orders) || '(No Project)';
+        projectBalances[key] = r2w((projectBalances[key] || 0) + net);
+    });
+    const totalBalance = Object.values(projectBalances).reduce((sum, val) => sum + (Number(val) || 0), 0);
+    return {
+        ...customer,
+        walletBalance: r2w(totalBalance),
+        walletBalances: projectBalances
+    };
+};
+
+// --- ORDER WALLET HELPER ---
+// Wallet of a single PO: x (customer payments) minus y (company payments to suppliers for it). No commitment.
+const computeOrderWallet = (order, orders = [], supplierPayments = []) => {
+    if (!order) return null;
     const isCallOff = Boolean(order.blanketContractId) && !order.blanketOrder;
-    const rejected = order.status === OrderStatus.REJECTED;
-    let projectName = String((order.projectName || '').trim());
-    if (!projectName && order.blanketContractId) {
-        const parent = orders.find(p => (p.id === order.blanketContractId || p.internalOrderNumber === order.blanketContractId || p.customerReferenceNumber === order.blanketContractId) && p.status !== OrderStatus.REJECTED);
-        if (parent && parent.projectName) projectName = String(parent.projectName).trim();
-    }
-    const r = x => Math.round(x * 100) / 100;
+    const x = orderPaidIn(order);
+    const y = orderPaidOut(order, supplierPayments);
     return {
         orderId: order.id,
         internalOrderNumber: order.internalOrderNumber,
         customerName: order.customerName,
-        projectName: projectName || '(No Project)',
+        projectName: orderProjectName(order, orders) || '(No Project)',
         status: order.status,
         blanketOrder: Boolean(order.blanketOrder),
         callOffOf: isCallOff ? order.blanketContractId : undefined,
-        committed: rejected || isCallOff ? 0 : r(commitment),
-        paid: rejected ? 0 : r(paid),
-        settlement: r(settlement),
-        walletBalance: rejected || isCallOff ? 0 : r(paid - commitment + settlement)
+        paid: x,
+        paidOut: y,
+        walletBalance: r2w(x - y)
+    };
+};
+
+// --- ACCOUNTS RECEIVABLE / PAYABLE (R30) ---
+// AR: what customers still owe, per PO / customer / project. Call-off payments count against their blanket contract.
+const computeReceivables = (orders = []) => {
+    const rows = [];
+    orders.forEach(o => {
+        if (o.status === OrderStatus.REJECTED) return;
+        const isCallOff = Boolean(o.blanketContractId) && !o.blanketOrder;
+        const committed = isCallOff ? 0 : orderCommitmentGross(o);
+        let paid = orderPaidIn(o);
+        if (o.blanketOrder) {
+            const refs = [o.id, o.internalOrderNumber, o.customerReferenceNumber].filter(Boolean);
+            orders.filter(c => c.blanketContractId && refs.includes(c.blanketContractId) && c.status !== OrderStatus.REJECTED).forEach(c => { paid += orderPaidIn(c); });
+        } else if (isCallOff) paid = 0;
+        paid = r2w(paid);
+        rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectName(o, orders) || '(No Project)', status: o.status, committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) });
+    });
+    const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, receivable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.receivable = r2w(e.receivable + r.receivable); }); return Array.from(m.values()); };
+    return {
+        total: r2w(rows.reduce((s, r) => s + r.receivable, 0)),
+        byOrder: rows,
+        byCustomer: group(r => r.customerName, r => ({ customerName: r.customerName })),
+        byProject: group(r => r.customerName + '|' + r.projectName, r => ({ customerName: r.customerName, projectName: r.projectName }))
+    };
+};
+// AP: what the company still owes suppliers (gross), per supplier / PO / project.
+const computePayables = (db) => {
+    const orders = db.orders || [], sps = db.supplierPayments || [];
+    const allocPerComp = {}, allocPerOrder = {};
+    sps.forEach(sp => {
+        (sp.allocations || []).forEach(a => { allocPerComp[a.componentId] = (allocPerComp[a.componentId] || 0) + (Number(a.amount) || 0); });
+        if (!(sp.allocations || []).length && sp.orderId) allocPerOrder[sp.orderId] = (allocPerOrder[sp.orderId] || 0) + (Number(sp.amount) || 0);
+    });
+    const supName = id => (db.suppliers || []).find(s => s.id === id)?.name || 'Unknown';
+    const rows = [];
+    orders.forEach(o => {
+        if (o.status === OrderStatus.REJECTED) return;
+        const byOrderSupplier = new Map();
+        (o.items || []).forEach(it => (it.components || []).forEach(comp => {
+            if (!(comp.source === 'PROCUREMENT' || comp.source === 'CONSUMED') || ['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)) return;
+            const mul = 1 + ((comp.taxPercent !== undefined && comp.taxPercent !== null ? Number(comp.taxPercent) : 14) / 100);
+            const committed = ((comp.quantity || 0) + (comp.allocatedQty || 0)) * (comp.unitCost || 0) * mul;
+            const k = comp.supplierId || comp.supplierName || '';
+            if (!byOrderSupplier.has(k)) byOrderSupplier.set(k, { supplierId: comp.supplierId, supplierName: comp.supplierId ? supName(comp.supplierId) : (comp.supplierName || 'Unknown'), committed: 0, paid: 0 });
+            const e = byOrderSupplier.get(k); e.committed += committed; e.paid += Math.min(committed, allocPerComp[comp.id] || 0);
+        }));
+        let loose = allocPerOrder[o.id] || 0;
+        byOrderSupplier.forEach(e => { const take = Math.min(loose, Math.max(0, e.committed - e.paid)); e.paid += take; loose -= take; });
+        byOrderSupplier.forEach(e => rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, projectName: orderProjectName(o, orders) || '(No Project)', customerName: o.customerName, supplierId: e.supplierId, supplierName: e.supplierName, committed: r2w(e.committed), paid: r2w(e.paid), payable: r2w(Math.max(0, e.committed - e.paid)) }));
+    });
+    const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, payable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.payable = r2w(e.payable + r.payable); }); return Array.from(m.values()); };
+    return {
+        total: r2w(rows.reduce((s, r) => s + r.payable, 0)),
+        byOrderSupplier: rows,
+        byOrder: group(r => r.orderId, r => ({ orderId: r.orderId, internalOrderNumber: r.internalOrderNumber, projectName: r.projectName })),
+        bySupplier: group(r => r.supplierId || r.supplierName, r => ({ supplierId: r.supplierId, supplierName: r.supplierName })),
+        byProject: group(r => r.projectName, r => ({ projectName: r.projectName }))
     };
 };
 
@@ -3754,7 +3781,7 @@ const getCollection = (col) => (req, res) => {
 
     if (col === 'customers') {
         const orders = db.orders || [];
-        return res.json((db[col] || []).map(c => computeCustomerWallet(c, orders)));
+        return res.json((db[col] || []).map(c => computeCustomerWallet(c, orders, db.supplierPayments || [])));
     }
 
     if (col === 'orders') {
@@ -3799,7 +3826,7 @@ const getItemFromCollection = (col) => (req, res) => {
         return res.json(safe);
     }
     if (col === 'customers') {
-        return res.json(computeCustomerWallet(item, db.orders || []));
+        return res.json(computeCustomerWallet(item, db.orders || [], db.supplierPayments || []));
     }
     if (col === 'orders') {
         if (touchByTechReview(item, req.headers['x-user'], db, 'opened the order')) writeDb(db, getDbPath(req));
@@ -4212,7 +4239,7 @@ app.get('/api/v1/order-wallets', (req, res) => {
     const db = getDb(req);
     const orders = db.orders || [];
     const { customerName, projectName } = req.query;
-    let list = orders.map(o => computeOrderWallet(o, orders));
+    let list = orders.map(o => computeOrderWallet(o, orders, db.supplierPayments || []));
     if (customerName) list = list.filter(w => w.customerName === customerName);
     if (projectName) list = list.filter(w => w.projectName === String(projectName).trim());
     res.json(list);
@@ -4223,13 +4250,31 @@ app.get('/api/v1/orders/:id/wallet', (req, res) => {
     const orders = db.orders || [];
     const order = orders.find(o => o.id === req.params.id || o.internalOrderNumber === req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json(computeOrderWallet(order, orders));
+    res.json(computeOrderWallet(order, orders, db.supplierPayments || []));
+});
+
+// R30: Accounts Receivable (customers owe us) and Accounts Payable (we owe suppliers); commitments live here, not in the wallets.
+app.get('/api/v1/ar', (req, res) => {
+    const db = getDb(req);
+    const out = computeReceivables(db.orders || []);
+    const { customerName, projectName } = req.query;
+    if (customerName) { out.byOrder = out.byOrder.filter(r => r.customerName === customerName); out.byCustomer = out.byCustomer.filter(r => r.customerName === customerName); out.byProject = out.byProject.filter(r => r.customerName === customerName); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0)); }
+    if (projectName) { out.byOrder = out.byOrder.filter(r => r.projectName === String(projectName).trim()); out.byProject = out.byProject.filter(r => r.projectName === String(projectName).trim()); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0)); }
+    res.json(out);
+});
+app.get('/api/v1/ap', (req, res) => {
+    const db = getDb(req);
+    const out = computePayables(db);
+    const { supplierId, projectName } = req.query;
+    if (supplierId) { out.byOrderSupplier = out.byOrderSupplier.filter(r => r.supplierId === supplierId); out.bySupplier = out.bySupplier.filter(r => r.supplierId === supplierId); out.total = r2w(out.byOrderSupplier.reduce((s, r) => s + r.payable, 0)); }
+    if (projectName) { out.byOrderSupplier = out.byOrderSupplier.filter(r => r.projectName === String(projectName).trim()); out.byProject = out.byProject.filter(r => r.projectName === String(projectName).trim()); out.total = r2w(out.byOrderSupplier.reduce((s, r) => s + r.payable, 0)); }
+    res.json(out);
 });
 
 app.get('/api/v1/project-wallets', (req, res) => {
     const db = getDb(req);
     const orders = db.orders || [];
-    const customers = (db.customers || []).map(c => computeCustomerWallet(c, orders));
+    const customers = (db.customers || []).map(c => computeCustomerWallet(c, orders, db.supplierPayments || []));
     const projectMap = new Map();
 
     customers.forEach(c => {
@@ -4246,7 +4291,7 @@ app.get('/api/v1/project-wallets', (req, res) => {
                         const parent = orders.find(p => (p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId) && p.status !== OrderStatus.REJECTED);
                         if (parent && parent.projectName) ordProj = String(parent.projectName).trim();
                     }
-                    return isBlanket && ordProj === trimmed;
+                    return ordProj === trimmed;
                 });
                 projectMap.set(trimmed, {
                     projectName: trimmed,
@@ -4445,7 +4490,7 @@ app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
         customer.logs.push(createAuditLog(note, 'WALLET_TRANSFER', user));
         ledgerPush(db, { type: 'TRANSFER', amount: amt, description: note, category: 'Account Transfer', fromAccount: acctLabel(customer.name, src.t, src.ref), toAccount: acctLabel(customer.name, dst.t, dst.ref), customerName: customer.name }, user);
         writeDb(db, getDbPath(req));
-        return res.json({ ok: true, amount: amt, from: acctLabel(customer.name, src.t, src.ref), to: acctLabel(customer.name, dst.t, dst.ref), wallet: computeCustomerWallet(customer, db.orders || []) });
+        return res.json({ ok: true, amount: amt, from: acctLabel(customer.name, src.t, src.ref), to: acctLabel(customer.name, dst.t, dst.ref), wallet: computeCustomerWallet(customer, db.orders || [], db.supplierPayments || []) });
     } catch (err) {
         res.status(400).json({ error: err.message || "Transfer failed" });
     }
@@ -4494,7 +4539,7 @@ app.post('/api/v1/customers/:id/advance-payment', (req, res) => {
         });
 
         writeDb(db, getDbPath(req));
-        return res.json(computeCustomerWallet(customer, db.orders || []));
+        return res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || []));
     } catch (err) {
         res.status(500).json({ error: err.message || "Failed to record customer advance payment" });
     }
@@ -4518,7 +4563,7 @@ app.post('/api/v1/customers/:id/refund', (req, res) => {
         customer.walletBalances[SELF_WALLET_KEY] = Math.round((bal - amt) * 100) / 100;
         ledgerPush(db, { type: 'REFUND', amount: amt, description: `Customer Refund: ${customer.name}${ord ? ` - PO ${ord.internalOrderNumber}` : ''} - ${memo || 'Refund of general wallet credit'}`, category: 'Customer Refunds', fromAccount: acctLabel(customer.name, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: customer.name, orderId: ord ? ord.id : undefined, poNumber: ord ? ord.internalOrderNumber : undefined }, user);
         writeDb(db, getDbPath(req));
-        return res.json(computeCustomerWallet(customer, db.orders || []));
+        return res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || []));
     } catch (err) {
         res.status(500).json({ error: err.message || "Failed to record customer refund" });
     }
@@ -4705,7 +4750,7 @@ app.post('/api/v1/customers/:id/hold', (req, res) => {
     db.customers[idx] = customer;
 
     if (writeDb(db, getDbPath(req))) {
-        res.json(computeCustomerWallet(customer, db.orders || []));
+        res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || []));
     } else {
         res.status(500).json({ error: "Failed to update customer hold state" });
     }
@@ -7287,16 +7332,20 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 // the difference (paid - delivered gross) is booked to the customer GENERAL wallet; the order keeps its history.
                 const diff = Math.round((roundedPaid - deliveredGross) * 100) / 100;
                 const cust = db.customers.find(c => c.name === order.customerName);
-                if (diff !== 0 && cust) {
+                // R30: a wallet is money paid. Overpayment (paid above the delivered gross) moves from the blanket order account
+                // to the customer GENERAL wallet; an underpayment moves no money: the open amount stays in Accounts Receivable.
+                if (diff > 0 && cust) {
                     cust.walletBalances = cust.walletBalances || {};
                     cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + diff) * 100) / 100;
                     cust.walletBalance = (cust.walletBalance || 0) + diff;
-                    ledgerPush(db, { type: 'TRANSFER', amount: Math.abs(diff), description: `Blanket close ${order.internalOrderNumber}: ${diff > 0 ? 'overpayment credited to' : 'underpayment debited from'} the customer general wallet`, category: 'Account Transfer', fromAccount: diff > 0 ? acctLabel(order.customerName, 'ORDER', order.internalOrderNumber) : acctLabel(order.customerName, 'GENERAL'), toAccount: diff > 0 ? acctLabel(order.customerName, 'GENERAL') : acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id }, user);
+                    order.payments = order.payments || [];
+                    order.payments.push({ amount: -diff, date: new Date().toISOString(), user, memo: `Blanket close ${order.internalOrderNumber}: overpayment moved to the customer general wallet`, receiptNumber: `TRF-${String(Date.now()).slice(-6)}`, transfer: true });
+                    ledgerPush(db, { type: 'TRANSFER', amount: diff, description: `Blanket close ${order.internalOrderNumber}: overpayment credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id }, user);
                 }
                 order.contractClosed = true;
                 order.closedDeliveredGross = deliveredGross;
                 order.status = OrderStatus.FULFILLED;
-                order.logs.push(createAuditLog(`Blanket order closed by finance: delivered gross ${deliveredGross.toFixed(2)}, payments ${roundedPaid.toFixed(2)}${diff !== 0 ? `, difference ${diff.toFixed(2)} booked to the customer general wallet` : ''}.`, order.status, user));
+                order.logs.push(createAuditLog(`Blanket order closed by finance: delivered gross ${deliveredGross.toFixed(2)}, payments ${roundedPaid.toFixed(2)}${diff > 0 ? `, overpayment ${diff.toFixed(2)} moved to the customer general wallet` : diff < 0 ? `, underpayment ${(-diff).toFixed(2)} stays in Accounts Receivable` : ''}.`, order.status, user));
                 break;
             }
             case 'financial-request': {

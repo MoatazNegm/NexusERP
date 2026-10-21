@@ -314,10 +314,9 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
         {orderWallet && (
           <div data-testid="order-wallet" className="bg-emerald-50 border-b border-emerald-100 px-6 py-3 flex flex-wrap items-center gap-x-8 gap-y-1 text-[11px] font-bold uppercase tracking-wide text-emerald-900">
             <span><i className="fa-solid fa-wallet mr-2"></i>Order wallet</span>
-            <span>Committed: {Number(orderWallet.committed).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-            <span>Paid: {Number(orderWallet.paid).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-            <span>Settlement: {Number(orderWallet.settlement).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-            <span>Balance: {Number(orderWallet.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>Received from customer: {Number(orderWallet.paid).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>Paid to suppliers: {Number(orderWallet.paidOut || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span>Wallet (paid money): {Number(orderWallet.walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             <span>Project: {orderWallet.projectName}</span>
           </div>
         )}

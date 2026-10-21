@@ -2414,6 +2414,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     return 0;
   }, [customers]);
 
+  // R30: commitments live in Accounts Receivable / Payable, not in the wallets
+  const [arData, setArData] = useState<any>(null);
+  const [apData, setApData] = useState<any>(null);
+  useEffect(() => {
+    if (activeTab !== 'project_wallets' && activeTab !== 'customer_wallets') return;
+    dataService.getAR().then(setArData).catch(() => setArData(null));
+    dataService.getAP().then(setApData).catch(() => setApData(null));
+  }, [activeTab, orders, customers]);
+
   const projectWallets = useMemo(() => {
     const q = projectWalletSearch.trim().toLowerCase();
     const map = new Map<string, {
@@ -2430,7 +2439,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         if (!pName) return;
         const b = Number(bal) || 0;
         if (!map.has(pName)) {
-          const projOrders = orders.filter(o => o.status !== OrderStatus.REJECTED && getOrderProjectName(o) === pName && isOrderBlanket(o));
+          const projOrders = orders.filter(o => o.status !== OrderStatus.REJECTED && getOrderProjectName(o) === pName);
           map.set(pName, {
             projectName: pName,
             totalBalance: 0,
@@ -4541,6 +4550,23 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 </div>
               );
             })}
+
+            {(arData || apData) && (
+              <div data-testid="ar-ap" className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
+                <div className="border border-slate-200 rounded-2xl p-4">
+                  <div className="text-xs font-black uppercase tracking-widest text-slate-500 mb-2">{language === 'ar' ? 'حسابات القبض (العملاء)' : 'Accounts Receivable (customers owe us)'}: {Number(arData?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                  <table className="w-full text-xs"><tbody>
+                    {(arData?.byProject || []).map((r: any) => (<tr key={r.customerName + r.projectName}><td className="py-1">{r.customerName} / {r.projectName}</td><td className="text-right">{Number(r.receivable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
+                  </tbody></table>
+                </div>
+                <div className="border border-slate-200 rounded-2xl p-4">
+                  <div className="text-xs font-black uppercase tracking-widest text-slate-500 mb-2">{language === 'ar' ? 'حسابات الدفع (الموردون)' : 'Accounts Payable (we owe suppliers)'}: {Number(apData?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                  <table className="w-full text-xs"><tbody>
+                    {(apData?.bySupplier || []).map((r: any) => (<tr key={r.supplierId || r.supplierName}><td className="py-1">{r.supplierName}</td><td className="text-right">{Number(r.payable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
+                  </tbody></table>
+                </div>
+              </div>
+            )}
 
             {projectWallets.length === 0 && (
               <div className="text-center py-16">

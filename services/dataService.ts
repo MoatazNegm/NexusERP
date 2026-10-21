@@ -147,6 +147,16 @@ class DataService {
 
   async getCustomers() { return this.get<Customer>('customers'); }
   async getProjectWallets(): Promise<ProjectWallet[]> { return this.get<ProjectWallet>('project-wallets'); }
+  async getAR(): Promise<any> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/ar`, { headers: this.getAuthHeaders() });
+    if (!res.ok) throw new Error(`Failed to fetch accounts receivable: ${res.statusText}`);
+    return res.json();
+  }
+  async getAP(): Promise<any> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/ap`, { headers: this.getAuthHeaders() });
+    if (!res.ok) throw new Error(`Failed to fetch accounts payable: ${res.statusText}`);
+    return res.json();
+  }
   async getOrderWallet(orderId: string): Promise<any> {
     const res = await fetch(`${BACKEND_URL}/api/v1/orders/${encodeURIComponent(orderId)}/wallet`, { headers: this.getAuthHeaders() });
     if (!res.ok) throw new Error(`Failed to fetch order wallet: ${res.statusText}`);
