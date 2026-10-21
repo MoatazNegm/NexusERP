@@ -152,6 +152,11 @@ class DataService {
     if (!res.ok) throw new Error(`Failed to fetch accounts receivable: ${res.statusText}`);
     return res.json();
   }
+  async getMissingWht(): Promise<any> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/wht-missing`, { headers: this.getAuthHeaders() });
+    if (!res.ok) throw new Error(`Failed to fetch missing withholding certificates: ${res.statusText}`);
+    return res.json();
+  }
   async getAP(): Promise<any> {
     const res = await fetch(`${BACKEND_URL}/api/v1/ap`, { headers: this.getAuthHeaders() });
     if (!res.ok) throw new Error(`Failed to fetch accounts payable: ${res.statusText}`);

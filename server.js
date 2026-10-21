@@ -2992,6 +2992,22 @@ const runThresholdAudit = async () => {
     let dbChanged = false;
     if (sweepContractStarts(db, new Date().toISOString().slice(0, 10))) dbChanged = true;
 
+    // --- Missing withholding certificate SLA (after 30 Nov of the order year) ---
+    {
+        const wm = computeMissingWht(orders);
+        for (const it of wm.items.filter(i => i.overdue)) {
+            const jk = `wht_sla_${it.orderId}`;
+            if (notifications.some(n => n.journalKey === jk)) continue;
+            const recipients = getRecipients(settings.thresholdNotifications?.['whtMissingSla'] || [], db);
+            const subject = `SLA: missing withholding certificate ${it.internalOrderNumber}`;
+            const body = `Customer ${it.customerName}, PO ${it.internalOrderNumber} (${it.date}): withholding certificate for ${it.amount.toFixed(2)} was due by ${it.deadline} and is still missing.`;
+            let sent = false;
+            if (recipients.length > 0) { const r = await sendEmail(recipients.map(x => x.email), subject, body, settings.emailConfig); sent = !!r.success; }
+            notifications.push({ id: `nt_wht_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, journalKey: jk, orderId: it.orderId, type: 'wht_missing_sla', amount: it.amount, customerName: it.customerName, deadline: it.deadline, message: body, sentAt: new Date().toISOString(), recipients: recipients.map(x => x.email), emailSent: sent, queuedInApp: !sent });
+            dbChanged = true;
+        }
+    }
+
     // --- Generic alert dispatcher (deduplicates all notification logic) ---
     const sendAlertForOrder = async (order, journalKey, alertType, thresholdKey, subject, body) => {
         const alreadySent = notifications.some(n => n.journalKey === journalKey);
@@ -3688,23 +3704,36 @@ const computeReceivables = (orders = []) => {
     const rows = [];
     orders.forEach(o => {
         if (o.status === OrderStatus.REJECTED) return;
-        const isCallOff = Boolean(o.blanketContractId) && !o.blanketOrder;
-        const committed = isCallOff ? 0 : orderCommitmentGross(o);
-        let paid = orderPaidIn(o);
-        if (o.blanketOrder) {
-            const refs = [o.id, o.internalOrderNumber, o.customerReferenceNumber].filter(Boolean);
-            orders.filter(c => c.blanketContractId && refs.includes(c.blanketContractId) && c.status !== OrderStatus.REJECTED).forEach(c => { paid += orderPaidIn(c); });
-        } else if (isCallOff) paid = 0;
-        paid = r2w(paid);
-        rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectName(o, orders) || '(No Project)', status: o.status, committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) });
+        // A blanket order commits nothing by itself: the customer owes what is CALLED OFF (each call-off carries its own amount).
+        const committed = o.blanketOrder ? 0 : orderCommitmentGross(o);
+        const paid = orderPaidIn(o);
+        rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectName(o, orders) || '(No Project)', status: o.status, blanketOrder: Boolean(o.blanketOrder), committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) });
     });
-    const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, receivable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.receivable = r2w(e.receivable + r.receivable); }); return Array.from(m.values()); };
+    const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, receivable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.receivable = r2w(Math.max(0, e.committed - e.paid)); }); return Array.from(m.values()); };
+    const byCustomer = group(r => r.customerName, r => ({ customerName: r.customerName }));
     return {
-        total: r2w(rows.reduce((s, r) => s + r.receivable, 0)),
+        total: r2w(byCustomer.reduce((s, r) => s + r.receivable, 0)),
         byOrder: rows,
-        byCustomer: group(r => r.customerName, r => ({ customerName: r.customerName })),
+        byCustomer,
         byProject: group(r => r.customerName + '|' + r.projectName, r => ({ customerName: r.customerName, projectName: r.projectName }))
     };
+};
+// --- MISSING WITHHOLDING CERTIFICATES (R30) ---
+// The customer keeps 1% withholding tax. The certificate must be collected by 30 November of the order year;
+// after that deadline an SLA alert is sent (or queued in-app when no recipients/SMTP exist) for each missing item.
+const whtDeadlineFor = (order) => { const y = new Date(order.orderDate || order.createdAt || Date.now()).getFullYear(); return `${y}-11-30`; };
+const computeMissingWht = (orders = [], today = new Date().toISOString().slice(0, 10)) => {
+    const items = [];
+    orders.forEach(o => {
+        if (!o.appliesWithholdingTax || o.whtCertificateFile || o.status === OrderStatus.REJECTED || (o.blanketOrder && !o.blanketContractId && false)) return;
+        let gross = 0;
+        (o.items || []).forEach(it => { gross += (getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100)); });
+        const amount = r2w(gross * 0.01);
+        if (!(amount > 0)) return;
+        const deadline = whtDeadlineFor(o);
+        items.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, amount, date: (o.orderDate || o.createdAt || '').toString().slice(0, 10), deadline, overdue: today > deadline });
+    });
+    return { total: r2w(items.reduce((s, r) => s + r.amount, 0)), overdueCount: items.filter(i => i.overdue).length, items };
 };
 // AP: what the company still owes suppliers (gross), per supplier / PO / project.
 const computePayables = (db) => {
@@ -4262,6 +4291,13 @@ app.get('/api/v1/ar', (req, res) => {
     const { customerName, projectName } = req.query;
     if (customerName) { out.byOrder = out.byOrder.filter(r => r.customerName === customerName); out.byCustomer = out.byCustomer.filter(r => r.customerName === customerName); out.byProject = out.byProject.filter(r => r.customerName === customerName); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0)); }
     if (projectName) { out.byOrder = out.byOrder.filter(r => r.projectName === String(projectName).trim()); out.byProject = out.byProject.filter(r => r.projectName === String(projectName).trim()); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0)); }
+    res.json(out);
+});
+app.get('/api/v1/wht-missing', (req, res) => {
+    const db = getDb(req);
+    const out = computeMissingWht(db.orders || []);
+    const { customerName } = req.query;
+    if (customerName) { out.items = out.items.filter(r => r.customerName === customerName); out.total = r2w(out.items.reduce((a, r) => a + r.amount, 0)); out.overdueCount = out.items.filter(i => i.overdue).length; }
     res.json(out);
 });
 app.get('/api/v1/ap', (req, res) => {

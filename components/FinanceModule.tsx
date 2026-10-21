@@ -2417,9 +2417,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   // R30: commitments live in Accounts Receivable / Payable, not in the wallets
   const [arData, setArData] = useState<any>(null);
   const [apData, setApData] = useState<any>(null);
+  const [whtMissing, setWhtMissing] = useState<any>(null);
   useEffect(() => {
     if (activeTab !== 'project_wallets' && activeTab !== 'customer_wallets') return;
     dataService.getAR().then(setArData).catch(() => setArData(null));
+    dataService.getMissingWht().then(setWhtMissing).catch(() => setWhtMissing(null));
     dataService.getAP().then(setApData).catch(() => setApData(null));
   }, [activeTab, orders, customers]);
 
@@ -4565,6 +4567,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     {(apData?.bySupplier || []).map((r: any) => (<tr key={r.supplierId || r.supplierName}><td className="py-1">{r.supplierName}</td><td className="text-right">{Number(r.payable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
                   </tbody></table>
                 </div>
+              </div>
+            )}
+
+            {whtMissing && whtMissing.items && whtMissing.items.length > 0 && (
+              <div data-testid="wht-missing" className="mt-6 bg-white border border-amber-300 rounded-2xl p-4">
+                <div className="text-xs font-black uppercase tracking-widest text-amber-700 mb-2">{language === 'ar' ? 'شهادات الخصم من المنبع المفقودة (يجب تحصيلها قبل 30 نوفمبر)' : 'Missing withholding certificates (collect by 30 November)'}: {Number(whtMissing.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                <table className="w-full text-xs"><thead><tr className="text-left text-slate-500"><th>Customer</th><th>PO</th><th>Date</th><th>Deadline</th><th className="text-right">Amount</th></tr></thead><tbody>
+                  {whtMissing.items.map((r: any) => (<tr key={r.orderId} className={r.overdue ? 'text-red-600 font-bold' : ''}><td className="py-1">{r.customerName}</td><td>{r.internalOrderNumber}</td><td>{r.date}</td><td>{r.deadline}{r.overdue ? ' (OVERDUE)' : ''}</td><td className="text-right">{Number(r.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
+                </tbody></table>
               </div>
             )}
 
