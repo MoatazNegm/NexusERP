@@ -3942,6 +3942,18 @@ const validateOrderItems = (items, customerName, customerPoNumber = '') => {
 };
 
 // R30 (23:00): units cannot be partitioned: every quantity is a whole number, blanket orders and call-offs included.
+function releaseSupplierAllocationsOfOrder(db, order) {
+    // Cancel / reopen voids the order's POs: what was allocated to them returns to the supplier general wallet (unallocated advance, no refund).
+    const ids = new Set();
+    (order.items || []).forEach(it => (it.components || []).forEach(c => { if (c.id) ids.add(c.id); }));
+    (db.supplierPayments || []).forEach(sp => {
+        const mine = (sp.allocations || []).filter(x => ids.has(x.componentId));
+        if (!mine.length) return;
+        const back = mine.reduce((t, x) => t + (Number(x.amount) || 0), 0);
+        sp.allocations = sp.allocations.filter(x => !ids.has(x.componentId));
+        sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) + back) * 100) / 100;
+    });
+}
 const firstFraction = (vals) => (vals || []).map(Number).find(q => Number.isFinite(q) && Math.abs(q - Math.round(q)) > 1e-9);
 const orderFraction = (o) => {
     const q = [];
@@ -5776,6 +5788,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
 
             case 'rollback-to-logged':
+                releaseSupplierAllocationsOfOrder(db, order);
                 const rollbackOld = JSON.parse(JSON.stringify(order));
                 const nowIso = new Date().toISOString();
                 const todayDate = nowIso.split('T')[0];
@@ -5994,6 +6007,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 else throw new Error("Database write failed");
 
             case 'reject-order':
+                releaseSupplierAllocationsOfOrder(db, order);
                 // CX16: a rejected order cannot be rejected again.
                 if (order.status === OrderStatus.REJECTED) throw new Error('Refused: order already rejected');
                 const today = new Date().toISOString().split('T')[0];
