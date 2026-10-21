@@ -2990,6 +2990,7 @@ const runThresholdAudit = async () => {
     const settings = resolveSettings(db);
 
     let dbChanged = false;
+    if (sweepContractStarts(db, new Date().toISOString().slice(0, 10))) dbChanged = true;
 
     // --- Generic alert dispatcher (deduplicates all notification logic) ---
     const sendAlertForOrder = async (order, journalKey, alertType, thresholdKey, subject, body) => {
@@ -3728,6 +3729,25 @@ const touchByTechReview = (order, username, db, how) => {
 };
 
 // --- GENERIC CRUD ---
+// User ruling 2026-10-21 (OS04 steps 19/20): an outsourcing component waits in WAITING_CONTRACT_START until its contract start date arrives, then it is RECEIVED.
+// Persisted sweep: runs on every order read and in the 60 s threshold audit (live DB). Receipts booked earlier are untouched. A sandbox may move "today" with the x-sandbox-today header (YYYY-MM-DD).
+const sweepContractStarts = (db, todayStr) => {
+    let changed = false;
+    (db.orders || []).forEach(o => {
+        if (o.status === OrderStatus.REJECTED) return;
+        (o.items || []).forEach(it => (it.components || []).forEach(c => {
+            if (c.status !== 'WAITING_CONTRACT_START' || !c.contractStartDate) return;
+            const d = String(c.contractStartDate).slice(0, 10);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d > todayStr) return;
+            c.status = 'RECEIVED';
+            c.statusUpdatedAt = new Date().toISOString();
+            (o.logs = o.logs || []).push(createAuditLog(`Contract start date ${d} reached: ${c.description || c.id} (Contract: ${c.contractNumber || c.componentNumber || 'N/A'}) is now RECEIVED.`, o.status, { name: 'System', username: 'system' }));
+            changed = true;
+        }));
+    });
+    return changed;
+};
+
 const getCollection = (col) => (req, res) => {
     const db = getDb(req);
     if (col === 'users') return res.json((db[col] || []).map(({ password, ...u }) => u));
@@ -3740,6 +3760,8 @@ const getCollection = (col) => (req, res) => {
     if (col === 'orders') {
         const settings = resolveSettings(db, isSandbox(req));
         const allOrders = db[col] || [];
+        { const hd = String(req.headers['x-sandbox-today'] || '').slice(0, 10); const today = (isSandbox(req) && /^\d{4}-\d{2}-\d{2}$/.test(hd)) ? hd : new Date().toISOString().slice(0, 10);
+          if (sweepContractStarts(db, today)) { try { writeDb(db, getDbPath(req)); } catch (e) { console.error('[sweep]', e.message); } } }
         return res.json(allOrders.map(o => withBlanketDrawdown(calculateOrderHealth(o, settings), allOrders)));
     }
 
@@ -4924,20 +4946,15 @@ app.get('/api/v1/reports/orders', (req, res) => {
         if (o.status === OrderStatus.REJECTED) return;
         if (isOutsourcingBlanket(o)) { o.reportBasis = 'LINES'; const nr = blanketNetRevenue(o); o.totalPrice = nr; o.totalPriceOrderCurrency = nr; }
         else if (isBlanketRoot(o)) {
-            const ids = new Set(blanketIdsOf(o));
-            const rev = blanketNetRevenue(o); // user ruling 2026-10-21: revenue is the NET total of line values; payments stay in wallet/cash figures
-            let cost = 0;
-            const grp = (db.orders || []).filter(x => ids.has(x.id));
-            const compIds = new Set(), poNums = new Set();
-            grp.forEach(x => (x.items || []).forEach(it => (it.components || []).forEach(c => { if (c.id) compIds.add(c.id); if (c.poNumber) poNums.add(c.poNumber); })));
-            // company payments to the PO financial account (supplier payments of the contract and its call-offs)
-            (db.supplierPayments || []).forEach(sp => { if (ids.has(sp.orderId) || (sp.poNumber && poNums.has(sp.poNumber)) || (sp.allocations || []).some(al => compIds.has(al.componentId))) cost += Number(sp.amount) || 0; });
-            // plus company payments from other general accounts booked to the contract (salaries, transportation, ...)
-            (db.ledger || []).forEach(l => { if ((l.type === 'COST' || l.type === 'EXPENSE') && l.category !== 'Supplier Payment' && ids.has(l.orderId)) cost += Number(l.amount) || 0; });
-            o.totalPrice = r2c(rev); o.totalPriceOrderCurrency = r2c(rev); o.totalRealCost = r2c(cost); o.reportBasis = 'PAID';
+            // User principle 2026-10-21: cost and revenue values never include VAT and never come from payments.
+            // Blanket revenue = NET total of the call-off lines; blanket cost = NET component cost of the call-offs (the contract's own lines when nothing was called off).
+            const rev = blanketNetRevenue(o);
+            const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === o.internalOrderNumber || x.blanketContractId === o.id || x.blanketContractId === o.customerReferenceNumber) && x.status !== OrderStatus.REJECTED);
+            const cost = co.length ? co.reduce((t, x) => t + (Number(x.totalRealCost) || 0), 0) : (Number(o.totalRealCost) || 0);
+            o.totalPrice = r2c(rev); o.totalPriceOrderCurrency = r2c(rev); o.totalRealCost = r2c(cost); o.reportBasis = 'LINES';
         } else if (o.blanketContractId) { o.reportBasis = 'BLANKET_CALL_OFF'; }
     });
-    const fulfilledOrders = enrichedOrders.filter(o => (o.status === OrderStatus.FULFILLED && o.reportBasis !== 'BLANKET_CALL_OFF') || o.reportBasis === 'PAID' || o.reportBasis === 'LINES');
+    const fulfilledOrders = enrichedOrders.filter(o => (o.status === OrderStatus.FULFILLED && o.reportBasis !== 'BLANKET_CALL_OFF') || o.reportBasis === 'LINES');
     const totalRevenue = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0));
     const totalRealCost = r2c(fulfilledOrders.reduce((sum, o) => sum + (Number(o.totalRealCost) || 0), 0));
     const count = enrichedOrders.length;
