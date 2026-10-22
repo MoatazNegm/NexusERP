@@ -2689,6 +2689,8 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                 }
             }
             if (!comp.status) comp.status = 'NEW';
+            // R30 ruling 2026-10-22: a stock part held for this order's PO is RESERVED (not NEW / PENDING_OFFER)
+            if (!isStockOrder(order) && comp.source === 'STOCK' && comp.inventoryItemId && ['NEW', 'PENDING_OFFER'].includes(comp.status)) comp.status = 'RESERVED';
             if (!isOrderApproved && comp.status === 'PENDING_OFFER' && !comp.poNumber && !comp.rfpId && !comp.awardId && !comp.procurementStartedAt) {
                 comp.status = 'NEW';
             }
