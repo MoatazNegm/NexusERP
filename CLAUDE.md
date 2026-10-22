@@ -268,6 +268,7 @@ When asked to change a feature, land on the row below, not on the file. All line
 ## Conventions
 
 - **Branch from `master`.** Conventional commit messages (`feat:` / `fix:` / `docs:` / `refactor:`).
+- **Branch topology (AI work):** `origin/AI_Nexus` is the AI-development stream and is a *linear descendant* of `NexusVSC` - it branches off the current `NexusVSC` tip, so the two never diverge. Integrate it with `git merge --ff-only origin/AI_Nexus`: no conflicts, and the incoming commit keeps its original hash. **Do not cherry-pick a single `AI_Nexus` commit.** `server.js` drifts ~1,500 lines across the stream, so the patch context does not apply (verified: `git apply --3way` fails on both `constants.tsx` and `server.js`), and features like `lineStatus` / `costBasisQty` were introduced by *earlier* commits in the stream - a lone cherry-pick lands half-wired code.
 - **TypeScript strict-ish** (`tsconfig.json` has `noEmit: true` + `allowImportingTsExtensions`). Run `npx tsc --noEmit` to typecheck (no script wired; use that command).
 - **Path alias:** `@/foo` -> `./foo` (configured in both `vite.config.ts` and `tsconfig.json`).
 - **i18n:** add keys to `locales/translations.ts`, never hardcode user-facing strings in a component if the codebase has them in the catalog.
