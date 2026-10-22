@@ -6879,6 +6879,21 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!order.payments || !order.payments[payload.index]) throw new Error("Payment index not found");
                 const [removed] = order.payments.splice(payload.index, 1);
                 order.logs.push(createAuditLog(`Payment of ${removed.amount} VOIDED: ${payload.reason || 'Correction'}`, order.status, user));
+                // R30 (2026-10-22): voiding a payment also takes back the part of it that had been moved to the customer general wallet as surplus; a fully paid PO that is no longer fully paid leaves WAITING_GOVE.
+                if (!order.blanketOrder && !order.blanketContractId && Number(order.surplusMovedToWallet) > 0) {
+                    const paidNow = (order.payments || []).reduce((sm, pp) => sm + (pp.amount || 0), 0);
+                    const keepS = Math.max(0, Math.round((paidNow - orderCommitmentGross(order)) * 100) / 100);
+                    const backS = Math.round((Number(order.surplusMovedToWallet) - keepS) * 100) / 100;
+                    const custV = (db.customers || []).find(c => c.name === order.customerName);
+                    if (backS > 0.004 && custV) {
+                        custV.walletBalances = custV.walletBalances || {};
+                        custV.walletBalances[SELF_WALLET_KEY] = Math.round(((custV.walletBalances[SELF_WALLET_KEY] || 0) - backS * orderFx(order)) * 100) / 100;
+                        custV.walletBalance = Math.round(((custV.walletBalance || 0) - backS * orderFx(order)) * 100) / 100;
+                        order.surplusMovedToWallet = keepS;
+                        order.logs.push(createAuditLog(`Payment voided: ${backS.toFixed(2)} of the surplus taken back from the customer general wallet.`, order.status, user));
+                    }
+                }
+                if (order.status === OrderStatus.WAITING_GOVE && !isOrderFullyPaid(order)) order.status = OrderStatus.DELIVERED;
                 // R21 (C13): a voided cash payment needs a reversing ledger entry (bank back to the order account).
                 const movedToWallet = Number(order.paymentMovedToWallet) || 0;
                 const custW = movedToWallet > 0 ? (db.customers || []).find(c => c.name === order.customerName) : null;
