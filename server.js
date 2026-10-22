@@ -1207,7 +1207,7 @@ const ACTION_ROLE_GATES = {
   'record-payment': { roles: ['finance'], msg: 'wrong role: payments are finance' },
   'approve-dispatch-receipt': { roles: ['finance'], msg: 'wrong role: dispatch receipt approval is finance' },
   'reject-order': { roles: ['order_management', 'planning', 'sales'], msg: 'no permission to cancel / delete' },
-  'hard-delete-order': { roles: [], msg: 'no permission to cancel / delete' },
+  'hard-delete-order': { roles: [], msg: 'Unauthorized: Only superusers or management can hard delete an order', raw: true },
 };
 const actionRoleDenied = (req, action) => {
   const gate = ACTION_ROLE_GATES[action];
@@ -1215,7 +1215,7 @@ const actionRoleDenied = (req, action) => {
   if (!gate || roles.length === 0) return null;
   if (roles.includes('admin') || roles.includes('management')) return null;
   if (roles.some(r => gate.roles.includes(r))) return null;
-  return 'refused: ' + gate.msg;
+  return gate.raw ? gate.msg : 'refused: ' + gate.msg;
 };
 
 // --- AES-256-CBC CIPHER FOR SENSITIVE SETTINGS ---
