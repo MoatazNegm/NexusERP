@@ -399,6 +399,9 @@ const getItemEffectiveStatus = (item) => {
     return 'MIXED';
 };
 
+// R31 (2026-10-22): while the order waits for the Government E-Invoice its lines show DELIVERED (order status stays WAITING_GOVE)
+const setGovWaitLines = (o, on) => { (o.items || []).forEach(i => { if (on) i.lineStatus = OrderStatus.DELIVERED; else delete i.lineStatus; }); };
+
 const getCostSheetWorkbook = (input) => {
     if (!input) return null;
     if (typeof input === 'object' && input.SheetNames && input.Sheets) return input;
@@ -5064,7 +5067,7 @@ app.get('/api/v1/reports/orders', (req, res) => {
         let net = 0, cost = 0;
         (o.items || []).forEach(it => {
             net += r2c((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0));
-            (it.components || []).forEach(c => { cost += (Number(c.unitCost) || 0) * (Number(c.quantity) || Number(c.receivedQty) || Number(c.consumedQty) || (c.source === 'CONSUMED' ? (Number(getItemEffectiveQty(it)) || 0) : 0)); });
+            (it.components || []).forEach(c => { cost += (Number(c.unitCost) || 0) * (Number(c.costBasisQty) || Number(c.quantity) || Number(c.receivedQty) || Number(c.consumedQty) || (c.source === 'CONSUMED' ? (Number(getItemEffectiveQty(it)) || 0) : 0)); });
         });
         // CX11 (R22): revenue of a foreign-currency order is converted to L.E. at the order's own rate; costs are L.E. already.
         const fxRate = (o.currency && o.currency !== 'L.E.' && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
@@ -6899,7 +6902,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         order.logs.push(createAuditLog(`Payment voided: ${backS.toFixed(2)} of the surplus taken back from the customer general wallet.`, order.status, user));
                     }
                 }
-                if (order.status === OrderStatus.WAITING_GOVE && !isOrderFullyPaid(order)) order.status = OrderStatus.DELIVERED;
+                if (order.status === OrderStatus.WAITING_GOVE && !isOrderFullyPaid(order)) { order.status = OrderStatus.DELIVERED; setGovWaitLines(order, false); }
                 // R21 (C13): a voided cash payment needs a reversing ledger entry (bank back to the order account).
                 const movedToWallet = Number(order.paymentMovedToWallet) || 0;
                 const custW = movedToWallet > 0 ? (db.customers || []).find(c => c.name === order.customerName) : null;
@@ -7109,10 +7112,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (fullyPaid) {
                     if (isLateStage && fullyDelivered) {
                         if (hasGovEInvoice) {
-                            order.status = OrderStatus.FULFILLED;
+                            order.status = OrderStatus.FULFILLED; setGovWaitLines(order, false);
                             order.logs.push(createAuditLog(`Full payment reconciled${order.appliesWithholdingTax ? ' (with 1% WHT deducted)' : ''}, Delivery complete & Gov. E-Invoice issued. Order lifecycle FULFILLED.`, order.status, user));
                         } else {
-                            order.status = OrderStatus.WAITING_GOVE;
+                            order.status = OrderStatus.WAITING_GOVE; setGovWaitLines(order, true);
                             order.logs.push(createAuditLog(`Full payment reconciled & Delivery complete. Awaiting Gov. E-Invoice to FULFILL.`, order.status, user));
                         }
                     } else if (isLateStage && !fullyDelivered) {
@@ -7191,6 +7194,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             // R21 (C02): adjust quantity only for components really released back to stock.
                             // Outsourced/other components have no consumption basis; zeroing them lost quantity, cost, COGS and profit.
                             if (releasedHere) {
+                                // R31 (2026-10-22): order cost is everything dedicated to the order, consumed or reserved in stock for the same PO
+                                if (!comp.costBasisQty) comp.costBasisQty = allocated;
                                 comp.quantity = consumed;
                                 order.logs.push(createAuditLog(`[Factory] Released ${remaining.toFixed(2)} units of ${comp.description} back to stock.`, order.status, user));
                             }
@@ -7452,7 +7457,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     } else if (fullyPaid) {
                         // same rule as the payment path: FULFILLED needs the Gov. e-invoice, otherwise WAITING_GOVE
                         const hasGovEInv = Boolean(order.einvoiceFile) || (order.logs || []).some(log => log.message && log.message.includes('Gov. E-Invoice Attached'));
-                        order.status = hasGovEInv ? OrderStatus.FULFILLED : OrderStatus.WAITING_GOVE;
+                        order.status = hasGovEInv ? OrderStatus.FULFILLED : OrderStatus.WAITING_GOVE; setGovWaitLines(order, !hasGovEInv);
                     } else {
                         // All delivered but not paid -> move to DELIVERED status
                         order.status = OrderStatus.DELIVERED;
@@ -7478,11 +7483,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 // CX16: the same e-invoice reference attached again is stored once and not logged again.
                 const einvLog = (msg) => { if (sameEinv && (order.logs || []).some(l => l.message === msg)) return; order.logs.push(createAuditLog(msg, order.status, user)); };
                 if (fullyDel && fullyPaid_) {
-                    order.status = OrderStatus.FULFILLED;
+                    order.status = OrderStatus.FULFILLED; setGovWaitLines(order, false);
                     einvLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}. All requirements met - Order FULFILLED.`);
                 } else if (order.status === OrderStatus.WAITING_GOVE && fullyDel && fullyPaid_) {
                     // If order was waiting for Gov.E invoice and all conditions are now met
-                    order.status = OrderStatus.FULFILLED;
+                    order.status = OrderStatus.FULFILLED; setGovWaitLines(order, false);
                     einvLog(`Gov. E-Invoice Attached: ${payload.einvoiceFile}. Order was waiting for Gov.E invoice - now FULFILLED.`);
                 } else if (fullyDel && order.status === OrderStatus.DELIVERED) {
                     // Stay in DELIVERED until paid
