@@ -9603,13 +9603,13 @@ const allocatedPerComponent = (db, supplierId) => {
     (db.supplierPayments || []).filter(sp => sp.supplierId === supplierId).forEach(sp => (sp.allocations || []).forEach(a => { alloc[a.componentId] = (alloc[a.componentId] || 0) + (Number(a.amount) || 0); }));
     return alloc;
 };
-const poComponentEntries = (db, supplierId, { orderId, poNumber, componentId } = {}) => {
+const poComponentEntries = (db, supplierId, { orderId, poNumber, componentId, all } = {}) => {
     const out = [];
     (db.orders || []).forEach(order => (order.items || []).forEach(item => (item.components || []).forEach(comp => {
         // a fully consumed procured component keeps its PO and supplier (source turns CONSUMED), so payments to that PO still allocate to it
         if (!(comp.source === 'PROCUREMENT' || (comp.source === 'CONSUMED' && comp.poNumber)) || comp.supplierId !== supplierId) return;
         if (NOT_COMMITTED_STATUSES.includes(String(comp.status || '').toUpperCase())) return;
-        const hit = (componentId && comp.id === componentId) || (!componentId && ((orderId && order.id === orderId) || (poNumber && comp.poNumber === poNumber)));
+        const hit = all || (componentId && comp.id === componentId) || (!componentId && ((orderId && order.id === orderId) || (poNumber && comp.poNumber === poNumber)));
         if (!hit) return;
         const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
         out.push({ componentId: comp.id, orderId: order.id, orderNumber: order.internalOrderNumber, itemDescription: comp.description, poNumber: comp.poNumber, totalCost: (comp.quantity || 0) * (comp.unitCost || 0) * (1 + taxRate / 100), at: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp });
@@ -9638,7 +9638,7 @@ const autoCoverFromExcess = (db, supplierId, poNumber) => {
     (db.supplierPayments || []).filter(sp => sp.supplierId === supplierId && sp.autoCover && !sp.isRefund && (Number(sp.unallocatedAdvance) || 0) > 0.004)
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         .forEach(sp => {
-            const entries = poComponentEntries(db, sp.supplierId, { poNumber });
+            const entries = poComponentEntries(db, sp.supplierId, poNumber ? { poNumber } : { all: true });
             if (!entries.length) return;
             const free = Number(sp.unallocatedAdvance) || 0;
             const r = allocateToEntries(db, sp.supplierId, entries, free);
@@ -9689,6 +9689,7 @@ app.post('/api/v1/supplierPayments', (req, res) => {
 
         if (!db.supplierPayments) db.supplierPayments = [];
         db.supplierPayments.push(paymentRecord);
+        if (paymentRecord.autoCover) autoCoverFromExcess(db, supplierId, undefined);
 
         // Reflect into db.ledger for financial general ledger & cash flow tracking
         if (!db.ledger) db.ledger = [];
