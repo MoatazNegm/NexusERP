@@ -3724,7 +3724,8 @@ const computeReceivables = (orders = []) => {
     orders.forEach(o => {
         if (o.status === OrderStatus.REJECTED) return;
         // A blanket order commits nothing by itself: the customer owes what is CALLED OFF (each call-off carries its own amount).
-        const committed = o.blanketOrder ? 0 : orderCommitmentGross(o);
+        // The 1% withholding the customer keeps (base NET) is cleared in the Tax tab: it is not a receivable (ruling 2026-10-21 22:08).
+        const committed = o.blanketOrder ? 0 : r2w(orderCommitmentGross(o) - (o.appliesWithholdingTax ? orderWhtAmount(o) : 0));
         const paid = orderPaidIn(o);
         rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectName(o, orders) || '(No Project)', status: o.status, blanketOrder: Boolean(o.blanketOrder), committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) });
     });
