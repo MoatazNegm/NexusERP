@@ -1449,9 +1449,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             });
           } catch (driveError: any) {
             const errMsg = driveError?.message ? ` Upload failed: ${driveError.message}` : ' Upload failed.';
-            setMessage({ type: 'error', text: `Order created successfully.${errMsg}` });
+            setMessage({ type: 'error', text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}.${errMsg}` });
             await fetchData();
-            resetForm();
+            resetForm(false);
             return;
           }
         } else {
