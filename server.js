@@ -6744,6 +6744,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     });
                 });
+                { const supIds = new Set(); order.items.forEach(it => (it.components || []).forEach(c => { if (c.sendPoId === sendPoId && c.supplierId) supIds.add(c.supplierId); })); supIds.forEach(sid => autoCoverFromExcess(db, sid, payload.poNumber)); }
                 order.logs.push(createAuditLog(`Issued PO batch ${payload.poNumber} for ${updatedCount} components (PO Group ID: ${sendPoId}). ${auditDetails.join(' ')}`, order.status, user));
 
                 break;
@@ -9632,6 +9633,21 @@ const allocateToEntries = (db, supplierId, entries, amount) => {
     return { allocations, rest };
 };
 
+// Move the excess of named supplier payments (autoCover) onto the issued PO components of that supplier that still need cover (oldest payment, oldest component first)
+const autoCoverFromExcess = (db, supplierId, poNumber) => {
+    (db.supplierPayments || []).filter(sp => sp.supplierId === supplierId && sp.autoCover && !sp.isRefund && (Number(sp.unallocatedAdvance) || 0) > 0.004)
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .forEach(sp => {
+            const entries = poComponentEntries(db, sp.supplierId, { poNumber });
+            if (!entries.length) return;
+            const free = Number(sp.unallocatedAdvance) || 0;
+            const r = allocateToEntries(db, sp.supplierId, entries, free);
+            if (!r.allocations.length) return;
+            sp.allocations = (sp.allocations || []).concat(r.allocations);
+            sp.unallocatedAdvance = Math.round(r.rest * 100) / 100;
+        });
+};
+
 // POST record a supplier payment with FIFO allocation & General Ledger reflection
 app.post('/api/v1/supplierPayments', (req, res) => {
     try {
@@ -9666,7 +9682,9 @@ app.post('/api/v1/supplierPayments', (req, res) => {
             orderId: orderId || undefined,
             poNumber: poNumber || undefined,
             unallocatedAdvance,
-            allocations
+            allocations,
+            // user ruling 2026-10-22: the excess of a payment that NAMED a PO/order waits in the supplier general wallet and covers the supplier's later POs / call-offs by itself
+            autoCover: (orderId || poNumber) && unallocatedAdvance > 0 ? true : undefined
         };
 
         if (!db.supplierPayments) db.supplierPayments = [];
