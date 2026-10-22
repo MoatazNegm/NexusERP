@@ -586,7 +586,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                 : c.quantity));
           const effCompQty = allocatedTotal > 0 ? Math.max(0, Number((baseQty - allocatedTotal).toFixed(3))) : c.quantity;
 
-          const isInStock = c.status === 'RECEIVED' || (c.receivedQty !== undefined && c.receivedQty >= effCompQty);
+          const isInStock = c.status === 'RECEIVED' || c.status === 'STOCKED' || (c.receivedQty !== undefined && c.receivedQty >= effCompQty);
           const availableQty = isInStock
             ? Math.max(0, (c.receivedQty || effCompQty) - (c.consumedQty || 0))
             : Math.max(0, effCompQty - (c.consumedQty || 0));

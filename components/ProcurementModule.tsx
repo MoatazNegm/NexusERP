@@ -1424,7 +1424,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
             } as ManufacturingComponent];
 
         itemComps.forEach(c => {
-          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'RECEIVED', 'RESERVED'].includes(c.status || '')) {
+          if (c.source === 'PROCUREMENT' && ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'RECEIVED', 'STOCKED', 'RESERVED'].includes(c.status || '')) {
             if (!map.has(o.id)) {
               map.set(o.id, {
                 id: o.id,
@@ -2383,7 +2383,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
   // Check for in-transit components before initiating a rollback
   const handleInitiateRollback = (order: CustomerOrder) => {
-    const IN_TRANSIT_STATUSES = ['ORDERED', 'AWARDED', 'RECEIVED', 'RESERVED'];
+    const IN_TRANSIT_STATUSES = ['ORDERED', 'AWARDED', 'RECEIVED', 'STOCKED', 'RESERVED'];
     const found: InTransitCompRecord[] = [];
     order.items.forEach(item => {
       (item.components || []).forEach(comp => {
@@ -4076,7 +4076,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       )}
                                     </div>
                                   )}
-                                  {['ORDERED', 'RECEIVED', 'RESERVED'].includes(c.status || '') && (
+                                  {['ORDERED', 'RECEIVED', 'STOCKED', 'RESERVED'].includes(c.status || '') && (
                                     <div className="flex flex-wrap items-center gap-2">
                                       {c.poNumber && (
                                         <button
@@ -4091,7 +4091,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                           // Find all components sharing this PO number and sendPoId
                                           const samePoBatch = comps.filter(x =>
                                             x.comp.poNumber === c.poNumber &&
-                                            ['ORDERED', 'RECEIVED', 'RESERVED'].includes(x.comp.status || '') &&
+                                            ['ORDERED', 'RECEIVED', 'STOCKED', 'RESERVED'].includes(x.comp.status || '') &&
                                             (c.sendPoId ? x.comp.sendPoId === c.sendPoId : true)
                                           );
                                           setMultiComps(samePoBatch.length > 0 ? samePoBatch : [{ item: i, comp: c, order: o }]);
@@ -4120,7 +4120,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                           <i className="fa-solid fa-truck-fast mr-1"></i>{t('procurement.component.inTransit')}
                                         </span>
                                       )}
-                                      {c.status === 'RECEIVED' && (
+                                      {['RECEIVED', 'STOCKED'].includes(c.status) && (
                                         <span className="text-[10px] font-black text-emerald-700 uppercase tracking-[0.15em] px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-lg">
                                           <i className="fa-solid fa-check-double mr-1"></i>{t('procurement.component.received', 'Received')}
                                         </span>
@@ -4909,7 +4909,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         </div>
 
                         {/* If component has received items, show stock release advisory */}
-                        {((activeAction.comp?.receivedQty || 0) > 0 || ['RECEIVED', 'RESERVED'].includes(activeAction.comp?.status || '')) && (
+                        {((activeAction.comp?.receivedQty || 0) > 0 || ['RECEIVED', 'STOCKED', 'RESERVED'].includes(activeAction.comp?.status || '')) && (
                           <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
                             <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 text-sm">
                               <i className="fa-solid fa-warehouse"></i>

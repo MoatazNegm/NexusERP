@@ -2109,7 +2109,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           const tax = net * (taxRate / 100);
           const gross = net + tax;
           const recQty = c.receivedQty || 0;
-          const isRec = c.status === 'RECEIVED' || (recQty >= (c.quantity || 0) && (c.quantity || 0) > 0);
+          const isRec = c.status === 'RECEIVED' || c.status === 'STOCKED' || (recQty >= (c.quantity || 0) && (c.quantity || 0) > 0);
 
           if (!posMap.has(groupKey)) {
             posMap.set(groupKey, {

@@ -75,7 +75,7 @@ const LogTimeline: React.FC<{ logs: LogEntry[], title?: string }> = ({ logs, tit
 );
 
 const BoMTable: React.FC<{ components: ManufacturingComponent[]; orderCurrency: string }> = ({ components, orderCurrency }) => {
-  const readyCount = components.filter(c => c.status === 'AVAILABLE' || c.status === 'RECEIVED').length;
+  const readyCount = components.filter(c => c.status === 'AVAILABLE' || c.status === 'RECEIVED' || c.status === 'STOCKED').length;
   const progressPercent = components.length > 0 ? (readyCount / components.length) * 100 : 0;
 
   return (

@@ -391,7 +391,7 @@ const getItemEffectiveStatus = (item) => {
     // If any component still needs procurement action
     if (statuses.some(s => ['PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'WAITING_CONTRACT_START'].includes(s))) return 'WAITING_SUPPLIERS';
     // If all components are reserved/received (ready to manufacture)
-    if (statuses.every(s => ['RESERVED', 'RECEIVED', 'RUNNING_CONTRACT', 'CANCELLED', 'ORDERED_FOR_STOCK'].includes(s))) return 'WAITING_FACTORY';
+    if (statuses.every(s => ['RESERVED', 'RECEIVED', 'STOCKED', 'RUNNING_CONTRACT', 'CANCELLED', 'ORDERED_FOR_STOCK'].includes(s))) return 'WAITING_FACTORY';
     // If any are actively being manufactured
     if (statuses.some(s => s === 'IN_MANUFACTURING')) return 'MANUFACTURING';
     // If all are manufactured
@@ -2431,7 +2431,7 @@ const handleStockReceipts = (oldOrder, newOrder, db) => {
             const oldStatus = oldComp ? oldComp.status : 'NEW';
 
             // Trigger on transition to RECEIVED
-            if (comp.status === 'RECEIVED' && oldStatus !== 'RECEIVED' && comp.inventoryItemId) {
+            if (['RECEIVED', 'STOCKED'].includes(comp.status) && !['RECEIVED', 'STOCKED'].includes(oldStatus) && comp.inventoryItemId) {
                 const invItem = (db.inventory || []).find(inv => inv.id === comp.inventoryItemId);
                 if (invItem) {
                     const qty = Math.max(0, (Number(comp.quantity) || 0) - (Number(comp.stockBooked) || 0));
@@ -2760,7 +2760,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
                     // Check if driving items have components ready (Reserved/Received/In Stock, or fully received)
                     const anyReservedOrReceived = drivingItems.some(item =>
                         (item.components || []).some(comp =>
-                            ['RESERVED', 'RECEIVED', 'IN_STOCK'].includes(comp.status) ||
+                            ['RESERVED', 'RECEIVED', 'STOCKED', 'IN_STOCK'].includes(comp.status) ||
                             ((comp.receivedQty || 0) >= (comp.quantity || 0))
                         )
                     );
@@ -5517,7 +5517,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             (item.components || []).forEach(comp => {
                 if (specificCompId && comp.id !== specificCompId) return;
 
-                const receivedQty = Number(comp.receivedQty) || (['RECEIVED', 'RESERVED'].includes(comp.status) ? Number(comp.quantity) || 0 : 0);
+                const receivedQty = Number(comp.receivedQty) || (['RECEIVED', 'STOCKED', 'RESERVED'].includes(comp.status) ? Number(comp.quantity) || 0 : 0);
                 if (receivedQty > 0) {
                     let invItem = db.inventory.find(i => i.id === comp.inventoryItemId);
                     if (!invItem) {
@@ -5618,7 +5618,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             comp.statusUpdatedAt = new Date().toISOString();
 
             if (receivedQty >= newPoQty) {
-                comp.status = isStockOrder(order) ? 'RECEIVED' : (item.productionType === 'TRADING' ? 'Manufactured' : 'RESERVED');
+                comp.status = isStockOrder(order) ? 'STOCKED' : (item.productionType === 'TRADING' ? 'Manufactured' : 'RESERVED');
             } else {
                 comp.status = 'ORDERED';
             }
@@ -5966,7 +5966,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         if (invItem) {
                             if (comp.source === 'STOCK' && ['RESERVED', 'AVAILABLE'].includes(comp.status)) {
                                 invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - (comp.quantity || 0));
-                            } else if (['RECEIVED', 'IN_STOCK', 'CONSUMED', 'Manufactured'].includes(comp.status)) {
+                            } else if (['RECEIVED', 'STOCKED', 'IN_STOCK', 'CONSUMED', 'Manufactured'].includes(comp.status)) {
                                 if (comp.receivedQty && comp.receivedQty > 0) {
                                     invItem.quantityInStock = Math.max(0, (invItem.quantityInStock || 0) - comp.receivedQty);
                                 }
@@ -6049,7 +6049,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 // Release any remaining reserved inventory back to free stock
                 order.items.forEach(item => {
                     (item.components || []).forEach(comp => {
-                        if (['RESERVED', 'RECEIVED'].includes(comp.status)) {
+                        if (['RESERVED', 'RECEIVED', 'STOCKED'].includes(comp.status)) {
                             updateInventoryItem(db, comp, 'RELEASE', order);
                             comp.status = 'IN_STOCK'; // Or specific status indicating released
                             delete comp.poNumber; delete comp.supplierId; delete comp.supplierName; comp.receivedQty = 0;
@@ -6335,6 +6335,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     compToReceive.statusUpdatedAt = new Date().toISOString();
                     order.logs.push(createAuditLog(`Service Receipt: ${qtyToProcess} ${compToReceive.unit || 'period'} of ${compToReceive.description} received (Total received: ${compToReceive.receivedQty}/${totalOrdered}); not stocked in the warehouse.`, order.status, user));
                 } else if (forStockComp) {
+                    // R30 ruling 2026-10-22: stock not tied to any PO and received by the inventory user is STOCKED
+                    if (compToReceive.receivedQty >= totalOrdered) compToReceive.status = 'STOCKED';
                     order.logs.push(createAuditLog(`Stock Component Receipt: ${qtyToProcess} ${compToReceive.unit || 'pcs'} of ${compToReceive.description} received into Warehouse Stock (ordered for stock)`, order.status, user));
                 } else if (!isStockOrder(order) && item.productionType === 'TRADING') {
                     // For trading items, automatically move received quantity to hub
@@ -6349,7 +6351,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                     // Check if all trading components are received and move to hub
                     // C06/TR11: warehouse stock allocated to the line (source STOCK) is available at once; only the procured parts must be received.
-                    const compReady = (comp) => comp.source === 'STOCK' || comp.status === 'ORDERED_FOR_STOCK' || comp.forStock || ['RESERVED', 'RECEIVED', 'IN_STOCK', 'Manufactured'].includes(comp.status) || (comp.receivedQty || 0) >= (comp.quantity || 0);
+                    const compReady = (comp) => comp.source === 'STOCK' || comp.status === 'ORDERED_FOR_STOCK' || comp.forStock || ['RESERVED', 'RECEIVED', 'STOCKED', 'IN_STOCK', 'Manufactured'].includes(comp.status) || (comp.receivedQty || 0) >= (comp.quantity || 0);
                     const allTradingCompsReceived = item.components?.every(compReady) || false;
                     const allTradingItemsReady = order.items.filter(i => i.productionType === 'TRADING').every(i => (i.components || []).every(compReady));
                     if (allTradingCompsReceived && allTradingItemsReady) {
@@ -6372,7 +6374,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 } else {
                     // Standard processing for manufacturing/outsourcing items
                     if (compToReceive.receivedQty >= totalOrdered) {
-                        compToReceive.status = isStockOrder(order) ? 'RECEIVED' : 'RESERVED';
+                        compToReceive.status = isStockOrder(order) ? 'STOCKED' : 'RESERVED';
                     }
                     compToReceive.statusUpdatedAt = new Date().toISOString();
                     const targetDest = isStockOrder(order) ? 'Warehouse Stock' : 'Reserved for Order';
@@ -6756,7 +6758,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 const targets = [];
                 order.items.forEach(item => {
                     item.components?.forEach(comp => {
-                        if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                        if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'STOCKED', 'RESERVED'].includes(comp.status)) {
                             targets.push({ item, comp });
                         }
                     });
@@ -6796,7 +6798,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (payload.sendPoId) {
                     order.items.forEach(item => {
                         item.components?.forEach(comp => {
-                            if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                            if (comp.sendPoId === payload.sendPoId && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'STOCKED', 'RESERVED'].includes(comp.status)) {
                                 targets.push({ item, comp });
                             }
                         });
@@ -6839,7 +6841,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (itemIdx === -1) throw new Error("Item not found");
                 const comp = order.items[itemIdx].components?.find(c => c.id === payload.componentId);
                 if (!comp) throw new Error("Component not found");
-                if (!['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'RESERVED'].includes(comp.status)) {
+                if (!['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'STOCKED', 'RESERVED'].includes(comp.status)) {
                     throw new Error("Component is not in a PO or received status");
                 }
                 const oldStatus = comp.status;
@@ -6982,7 +6984,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                                     if (invItem) {
                                         if (comp.status === 'RESERVED' || comp.status === 'AVAILABLE') {
                                             // R24: reconcileInventory lowers the reservation when comp.quantity drops; a direct decrement here released it twice (negative reserved).
-                                        } else if (['RECEIVED', 'IN_STOCK', 'CONSUMED', 'Manufactured'].includes(comp.status)) {
+                                        } else if (['RECEIVED', 'STOCKED', 'IN_STOCK', 'CONSUMED', 'Manufactured'].includes(comp.status)) {
                                             if (comp.consumedQty && comp.consumedQty > 0) {
                                                 const overConsumed = Math.min(qtyDelta, comp.consumedQty);
                                                 comp.consumedQty = Math.max(0, (comp.consumedQty || 0) - overConsumed);
@@ -7180,7 +7182,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             // the reservation (reconcileInventory does that when comp.quantity is reduced to the consumed part).
                             let releasedHere = false;
                             if ((comp.source === 'STOCK' && comp.inventoryItemId) ||
-                                (comp.source === 'PROCUREMENT' && (comp.status === 'RESERVED' || comp.status === 'RECEIVED'))) {
+                                (comp.source === 'PROCUREMENT' && (comp.status === 'RESERVED' || ['RECEIVED', 'STOCKED'].includes(comp.status)))) {
                                 releasedHere = true;
                             }
                             
@@ -7659,7 +7661,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 }
 
-                const isStockSource = stockComp.source === 'STOCK' || stockStatusBefore === 'RECEIVED' || stockStatusBefore === 'IN_STOCK';
+                const isStockSource = stockComp.source === 'STOCK' || stockStatusBefore === 'RECEIVED' || stockStatusBefore === 'STOCKED' || stockStatusBefore === 'IN_STOCK';
                 const newCompId = `c_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
                 const newComp = {
                     id: newCompId,
