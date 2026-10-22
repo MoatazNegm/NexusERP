@@ -4119,6 +4119,15 @@ const addToCollection = (col) => (req, res) => {
     } else res.status(500).json({ error: "Write failed" });
 };
 
+// Orders that have passed Technical Review cannot be edited from Order Management (items/prices).
+// Enforced only for callers whose roles are known and are all Order Management roles; other modules keep their own edits.
+const ORDER_EDIT_EDITABLE_STATUSES = ['LOGGED', 'NEGATIVE_MARGIN', 'IN_HOLD', 'REJECTED'];
+const ORDER_EDIT_LOCKED_REASON = (req, order) => {
+    const roles = req.roles || [];
+    if (roles.length === 0 || !roles.every(r => r === 'order_management' || r === 'sales')) return null;
+    if (!order || ORDER_EDIT_EDITABLE_STATUSES.includes(String(order.status))) return null;
+    return 'This order is locked: it has passed Technical Review and can no longer be edited.';
+};
 const updateInCollection = (col) => (req, res) => {
     const db = getDb(req);
     if (!db[col]) db[col] = [];
@@ -4140,6 +4149,10 @@ const updateInCollection = (col) => (req, res) => {
     let updated = { ...oldItem, ...req.body };
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
         return res.status(400).json({ error: 'Invalid orderDate.' });
+    }
+
+    if (col === 'orders' && req.body.items !== undefined && ORDER_EDIT_LOCKED_REASON(req, oldItem)) {
+        return res.status(403).json({ error: ORDER_EDIT_LOCKED_REASON(req, oldItem) });
     }
 
     if (col === 'orders' && req.body.items !== undefined) {

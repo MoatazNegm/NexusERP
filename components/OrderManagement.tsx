@@ -520,6 +520,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       return { type: 'warning', label: 'MANAGER OVERRIDE: Edit time limit bypassed.', isFrozen: false };
     }
 
+    const EDITABLE_STATUSES: string[] = [OrderStatus.LOGGED, OrderStatus.NEGATIVE_MARGIN, OrderStatus.IN_HOLD, OrderStatus.REJECTED];
+    if (!EDITABLE_STATUSES.includes(String(order.status))) {
+      return { type: 'frozen', label: 'This order is locked: it has passed Technical Review and can no longer be edited.', isFrozen: true };
+    }
+
     const entrySource = order.dataEntryTimestamp ?? order.orderDate ?? new Date().toISOString();
     const entryTime = new Date(String(entrySource)).getTime();
     const now = new Date().getTime();
