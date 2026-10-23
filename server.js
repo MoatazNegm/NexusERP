@@ -3685,7 +3685,7 @@ const orderCommitmentGross = (order) => {
 const unlinkedCompanyCosts = (db) => {
     if (!db) return 0;
     let c = 0;
-    (db.supplierPayments || []).forEach(sp => { c += Number(sp.unallocatedAdvance) || 0; });
+    (db.supplierPayments || []).forEach(sp => { if (!sp.orderId && !sp.poNumber) c += Number(sp.unallocatedAdvance) || 0; });
     (db.ledger || []).forEach(l => { if (l && l.category === 'Tax Settlement' && l.type === 'COST') c += Number(l.amount) || 0; });
     return r2w(c);
 };
