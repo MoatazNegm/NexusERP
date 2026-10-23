@@ -3680,7 +3680,16 @@ const orderCommitmentGross = (order) => {
 // Customer wallet = money held for the customer outside any PO (stored general/project advances) plus the money
 // paid on each non-rejected PO (x) minus the money the company paid for it (y), per project and in total.
 // Rejected orders are strictly ignored (their paid amount was moved to the general wallet when they were cancelled).
-const computeCustomerWallet = (customer, orders = [], supplierPayments = []) => {
+// Company costs linked to neither a PO nor a project (supplier payments left unallocated, tax settlements) have no customer attribute:
+// they lower the customer general wallet only when the company has exactly one customer (user wallet model, validator-confirmed).
+const unlinkedCompanyCosts = (db) => {
+    if (!db) return 0;
+    let c = 0;
+    (db.supplierPayments || []).forEach(sp => { c += Number(sp.unallocatedAdvance) || 0; });
+    (db.ledger || []).forEach(l => { if (l && l.category === 'Tax Settlement' && l.type === 'COST') c += Number(l.amount) || 0; });
+    return r2w(c);
+};
+const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db = null) => {
     if (!customer) return customer;
     const projectBalances = {};
     Object.entries(customer.walletBalances || {}).forEach(([proj, bal]) => {
@@ -3693,6 +3702,10 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = []) => 
         const key = orderProjectName(o, orders) || '(No Project)';
         projectBalances[key] = r2w((projectBalances[key] || 0) + net);
     });
+    if (db && (db.customers || []).length === 1) {
+        const uc = unlinkedCompanyCosts(db);
+        if (uc) projectBalances['(No Project)'] = r2w((projectBalances['(No Project)'] || 0) - uc);
+    }
     const totalBalance = Object.values(projectBalances).reduce((sum, val) => sum + (Number(val) || 0), 0);
     return {
         ...customer,
@@ -3854,7 +3867,7 @@ const getCollection = (col) => (req, res) => {
 
     if (col === 'customers') {
         const orders = db.orders || [];
-        return res.json((db[col] || []).map(c => computeCustomerWallet(c, orders, db.supplierPayments || [])));
+        return res.json((db[col] || []).map(c => computeCustomerWallet(c, orders, db.supplierPayments || [], db)));
     }
 
     if (col === 'orders') {
@@ -3899,7 +3912,7 @@ const getItemFromCollection = (col) => (req, res) => {
         return res.json(safe);
     }
     if (col === 'customers') {
-        return res.json(computeCustomerWallet(item, db.orders || [], db.supplierPayments || []));
+        return res.json(computeCustomerWallet(item, db.orders || [], db.supplierPayments || [], db));
     }
     if (col === 'orders') {
         if (touchByTechReview(item, req.headers['x-user'], db, 'opened the order')) writeDb(db, getDbPath(req));
@@ -4388,7 +4401,7 @@ app.get('/api/v1/ap', (req, res) => {
 app.get('/api/v1/project-wallets', (req, res) => {
     const db = getDb(req);
     const orders = db.orders || [];
-    const customers = (db.customers || []).map(c => computeCustomerWallet(c, orders, db.supplierPayments || []));
+    const customers = (db.customers || []).map(c => computeCustomerWallet(c, orders, db.supplierPayments || [], db));
     const projectMap = new Map();
 
     customers.forEach(c => {
@@ -4604,7 +4617,7 @@ app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
         customer.logs.push(createAuditLog(note, 'WALLET_TRANSFER', user));
         ledgerPush(db, { type: 'TRANSFER', amount: amt, description: note, category: 'Account Transfer', fromAccount: acctLabel(customer.name, src.t, src.ref), toAccount: acctLabel(customer.name, dst.t, dst.ref), customerName: customer.name }, user);
         writeDb(db, getDbPath(req));
-        return res.json({ ok: true, amount: amt, from: acctLabel(customer.name, src.t, src.ref), to: acctLabel(customer.name, dst.t, dst.ref), wallet: computeCustomerWallet(customer, db.orders || [], db.supplierPayments || []) });
+        return res.json({ ok: true, amount: amt, from: acctLabel(customer.name, src.t, src.ref), to: acctLabel(customer.name, dst.t, dst.ref), wallet: computeCustomerWallet(customer, db.orders || [], db.supplierPayments || [], db) });
     } catch (err) {
         res.status(400).json({ error: err.message || "Transfer failed" });
     }
@@ -4653,7 +4666,7 @@ app.post('/api/v1/customers/:id/advance-payment', (req, res) => {
         });
 
         writeDb(db, getDbPath(req));
-        return res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || []));
+        return res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || [], db));
     } catch (err) {
         res.status(500).json({ error: err.message || "Failed to record customer advance payment" });
     }
@@ -4677,7 +4690,7 @@ app.post('/api/v1/customers/:id/refund', (req, res) => {
         customer.walletBalances[SELF_WALLET_KEY] = Math.round((bal - amt) * 100) / 100;
         ledgerPush(db, { type: 'REFUND', amount: amt, description: `Customer Refund: ${customer.name}${ord ? ` - PO ${ord.internalOrderNumber}` : ''} - ${memo || 'Refund of general wallet credit'}`, category: 'Customer Refunds', fromAccount: acctLabel(customer.name, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: customer.name, orderId: ord ? ord.id : undefined, poNumber: ord ? ord.internalOrderNumber : undefined }, user);
         writeDb(db, getDbPath(req));
-        return res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || []));
+        return res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || [], db));
     } catch (err) {
         res.status(500).json({ error: err.message || "Failed to record customer refund" });
     }
@@ -4865,7 +4878,7 @@ app.post('/api/v1/customers/:id/hold', (req, res) => {
     db.customers[idx] = customer;
 
     if (writeDb(db, getDbPath(req))) {
-        res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || []));
+        res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || [], db));
     } else {
         res.status(500).json({ error: "Failed to update customer hold state" });
     }
