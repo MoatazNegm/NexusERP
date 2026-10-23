@@ -2406,7 +2406,8 @@ const reconcileInventory = (oldOrder, newOrder, db) => {
         inventoryUpdates.forEach((delta, id) => {
             const invItem = db.inventory.find(inv => inv.id === id);
             if (invItem) {
-                invItem.quantityReserved = (invItem.quantityReserved || 0) + delta;
+                // v1.0001196: a reservation is never negative (a release function that already freed the stock must not be released a second time)
+                invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) + delta);
                 console.log(`[Inventory] Reconciled ${invItem.sku}: Delta ${delta}, New Reserved: ${invItem.quantityReserved}`);
             }
         });
