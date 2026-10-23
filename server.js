@@ -2375,7 +2375,8 @@ const reconcileInventory = (oldOrder, newOrder, db) => {
                     const current = map.get(comp.inventoryItemId) || 0;
                     // R23: the consumed part has left stock, so it is no longer reserved
                     map.set(comp.inventoryItemId, current + Math.max(0, (comp.quantity || 0) - (comp.consumedQty || 0)));
-                } else if (comp.inventoryItemId && comp.source === 'PROCUREMENT' && !isStockOrder(order) && (comp.receivedQty || 0) > 0 && !['CANCELLED', 'ORDERED_FOR_STOCK', 'Manufactured'].includes(comp.status)) {
+                } else if (comp.inventoryItemId && comp.source === 'PROCUREMENT' && !isStockOrder(order) && (comp.receivedQty || 0) > 0 && !comp.forStock && !['CANCELLED', 'ORDERED_FOR_STOCK', 'Manufactured', 'STOCKED'].includes(comp.status)) {
+                    // v1.0001195: a component bought for stock (forStock / STOCKED) is free stock, never reserved for the order
                     // R22 (C11): a partly received procured component is reserved for the order for the received part, at receipt.
                     const current = map.get(comp.inventoryItemId) || 0;
                     map.set(comp.inventoryItemId, current + Math.min(comp.receivedQty || 0, comp.quantity || 0));
