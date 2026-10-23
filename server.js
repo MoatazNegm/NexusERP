@@ -3704,7 +3704,7 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db 
     });
     if (db && (db.customers || []).length === 1) {
         const uc = unlinkedCompanyCosts(db);
-        if (uc) projectBalances['(No Project)'] = r2w((projectBalances['(No Project)'] || 0) - uc);
+        if (uc) projectBalances['(General Advance / Future Orders)'] = r2w((projectBalances['(General Advance / Future Orders)'] || 0) - uc);
     }
     const totalBalance = Object.values(projectBalances).reduce((sum, val) => sum + (Number(val) || 0), 0);
     return {
