@@ -898,117 +898,485 @@ const DEFAULT_TURSO_URL = process.env.TURSO_URL || 'libsql://qualitycheck-moataz
 const getDefaultTursoToken = () => process.env.TURSO_TOKEN
   || readSecretFile('TURSO_TOKEN_FILE', ['/secrets/turso.token', '/run/secrets/turso_token']);
 
-const pushToTursoAsync = async (data, dbPath) => {
+// ==================== PERSISTENCE GUARD (v1.0001200) ====================
+// Render (and any ephemeral host) loses db.json on every deploy/restart. These rules keep the
+// Turso copy safe and make an empty boot hydrate from Turso instead of starting empty:
+//  1. TURSO_ENABLED=1 (env) switches Turso on at boot, independent of db.json; URL/token from
+//     TURSO_DATABASE_URL (or TURSO_URL) and TURSO_AUTH_TOKEN (or TURSO_TOKEN / TURSO_TOKEN_FILE).
+//     TURSO_ENABLED=0 forces it off. Unset: the Settings switch (settings[0].useTurso + tursoUrl) decides, as before.
+//  2. Hydrate runs before the live DB is used. If it fails, or the remote is below TURSO_MIN_RECORDS,
+//     the server goes READ-ONLY (writes answer 503) instead of starting empty and pushing.
+//  3. A live write/push that shrinks orders/users/customers/suppliers/supplierPayments against the
+//     last known remote by more than TURSO_SHRINK_MAX_PCT % (and at least TURSO_SHRINK_MIN_DROP rows,
+//     or to an empty DB) is refused unless forced (restore / wipe routes).
+//  4. Before the remote row 'live' is replaced it is copied to 'live.<timestamp>' (last
+//     TURSO_SNAPSHOT_KEEP kept); every push carries revision+1 and only lands if the remote revision
+//     is still the one we read (another instance wrote -> conflict -> read-only until re-hydrate).
+//     Pushes run one at a time per target, in order (pending writes coalesce to the newest state).
+// Never log or expose URL tokens or keys.
+const envFlagValue = (name) => {
+    const raw = process.env[name];
+    if (raw === undefined || String(raw).trim() === '') return null;
+    return /^(1|true|yes|on)$/i.test(String(raw).trim());
+};
+const envInt = (name, def) => {
+    const n = parseInt(process.env[name], 10);
+    return Number.isFinite(n) && n >= 0 ? n : def;
+};
+const TURSO_ENV_SWITCH = envFlagValue('TURSO_ENABLED');
+const TURSO_SNAPSHOT_KEEP = envInt('TURSO_SNAPSHOT_KEEP', 10);
+const TURSO_MIN_RECORDS = envInt('TURSO_MIN_RECORDS', 1);
+const TURSO_SHRINK_MAX_PCT = envInt('TURSO_SHRINK_MAX_PCT', 20);
+const TURSO_SHRINK_MIN_DROP = envInt('TURSO_SHRINK_MIN_DROP', 3);
+const TURSO_HYDRATE_RETRY_SEC = envInt('TURSO_HYDRATE_RETRY_SEC', 60);
+const GUARDED_COLLECTIONS = ['orders', 'users', 'customers', 'suppliers', 'supplierPayments'];
+const COUNTED_COLLECTIONS = [...GUARDED_COLLECTIONS, 'inventory', 'contracts', 'ledger'];
+const SERVER_APP_VERSION = (() => {
     try {
-        const isLive = (dbPath === DB_PATH);
-        const settingsList = data.settings || [];
-        const settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
-        
-        const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
-        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
-        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : false;
+        const m = fs.readFileSync(path.join(__dirname, 'constants.tsx'), 'utf8').match(/APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+        return m ? m[1] : 'unknown';
+    } catch { return 'unknown'; }
+})();
 
-        if (useTurso && rawUrl && authToken) {
-            const targetId = isLive ? 'live' : 'sandbox.' + path.basename(dbPath).replace('db.sandbox.', '').replace('.json', '');
-            
-            const dbUrl = rawUrl.startsWith('libsql://') 
-              ? rawUrl.replace(/^libsql:\/\//, 'https://') 
-              : rawUrl;
-              
-            const client = createClient({ url: dbUrl, authToken });
-            await client.execute(`CREATE TABLE IF NOT EXISTS nexus_state (id TEXT PRIMARY KEY, json_data TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-            await client.execute({
-                sql: `INSERT INTO nexus_state (id, json_data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json_data=excluded.json_data, updated_at=CURRENT_TIMESTAMP`,
-                args: [targetId, JSON.stringify(data)]
-            });
-            console.log(`[Turso] Successfully synced ${targetId} to cloud DB.`);
-        }
+const countRecords = (db) => {
+    const out = { total: 0 };
+    for (const col of COUNTED_COLLECTIONS) {
+        const n = Array.isArray(db?.[col]) ? db[col].length : 0;
+        out[col] = n;
+        out.total += n;
+    }
+    return out;
+};
+
+const persistState = {
+    source: 'unknown',            // turso | local | stub | restore
+    hydrated: false,              // live pushes wait until the boot hydrate has decided
+    readOnly: false,
+    readOnlyReason: '',
+    readOnlySince: null,
+    pendingForcePush: false,      // a restore/wipe was saved locally but its push failed: push it on the next retry
+    turso: { enabled: false, by: 'off', configured: false },
+    hydrate: { at: null, ok: null, error: null, remoteFound: null, remoteCounts: null, remoteRevision: null, attempts: 0 },
+    lastRemoteCounts: null,       // shrink-guard baseline (remote row 'live')
+    remoteRevision: null,         // revision of row 'live' we last read or wrote
+    lastPush: { at: null, ok: null, error: null, target: null, revision: null, forced: false, snapshot: null },
+    refusedWrites: 0,
+    lastRefusal: null,
+    localCounts: null,
+};
+
+const enterReadOnly = (reason) => {
+    if (!persistState.readOnly) persistState.readOnlySince = new Date().toISOString();
+    persistState.readOnly = true;
+    persistState.readOnlyReason = reason;
+    console.error(`[Persistence] READ-ONLY: ${reason}. Writes are refused (503) until Turso answers and the data is hydrated.`);
+};
+const leaveReadOnly = () => {
+    if (persistState.readOnly) console.log(`[Persistence] Read-only mode cleared (was: ${persistState.readOnlyReason}).`);
+    persistState.readOnly = false;
+    persistState.readOnlyReason = '';
+    persistState.readOnlySince = null;
+};
+
+// Turso on/off, URL and token. Env switch first; otherwise the legacy Settings switch with the old precedence.
+const resolveTursoConfig = (settings) => {
+    const s = settings || {};
+    const settingsUrl = s.tursoUrl ? String(s.tursoUrl).trim() : '';
+    const settingsToken = s.tursoAuthToken ? String(s.tursoAuthToken).trim() : '';
+    if (TURSO_ENV_SWITCH !== null) {
+        const url = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || settingsUrl || DEFAULT_TURSO_URL;
+        const token = process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken() || settingsToken;
+        return { enabled: TURSO_ENV_SWITCH, by: TURSO_ENV_SWITCH ? 'env' : 'env-off', url, token };
+    }
+    const legacyOn = (s.useTurso !== undefined && settingsUrl) ? !!s.useTurso : false;
+    return {
+        enabled: legacyOn,
+        by: legacyOn ? 'settings' : 'off',
+        url: settingsUrl || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL,
+        token: settingsToken || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken(),
+    };
+};
+const tursoConfigFromDb = (db) => {
+    let settings = null;
+    try { const s = (db?.settings || [])[0]; settings = s ? decryptSettings(s) : null; } catch {}
+    return resolveTursoConfig(settings);
+};
+const tursoClientFor = (cfg) => {
+    const dbUrl = cfg.url.startsWith('libsql://') ? cfg.url.replace(/^libsql:\/\//, 'https://') : cfg.url;
+    return createClient({ url: dbUrl, authToken: cfg.token });
+};
+const tursoSchemaReady = new Set();
+const ensureTursoSchema = async (client, cfg) => {
+    if (tursoSchemaReady.has(cfg.url)) return;
+    await client.execute(`CREATE TABLE IF NOT EXISTS nexus_state (id TEXT PRIMARY KEY, json_data TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+    try {
+        await client.execute(`ALTER TABLE nexus_state ADD COLUMN revision INTEGER DEFAULT 0`); // additive, once
     } catch (e) {
-        console.error(`[Turso Sync Error on ${dbPath}]`, e.message);
+        if (!/duplicate column/i.test(String(e.message))) throw e;
+    }
+    tursoSchemaReady.add(cfg.url);
+};
+const tursoTargetId = (dbPath) => (dbPath === DB_PATH)
+    ? 'live'
+    : 'sandbox.' + path.basename(dbPath).replace('db.sandbox.', '').replace('.json', '');
+
+// Returns a reason string when `next` loses too much against `baseline`, else null.
+const findShrink = (baseline, next) => {
+    if (!baseline || !next) return null;
+    if ((baseline.total || 0) > 0 && (next.total || 0) === 0) return `whole database ${baseline.total} -> 0 records`;
+    for (const col of GUARDED_COLLECTIONS) {
+        const before = baseline[col] || 0;
+        const after = next[col] || 0;
+        const drop = before - after;
+        if (drop < TURSO_SHRINK_MIN_DROP) continue;
+        if (after === 0 || drop * 100 > before * TURSO_SHRINK_MAX_PCT) return `${col} ${before} -> ${after}`;
+    }
+    return null;
+};
+const recordRefusal = (where, reason) => {
+    persistState.refusedWrites++;
+    persistState.lastRefusal = { at: new Date().toISOString(), where, reason };
+    console.error(`[Persistence] ${where} REFUSED: ${reason} (limit ${TURSO_SHRINK_MAX_PCT} % / ${TURSO_SHRINK_MIN_DROP} rows against the last Turso copy; use a restore to force).`);
+};
+
+const pushQueues = new Map();       // targetId -> { running, pending }
+const lastPushPromise = new Map();  // dbPath -> promise of the newest scheduled push
+
+const pushOnce = async (targetId, job) => {
+    const isLive = targetId === 'live';
+    const client = tursoClientFor(job.cfg);
+    await ensureTursoSchema(client, job.cfg);
+    if (isLive && !job.force) {
+        if (persistState.lastRemoteCounts === null) {
+            // No baseline yet (e.g. Turso switched on in Settings after boot): read the remote once.
+            const r = await client.execute({ sql: `SELECT json_data, revision FROM nexus_state WHERE id = 'live'`, args: [] });
+            if (r.rows.length && r.rows[0].json_data) {
+                try { persistState.lastRemoteCounts = countRecords(JSON.parse(String(r.rows[0].json_data))); } catch {}
+                if (persistState.remoteRevision === null) persistState.remoteRevision = Number(r.rows[0].revision || 0);
+            }
+        }
+        const shrink = findShrink(persistState.lastRemoteCounts, job.counts);
+        if (shrink) {
+            recordRefusal('Turso push', shrink);
+            return { ok: false, refused: true, reason: shrink };
+        }
+    }
+    if (!isLive) {
+        await client.execute({
+            sql: `INSERT INTO nexus_state (id, json_data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json_data=excluded.json_data, updated_at=CURRENT_TIMESTAMP`,
+            args: [targetId, job.payload]
+        });
+        console.log(`[Turso] Successfully synced ${targetId} to cloud DB.`);
+        return { ok: true };
+    }
+    // Live row: optimistic revision check, snapshot, replace, prune - one transaction.
+    const cur = await client.execute({ sql: `SELECT revision FROM nexus_state WHERE id = 'live'`, args: [] });
+    const remoteRev = cur.rows.length ? Number(cur.rows[0].revision || 0) : null;
+    const expected = persistState.remoteRevision;
+    if (remoteRev !== null && expected !== null && remoteRev !== expected && !job.force) {
+        const reason = `remote revision ${remoteRev} differs from ours ${expected} (another instance wrote)`;
+        enterReadOnly(`Turso conflict: ${reason}`);
+        return { ok: false, conflict: true, reason };
+    }
+    const base = remoteRev === null ? 0 : remoteRev;
+    const nextRev = base + 1;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const snapshotId = remoteRev !== null && TURSO_SNAPSHOT_KEEP > 0 ? `live.${stamp}` : null;
+    const stmts = [];
+    if (snapshotId) {
+        stmts.push({ sql: `INSERT OR REPLACE INTO nexus_state (id, json_data, updated_at, revision) SELECT ?, json_data, updated_at, revision FROM nexus_state WHERE id = 'live'`, args: [snapshotId] });
+    }
+    const upsertIdx = stmts.length;
+    stmts.push({
+        sql: `INSERT INTO nexus_state (id, json_data, revision) VALUES ('live', ?, ?) ON CONFLICT(id) DO UPDATE SET json_data=excluded.json_data, revision=excluded.revision, updated_at=CURRENT_TIMESTAMP WHERE COALESCE(nexus_state.revision, 0) = ?`,
+        args: [job.payload, nextRev, base]
+    });
+    if (snapshotId) {
+        stmts.push({ sql: `DELETE FROM nexus_state WHERE id LIKE 'live.%' AND id NOT IN (SELECT id FROM nexus_state WHERE id LIKE 'live.%' ORDER BY id DESC LIMIT ?)`, args: [TURSO_SNAPSHOT_KEEP] });
+    }
+    const results = await client.batch(stmts, 'write');
+    if (!results[upsertIdx] || results[upsertIdx].rowsAffected < 1) {
+        const reason = `remote revision moved during the push (expected ${base})`;
+        enterReadOnly(`Turso conflict: ${reason}`);
+        return { ok: false, conflict: true, reason };
+    }
+    persistState.remoteRevision = nextRev;
+    persistState.lastRemoteCounts = job.counts;
+    console.log(`[Turso] Successfully synced live to cloud DB (revision ${nextRev}${snapshotId ? `, previous kept as ${snapshotId}` : ''}${job.force ? ', forced' : ''}).`);
+    return { ok: true, revision: nextRev, snapshot: snapshotId };
+};
+
+const runPushQueue = async (targetId, q) => {
+    q.running = true;
+    try {
+        while (q.pending) {
+            const job = q.pending;
+            q.pending = null;
+            let result;
+            try { result = await pushOnce(targetId, job); }
+            catch (e) {
+                result = { ok: false, error: e.message };
+                console.error(`[Turso Sync Error on ${targetId}]`, e.message);
+            }
+            if (targetId === 'live') {
+                persistState.lastPush = {
+                    at: new Date().toISOString(), ok: !!result.ok,
+                    error: result.ok ? null : (result.reason || result.error || 'not pushed'),
+                    target: targetId, revision: result.revision ?? persistState.remoteRevision, forced: job.force, snapshot: result.snapshot || null
+                };
+            }
+            job.waiters.forEach(w => w(result));
+        }
+    } finally {
+        q.running = false;
     }
 };
 
-const pullFromTursoOnStartup = async () => {
-    try {
-        let settings = null;
-        let localDb = null;
-        if (fs.existsSync(DB_PATH)) {
+// Schedules a push of `data` for `dbPath`; resolves with { ok, ... } (ok:null = Turso off / skipped).
+const schedulePush = (data, dbPath, opts = {}) => {
+    const isLive = dbPath === DB_PATH;
+    const cfg = tursoConfigFromDb(data);
+    if (isLive) persistState.turso = { enabled: !!cfg.enabled, by: cfg.by, configured: !!(cfg.url && cfg.token) };
+    if (!cfg.enabled || !cfg.url || !cfg.token) return Promise.resolve({ ok: null, skipped: 'turso-off' });
+    if (!opts.force && isLive && !persistState.hydrated) {
+        console.warn('[Turso] Live push skipped: boot hydrate not finished.');
+        return Promise.resolve({ ok: false, skipped: 'before-hydrate' });
+    }
+    if (!opts.force && persistState.readOnly) return Promise.resolve({ ok: false, skipped: 'read-only' });
+    const targetId = tursoTargetId(dbPath);
+    let q = pushQueues.get(targetId);
+    if (!q) { q = { running: false, pending: null }; pushQueues.set(targetId, q); }
+    const payload = JSON.stringify(data);
+    const counts = isLive ? countRecords(data) : null;
+    const p = new Promise((resolve) => {
+        if (q.pending) {
+            // Coalesce: the newest state replaces the queued one; the force flag sticks.
+            q.pending.payload = payload;
+            q.pending.counts = counts;
+            q.pending.cfg = cfg;
+            q.pending.force = q.pending.force || !!opts.force;
+            q.pending.waiters.push(resolve);
+        } else {
+            q.pending = { payload, counts, cfg, force: !!opts.force, waiters: [resolve] };
+        }
+    });
+    if (!q.running) runPushQueue(targetId, q);
+    lastPushPromise.set(dbPath, p);
+    return p;
+};
+const awaitPush = (dbPath = DB_PATH) => lastPushPromise.get(dbPath) || Promise.resolve({ ok: null, skipped: 'nothing scheduled' });
+
+const syncSandboxesWithTurso = async (client) => {
+    const allRes = await client.execute(`SELECT id, json_data FROM nexus_state WHERE id LIKE 'sandbox.%'`);
+    const cloudSbIds = new Set();
+    for (const row of allRes.rows) {
+        if (row.id && row.json_data) {
+            cloudSbIds.add(row.id);
+            const sbOwner = row.id.replace(/^sandbox\./, '');
+            const sbPath = path.join(__dirname, `db.sandbox.${sbOwner}.json`);
             try {
-                localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-                const settingsList = localDb.settings || [];
-                settings = settingsList[0] ? decryptSettings(settingsList[0]) : null;
-            } catch (err) {}
+                if (!fs.existsSync(sbPath)) {
+                    fs.writeFileSync(sbPath, row.json_data, 'utf8');
+                    console.log(`[Turso] Sandbox ${sbOwner} successfully restored from cloud.`);
+                }
+            } catch (e) {}
         }
-        
-        const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
-        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
-        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : false;
-
-        if (useTurso && rawUrl && authToken) {
-            console.log("[Turso] Cloud Sync enabled. Checking latest data from cloud on startup...");
-            const dbUrl = rawUrl.startsWith('libsql://') 
-              ? rawUrl.replace(/^libsql:\/\//, 'https://') 
-              : rawUrl;
-              
-            const client = createClient({ url: dbUrl, authToken });
-            await client.execute(`CREATE TABLE IF NOT EXISTS nexus_state (id TEXT PRIMARY KEY, json_data TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-            
-            const res = await client.execute({ sql: `SELECT json_data FROM nexus_state WHERE id = ?`, args: ['live'] });
-            if (res.rows.length > 0 && res.rows[0].json_data) {
-                try {
-                    const remoteData = JSON.parse(res.rows[0].json_data);
-                    const localOrdersCount = (localDb?.orders || []).length;
-                    const remoteOrdersCount = (remoteData?.orders || []).length;
-                    if (remoteOrdersCount >= localOrdersCount || !localDb || localOrdersCount === 0) {
-                        fs.writeFileSync(DB_PATH, res.rows[0].json_data, 'utf8');
-                        console.log(`[Turso] Live database successfully restored from cloud (${remoteOrdersCount} orders).`);
-                    } else {
-                        console.log(`[Turso] Local database has more orders (${localOrdersCount}) than cloud (${remoteOrdersCount}). Preserving local data and syncing to cloud.`);
-                        pushToTursoAsync(localDb, DB_PATH);
-                    }
-                } catch (parseErr) {
-                    fs.writeFileSync(DB_PATH, res.rows[0].json_data, 'utf8');
-                }
-            }
-            
-            const allRes = await client.execute(`SELECT id, json_data FROM nexus_state WHERE id LIKE 'sandbox.%'`);
-            const cloudSbIds = new Set();
-            for (const row of allRes.rows) {
-                if (row.id && row.json_data) {
-                    cloudSbIds.add(row.id);
-                    const sbOwner = row.id.replace(/^sandbox\./, '');
-                    const sbPath = path.join(__dirname, `db.sandbox.${sbOwner}.json`);
-                    try {
-                        const localExists = fs.existsSync(sbPath);
-                        if (!localExists) {
-                            fs.writeFileSync(sbPath, row.json_data, 'utf8');
-                            console.log(`[Turso] Sandbox ${sbOwner} successfully restored from cloud.`);
-                        }
-                    } catch (e) {}
-                }
-            }
-
-            // Sync any local sandboxes that are missing in cloud
-            const localSbFiles = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
-            for (const file of localSbFiles) {
-                const sbOwner = file.replace(/^db\.sandbox\./, '').replace(/\.json$/, '');
-                const targetId = `sandbox.${sbOwner}`;
-                if (!cloudSbIds.has(targetId)) {
-                    try {
-                        const localSbData = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
-                        pushToTursoAsync(localSbData, path.join(__dirname, file));
-                        console.log(`[Turso] Pushed missing local sandbox ${targetId} to cloud.`);
-                    } catch (e) {}
-                }
-            }
+    }
+    // Sync any local sandboxes that are missing in cloud
+    const localSbFiles = fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.local.bak') && !f.endsWith('.tmp'));
+    for (const file of localSbFiles) {
+        const sbOwner = file.replace(/^db\.sandbox\./, '').replace(/\.json$/, '');
+        const targetId = `sandbox.${sbOwner}`;
+        if (!cloudSbIds.has(targetId)) {
+            try {
+                const localSbData = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+                schedulePush(localSbData, path.join(__dirname, file));
+                console.log(`[Turso] Pushed missing local sandbox ${targetId} to cloud.`);
+            } catch (e) {}
         }
-    } catch (e) {
-        console.error("[Turso] Startup pull failed:", e.message);
     }
 };
 
-const writeDb = (data, customPath = null) => {
+// Boot (and retry) hydrate of the live DB. Decides the data source and the read-only flag.
+const hydrateLiveFromTurso = async (why = 'boot') => {
+    const h = persistState.hydrate;
+    h.attempts++;
+    h.at = new Date().toISOString();
+    let localDb = null;
+    if (fs.existsSync(DB_PATH)) {
+        try { localDb = JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); } catch (err) {}
+    }
+    const localCounts = localDb ? countRecords(localDb) : null;
+    const localTotal = localCounts?.total || 0;
+    const cfg = tursoConfigFromDb(localDb);
+    persistState.turso = { enabled: !!cfg.enabled, by: cfg.by, configured: !!(cfg.url && cfg.token) };
+    const localSource = localTotal > 0 ? 'local' : 'stub';
+
+    if (!cfg.enabled) {
+        persistState.source = localSource;
+        persistState.hydrated = true;
+        h.ok = null; h.error = null;
+        return;
+    }
+    if (!cfg.url || !cfg.token) {
+        if (cfg.by === 'env') {
+            h.ok = false; h.error = 'TURSO_ENABLED is set but the Turso URL or token is missing';
+            persistState.source = localSource;
+            enterReadOnly(h.error);
+            return;
+        }
+        // Legacy Settings switch without a token: local only, as before.
+        persistState.source = localSource;
+        persistState.hydrated = true;
+        h.ok = null; h.error = 'Turso switched on in Settings but no token: running local only';
+        return;
+    }
+    try {
+        console.log(`[Turso] Cloud Sync enabled (by ${cfg.by}). Checking latest data from cloud (${why})...`);
+        const client = tursoClientFor(cfg);
+        await ensureTursoSchema(client, cfg);
+        const res = await client.execute({ sql: `SELECT json_data, revision FROM nexus_state WHERE id = ?`, args: ['live'] });
+        let remoteRaw = null, remoteData = null, remoteRev = null;
+        if (res.rows.length > 0 && res.rows[0].json_data) {
+            remoteRaw = String(res.rows[0].json_data);
+            remoteData = JSON.parse(remoteRaw); // corrupt remote -> catch -> read-only
+            remoteRev = Number(res.rows[0].revision || 0);
+        } else if (res.rows.length > 0) {
+            remoteRev = Number(res.rows[0].revision || 0);
+        }
+        const remoteCounts = remoteData ? countRecords(remoteData) : null;
+        h.remoteFound = !!remoteData;
+        h.remoteCounts = remoteCounts;
+        h.remoteRevision = remoteRev;
+        persistState.remoteRevision = remoteRev;
+        persistState.lastRemoteCounts = remoteCounts;
+
+        if (persistState.pendingForcePush && localDb) {
+            // A restore/wipe was stored locally while Turso failed: push that state now (forced, snapshot kept).
+            persistState.hydrated = true;
+            const r = await schedulePush(localDb, DB_PATH, { force: true });
+            if (r.ok) {
+                persistState.pendingForcePush = false;
+                persistState.source = 'restore';
+                h.ok = true; h.error = null;
+                leaveReadOnly();
+            } else {
+                h.ok = false; h.error = `pending restore push failed: ${r.reason || r.error || r.skipped}`;
+                enterReadOnly(h.error);
+            }
+            return;
+        }
+
+        const remoteOrders = remoteCounts?.orders || 0;
+        const localOrders = localCounts?.orders || 0;
+        const remoteTotal = remoteCounts?.total || 0;
+        if (remoteData && (remoteOrders >= localOrders || localTotal === 0)) {
+            if (remoteTotal < TURSO_MIN_RECORDS) {
+                h.ok = false; h.error = `Turso row 'live' holds ${remoteTotal} records, below TURSO_MIN_RECORDS=${TURSO_MIN_RECORDS}`;
+                persistState.source = localSource;
+                enterReadOnly(h.error);
+                return;
+            }
+            fs.writeFileSync(DB_PATH, remoteRaw, 'utf8');
+            try { fs.copyFileSync(DB_PATH, DB_PATH + '.local.bak'); } catch {}
+            persistState.source = 'turso';
+            console.log(`[Turso] Live database successfully restored from cloud (${remoteOrders} orders, revision ${remoteRev}).`);
+        } else if (localTotal >= Math.max(1, TURSO_MIN_RECORDS)) {
+            persistState.source = 'local';
+            persistState.hydrated = true;
+            console.log(remoteData
+                ? `[Turso] Local database has more orders (${localOrders}) than cloud (${remoteOrders}). Preserving local data and syncing to cloud.`
+                : `[Turso] No live row in cloud. Seeding it from the local database (${localTotal} records).`);
+            schedulePush(localDb, DB_PATH);
+        } else if (!remoteData && TURSO_MIN_RECORDS === 0) {
+            persistState.source = 'stub';
+            console.warn('[Turso] No live row in cloud and no local data; starting EMPTY because TURSO_MIN_RECORDS=0.');
+        } else {
+            h.ok = false;
+            h.error = remoteData
+                ? `local and Turso data below TURSO_MIN_RECORDS=${TURSO_MIN_RECORDS}`
+                : `no live row in Turso and no local data (fresh install: restore a backup, or set TURSO_MIN_RECORDS=0 to start empty)`;
+            persistState.source = localSource;
+            enterReadOnly(h.error);
+            return;
+        }
+        persistState.hydrated = true;
+        h.ok = true; h.error = null;
+        leaveReadOnly();
+        try { await syncSandboxesWithTurso(client); } catch (e) { console.error('[Turso] Sandbox sync failed:', e.message); }
+    } catch (e) {
+        h.ok = false; h.error = `Turso hydrate failed: ${e.message}`;
+        persistState.source = localSource;
+        enterReadOnly(h.error);
+    }
+};
+const pullFromTursoOnStartup = () => hydrateLiveFromTurso('boot');
+
+let hydrateRetryRunning = false;
+setInterval(() => {
+    if (!persistState.readOnly || hydrateRetryRunning) return;
+    hydrateRetryRunning = true;
+    hydrateLiveFromTurso('retry')
+        .then(() => { if (!persistState.readOnly) runStartupRepairs(); })
+        .catch(() => {})
+        .finally(() => { hydrateRetryRunning = false; });
+}, Math.max(5, TURSO_HYDRATE_RETRY_SEC) * 1000).unref();
+
+const scrubText = (t) => (t == null ? t : String(t).replace(/(libsql|https?|wss?):\/\/\S+/gi, '[url]'));
+const persistenceHealth = () => {
+    let counts = persistState.localCounts;
+    let dbSchemaVersion = null;
+    try {
+        const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+        counts = countRecords(db);
+        dbSchemaVersion = db.settings?.[0]?.dbSchemaVersion ?? null;
+    } catch {}
+    return {
+        status: persistState.readOnly ? 'read-only' : (persistState.lastPush.ok === false ? 'degraded' : 'ok'),
+        appVersion: SERVER_APP_VERSION,
+        dbSchemaVersion,
+        currentSchemaVersion: CURRENT_SCHEMA_VERSION,
+        dataSource: persistState.source,
+        counts,
+        readOnly: persistState.readOnly,
+        readOnlyReason: scrubText(persistState.readOnlyReason) || null,
+        readOnlySince: persistState.readOnlySince,
+        turso: {
+            enabled: persistState.turso.enabled,
+            enabledBy: persistState.turso.by,
+            configured: persistState.turso.configured,
+            remoteRevision: persistState.remoteRevision,
+            snapshotsKept: TURSO_SNAPSHOT_KEEP,
+            hydrate: { ...persistState.hydrate, error: scrubText(persistState.hydrate.error) },
+            lastPush: { ...persistState.lastPush, error: scrubText(persistState.lastPush.error) },
+            pendingForcePush: persistState.pendingForcePush,
+        },
+        guard: {
+            minRecords: TURSO_MIN_RECORDS, shrinkMaxPct: TURSO_SHRINK_MAX_PCT, shrinkMinDrop: TURSO_SHRINK_MIN_DROP,
+            refusedWrites: persistState.refusedWrites, lastRefusal: persistState.lastRefusal,
+        },
+        storage: { dbPathFromEnv: !!process.env.DB_PATH, uploadsPathFromEnv: !!process.env.UPLOADS_PATH },
+        uptimeSec: Math.round(process.uptime()),
+    };
+};
+
+// opts.force: restore / wipe routes; skips the shrink guard and the read-only refusal.
+const writeDb = (data, customPath = null, opts = {}) => {
   const targetPath = customPath || DB_PATH;
+  const isLive = targetPath === DB_PATH;
+  if (isLive && !opts.force) {
+    if (persistState.readOnly) {
+      console.error(`[Persistence] Live write refused: read-only (${persistState.readOnlyReason}).`);
+      return false;
+    }
+    if (persistState.turso.enabled) {
+      const shrink = findShrink(persistState.lastRemoteCounts, countRecords(data));
+      if (shrink) {
+        recordRefusal('Live write', shrink);
+        return false;
+      }
+    }
+  }
   const bakPath = targetPath + '.local.bak';
   const content = JSON.stringify(data, null, 2);
   try {
@@ -1021,9 +1389,10 @@ const writeDb = (data, customPath = null) => {
       fs.writeFileSync(targetPath, content, 'utf8');
       try { fs.unlinkSync(tmpPath); } catch {}
     }
-    
-    // Trigger background sync to cloud
-    pushToTursoAsync(data, targetPath).catch(() => {});
+    if (isLive) persistState.localCounts = countRecords(data);
+
+    // Trigger background sync to cloud (serialized per target; restore routes await it via awaitPush)
+    schedulePush(data, targetPath, opts).catch(() => {});
 
     try { fs.copyFileSync(targetPath, bakPath); } catch {}
     return true;
@@ -3303,6 +3672,25 @@ const PORT = process.env.PORT || 5005;
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
+// v1.0001200: no-auth health probe (Render health check). Never exposes secrets, URLs or paths.
+app.get('/api/health', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(persistenceHealth());
+});
+
+// v1.0001200: read-only mode (Turso hydrate failed / below floor / conflict) refuses every change.
+// Logins, restores and the admin persistence routes stay open so an admin can recover.
+app.use((req, res, next) => {
+    if (!persistState.readOnly) return next();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || !req.path.startsWith('/api/')) return next();
+    if (/\/(login|logout)\b|\/auth\/|\/(full-)?restore$|\/admin\/persistence\//.test(req.path)) return next();
+    return res.status(503).json({
+        error: 'READ_ONLY',
+        readOnly: true,
+        message: `Not stored: the server is in read-only mode (${persistState.readOnlyReason}). Data could not be loaded safely from the cloud database, so changes are refused until it is. Check GET /api/health.`
+    });
+});
+
 // --- MULTI-TENANT SANDBOX MIDDLEWARE (must run before any /api/v1/* route) ---
 // Resolves x-sandbox-owner into req.sandboxDbPath / req.sandboxOwner / req.roles.
 // Live mode (no header) is a zero-disk-IO pass-through; roles are evaluated
@@ -5165,11 +5553,38 @@ COLLECTIONS.forEach(col => {
     app.put(`/api/v1/${col}/:id`, updateInCollection(col));
 });
 
-app.post('/api/v1/wipe', (req, res) => {
+// After a forced live write (restore / wipe): Turso off or push ok -> normal mode;
+// push failed -> keep the restored data locally, stay read-only and push it on the next hydrate retry.
+const settleForcedLivePush = (push, what) => {
+    if (push && push.ok === false) {
+        persistState.pendingForcePush = true;
+        enterReadOnly(`${what} saved locally but the Turso push failed (${push.reason || push.error || push.skipped}); it is pushed on the next retry`);
+        return;
+    }
+    persistState.pendingForcePush = false;
+    persistState.hydrated = true;
+    persistState.source = what === 'wipe' ? persistState.source : 'restore';
+    leaveReadOnly();
+};
+
+// Admin: retry the Turso hydrate now (read-only recovery). Returns the health document.
+app.post('/api/v1/admin/persistence/retry-hydrate', async (req, res) => {
+    if (!isAdminUser(req)) return res.status(403).json({ error: 'Admin only.' });
+    await hydrateLiveFromTurso('admin-retry');
+    if (!persistState.readOnly) runStartupRepairs();
+    res.json(persistenceHealth());
+});
+
+app.post('/api/v1/wipe', async (req, res) => {
   if (isSandbox(req)) return res.status(400).json({ error: "Direct wipe is disabled in sandbox mode. Use /api/v1/sandbox/reset." });
   const db = getDb(req);
   db.orders = []; db.customers = []; db.inventory = []; db.notifications = []; db.contracts = []; db.supplierPayments = [];
-  if (writeDb(db, getDbPath(req))) res.json({ message: "Live wipe successful" });
+  // Explicit wipe: forced past the shrink guard (the previous Turso copy is kept as a live.<timestamp> snapshot).
+  if (writeDb(db, getDbPath(req), { force: true })) {
+    const push = await awaitPush(DB_PATH);
+    settleForcedLivePush(push, 'wipe');
+    res.json({ message: "Live wipe successful", push });
+  }
   else res.status(500).json({ error: "Wipe failed" });
 });
 
@@ -7889,7 +8304,7 @@ app.get('/api/v1/full-backup', (req, res) => {
     }
 });
 
-app.post('/api/v1/restore', (req, res) => {
+app.post('/api/v1/restore', async (req, res) => {
     const data = req.body;
     const required = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'settings', 'modules'];
     const missing = required.filter(col => !data[col]);
@@ -7965,7 +8380,9 @@ app.post('/api/v1/restore', (req, res) => {
     // Migrate schema after restore so old backups work on new code versions
     applySchemaMigrations(cleanDb, getDbPath(req));
 
-    if (writeDb(cleanDb, getDbPath(req))) {
+    // Live restore is an explicit admin action: forced past the shrink guard and read-only mode
+    // (the previous Turso copy is kept as a live.<timestamp> snapshot).
+    if (writeDb(cleanDb, getDbPath(req), { force: !isSandbox(req) })) {
         // If restoring in Live and sandboxes are in the JSON payload, restore each sandbox too
         if (!isSandbox(req) && (_sandboxes || sandboxes)) {
             const sMap = _sandboxes || sandboxes;
@@ -7980,6 +8397,11 @@ app.post('/api/v1/restore', (req, res) => {
             }
         }
         console.log(`[System] Database restored manually at ${new Date().toISOString()}`);
+        if (!isSandbox(req)) {
+            const push = await awaitPush(DB_PATH);
+            settleForcedLivePush(push, 'restore');
+            return res.json({ message: "Restored", push, readOnly: persistState.readOnly });
+        }
         res.json({ message: "Restored" });
     } else {
         res.status(500).json({ error: "Restore failed during file write" });
@@ -7990,6 +8412,7 @@ const restoreDiskUpload = multer({ dest: os.tmpdir() });
 app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req, res) => {
   const tempDir = path.join(os.tmpdir(), `nexus-restore-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
   fs.mkdirSync(tempDir, { recursive: true });
+  let livePush = null;
   try {
     if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
 
@@ -8088,6 +8511,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
     } else {
       // LIVE RESTORE: Restore live db.json AND all db.sandbox.*.json files AND all uploads
       const extractedDb = path.join(tempDir, 'db.json');
+      let liveRestored = false;
       if (fs.existsSync(extractedDb)) {
         const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
         try {
@@ -8113,7 +8537,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
         } catch (pe) {}
         applySchemaMigrations(db, DB_PATH);
         if (!db.contracts) db.contracts = [];
-        writeDb(db, DB_PATH);
+        liveRestored = writeDb(db, DB_PATH, { force: true });
       }
 
       // Restore all extracted sandbox files
@@ -8140,9 +8564,13 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
         // Auto-sync restored files from permanent UPLOADS_BASE to Dropbox in background if configured
         syncLocalDirectoryToDropbox(UPLOADS_BASE, req).catch((err) => console.error('[Dropbox Sync Restore Error]', err.message));
       }
+      if (liveRestored) {
+        livePush = await awaitPush(DB_PATH);
+        settleForcedLivePush(livePush, 'full-restore');
+      }
     }
 
-    res.json({ message: "Full system restore successful", isSandbox: isSandbox(req) });
+    res.json({ message: "Full system restore successful", isSandbox: isSandbox(req), ...(livePush ? { push: livePush, readOnly: persistState.readOnly } : {}) });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -9116,12 +9544,14 @@ app.get('/api/v1/integrations/turso/status', async (req, res) => {
     try {
         const db = getDb(req);
         const settings = resolveSettings(db);
-        const rawUrl = (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
-        const authToken = (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
-        const useTurso = (settings && settings.useTurso !== undefined && settings.tursoUrl) ? !!settings.useTurso : false;
+        // v1.0001200: same resolution as the sync itself (TURSO_ENABLED env first, then the Settings switch)
+        const tcfg = resolveTursoConfig(settings);
+        const rawUrl = tcfg.url;
+        const authToken = tcfg.token;
+        const useTurso = !!tcfg.enabled;
 
         if (!rawUrl || !authToken) {
-            return res.json({ configured: false, connected: false, enabled: useTurso });
+            return res.json({ configured: false, connected: false, enabled: useTurso, enabledBy: tcfg.by });
         }
 
         const dbUrl = rawUrl.startsWith('libsql://') ? rawUrl.replace(/^libsql:\/\//, 'https://') : rawUrl;
@@ -9133,8 +9563,11 @@ app.get('/api/v1/integrations/turso/status', async (req, res) => {
             configured: true,
             connected: true,
             enabled: useTurso,
+            enabledBy: tcfg.by,
             databaseUrl: rawUrl,
-            syncedStatesCount: count
+            syncedStatesCount: count,
+            readOnly: persistState.readOnly,
+            lastPush: persistState.lastPush
         });
     } catch (err) {
         return res.json({
@@ -9902,11 +10335,20 @@ app.get('{*path}', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-const startupDb = readDb();
-repairNegativeMarginOrders(startupDb);
-repairTradingMirrorOrders(startupDb);
-reconcileStockAllocations(startupDb, DB_PATH);
-syncAuthoritativeUsersToSandboxes(startupDb);
+// v1.0001200: the startup repairs run AFTER the Turso hydrate (see the boot block below), so a fresh
+// disk never repairs/writes the empty stub before the real data is back. Skipped while read-only;
+// the hydrate retry runs them once the data is in.
+const runStartupRepairs = () => {
+    if (persistState.readOnly) {
+        console.warn('[Persistence] Startup repairs skipped: read-only.');
+        return;
+    }
+    const startupDb = readDb();
+    repairNegativeMarginOrders(startupDb);
+    repairTradingMirrorOrders(startupDb);
+    reconcileStockAllocations(startupDb, DB_PATH);
+    syncAuthoritativeUsersToSandboxes(startupDb);
+};
 
 // Sweep every db.sandbox.*.json in the project root, run applySchemaMigrations on
 // any whose schema version is older than CURRENT_SCHEMA_VERSION, and write the
@@ -9957,13 +10399,20 @@ setInterval(() => {
 }, 60000).unref();
 
 (async () => {
-    // 1. Pull latest database state from Turso Cloud (if enabled in settings)
+    // 1. Hydrate the live database from Turso Cloud (enabled by TURSO_ENABLED env or the Settings switch).
+    //    Failure or a remote below the floor -> read-only mode instead of an empty start.
     await pullFromTursoOnStartup();
-    
-    // 2. Perform DB schema migrations locally
+
+    // 2. Startup data repairs on the hydrated live DB (skipped while read-only)
+    runStartupRepairs();
+
+    // 3. Perform DB schema migrations locally
     migrateAllSandboxesOnStartup();
+
+    const ph = persistenceHealth();
+    console.log(`[Persistence] v${ph.appVersion} schema ${ph.dbSchemaVersion}/${ph.currentSchemaVersion} source=${ph.dataSource} turso=${ph.turso.enabled ? 'on' : 'off'} (by ${ph.turso.enabledBy}) readOnly=${ph.readOnly}${ph.readOnly ? ` (${ph.readOnlyReason})` : ''} records: orders=${ph.counts?.orders ?? 0} users=${ph.counts?.users ?? 0} customers=${ph.counts?.customers ?? 0} suppliers=${ph.counts?.suppliers ?? 0} supplierPayments=${ph.counts?.supplierPayments ?? 0} total=${ph.counts?.total ?? 0}`);
     
-    // 3. Start Express server
+    // 4. Start Express server
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`[Backend] Running exclusively on http://localhost:${PORT}`);
         runThresholdAudit().catch(err => console.error('[Audit] Unhandled error in initial audit:', err));

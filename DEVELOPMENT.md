@@ -562,6 +562,7 @@ In ephemeral hosting environments (Render, Docker containers), the local disk is
    - Configure **Turso Sync** in System Core Control → Settings (`useTurso`, `tursoUrl`, `tursoAuthToken`).
    - The backend runs a write-through background sync (`pushToTursoAsync`) to a remote Turso (libSQL) database on every write, and automatically restores latest state on startup (`pullFromTursoOnStartup`).
    - Requires zero local disk persistence across container restarts.
+   - On Render switch it on with the `TURSO_ENABLED` env var (see **Render persistence guard** below): the Settings switch lives inside `db.json`, so an empty disk can never turn it on by itself.
 2. **Option B: Persistent disk volume:**
    - Mount a persistent volume (e.g. at `/data`) in your cloud provider's console.
    - Set environment variables:
@@ -591,6 +592,54 @@ Render standard starter/free web services are constrained to a strict 512 MB mem
 ### `db.stub.json` template
 
 `db.stub.json` should only contain the empty structure for a fresh database. Do not add production data, users, or custom settings to it.
+
+---
+
+## Render persistence guard (v1.0001200)
+
+Why: on Render the disk is ephemeral and `db.json` is gitignored, so every deploy/restart booted from `db.stub.json` (0 records). The Turso switch (`settings[0].useTurso`) is stored *inside* the data it should restore, so an empty boot never asked Turso, and any later write replaced the whole remote row with no guard. Code: `server.js`, block `PERSISTENCE GUARD (v1.0001200)` (`resolveTursoConfig`, `hydrateLiveFromTurso`, `schedulePush`/`pushOnce`, `findShrink`, `writeDb`, `persistenceHealth`), boot block at the end of the file.
+
+### What to set in Render (names only; values in the dashboard, never in git)
+
+| Env var | Value | Notes |
+|---|---|---|
+| `TURSO_ENABLED` | `1` | Turns Turso on at boot, independent of `db.json`. `0` forces it off. Unset = old behaviour (Settings switch). |
+| `TURSO_DATABASE_URL` | the `libsql://...` URL | `TURSO_URL` is read as a fallback. |
+| `TURSO_AUTH_TOKEN` | Turso token | Secret (`sync: false`). `TURSO_TOKEN` / `TURSO_TOKEN_FILE` also work. |
+| `DB_PATH`, `UPLOADS_PATH` | `/var/data/db.json`, `/var/data/uploads` | On the persistent disk from `render.yaml` (`disk:` block, mount `/var/data`, paid instance type). |
+| `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN` | Dropbox app creds | Uploaded files only; the database JSON is never in Dropbox. |
+| optional: `TURSO_MIN_RECORDS` (1), `TURSO_SHRINK_MAX_PCT` (20), `TURSO_SHRINK_MIN_DROP` (3), `TURSO_SNAPSHOT_KEEP` (10), `TURSO_HYDRATE_RETRY_SEC` (60) | defaults in brackets | Guard tuning. |
+
+With env on, the env URL/token win over any URL/token inside the restored data. The Settings switch in the UI cannot turn Turso off while `TURSO_ENABLED=1`.
+
+### Rules the server follows
+
+1. **Hydrate first.** `pullFromTursoOnStartup` (`hydrateLiveFromTurso`) runs before the startup repairs and before `app.listen`. The remote row `live` replaces the local file when it has at least as many orders (or the local copy is empty); a local copy with more orders (persistent disk) is kept and pushed up; a missing remote row is seeded from a non-empty local copy.
+2. **Read-only instead of empty.** Hydrate error, env on without URL/token, a remote below `TURSO_MIN_RECORDS`, no remote row and no local data, or a revision conflict -> `readOnly`: every non-GET `/api/*` call answers **503 `READ_ONLY`** (login, `/api/v1/restore`, `/api/v1/full-restore` and `/api/v1/admin/persistence/*` stay open), live `writeDb` returns false, nothing is pushed. The hydrate is retried every `TURSO_HYDRATE_RETRY_SEC`; an admin can retry at once with `POST /api/v1/admin/persistence/retry-hydrate`. A brand-new empty Turso: restore a backup (forced, below) or start once with `TURSO_MIN_RECORDS=0`.
+3. **Never shrink the remote.** A live write (and its push) is refused and logged (`[Persistence] Live write REFUSED` / `Turso push REFUSED`, `guard.lastRefusal` in health) when orders, users, customers, suppliers or supplierPayments drop by at least `TURSO_SHRINK_MIN_DROP` rows and by more than `TURSO_SHRINK_MAX_PCT` % (or to 0), or the whole DB becomes empty, against the last known remote copy. Restores and `/api/v1/wipe` are forced (explicit admin actions) and skip this check.
+4. **Snapshots, revisions, order.** Before row `live` is replaced it is copied to `live.<ISO-timestamp>`; the newest `TURSO_SNAPSHOT_KEEP` are kept. Column `revision` (added with `ALTER TABLE`, additive) grows by 1 per push, and a push only lands when the remote revision is still the one this process read; otherwise conflict -> read-only -> re-hydrate (remote wins). Pushes run one at a time per target; queued writes coalesce to the newest state.
+5. **Restores wait for the push.** `/api/v1/restore` and `/api/v1/full-restore` (live) await the push and return `push: { ok, revision, snapshot | error }` and `readOnly`. When Turso is on by env the restored data is pushed even if the backup has no Turso settings. A failed push keeps the restored data locally, stays read-only and pushes it (forced) on the next retry.
+6. **Health.** `GET /api/health` (no auth, also the Render `healthCheckPath`) returns `status` (`ok` / `degraded` / `read-only`), `appVersion`, `dbSchemaVersion`, `dataSource` (`turso` / `local` / `stub` / `restore`), `counts`, `readOnly` + reason, `turso.enabled`/`enabledBy`/`remoteRevision`/`hydrate`/`lastPush`, `guard`. It never contains URLs, tokens or paths. The boot log prints the same as one `[Persistence] ...` line.
+
+### How to verify after a deploy
+
+1. `curl -s https://<service>/api/health` -> `dataSource: "turso"`, `turso.enabled: true`, `turso.enabledBy: "env"`, `readOnly: false`, `counts.orders` as expected.
+2. Render logs at boot: `[Turso] Cloud Sync enabled (by env)`, `[Turso] Live database successfully restored from cloud (N orders, revision R)`, `[Persistence] v... source=turso ...`.
+3. Change one record, then health `turso.lastPush.ok: true` and a higher `remoteRevision`. In Turso: `SELECT id, revision, updated_at FROM nexus_state WHERE id LIKE 'live%' ORDER BY id;`.
+4. Roll back by hand from a snapshot (Turso shell): `UPDATE nexus_state SET json_data=(SELECT json_data FROM nexus_state WHERE id='live.<ts>'), revision=revision+1 WHERE id='live';` then restart the service (it re-hydrates).
+
+### Failure modes
+
+| Symptom | Cause | Action |
+|---|---|---|
+| health `readOnly: true`, reason `Turso hydrate failed ...` | Turso unreachable / wrong token | Fix env; the server retries by itself. |
+| reason `TURSO_ENABLED is set but the Turso URL or token is missing` | env incomplete | Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`. |
+| reason `no live row in Turso and no local data` | new empty Turso DB | Restore a backup (pushed, forced) or boot once with `TURSO_MIN_RECORDS=0`. |
+| reason `Turso conflict ...` | another instance (old one during a deploy) wrote | Automatic re-hydrate, remote wins; local writes since the last push are lost. A disk (single instance) avoids overlapping instances. |
+| writes answer 500 and log `Live write REFUSED` | local state would wipe/shrink the remote | Check why the local copy is small (lost disk?); restore if the shrink is wanted. |
+| status `degraded` | last push failed | See `turso.lastPush.error`; the next write retries. |
+
+Sandbox DB files (`db.sandbox.*.json`) still live next to `server.js`, not on the disk: they come back from Turso rows `sandbox.<owner>` only when the local file is missing, with no guard or snapshot (sandboxes are test data).
 
 ---
 
