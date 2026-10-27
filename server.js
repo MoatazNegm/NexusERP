@@ -293,7 +293,7 @@ const costSheetStorage = multer.diskStorage({
 });
 const uploadCostSheet = multer({ storage: costSheetStorage });
 
-const saveBase64CostSheetToFile = (base64String, req = null) => {
+const saveBase64CostSheetToFile = (base64String, req = null, opts = {}) => {
     if (!base64String || typeof base64String !== 'string' || !base64String.startsWith('data:')) {
         return base64String;
     }
@@ -319,6 +319,7 @@ const saveBase64CostSheetToFile = (base64String, req = null) => {
 
         mirrorToSandboxIfApplicable(req, 'cost_sheets', filePath);
         const relativePath = isLive ? `uploads/cost_sheets/${fileName}` : `uploads/sandbox/${req.sandboxOwner}/cost_sheets/${fileName}`;
+        if (opts.strict) return { relativePath, filePath, buffer: Buffer.from(b64Data, 'base64') }; // v1.0001201: caller stores it in Dropbox first
         if (!isLive && req?.sandboxOwner) {
             recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
         }
@@ -328,6 +329,21 @@ const saveBase64CostSheetToFile = (base64String, req = null) => {
         console.error('[CostSheet] Failed to persist base64 to disk:', err);
         return base64String;
     }
+};
+
+// v1.0001201: strict mode stores a base64 cost sheet only when Dropbox accepted it (else throws with httpStatus 503).
+const persistBase64CostSheet = async (base64String, req = null) => {
+    if (!STRICT_REMOTE.on) return saveBase64CostSheetToFile(base64String, req);
+    const fail = (message) => { const e = new Error(message); e.httpStatus = 503; e.code = 'DROPBOX_UPLOAD_FAILED'; return e; };
+    const saved = saveBase64CostSheetToFile(base64String, req, { strict: true });
+    if (!saved || typeof saved !== 'object') throw fail('Not stored: the cost sheet file could not be written.');
+    const r = await storeUploadInDropbox(req, saved.relativePath, saved.buffer);
+    if (!r.ok) {
+        try { fs.unlinkSync(saved.filePath); } catch {}
+        throw fail(r.message);
+    }
+    if (req?.sandboxOwner) recordSandboxFileChange(req.sandboxOwner, saved.relativePath, 'add');
+    return saved.relativePath;
 };
 
 const supplierReceiptStorage = multer.diskStorage({
@@ -938,6 +954,55 @@ const SERVER_APP_VERSION = (() => {
     } catch { return 'unknown'; }
 })();
 
+// ==================== STRICT REMOTE MODE (v1.0001201) ====================
+// When strict, the cloud is the only store: Turso holds the database, Dropbox holds uploaded files.
+// There is NO fallback to the local db.json or to local-only uploads:
+//  - Turso is always on (the Settings switch and TURSO_ENABLED=0 cannot turn it off). URL/token come from
+//    env, the Settings data, then the INITIAL_CONFIG defaults in constants.tsx. Unresolvable/unreachable
+//    -> read-only with a clear reason; until the data was loaded from (or confirmed by) Turso in this
+//    process, the data API answers 503 STRICT_NOT_LOADED (GETs included): the local file is only a cache.
+//  - The remote row always wins at hydrate; a local copy is never pushed up as the source.
+//  - A live push that fails -> read-only; the pending change is pushed (revision-checked) on the retry.
+//  - An upload is stored only when the Dropbox upload succeeded (else 503 and the local file is removed);
+//    files are served from Dropbox, a local file only as a cache of a file confirmed in Dropbox.
+// STRICT_REMOTE=1 / 0 decides; unset -> ON when the RENDER env var is set (Render sets it on every service).
+// NODE_ENV=production alone does NOT switch it on: the local test container runs with NODE_ENV=production
+// and must keep Turso/Dropbox off.
+const STRICT_REMOTE = (() => {
+    const v = envFlagValue('STRICT_REMOTE');
+    if (v !== null) return { on: v, by: v ? 'env' : 'env-off' };
+    if (process.env.RENDER && String(process.env.RENDER).trim() !== '') return { on: true, by: 'render' };
+    return { on: false, by: 'default-off' };
+})();
+const DROPBOX_CHECK_SEC = envInt('DROPBOX_CHECK_SEC', 300);
+// Defaults of the INITIAL_CONFIG settings block in constants.tsx (the same values the browser seeds into
+// the settings). Used only in strict mode, after env and the stored settings. Never logged or exposed.
+const INITIAL_REMOTE_DEFAULTS = (() => {
+    const out = { tursoUrl: '', tursoAuthToken: '', dropbox: { appKey: '', appSecret: '', refreshToken: '', folderPath: '' } };
+    try {
+        const src = fs.readFileSync(path.join(__dirname, 'constants.tsx'), 'utf8');
+        const start = src.search(/export\s+const\s+INITIAL_CONFIG\b/);
+        if (start < 0) return out;
+        const rest = src.slice(start + 1);
+        const nextExport = rest.search(/\nexport\s+/);
+        const block = nextExport >= 0 ? rest.slice(0, nextExport) : rest;
+        const str = (re, s) => { const m = s.match(re); return m ? m[2] : ''; };
+        out.tursoUrl = str(/\btursoUrl\s*:\s*(['"`])([^'"`]*)\1/, block);
+        out.tursoAuthToken = str(/\btursoAuthToken\s*:\s*(['"`])([^'"`]*)\1/, block);
+        const dbx = block.match(/\bdropboxConfig\s*:\s*\{([^}]*)\}/);
+        if (dbx) {
+            for (const k of ['appKey', 'appSecret', 'refreshToken', 'folderPath']) {
+                out.dropbox[k] = str(new RegExp(`\\b${k}\\s*:\\s*(['"\`])([^'"\`]*)\\1`), dbx[1]);
+            }
+        }
+    } catch {}
+    return out;
+})();
+if (STRICT_REMOTE.on) {
+    console.log(`[Strict] Strict remote mode ON (by ${STRICT_REMOTE.by}): Turso is the only database, Dropbox the only file store; no local fallback.`);
+    if (envFlagValue('TURSO_ENABLED') === false) console.warn('[Strict] TURSO_ENABLED=0 is ignored: strict mode keeps Turso on.');
+}
+
 const countRecords = (db) => {
     const out = { total: 0 };
     for (const col of COUNTED_COLLECTIONS) {
@@ -955,8 +1020,10 @@ const persistState = {
     readOnlyReason: '',
     readOnlySince: null,
     pendingForcePush: false,      // a restore/wipe was saved locally but its push failed: push it on the next retry
+    pendingPush: false,           // strict: a normal live push failed; push the local state (revision-checked) on the retry
+    remoteLoaded: false,          // strict: the live file was loaded from / confirmed by Turso in this process
     turso: { enabled: false, by: 'off', configured: false },
-    hydrate: { at: null, ok: null, error: null, remoteFound: null, remoteCounts: null, remoteRevision: null, attempts: 0 },
+    hydrate: { at: null, ok: null, error: null, remoteFound: null, remoteCounts: null, remoteRevision: null, attempts: 0, skippedRemote: null },
     lastRemoteCounts: null,       // shrink-guard baseline (remote row 'live')
     remoteRevision: null,         // revision of row 'live' we last read or wrote
     lastPush: { at: null, ok: null, error: null, target: null, revision: null, forced: false, snapshot: null },
@@ -965,6 +1032,7 @@ const persistState = {
     localCounts: null,
 };
 
+let hydrateRetryRunning = false;  // one hydrate at a time (boot retry loop, Turso switched on later)
 const enterReadOnly = (reason) => {
     if (!persistState.readOnly) persistState.readOnlySince = new Date().toISOString();
     persistState.readOnly = true;
@@ -983,6 +1051,12 @@ const resolveTursoConfig = (settings) => {
     const s = settings || {};
     const settingsUrl = s.tursoUrl ? String(s.tursoUrl).trim() : '';
     const settingsToken = s.tursoAuthToken ? String(s.tursoAuthToken).trim() : '';
+    if (STRICT_REMOTE.on) {
+        // Strict: always on. env first, then the stored settings, then the INITIAL_CONFIG defaults.
+        const url = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || settingsUrl || INITIAL_REMOTE_DEFAULTS.tursoUrl || DEFAULT_TURSO_URL;
+        const token = process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken() || settingsToken || INITIAL_REMOTE_DEFAULTS.tursoAuthToken;
+        return { enabled: true, by: 'strict', url, token };
+    }
     if (TURSO_ENV_SWITCH !== null) {
         const url = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || settingsUrl || DEFAULT_TURSO_URL;
         const token = process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken() || settingsToken;
@@ -1001,9 +1075,17 @@ const tursoConfigFromDb = (db) => {
     try { const s = (db?.settings || [])[0]; settings = s ? decryptSettings(s) : null; } catch {}
     return resolveTursoConfig(settings);
 };
+// v1.0001201: remote calls (Turso, Dropbox) get a 30 s timeout so a hung network cannot stall the server.
+const REMOTE_FETCH_TIMEOUT_MS = envInt('REMOTE_FETCH_TIMEOUT_MS', 30000);
+const timeoutFetch = (input, init = {}) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), REMOTE_FETCH_TIMEOUT_MS);
+    if (init.signal) { if (init.signal.aborted) ctrl.abort(); else init.signal.addEventListener('abort', () => ctrl.abort(), { once: true }); }
+    return fetch(input, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+};
 const tursoClientFor = (cfg) => {
     const dbUrl = cfg.url.startsWith('libsql://') ? cfg.url.replace(/^libsql:\/\//, 'https://') : cfg.url;
-    return createClient({ url: dbUrl, authToken: cfg.token });
+    return createClient({ url: dbUrl, authToken: cfg.token, fetch: timeoutFetch });
 };
 const tursoSchemaReady = new Set();
 const ensureTursoSchema = async (client, cfg) => {
@@ -1124,6 +1206,12 @@ const runPushQueue = async (targetId, q) => {
                     error: result.ok ? null : (result.reason || result.error || 'not pushed'),
                     target: targetId, revision: result.revision ?? persistState.remoteRevision, forced: job.force, snapshot: result.snapshot || null
                 };
+                if (result.ok) persistState.remoteLoaded = true;
+                // Strict: a failed normal push must not leave the server writing local-only data.
+                if (STRICT_REMOTE.on && !result.ok && !result.refused && !result.conflict && !job.force) {
+                    persistState.pendingPush = true;
+                    enterReadOnly(`strict mode: Turso push failed (${result.error || result.reason || 'not pushed'}); the last change is kept in the local cache and pushed on the next retry`);
+                }
             }
             job.waiters.forEach(w => w(result));
         }
@@ -1138,11 +1226,25 @@ const schedulePush = (data, dbPath, opts = {}) => {
     const cfg = tursoConfigFromDb(data);
     if (isLive) persistState.turso = { enabled: !!cfg.enabled, by: cfg.by, configured: !!(cfg.url && cfg.token) };
     if (!cfg.enabled || !cfg.url || !cfg.token) return Promise.resolve({ ok: null, skipped: 'turso-off' });
+    if (!opts.force && isLive && persistState.hydrate.skippedRemote) {
+        // v1.0001201 root-cause fix: Turso was off when the boot hydrate ran (e.g. empty disk, stub without
+        // settings), then got switched on (the browser seeds INITIAL_CONFIG settings with useTurso=true).
+        // Never push before the remote row was read: hydrate first (remote wins over an empty local copy).
+        if (!hydrateRetryRunning) {
+            hydrateRetryRunning = true;
+            console.warn('[Turso] Turso switched on after a boot without it: reading the cloud copy before any push.');
+            hydrateLiveFromTurso('turso-switched-on')
+                .then(() => { if (!persistState.readOnly) runStartupRepairs(); })
+                .catch(() => {})
+                .finally(() => { hydrateRetryRunning = false; });
+        }
+        return Promise.resolve({ ok: false, skipped: 'hydrate-first' });
+    }
     if (!opts.force && isLive && !persistState.hydrated) {
         console.warn('[Turso] Live push skipped: boot hydrate not finished.');
         return Promise.resolve({ ok: false, skipped: 'before-hydrate' });
     }
-    if (!opts.force && persistState.readOnly) return Promise.resolve({ ok: false, skipped: 'read-only' });
+    if (!opts.force && !opts.retryPending && persistState.readOnly) return Promise.resolve({ ok: false, skipped: 'read-only' });
     const targetId = tursoTargetId(dbPath);
     let q = pushQueues.get(targetId);
     if (!q) { q = { running: false, pending: null }; pushQueues.set(targetId, q); }
@@ -1155,9 +1257,10 @@ const schedulePush = (data, dbPath, opts = {}) => {
             q.pending.counts = counts;
             q.pending.cfg = cfg;
             q.pending.force = q.pending.force || !!opts.force;
+            q.pending.retryPending = q.pending.retryPending || !!opts.retryPending;
             q.pending.waiters.push(resolve);
         } else {
-            q.pending = { payload, counts, cfg, force: !!opts.force, waiters: [resolve] };
+            q.pending = { payload, counts, cfg, force: !!opts.force, retryPending: !!opts.retryPending, waiters: [resolve] };
         }
     });
     if (!q.running) runPushQueue(targetId, q);
@@ -1216,9 +1319,18 @@ const hydrateLiveFromTurso = async (why = 'boot') => {
         persistState.source = localSource;
         persistState.hydrated = true;
         h.ok = null; h.error = null;
+        h.skippedRemote = true; // Turso was off at this hydrate: the remote row was NOT read
         return;
     }
+    h.skippedRemote = false;
     if (!cfg.url || !cfg.token) {
+        if (cfg.by === 'strict') {
+            h.ok = false; h.error = 'strict mode: the Turso URL or token cannot be resolved (set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN)';
+            persistState.source = localSource;
+            persistState.remoteLoaded = false;
+            enterReadOnly(h.error);
+            return;
+        }
         if (cfg.by === 'env') {
             h.ok = false; h.error = 'TURSO_ENABLED is set but the Turso URL or token is missing';
             persistState.source = localSource;
@@ -1248,6 +1360,26 @@ const hydrateLiveFromTurso = async (why = 'boot') => {
         h.remoteFound = !!remoteData;
         h.remoteCounts = remoteCounts;
         h.remoteRevision = remoteRev;
+        if (STRICT_REMOTE.on && persistState.pendingPush && localDb && !persistState.pendingForcePush) {
+            // Strict: a normal push failed earlier. Push the local cache now, still revision-checked against the
+            // revision we last read/wrote (persistState.remoteRevision is not overwritten before this push).
+            const r = await schedulePush(localDb, DB_PATH, { retryPending: true });
+            if (r.ok) {
+                persistState.pendingPush = false;
+                persistState.hydrated = true;
+                h.ok = true; h.error = null;
+                leaveReadOnly();
+                return;
+            }
+            if (!r.conflict && !r.refused) {
+                h.ok = false; h.error = `strict mode: pending Turso push failed again (${r.error || r.reason || r.skipped})`;
+                enterReadOnly(h.error);
+                return;
+            }
+            // Conflict or shrink refusal: the remote wins below; the unpushed local cache is kept as a .bak file.
+            persistState.pendingPush = false;
+            console.error(`[Strict] Pending push dropped (${r.reason}); the remote row wins.`);
+        }
         persistState.remoteRevision = remoteRev;
         persistState.lastRemoteCounts = remoteCounts;
 
@@ -1262,6 +1394,7 @@ const hydrateLiveFromTurso = async (why = 'boot') => {
                 leaveReadOnly();
             } else {
                 h.ok = false; h.error = `pending restore push failed: ${r.reason || r.error || r.skipped}`;
+                if (STRICT_REMOTE.on) persistState.remoteLoaded = false;
                 enterReadOnly(h.error);
             }
             return;
@@ -1270,37 +1403,51 @@ const hydrateLiveFromTurso = async (why = 'boot') => {
         const remoteOrders = remoteCounts?.orders || 0;
         const localOrders = localCounts?.orders || 0;
         const remoteTotal = remoteCounts?.total || 0;
-        if (remoteData && (remoteOrders >= localOrders || localTotal === 0)) {
+        if (remoteData && (STRICT_REMOTE.on || remoteOrders >= localOrders || localTotal === 0)) {
             if (remoteTotal < TURSO_MIN_RECORDS) {
                 h.ok = false; h.error = `Turso row 'live' holds ${remoteTotal} records, below TURSO_MIN_RECORDS=${TURSO_MIN_RECORDS}`;
                 persistState.source = localSource;
+                persistState.remoteLoaded = false;
                 enterReadOnly(h.error);
                 return;
+            }
+            if (STRICT_REMOTE.on && localTotal > 0) {
+                // Strict: remote always wins; keep the replaced local cache once for a manual look.
+                try {
+                    if (fs.readFileSync(DB_PATH, 'utf8') !== remoteRaw) {
+                        fs.copyFileSync(DB_PATH, DB_PATH + '.pre-hydrate.bak');
+                        if (localOrders > remoteOrders) console.warn(`[Strict] Local cache had more orders (${localOrders}) than Turso (${remoteOrders}); Turso wins, the local copy is kept as db.json.pre-hydrate.bak.`);
+                    }
+                } catch {}
             }
             fs.writeFileSync(DB_PATH, remoteRaw, 'utf8');
             try { fs.copyFileSync(DB_PATH, DB_PATH + '.local.bak'); } catch {}
             persistState.source = 'turso';
             console.log(`[Turso] Live database successfully restored from cloud (${remoteOrders} orders, revision ${remoteRev}).`);
-        } else if (localTotal >= Math.max(1, TURSO_MIN_RECORDS)) {
+        } else if (!STRICT_REMOTE.on && localTotal >= Math.max(1, TURSO_MIN_RECORDS)) {
             persistState.source = 'local';
             persistState.hydrated = true;
             console.log(remoteData
                 ? `[Turso] Local database has more orders (${localOrders}) than cloud (${remoteOrders}). Preserving local data and syncing to cloud.`
                 : `[Turso] No live row in cloud. Seeding it from the local database (${localTotal} records).`);
             schedulePush(localDb, DB_PATH);
-        } else if (!remoteData && TURSO_MIN_RECORDS === 0) {
+        } else if (!remoteData && TURSO_MIN_RECORDS === 0 && (!STRICT_REMOTE.on || localTotal === 0)) {
             persistState.source = 'stub';
             console.warn('[Turso] No live row in cloud and no local data; starting EMPTY because TURSO_MIN_RECORDS=0.');
         } else {
             h.ok = false;
             h.error = remoteData
                 ? `local and Turso data below TURSO_MIN_RECORDS=${TURSO_MIN_RECORDS}`
-                : `no live row in Turso and no local data (fresh install: restore a backup, or set TURSO_MIN_RECORDS=0 to start empty)`;
+                : (STRICT_REMOTE.on && localTotal > 0
+                    ? `strict mode: no live row in Turso; the local copy (${localTotal} records) is not used as the source (restore a backup: it is pushed to Turso)`
+                    : `no live row in Turso and no local data (fresh install: restore a backup, or set TURSO_MIN_RECORDS=0 to start empty)`);
             persistState.source = localSource;
+            if (STRICT_REMOTE.on) persistState.remoteLoaded = false;
             enterReadOnly(h.error);
             return;
         }
         persistState.hydrated = true;
+        persistState.remoteLoaded = true;
         h.ok = true; h.error = null;
         leaveReadOnly();
         try { await syncSandboxesWithTurso(client); } catch (e) { console.error('[Turso] Sandbox sync failed:', e.message); }
@@ -1312,7 +1459,6 @@ const hydrateLiveFromTurso = async (why = 'boot') => {
 };
 const pullFromTursoOnStartup = () => hydrateLiveFromTurso('boot');
 
-let hydrateRetryRunning = false;
 setInterval(() => {
     if (!persistState.readOnly || hydrateRetryRunning) return;
     hydrateRetryRunning = true;
@@ -1326,13 +1472,18 @@ const scrubText = (t) => (t == null ? t : String(t).replace(/(libsql|https?|wss?
 const persistenceHealth = () => {
     let counts = persistState.localCounts;
     let dbSchemaVersion = null;
+    let liveDbForHealth = null;
     try {
         const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+        liveDbForHealth = db;
         counts = countRecords(db);
         dbSchemaVersion = db.settings?.[0]?.dbSchemaVersion ?? null;
     } catch {}
+    const dropbox = dropboxHealth(liveDbForHealth);
+    const strictDegraded = STRICT_REMOTE.on && (!dropbox.configured || dropbox.reachable === false || !persistState.remoteLoaded);
     return {
-        status: persistState.readOnly ? 'read-only' : (persistState.lastPush.ok === false ? 'degraded' : 'ok'),
+        status: persistState.readOnly ? 'read-only' : ((persistState.lastPush.ok === false || strictDegraded) ? 'degraded' : 'ok'),
+        strict: { on: STRICT_REMOTE.on, by: STRICT_REMOTE.by, remoteLoaded: STRICT_REMOTE.on ? persistState.remoteLoaded : null, pendingPush: persistState.pendingPush },
         appVersion: SERVER_APP_VERSION,
         dbSchemaVersion,
         currentSchemaVersion: CURRENT_SCHEMA_VERSION,
@@ -1355,6 +1506,7 @@ const persistenceHealth = () => {
             minRecords: TURSO_MIN_RECORDS, shrinkMaxPct: TURSO_SHRINK_MAX_PCT, shrinkMinDrop: TURSO_SHRINK_MIN_DROP,
             refusedWrites: persistState.refusedWrites, lastRefusal: persistState.lastRefusal,
         },
+        dropbox: { ...dropbox, lastCheck: { ...dropbox.lastCheck, error: scrubText(dropbox.lastCheck.error) }, lastUpload: { ...dropbox.lastUpload, error: scrubText(dropbox.lastUpload.error) } },
         storage: { dbPathFromEnv: !!process.env.DB_PATH, uploadsPathFromEnv: !!process.env.UPLOADS_PATH },
         uptimeSec: Math.round(process.uptime()),
     };
@@ -1860,7 +2012,20 @@ const getDropboxConfig = (settings) => {
     const appSecret = String((raw.appSecret && String(raw.appSecret).trim()) || DEFAULT_DROPBOX_CONFIG.appSecret || process.env.DROPBOX_APP_SECRET || '').trim();
     const refreshToken = String((raw.refreshToken && String(raw.refreshToken).trim()) || DEFAULT_DROPBOX_CONFIG.refreshToken || process.env.DROPBOX_REFRESH_TOKEN || '').trim();
     const folderPath = String((raw.folderPath && String(raw.folderPath).trim()) || DEFAULT_DROPBOX_CONFIG.folderPath || process.env.DROPBOX_FOLDER_PATH || '/NexusERP_Uploads').trim().replace(/\/$/, '') || '/NexusERP_Uploads';
-    const enabled = (raw.enabled !== undefined && (raw.refreshToken && String(raw.refreshToken).trim())) ? !!raw.enabled : true;
+    let enabled = (raw.enabled !== undefined && (raw.refreshToken && String(raw.refreshToken).trim())) ? !!raw.enabled : true;
+    if (STRICT_REMOTE.on) {
+        // Strict: Dropbox is the file store and always on; missing creds fall back to the INITIAL_CONFIG defaults.
+        const d = INITIAL_REMOTE_DEFAULTS.dropbox;
+        const sk = appKey || d.appKey, ss = appSecret || d.appSecret, sr = refreshToken || d.refreshToken;
+        const sf = (String(raw.folderPath || '').trim() || DEFAULT_DROPBOX_CONFIG.folderPath || d.folderPath || '/NexusERP_Uploads').replace(/\/$/, '') || '/NexusERP_Uploads';
+        return {
+            enabled: true, strict: true,
+            autoUploadExternalSubmissions: raw.autoUploadExternalSubmissions !== undefined ? !!raw.autoUploadExternalSubmissions : true,
+            appKey: sk, appSecret: ss, refreshToken: sr, folderPath: sf,
+            connectedAccount: String(raw.connectedAccount || '').trim(), connectedAt: String(raw.connectedAt || '').trim(),
+            configured: !!sk && !!ss && !!sr
+        };
+    }
     const connectedAccount = String((raw.connectedAccount && String(raw.connectedAccount).trim()) || (refreshToken === DEFAULT_DROPBOX_CONFIG.refreshToken ? DEFAULT_DROPBOX_CONFIG.connectedAccount : '')).trim();
     const connectedAt = String(raw.connectedAt || (refreshToken === DEFAULT_DROPBOX_CONFIG.refreshToken ? DEFAULT_DROPBOX_CONFIG.connectedAt : '')).trim();
 
@@ -1890,12 +2055,13 @@ const getDropboxClient = (settings) => {
     return new Dropbox({
         clientId: cfg.appKey,
         clientSecret: cfg.appSecret,
-        refreshToken: cfg.refreshToken
+        refreshToken: cfg.refreshToken,
+        fetch: timeoutFetch
     });
 };
 
 const testDropboxConnection = async (appKey, appSecret, refreshToken) => {
-    const dbx = new Dropbox({ clientId: appKey, clientSecret: appSecret, refreshToken });
+    const dbx = new Dropbox({ clientId: appKey, clientSecret: appSecret, refreshToken, fetch: timeoutFetch });
     const check = await dbx.usersGetCurrentAccount();
     return check.result;
 };
@@ -1938,6 +2104,7 @@ const downloadFileStreamFromDropbox = async ({ settings, relativePath }) => {
             }
             resolve(res);
         });
+        req.setTimeout(REMOTE_FETCH_TIMEOUT_MS, () => req.destroy(new Error('timeout')));
         req.on('error', (err) => {
             console.error('[Dropbox] Download error:', err.message);
             resolve(null);
@@ -1969,6 +2136,165 @@ const syncUploadToDropbox = async (req, relativePath, buffer = null) => {
     } catch (err) {
         console.warn('[Dropbox Sync Warning]', err.message);
     }
+};
+
+// ==================== STRICT DROPBOX (v1.0001201) ====================
+// In strict mode an upload counts as stored only when Dropbox accepted it. Known Dropbox files (scan +
+// confirmed uploads/downloads) may be served from the local cache; any other local file is "local-only".
+const dropboxState = {
+    reachable: null,
+    lastCheck: { at: null, ok: null, error: null },
+    lastUpload: { at: null, ok: null, error: null },
+    uploadsOk: 0, uploadsFailed: 0, refused: 0,
+    localOnlyFiles: null, localOnlyCheckedAt: null,
+};
+const dropboxKnown = new Set();  // relative paths under the Dropbox folder (lower case), e.g. 'pod/pod-1.pdf'
+const dropboxRelKey = (relativePath) => String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/^uploads\//, '').toLowerCase();
+const dropboxErrText = (e) => scrubText(
+    (e && (e.message || e?.error?.error_summary || (typeof e.error === 'string' ? e.error : ''))) || (e && e.status ? `Dropbox HTTP ${e.status}` : String(e))
+);
+const strictDropboxNotReadyMessage = (why) => `Not stored: strict mode keeps uploaded files only in Dropbox, and ${why}. Nothing was kept on the local disk. Check GET /api/health.`;
+const DROPBOX_NOT_CONFIGURED = 'Dropbox is not configured (DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN)';
+
+// Upload a stored local file to Dropbox and wait for the answer. Returns { ok, status, message }.
+const storeUploadInDropbox = async (req, relativePath, buffer) => {
+    let settings = null, cfg = null;
+    try { settings = resolveSettings(getDb(req)); cfg = getDropboxConfig(settings); } catch {}
+    if (!cfg || !cfg.enabled || !cfg.configured) {
+        dropboxState.refused++;
+        dropboxState.lastUpload = { at: new Date().toISOString(), ok: false, error: 'Dropbox is not configured' };
+        return { ok: false, status: 503, message: strictDropboxNotReadyMessage(DROPBOX_NOT_CONFIGURED) };
+    }
+    try {
+        await uploadFileToDropbox({ settings, buffer, relativePath });
+        dropboxKnown.add(dropboxRelKey(relativePath));
+        dropboxState.reachable = true;
+        dropboxState.uploadsOk++;
+        dropboxState.lastUpload = { at: new Date().toISOString(), ok: true, error: null };
+        console.log(`[Dropbox] Stored ${relativePath} in Dropbox (strict).`);
+        return { ok: true };
+    } catch (e) {
+        const err = dropboxErrText(e);
+        dropboxState.reachable = false;
+        dropboxState.uploadsFailed++;
+        dropboxState.lastUpload = { at: new Date().toISOString(), ok: false, error: err };
+        console.error(`[Dropbox] Strict upload of ${relativePath} FAILED: ${err}`);
+        return { ok: false, status: 503, message: strictDropboxNotReadyMessage(`the Dropbox upload failed (${err})`) };
+    }
+};
+
+// Refuse an upload before multer writes anything when strict and Dropbox is not configured.
+const strictUploadGate = (req, res, next) => {
+    if (!STRICT_REMOTE.on) return next();
+    let cfg = null;
+    try { cfg = getDropboxConfig(resolveSettings(getDb(req))); } catch {}
+    if (cfg && cfg.enabled && cfg.configured) return next();
+    dropboxState.refused++;
+    return res.status(503).json({ success: false, error: 'DROPBOX_REQUIRED', message: strictDropboxNotReadyMessage(DROPBOX_NOT_CONFIGURED) });
+};
+
+// Answer an upload route: non-strict = old behaviour (local file + background Dropbox copy);
+// strict = wait for Dropbox, else delete the local file and answer 503.
+const finishUpload = async (req, res, absPath) => {
+    const relativePath = storedUploadPath(absPath);
+    if (!STRICT_REMOTE.on) {
+        if (req.sandboxOwner) recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
+        syncUploadToDropbox(req, relativePath, fs.readFileSync(absPath)).catch(() => {});
+        return res.json({ success: true, filePath: relativePath });
+    }
+    const r = await storeUploadInDropbox(req, relativePath, fs.readFileSync(absPath));
+    if (!r.ok) {
+        try { fs.unlinkSync(absPath); } catch {}
+        return res.status(r.status || 503).json({ success: false, error: 'DROPBOX_UPLOAD_FAILED', message: r.message });
+    }
+    if (req.sandboxOwner) recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
+    return res.json({ success: true, filePath: relativePath, storedIn: 'dropbox' });
+};
+
+// Strict: list the Dropbox folder (reachability + known files) and count local files that are not in Dropbox.
+const listDropboxFolderRecursive = async (settings) => {
+    const cfg = getDropboxConfig(settings);
+    const dbx = getDropboxClient(settings);
+    const prefix = cfg.folderPath.toLowerCase() + '/';
+    const out = new Set();
+    let resp;
+    try {
+        resp = await dbx.filesListFolder({ path: cfg.folderPath, recursive: true, limit: 2000 });
+    } catch (e) {
+        if (/not_found/.test(JSON.stringify(e?.error || '')) || /not_found/.test(String(e?.message || ''))) return out; // folder not created yet
+        throw e;
+    }
+    for (;;) {
+        for (const ent of resp.result.entries || []) {
+            if (ent['.tag'] !== 'file' || !ent.path_lower) continue;
+            if (ent.path_lower.startsWith(prefix)) out.add(ent.path_lower.slice(prefix.length));
+        }
+        if (!resp.result.has_more) break;
+        resp = await dbx.filesListFolderContinue({ cursor: resp.result.cursor });
+    }
+    return out;
+};
+const listLocalUploadFiles = () => {
+    const files = [];
+    const walk = (dir) => {
+        let entries = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const ent of entries) {
+            const full = path.join(dir, ent.name);
+            if (ent.isDirectory()) walk(full);
+            else if (ent.isFile()) files.push(path.relative(UPLOADS_BASE, full).replace(/\\/g, '/').toLowerCase());
+        }
+    };
+    walk(UPLOADS_BASE);
+    return files;
+};
+let dropboxCheckRunning = false;
+const checkDropboxRemote = async (why = 'timer') => {
+    if (!STRICT_REMOTE.on || dropboxCheckRunning) return;
+    dropboxCheckRunning = true;
+    const at = new Date().toISOString();
+    try {
+        const settings = resolveSettings(readDb(DB_PATH));
+        const cfg = getDropboxConfig(settings);
+        if (!cfg.configured) {
+            dropboxState.reachable = false;
+            dropboxState.lastCheck = { at, ok: false, error: 'Dropbox is not configured' };
+            return;
+        }
+        const remote = await listDropboxFolderRecursive(settings);
+        dropboxKnown.clear();
+        remote.forEach(k => dropboxKnown.add(k));
+        const localOnly = listLocalUploadFiles().filter(f => !remote.has(f));
+        dropboxState.reachable = true;
+        dropboxState.lastCheck = { at, ok: true, error: null };
+        dropboxState.localOnlyFiles = localOnly.length;
+        dropboxState.localOnlyCheckedAt = at;
+        if (localOnly.length) console.warn(`[Dropbox] ${localOnly.length} local upload file(s) are not in Dropbox (local-only, not served in strict mode; run Dropbox sync-all).`);
+    } catch (e) {
+        dropboxState.reachable = false;
+        dropboxState.lastCheck = { at, ok: false, error: dropboxErrText(e) };
+        console.error(`[Dropbox] Check (${why}) failed: ${dropboxState.lastCheck.error}`);
+    } finally {
+        dropboxCheckRunning = false;
+    }
+};
+if (STRICT_REMOTE.on) {
+    setInterval(() => { checkDropboxRemote('timer').catch(() => {}); }, Math.max(30, DROPBOX_CHECK_SEC) * 1000).unref();
+}
+const dropboxHealth = (db) => {
+    let cfg = null;
+    try { cfg = getDropboxConfig(resolveSettings(db || {})); } catch {}
+    return {
+        strict: STRICT_REMOTE.on,
+        enabled: !!cfg?.enabled,
+        configured: !!cfg?.configured,
+        reachable: dropboxState.reachable,
+        lastCheck: { ...dropboxState.lastCheck },
+        lastUpload: { ...dropboxState.lastUpload },
+        uploadsOk: dropboxState.uploadsOk, uploadsFailed: dropboxState.uploadsFailed, uploadsRefused: dropboxState.refused,
+        localOnlyFiles: dropboxState.localOnlyFiles,
+        localOnlyCheckedAt: dropboxState.localOnlyCheckedAt,
+    };
 };
 
 const syncLocalDirectoryToDropbox = async (baseDir, req) => {
@@ -2007,6 +2333,7 @@ const syncLocalDirectoryToDropbox = async (baseDir, req) => {
                     buffer: buf,
                     relativePath: file.relativePath
                 });
+                dropboxKnown.add(dropboxRelKey(file.relativePath));
                 count++;
             } catch (err) {
                 console.warn(`[Dropbox Sync] Failed to sync ${file.relativePath}:`, err.message);
@@ -3691,6 +4018,20 @@ app.use((req, res, next) => {
     });
 });
 
+// v1.0001201 strict mode: until the live data was loaded from (or confirmed by) Turso in this process the
+// local file is only an unverified cache, so the data API answers 503 for reads too (no silent local data).
+// Health, login, restores, the admin persistence routes and the integration status pages stay open.
+app.use((req, res, next) => {
+    if (!STRICT_REMOTE.on || persistState.remoteLoaded) return next();
+    if (req.method === 'OPTIONS' || !req.path.startsWith('/api/')) return next();
+    if (/^\/api\/health$|\/(login|logout)\b|\/auth\/|\/(full-)?restore$|\/admin\/persistence\/|\/integrations\/(turso|dropbox)\/status$/.test(req.path)) return next();
+    return res.status(503).json({
+        error: 'STRICT_NOT_LOADED',
+        readOnly: true,
+        message: `Not available: strict mode serves only data loaded from the cloud database, and it is not loaded yet (${persistState.readOnlyReason || persistState.hydrate.error || 'hydrate pending'}). Check GET /api/health.`
+    });
+});
+
 // --- MULTI-TENANT SANDBOX MIDDLEWARE (must run before any /api/v1/* route) ---
 // Resolves x-sandbox-owner into req.sandboxDbPath / req.sandboxOwner / req.roles.
 // Live mode (no header) is a zero-disk-IO pass-through; roles are evaluated
@@ -3862,12 +4203,21 @@ app.use('/uploads', async (req, res, next) => {
     const rawPath = decodeURIComponent(req.path || '').replace(/^\/+/, '');
     if (!rawPath) return res.status(404).json({ error: 'File path required' });
 
-    const serveFromDisk = (absPath) => {
+    // v1.0001201 strict: a local file is only a cache of a file confirmed in Dropbox; local-only files are not served.
+    let localOnlySeen = false;
+    const serveFromDisk = (absPath, relPath) => {
         if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+            if (STRICT_REMOTE.on && !dropboxKnown.has(dropboxRelKey(relPath))) { localOnlySeen = true; return false; }
             res.sendFile(absPath);
             return true;
         }
         return false;
+    };
+    const notFound = () => {
+        if (STRICT_REMOTE.on && localOnlySeen) {
+            return res.status(503).json({ error: 'LOCAL_ONLY_FILE', message: `This file exists only on the server's local disk and was not found in Dropbox${dropboxState.reachable === false ? ' (Dropbox is not reachable now)' : ''}. Strict mode serves uploaded files from Dropbox only; an admin can run the Dropbox sync-all.` });
+        }
+        return res.status(404).json({ error: 'File not found' });
     };
 
     const serveFromDropbox = async (relPath, localCachePath) => {
@@ -3877,6 +4227,7 @@ app.use('/uploads', async (req, res, next) => {
             if (isDropboxConfigured(settings)) {
                 const stream = await downloadFileStreamFromDropbox({ settings, relativePath: relPath });
                 if (stream) {
+                    if (STRICT_REMOTE.on) { dropboxKnown.add(dropboxRelKey(relPath)); dropboxState.reachable = true; }
                     const ext = path.extname(localCachePath).toLowerCase();
                     let contentType = 'application/octet-stream';
                     if (ext === '.pdf') contentType = 'application/pdf';
@@ -3907,32 +4258,32 @@ app.use('/uploads', async (req, res, next) => {
     const sbMatch = rawPath.match(/^sandbox\/([^/]+)\/(.*)$/);
     if (sbMatch) {
         const sbLocalPath = path.join(UPLOADS_BASE, rawPath);
-        if (serveFromDisk(sbLocalPath)) return;
+        if (serveFromDisk(sbLocalPath, rawPath)) return;
         if (await serveFromDropbox(rawPath, sbLocalPath)) return;
 
         // COW Fallback: file was not modified in sandbox, serve baseline original!
         const baselineSubPath = sbMatch[2];
         const baselineLocalPath = path.join(UPLOADS_BASE, baselineSubPath);
-        if (serveFromDisk(baselineLocalPath)) return;
+        if (serveFromDisk(baselineLocalPath, baselineSubPath)) return;
         if (await serveFromDropbox(baselineSubPath, baselineLocalPath)) return;
 
-        return res.status(404).json({ error: 'File not found' });
+        return notFound();
     }
 
     // 2. If request is from a sandbox user and requests a non-sandbox path, check if sandbox has an amended version
     if (req.sandboxOwner) {
         const sbRelPath = `sandbox/${sanitizeUsername(req.sandboxOwner)}/${rawPath}`;
         const sbLocalPath = path.join(UPLOADS_BASE, sbRelPath);
-        if (serveFromDisk(sbLocalPath)) return;
+        if (serveFromDisk(sbLocalPath, sbRelPath)) return;
         if (await serveFromDropbox(sbRelPath, sbLocalPath)) return;
     }
 
     // 3. Standard live path check
     const localFilePath = path.join(UPLOADS_BASE, rawPath);
-    if (serveFromDisk(localFilePath)) return;
+    if (serveFromDisk(localFilePath, rawPath)) return;
     if (await serveFromDropbox(rawPath, localFilePath)) return;
 
-    return res.status(404).json({ error: 'File not found' });
+    return notFound();
 });
 
 app.use(express.static(path.join(__dirname, 'dist'), {
@@ -5556,8 +5907,10 @@ COLLECTIONS.forEach(col => {
 // After a forced live write (restore / wipe): Turso off or push ok -> normal mode;
 // push failed -> keep the restored data locally, stay read-only and push it on the next hydrate retry.
 const settleForcedLivePush = (push, what) => {
-    if (push && push.ok === false) {
+    // Strict: only a confirmed push counts (ok:null = Turso not usable is a failure too).
+    if (push && (push.ok === false || (STRICT_REMOTE.on && push.ok !== true))) {
         persistState.pendingForcePush = true;
+        if (STRICT_REMOTE.on) persistState.remoteLoaded = false;
         enterReadOnly(`${what} saved locally but the Turso push failed (${push.reason || push.error || push.skipped}); it is pushed on the next retry`);
         return;
     }
@@ -6598,7 +6951,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
 
                 if (payload.costSheetFile && typeof payload.costSheetFile === 'string' && payload.costSheetFile.startsWith('data:')) {
-                    payload.costSheetFile = saveBase64CostSheetToFile(payload.costSheetFile, req);
+                    payload.costSheetFile = await persistBase64CostSheet(payload.costSheetFile, req);
                 }
 
                 let metrics = { resourceCount: 0, realCost: 0, invoiceTotal: 0 };
@@ -8207,7 +8560,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             res.status(500).json({ error: "Failed to save data" });
         }
     } catch (e) {
-        res.status(400).json({ error: e.message });
+        res.status(e.httpStatus || 400).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
     }
 });
 
@@ -8413,6 +8766,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
   const tempDir = path.join(os.tmpdir(), `nexus-restore-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
   fs.mkdirSync(tempDir, { recursive: true });
   let livePush = null;
+  let restoredUploadsDropbox = null; // v1.0001201 strict: Dropbox result for the restored uploads
   try {
     if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
 
@@ -8561,8 +8915,15 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
         if (!fs.existsSync(UPLOADS_BASE)) fs.mkdirSync(UPLOADS_BASE, { recursive: true });
         fs.cpSync(extractedUploads, UPLOADS_BASE, { recursive: true });
 
+        if (STRICT_REMOTE.on) {
+          // Strict: the restored files count only once they are in Dropbox; wait and report.
+          restoredUploadsDropbox = await syncLocalDirectoryToDropbox(UPLOADS_BASE, req).catch((err) => ({ count: 0, errors: -1, error: dropboxErrText(err) }));
+          await checkDropboxRemote('full-restore').catch(() => {});
+          restoredUploadsDropbox = { ...restoredUploadsDropbox, localOnlyFiles: dropboxState.localOnlyFiles };
+        } else {
         // Auto-sync restored files from permanent UPLOADS_BASE to Dropbox in background if configured
         syncLocalDirectoryToDropbox(UPLOADS_BASE, req).catch((err) => console.error('[Dropbox Sync Restore Error]', err.message));
+        }
       }
       if (liveRestored) {
         livePush = await awaitPush(DB_PATH);
@@ -8570,7 +8931,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       }
     }
 
-    res.json({ message: "Full system restore successful", isSandbox: isSandbox(req), ...(livePush ? { push: livePush, readOnly: persistState.readOnly } : {}) });
+    res.json({ message: "Full system restore successful", isSandbox: isSandbox(req), ...(livePush ? { push: livePush, readOnly: persistState.readOnly } : {}), ...(restoredUploadsDropbox ? { dropbox: restoredUploadsDropbox } : {}) });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -9193,71 +9554,46 @@ app.post('/api/v1/seed-users', (req, res) => {
 });
 
 // --- FILE UPLOAD ENDPOINT ---
-app.post('/api/upload-pod', uploadPod.single('podFile'), (req, res) => {
+app.post('/api/upload-pod', strictUploadGate, uploadPod.single('podFile'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = storedUploadPath(req.file.path);
-        if (req.sandboxOwner) {
-            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
-        }
-        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
-        res.json({ success: true, filePath: relativePath });
+        return await finishUpload(req, res, req.file.path);
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
     }
 });
 
-app.post('/api/upload-einvoice', uploadEInvoice.single('einvoiceFile'), (req, res) => {
+app.post('/api/upload-einvoice', strictUploadGate, uploadEInvoice.single('einvoiceFile'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = storedUploadPath(req.file.path);
-        if (req.sandboxOwner) {
-            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
-        }
-        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
-        res.json({ success: true, filePath: relativePath });
+        return await finishUpload(req, res, req.file.path);
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
     }
 });
 
-app.post('/api/upload-wht-certificate', uploadWht.single('whtFile'), (req, res) => {
+app.post('/api/upload-wht-certificate', strictUploadGate, uploadWht.single('whtFile'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = storedUploadPath(req.file.path);
-        if (req.sandboxOwner) {
-            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
-        }
-        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
-        res.json({ success: true, filePath: relativePath });
+        return await finishUpload(req, res, req.file.path);
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
     }
 });
 
-app.post('/api/upload-cost-sheet', uploadCostSheet.single('costSheetFile'), (req, res) => {
+app.post('/api/upload-cost-sheet', strictUploadGate, uploadCostSheet.single('costSheetFile'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = storedUploadPath(req.file.path);
-        if (req.sandboxOwner) {
-            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
-        }
-        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
-        res.json({ success: true, filePath: relativePath });
+        return await finishUpload(req, res, req.file.path);
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
     }
 });
 
-app.post('/api/upload-supplier-receipt', uploadSupplierReceipt.single('receiptFile'), (req, res) => {
+app.post('/api/upload-supplier-receipt', strictUploadGate, uploadSupplierReceipt.single('receiptFile'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ success: false, error: "No file" });
-        const relativePath = storedUploadPath(req.file.path);
-        if (req.sandboxOwner) {
-            recordSandboxFileChange(req.sandboxOwner, relativePath, 'add');
-        }
-        syncUploadToDropbox(req, relativePath, fs.readFileSync(req.file.path)).catch(() => {});
-        res.json({ success: true, filePath: relativePath });
+        return await finishUpload(req, res, req.file.path);
     } catch (err) {
         res.status(500).json({ success: false, error: "Upload failed" });
     }
@@ -9551,7 +9887,7 @@ app.get('/api/v1/integrations/turso/status', async (req, res) => {
         const useTurso = !!tcfg.enabled;
 
         if (!rawUrl || !authToken) {
-            return res.json({ configured: false, connected: false, enabled: useTurso, enabledBy: tcfg.by });
+            return res.json({ configured: false, connected: false, enabled: useTurso, enabledBy: tcfg.by, strict: STRICT_REMOTE.on });
         }
 
         const dbUrl = rawUrl.startsWith('libsql://') ? rawUrl.replace(/^libsql:\/\//, 'https://') : rawUrl;
@@ -9564,6 +9900,7 @@ app.get('/api/v1/integrations/turso/status', async (req, res) => {
             connected: true,
             enabled: useTurso,
             enabledBy: tcfg.by,
+            strict: STRICT_REMOTE.on,
             databaseUrl: rawUrl,
             syncedStatesCount: count,
             readOnly: persistState.readOnly,
@@ -9574,6 +9911,7 @@ app.get('/api/v1/integrations/turso/status', async (req, res) => {
             configured: true,
             connected: false,
             enabled: true,
+            strict: STRICT_REMOTE.on,
             error: err.message
         });
     }
@@ -9612,6 +9950,8 @@ app.get('/api/v1/integrations/dropbox/status', (req, res) => {
         const callbackUrl = `${baseUrl}/api/v1/integrations/dropbox/callback`;
         return res.json({
             enabled: !!cfg.enabled,
+            strict: STRICT_REMOTE.on,
+            reachable: dropboxState.reachable,
             autoUploadExternalSubmissions: !!cfg.autoUploadExternalSubmissions,
             configured: !!cfg.configured,
             connected: !!cfg.refreshToken,
@@ -10399,7 +10739,7 @@ setInterval(() => {
 }, 60000).unref();
 
 (async () => {
-    // 1. Hydrate the live database from Turso Cloud (enabled by TURSO_ENABLED env or the Settings switch).
+    // 1. Hydrate the live database from Turso Cloud (strict mode, TURSO_ENABLED env or the Settings switch).
     //    Failure or a remote below the floor -> read-only mode instead of an empty start.
     await pullFromTursoOnStartup();
 
@@ -10409,7 +10749,11 @@ setInterval(() => {
     // 3. Perform DB schema migrations locally
     migrateAllSandboxesOnStartup();
 
+    // 3b. Strict: check Dropbox (reachability, local-only upload files) in the background; never blocks the start.
+    if (STRICT_REMOTE.on) checkDropboxRemote('boot').catch(() => {});
+
     const ph = persistenceHealth();
+    console.log(`[Persistence] strict=${ph.strict.on ? 'on' : 'off'} (by ${ph.strict.by}) remoteLoaded=${ph.strict.remoteLoaded} dropbox: enabled=${ph.dropbox.enabled} configured=${ph.dropbox.configured}`);
     console.log(`[Persistence] v${ph.appVersion} schema ${ph.dbSchemaVersion}/${ph.currentSchemaVersion} source=${ph.dataSource} turso=${ph.turso.enabled ? 'on' : 'off'} (by ${ph.turso.enabledBy}) readOnly=${ph.readOnly}${ph.readOnly ? ` (${ph.readOnlyReason})` : ''} records: orders=${ph.counts?.orders ?? 0} users=${ph.counts?.users ?? 0} customers=${ph.counts?.customers ?? 0} suppliers=${ph.counts?.suppliers ?? 0} supplierPayments=${ph.counts?.supplierPayments ?? 0} total=${ph.counts?.total ?? 0}`);
     
     // 4. Start Express server

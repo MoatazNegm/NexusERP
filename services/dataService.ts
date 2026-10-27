@@ -774,7 +774,7 @@ class DataService {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to read Dropbox status');
     }
-    return response.json() as Promise<{ configured: boolean; connected: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; folderPath: string; appKey: string; appSecretConfigured: boolean; refreshTokenConfigured: boolean; connectedAccount?: string; connectedAt?: string; callbackUrl?: string }>;
+    return response.json() as Promise<{ configured: boolean; connected: boolean; enabled: boolean; strict?: boolean; reachable?: boolean | null; autoUploadExternalSubmissions: boolean; folderPath: string; appKey: string; appSecretConfigured: boolean; refreshTokenConfigured: boolean; connectedAccount?: string; connectedAt?: string; callbackUrl?: string }>;
   }
 
   async testDropbox(credentials?: { appKey?: string; appSecret?: string; refreshToken?: string }) {
@@ -798,7 +798,7 @@ class DataService {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to read Turso status');
     }
-    return response.json() as Promise<{ configured: boolean; connected: boolean; enabled: boolean; databaseUrl?: string; syncedStatesCount?: number; error?: string }>;
+    return response.json() as Promise<{ configured: boolean; connected: boolean; enabled: boolean; strict?: boolean; enabledBy?: string; databaseUrl?: string; syncedStatesCount?: number; error?: string }>;
   }
 
   async testTursoConnection(credentials?: { tursoUrl?: string; tursoAuthToken?: string }) {

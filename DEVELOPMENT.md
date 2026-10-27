@@ -644,6 +644,46 @@ Sandbox DB files (`db.sandbox.*.json`) still live next to `server.js`, not on th
 
 ---
 
+## Strict remote mode (v1.0001201)
+
+Why: on Render (v1.0001200, health right after a deploy) Turso showed `enabledBy: "settings"` and `hydrate {ok: null, remoteFound: null}`, `dataSource: "restore"`, `guard.refusedWrites: 9` (`Live write: orders 61 -> 0`). **Root cause:** no `TURSO_ENABLED` env on the service, so the boot hydrate asked the Settings switch; the disk was empty, `db.stub.json` has no settings, so Turso was *off* at hydrate time and the remote row was never read (`ok: null` = skipped, not failed). The browser then seeded the `INITIAL_CONFIG` settings (with `useTurso: true` and the URL/token), which switched Turso on *after* the hydrate; every following write tried to push the empty state, and the shrink guard refused it (61 orders kept safe), until the user restored a backup. The user's demand: the Render app uses Turso (database) and Dropbox (uploaded files) as soon as it is deployed, with **no** fallback to a local db or local uploads.
+
+Code: `server.js`, blocks `STRICT REMOTE MODE (v1.0001201)` (switch, `INITIAL_REMOTE_DEFAULTS`), `resolveTursoConfig` (strict branch), `hydrateLiveFromTurso`, `runPushQueue`, `settleForcedLivePush`, the `STRICT_NOT_LOADED` middleware, `STRICT DROPBOX (v1.0001201)` (`storeUploadInDropbox`, `strictUploadGate`, `finishUpload`, `checkDropboxRemote`, `dropboxHealth`), `getDropboxConfig` (strict branch), the `/uploads` route, `persistBase64CostSheet`; UI `components/DataMaintenance.tsx` (switches).
+
+### Switch
+
+| `STRICT_REMOTE` | Result |
+|---|---|
+| `1` / `true` | strict on |
+| `0` / `false` | strict off (old behaviour, v1.0001200 rules) |
+| unset | **on when the `RENDER` env var is set** (Render sets it on every service), else off |
+
+`NODE_ENV=production` alone does **not** switch it on: the local test container `nexuserp` runs with `NODE_ENV=production` and must keep Turso/Dropbox off. Local sandbox/test runs: leave `RENDER` unset (or set `STRICT_REMOTE=0` explicitly). `render.yaml` lists `STRICT_REMOTE: "1"`; it only applies when the service is managed by the Blueprint, the `RENDER` default covers a dashboard-managed service.
+
+### Rules in strict mode
+
+1. **Turso always on.** The Settings switch and `TURSO_ENABLED=0` cannot turn it off (`turso.enabledBy: "strict"`). URL: `TURSO_DATABASE_URL` / `TURSO_URL`, then the stored settings, then `INITIAL_CONFIG.settings.tursoUrl` (constants.tsx). Token: `TURSO_AUTH_TOKEN` / `TURSO_TOKEN` / `TURSO_TOKEN_FILE`, then the stored settings, then `INITIAL_CONFIG.settings.tursoAuthToken`. The constants values are read once at boot from `constants.tsx`, never logged or exposed. So an empty disk with no env reads the remote row `live` before `app.listen`.
+2. **Remote wins.** At hydrate the `live` row always replaces the local file (a differing local copy is kept once as `db.json.pre-hydrate.bak`). A local copy is never pushed up as the source: no remote row -> read-only (`strict mode: no live row in Turso ...`), except `TURSO_MIN_RECORDS=0` with an empty local copy (deliberate empty start). A brand-new Turso is filled by a restore (forced push).
+3. **Not loaded = not served.** Until the live data was loaded from Turso (or a forced restore push was confirmed) in this process, every `/api/*` call answers **503 `STRICT_NOT_LOADED`**, GETs included. Open: `/api/health`, login/logout/auth, `/api/v1/restore`, `/api/v1/full-restore`, `/api/v1/admin/persistence/*`, `/api/v1/integrations/{turso,dropbox}/status`.
+4. **Read-only on any Turso problem.** URL/token not resolvable, hydrate error, remote below `TURSO_MIN_RECORDS`, conflict: read-only (writes 503 `READ_ONLY`) with the reason, as in v1.0001200 (never the legacy local-only path). New: a failed normal live push also switches to read-only (`pendingPush`); the retry pushes the local cache revision-checked (no data lost when nobody else wrote); a conflict or shrink refusal drops it and the remote wins. A restore/wipe counts as stored only with a confirmed push (`push.ok === true`).
+5. **Uploads only via Dropbox.** Dropbox is always on (`enabled: true`); credentials: stored settings, then `DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET` / `DROPBOX_REFRESH_TOKEN` (and `DROPBOX_FOLDER_PATH`), then `INITIAL_CONFIG.settings.dropboxConfig`. Not configured -> the upload routes answer **503 `DROPBOX_REQUIRED`** before anything is written. Configured -> the file is uploaded to Dropbox and the answer waits for it; a failed upload deletes the local file and answers **503 `DROPBOX_UPLOAD_FAILED`** with the reason. Applies to `/api/upload-pod`, `-einvoice`, `-wht-certificate`, `-cost-sheet`, `-supplier-receipt`, and the base64 cost sheet of the dispatch action `upload-cost-sheet` (503 + `code`). A full restore waits for the Dropbox copy of the restored uploads and reports `dropbox: {count, errors, localOnlyFiles}`.
+6. **Serving files.** `/uploads/...` serves a local file only as the cache of a file known to be in Dropbox (folder scan, confirmed upload or download); otherwise it downloads from Dropbox (and caches). A file that exists only locally answers **503 `LOCAL_ONLY_FILE`** (admin: Dropbox *sync-all*).
+7. **Dropbox check.** At boot (background, never blocks the start) and every `DROPBOX_CHECK_SEC` (default 300 s) the server lists the Dropbox folder: `reachable`, known files and `localOnlyFiles` (local upload files not in Dropbox).
+
+### Health (`GET /api/health`) additions
+
+`strict: {on, by, remoteLoaded, pendingPush}` and `dropbox: {strict, enabled, configured, reachable, lastCheck, lastUpload {at, ok, error}, uploadsOk, uploadsFailed, uploadsRefused, localOnlyFiles, localOnlyCheckedAt}`. No URLs, tokens, keys or paths. In strict mode `status` is `degraded` while Dropbox is not configured/unreachable or the data is not loaded. `/api/v1/integrations/turso/status` and `/dropbox/status` carry `strict`; the Settings switches then show **forced on (strict)** and are disabled.
+
+### Legacy path fix (non-strict)
+
+If the boot hydrate ran with Turso off (`hydrate.skippedRemote: true`) and Turso is switched on later (Settings / browser bootstrap), the first live push is not sent: the server first runs the hydrate (`turso-switched-on`), so the remote row wins over an empty local copy instead of 9 refused shrinking writes.
+
+### Render checklist (names only)
+
+`STRICT_REMOTE=1` (or rely on `RENDER`), `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` (recommended over the constants defaults), `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`, optional `DROPBOX_FOLDER_PATH`, `DROPBOX_CHECK_SEC`, and the guard tuning of v1.0001200. After a deploy: health `strict.on: true`, `strict.remoteLoaded: true`, `turso.enabledBy: "strict"`, `turso.hydrate.ok: true`, `remoteFound: true`, `counts.orders` as in Turso, `readOnly: false`, `dropbox.configured: true`, `dropbox.reachable: true`, `dropbox.localOnlyFiles: 0`.
+
+---
+
 ## Backup segregation & streaming archives (.nxarchive v2)
 
 Two backup endpoints, two scopes — do not collapse them.

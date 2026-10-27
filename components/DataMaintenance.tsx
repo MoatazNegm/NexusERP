@@ -59,7 +59,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [tursoAuthToken, setTursoAuthToken] = useState(config.settings.tursoAuthToken || DEFAULT_TURSO_CLIENT_CONFIG.tursoAuthToken);
   const [showTursoToken, setShowTursoToken] = useState(false);
   const [useTurso, setUseTurso] = useState(config.settings.useTurso !== undefined ? !!config.settings.useTurso : DEFAULT_TURSO_CLIENT_CONFIG.useTurso);
-  const [tursoStatus, setTursoStatus] = useState<{ configured: boolean; connected: boolean; enabled: boolean; databaseUrl?: string; syncedStatesCount?: number; error?: string } | null>(null);
+  const [tursoStatus, setTursoStatus] = useState<{ configured: boolean; connected: boolean; enabled: boolean; strict?: boolean; enabledBy?: string; databaseUrl?: string; syncedStatesCount?: number; error?: string } | null>(null);
   const [isTursoBusy, setIsTursoBusy] = useState(false);
   const [localStorageStatus, setLocalStorageStatus] = useState<{ configured: boolean; reachable: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; storageIp: string; apiPort: number; consolePort: number; bucketName: string; buckets: string[] } | null>(null);
   const [dropboxDraft, setDropboxDraft] = useState<DropboxConfig>({
@@ -70,7 +70,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     refreshToken: config.settings.dropboxConfig?.refreshToken || DEFAULT_DROPBOX_CLIENT_CONFIG.refreshToken,
     folderPath: config.settings.dropboxConfig?.folderPath || DEFAULT_DROPBOX_CLIENT_CONFIG.folderPath
   });
-  const [dropboxStatus, setDropboxStatus] = useState<{ configured: boolean; connected: boolean; enabled: boolean; autoUploadExternalSubmissions: boolean; folderPath: string; appKey: string; appSecretConfigured: boolean; refreshTokenConfigured: boolean; connectedAccount?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
+  const [dropboxStatus, setDropboxStatus] = useState<{ configured: boolean; connected: boolean; enabled: boolean; strict?: boolean; reachable?: boolean | null; autoUploadExternalSubmissions: boolean; folderPath: string; appKey: string; appSecretConfigured: boolean; refreshTokenConfigured: boolean; connectedAccount?: string; connectedAt?: string; callbackUrl?: string } | null>(null);
   const [isDropboxBusy, setIsDropboxBusy] = useState(false);
   const [showDropboxSecret, setShowDropboxSecret] = useState(false);
   const [showDropboxRefreshToken, setShowDropboxRefreshToken] = useState(false);
@@ -671,7 +671,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     setIsTursoBusy(true);
     try {
       await persistSettings({
-        useTurso,
+        useTurso: useTurso || !!tursoStatus?.strict,
         tursoUrl: (tursoUrl || '').trim() || DEFAULT_TURSO_CLIENT_CONFIG.tursoUrl,
         tursoAuthToken: (tursoAuthToken || '').trim() || DEFAULT_TURSO_CLIENT_CONFIG.tursoAuthToken
       });
@@ -706,7 +706,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       const existing = config.settings.dropboxConfig || DEFAULT_DROPBOX_CLIENT_CONFIG;
       const next: DropboxConfig = {
         ...existing,
-        enabled: dropboxDraft.enabled !== undefined ? !!dropboxDraft.enabled : true,
+        enabled: dropboxStatus?.strict ? true : (dropboxDraft.enabled !== undefined ? !!dropboxDraft.enabled : true),
         autoUploadExternalSubmissions: !!dropboxDraft.autoUploadExternalSubmissions,
         appKey: (dropboxDraft.appKey || '').trim() || DEFAULT_DROPBOX_CLIENT_CONFIG.appKey,
         appSecret: dropboxDraft.appSecret !== undefined && dropboxDraft.appSecret.trim() ? dropboxDraft.appSecret.trim() : (existing.appSecret || DEFAULT_DROPBOX_CLIENT_CONFIG.appSecret),
@@ -2049,12 +2049,18 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     </div>
 
                     <div className="space-y-3 md:col-span-2">
-                      <label className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
-                        <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Dropbox Integration</span>
+                      {/* v1.0001201: in strict mode (Render) uploads are stored only in Dropbox; the switch cannot turn it off. */}
+                      <label className={`flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 ${dropboxStatus?.strict ? 'cursor-not-allowed' : 'cursor-pointer'}`} title={dropboxStatus?.strict ? 'Strict mode: uploaded files are stored only in Dropbox; an upload is refused when Dropbox does not accept it.' : undefined}>
+                        <span className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                          Enable Dropbox Integration
+                          {dropboxStatus?.strict && <span className="ml-2 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[9px] font-black normal-case tracking-normal">forced on (strict)</span>}
+                        </span>
                         <input
                           type="checkbox"
-                          checked={!!dropboxDraft.enabled}
+                          checked={!!dropboxDraft.enabled || !!dropboxStatus?.strict}
+                          disabled={!!dropboxStatus?.strict}
                           onChange={e => {
+                            if (dropboxStatus?.strict) return;
                             setDriveDraftDirty(true);
                             setDropboxDraft(prev => ({ ...prev, enabled: e.target.checked }));
                           }}
@@ -2195,12 +2201,16 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     </div>
                   )}
 
-                  <label className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 cursor-pointer">
-                    <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Enable Turso Sync</span>
-                    <input type="checkbox" checked={useTurso} onChange={e => setUseTurso(e.target.checked)} />
+                  {/* v1.0001201: in strict mode (Render) the server keeps Turso on; the switch cannot turn it off. */}
+                  <label className={`flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 ${tursoStatus?.strict ? 'cursor-not-allowed' : 'cursor-pointer'}`} title={tursoStatus?.strict ? 'Strict mode: the server always uses Turso as its database; there is no local fallback.' : undefined}>
+                    <span className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                      Enable Turso Sync
+                      {tursoStatus?.strict && <span className="ml-2 px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[9px] font-black normal-case tracking-normal">forced on (strict)</span>}
+                    </span>
+                    <input type="checkbox" checked={useTurso || !!tursoStatus?.strict} disabled={!!tursoStatus?.strict} onChange={e => { if (!tursoStatus?.strict) setUseTurso(e.target.checked); }} />
                   </label>
                   
-                  {useTurso && (
+                  {(useTurso || !!tursoStatus?.strict) && (
                     <>
                       <div className="space-y-2">
                         <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Turso Database URL</label>

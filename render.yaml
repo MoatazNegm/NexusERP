@@ -21,7 +21,17 @@ services:
         value: /var/data/db.json
       - key: UPLOADS_PATH
         value: /var/data/uploads
+      # v1.0001201 strict remote mode: Turso is the only database and Dropbox the only file store, no local
+      # fallback (failure -> read-only / upload refused). Also on by default when Render's RENDER env is set;
+      # listed here so it is explicit. 0 turns it off (never on Render).
+      - key: STRICT_REMOTE
+        value: "1"
+      # Optional: seconds between the Dropbox reachability / local-only file checks (default 300).
+      - key: DROPBOX_CHECK_SEC
+        sync: false
       # Turso switch and credentials: values are set in the Render dashboard, never in git.
+      # In strict mode TURSO_ENABLED is not needed (Turso is always on); URL/token fall back to the
+      # INITIAL_CONFIG defaults in constants.tsx when these are unset.
       - key: TURSO_ENABLED
         sync: false
       - key: TURSO_DATABASE_URL
