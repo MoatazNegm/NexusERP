@@ -192,6 +192,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [loggedFilterType, setLoggedFilterType] = useState<'all' | 'trade' | 'manufacturing' | 'blanket' | 'stock' | 'standard'>('all');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [existingOrders, setExistingOrders] = useState<CustomerOrder[]>([]);
+  const [rejectTarget, setRejectTarget] = useState<CustomerOrder | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerReferenceNumber, setCustomerReferenceNumber] = useState('');
   const [orderDate, setOrderDate] = useState(today);
@@ -518,6 +520,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
     const isManager = currentUser.roles?.includes('management') || false;
     if (isManager) {
       return { type: 'warning', label: 'MANAGER OVERRIDE: Edit time limit bypassed.', isFrozen: false };
+    }
+
+    const EDITABLE_STATUSES: string[] = [OrderStatus.LOGGED, OrderStatus.NEGATIVE_MARGIN, OrderStatus.IN_HOLD, OrderStatus.REJECTED];
+    if (!EDITABLE_STATUSES.includes(String(order.status))) {
+      return { type: 'frozen', label: 'This order is locked: it has passed Technical Review and can no longer be edited.', isFrozen: true };
     }
 
     const entrySource = order.dataEntryTimestamp ?? order.orderDate ?? new Date().toISOString();
@@ -1449,9 +1456,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             });
           } catch (driveError: any) {
             const errMsg = driveError?.message ? ` Upload failed: ${driveError.message}` : ' Upload failed.';
-            setMessage({ type: 'error', text: `Order created successfully.${errMsg}` });
+            setMessage({ type: 'error', text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}.${errMsg}` });
             await fetchData();
-            resetForm();
+            resetForm(false);
             return;
           }
         } else {
@@ -2608,6 +2615,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
                         >
                           <i className="fa-solid fa-rotate-right"></i> Resume Record
                         </button>
+                        <button
+                          onClick={() => { setRejectTarget(draft); setRejectReason(''); }}
+                          className="mt-2 px-5 py-2.5 bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-rose-700 transition-all flex items-center gap-2 ml-auto"
+                        >
+                          <i className="fa-solid fa-ban"></i> Reject
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -2630,6 +2643,33 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           </div>
         </div>
       ) : null}
+
+      {rejectTarget && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/60">
+          <div className="bg-white rounded-2xl p-8 w-[28rem] space-y-4">
+            <h3 className="font-black text-sm uppercase">Reject order {rejectTarget.internalOrderNumber}</h3>
+            <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="Reason for rejection" className="w-full border rounded-xl p-3 text-sm" rows={3} />
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setRejectTarget(null)} className="px-4 py-2 text-xs font-black uppercase">Cancel</button>
+              <button
+                disabled={!rejectReason.trim()}
+                onClick={async () => {
+                  const t = rejectTarget;
+                  try {
+                    await dataService.rejectOrder(t.id, rejectReason.trim());
+                    setMessage({ type: 'success', text: `Order ${t.internalOrderNumber} rejected: ${rejectReason.trim()}` });
+                  } catch (e: any) {
+                    setMessage({ type: 'error', text: e?.message || 'Reject failed' });
+                  }
+                  setRejectTarget(null);
+                  fetchData();
+                }}
+                className="px-4 py-2 bg-rose-600 text-white text-xs font-black uppercase rounded-xl disabled:opacity-40"
+              >Confirm Reject</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Customer Modal */}
       {showAddCustomerModal && (

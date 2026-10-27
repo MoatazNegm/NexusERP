@@ -230,6 +230,24 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
     }
   };
 
+  const handleExportOrderPdf = () => {
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    let y = 15;
+    const line = (t: string, size = 10) => { pdf.setFontSize(size); pdf.text(t, 14, y); y += size > 10 ? 9 : 6; if (y > 280) { pdf.addPage(); y = 15; } };
+    line(`Order ${order.internalOrderNumber || order.id}`, 16);
+    line(`PO reference: ${order.customerReferenceNumber || '-'}`);
+    line(`Customer: ${order.customerName || '-'}`);
+    line(`Status: ${order.status}`);
+    line(`Order date: ${order.orderDate || '-'}`);
+    y += 3;
+    line('Line items', 12);
+    (order.items || []).forEach((it: any, i: number) => line(`${i + 1}. ${String(it.description || it.name || it.itemName || 'Item').slice(0, 60)}  qty ${it.quantity ?? ''}  price ${it.unitPrice ?? it.price ?? ''}`));
+    y += 3;
+    line('History', 12);
+    ((order as any).logs || []).forEach((l: any) => line(`${String(l.timestamp || '').slice(0, 19)}  ${l.user || ''}  ${String(l.message || '').slice(0, 70)}`));
+    pdf.save(`Order-${order.internalOrderNumber || order.id}.pdf`);
+  };
+
   const showInvoiceButton = [OrderStatus.INVOICED, OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED].includes(order.status);
 
   return (
@@ -398,6 +416,13 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order: ini
                 {showHardDeleteConfirm ? 'Cancel Deletion' : 'Hard Delete PO'}
               </button>
             )}
+            <button
+              onClick={handleExportOrderPdf}
+              className="px-6 py-3 bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2"
+            >
+              <i className="fa-solid fa-file-pdf"></i>
+              Export Order PDF
+            </button>
             {showInvoiceButton && (
               <button
                 onClick={handleDownloadInvoice}

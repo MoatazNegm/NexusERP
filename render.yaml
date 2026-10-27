@@ -4,8 +4,34 @@ services:
     runtime: node
     buildCommand: npm install && npm run build
     startCommand: node --max-old-space-size=450 server.js
+    # v1.0001200: no-auth probe; reports data source, record counts, Turso state and the read-only flag.
+    healthCheckPath: /api/health
+    # Persistent disk (second safety next to Turso). Render disks need a paid instance type
+    # (not the free plan) and turn off zero-downtime deploys (one instance at a time).
+    disk:
+      name: nexuserp-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
         value: --max-old-space-size=450
+      - key: DB_PATH
+        value: /var/data/db.json
+      - key: UPLOADS_PATH
+        value: /var/data/uploads
+      # Turso switch and credentials: values are set in the Render dashboard, never in git.
+      - key: TURSO_ENABLED
+        sync: false
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      # Dropbox (uploaded files only; the database itself lives in Turso / on the disk).
+      - key: DROPBOX_APP_KEY
+        sync: false
+      - key: DROPBOX_APP_SECRET
+        sync: false
+      - key: DROPBOX_REFRESH_TOKEN
+        sync: false
