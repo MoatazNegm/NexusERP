@@ -2616,8 +2616,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         for (const comp of (item.components || [])) {
           if ((comp.description || '').toLowerCase().includes(q)) return true;
           if ((comp.componentNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.poNumber || '').toLowerCase().includes(q)) return true;
           if ((comp.supplierPartNumber || '').toLowerCase().includes(q)) return true;
           if ((comp.supplierName || '').toLowerCase().includes(q)) return true;
+          if ((comp.partNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierPartNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierName || '').toLowerCase().includes(q)) return true;
+          if ((comp.poNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.partNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.rfpId || '').toLowerCase().includes(q)) return true;
+          if ((comp.awardId || '').toLowerCase().includes(q)) return true;
         }
       }
       return false;
@@ -2814,6 +2822,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         for (const comp of (item.components || [])) {
           if ((comp.description || '').toLowerCase().includes(q)) return true;
           if ((comp.componentNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.poNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierPartNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierName || '').toLowerCase().includes(q)) return true;
+          if ((comp.partNumber || '').toLowerCase().includes(q)) return true;
         }
       }
 
@@ -8294,6 +8306,24 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               </span>
                               <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-600">
                                 {language === 'ar' ? 'مخزون داخلي' : 'Internal Stock'}
+                              </span>
+                              {(() => {
+                                const supplierPos = Array.from(new Set(allComps.map(c => c.poNumber).filter((p): p is string => Boolean(p))));
+                                return supplierPos.map(po => (
+                                  <span key={po} className="px-2.5 py-0.5 rounded-full text-[9px] font-black font-mono uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200" title="Issued Supplier PO Number">
+                                    <i className="fa-solid fa-file-invoice mr-1 text-[8px]"></i>{po}
+                                  </span>
+                                ));
+                              })()}
+                              {(() => {
+                                const st = STATUS_CONFIG[order.status || OrderStatus.LOGGED] || STATUS_CONFIG[OrderStatus.LOGGED];
+                                return (
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-${st.color}-50 text-${st.color}-700 border border-${st.color}-200`}>
+                                    <i className={`fa-solid ${st.icon} mr-1 text-[8px]`}></i>{st.label}
+                                  </span>
+                                );
+                              })()}
+                              <span className="hidden">
                               </span>
                               {order.orderDate && (
                                 <span className="text-[10px] font-bold text-slate-400">

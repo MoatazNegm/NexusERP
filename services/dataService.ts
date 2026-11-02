@@ -972,6 +972,11 @@ class DataService {
         if ((o.contractId || '').toLowerCase().includes(q)) return true;
         if ((o.blanketContractId || '').toLowerCase().includes(q)) return true;
         if ((o.invoiceNumber || '').toLowerCase().includes(q)) return true;
+        if ((o.status || '').toLowerCase().includes(q)) return true;
+        if ((o.status || '').toLowerCase().replace(/_/g, ' ').includes(q)) return true;
+        if ((o.orderDate || '').toLowerCase().includes(q)) return true;
+        const isStock = (o.customerName || '').trim().toLowerCase() === 'internal stock' || (o.customerReferenceNumber || '').trim().toUpperCase().startsWith('STOCK-');
+        if (isStock && (q === 'stock' || q === 'stock order' || q === 'stock orders' || q === 'internal stock')) return true;
 
         // Blanket / Non-Blanket keyword search
         if (q === 'blanket' || q === 'blanket order' || q === 'blanket orders') {
@@ -995,9 +1000,22 @@ class DataService {
 
         return (o.items || []).some(i => 
           (i.id || '').toLowerCase().includes(q) ||
+          (i.orderNumber || '').toLowerCase().includes(q) ||
+          ((i as any).supplierPartNumber || '').toLowerCase().includes(q) ||
           (i.description || '').toLowerCase().includes(q) ||
           (i.components || []).some(c => 
             (c.componentNumber || '').toLowerCase().includes(q) ||
+            (c.poNumber || '').toLowerCase().includes(q) ||
+            (c.supersededPoNumber || '').toLowerCase().includes(q) ||
+            (c.cancelledPoNumber || '').toLowerCase().includes(q) ||
+            (c.revertedPoNumber || '').toLowerCase().includes(q) ||
+            ((c as any).partNumber || '').toLowerCase().includes(q) ||
+            (c.supplierPartNumber || '').toLowerCase().includes(q) ||
+            (c.supplierName || '').toLowerCase().includes(q) ||
+            (c.rfpId || '').toLowerCase().includes(q) ||
+            (c.awardId || '').toLowerCase().includes(q) ||
+            (c.contractNumber || '').toLowerCase().includes(q) ||
+            (c.status || '').toLowerCase().includes(q) ||
             (c.description || '').toLowerCase().includes(q)
           )
         );

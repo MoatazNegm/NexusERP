@@ -125,7 +125,7 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
               <input
                 type="text"
                 className="w-full pl-10 pr-4 py-2.5 border rounded-xl bg-white text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 border-slate-200 text-sm transition-all"
-                placeholder="Search by ID, Customer, Items, Project, Blanket (or 'non-project')..."
+                placeholder="Search by ID, PO #, Supplier PO, Customer, Items, Project, Stock, Blanket..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -255,6 +255,21 @@ export const OrderReport: React.FC<OrderReportProps> = ({ config, dashboardFilte
                       ) : null}
                     </div>
                     <div className="text-[10px] text-slate-400 font-medium mt-1">Ref: {order.customerReferenceNumber || 'None'}</div>
+                    {(() => {
+                      const supplierPos = Array.from(new Set(
+                        (order.items || []).flatMap(it => (it.components || []).map(c => c.poNumber).filter((p): p is string => Boolean(p)))
+                      ));
+                      if (supplierPos.length === 0) return null;
+                      return (
+                        <div className="flex items-center gap-1 flex-wrap mt-1">
+                          {supplierPos.map(po => (
+                            <span key={po} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-mono text-[9px] font-black uppercase" title="Supplier PO Number">
+                              <i className="fa-solid fa-file-invoice text-[8px]"></i> {po}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {order.contractId && (
                       <div className="text-[9px] text-teal-600 font-bold uppercase mt-0.5">Contract: {order.contractId}</div>
                     )}
