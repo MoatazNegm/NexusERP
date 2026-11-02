@@ -212,7 +212,7 @@ const isStockOrder = (order) => {
     if (!order) return false;
     const cust = String(order.customerName || '').trim().toLowerCase();
     const po = typeof order.customerReferenceNumber === 'string' ? order.customerReferenceNumber.trim().toUpperCase() : '';
-    return cust === 'internal stock' || po.startsWith('STOCK-');
+    return cust === 'internal stock' || po.startsWith('STOCK-') || /^REJ_[\d-]+_STOCK-/.test(po);
 };
 
 // --- MULTER CONFIG ---
@@ -1727,7 +1727,7 @@ const ACTION_ROLE_GATES = {
   'issue-invoice': { roles: ['finance'], msg: 'invoicing is finance' },
   'record-payment': { roles: ['finance'], msg: 'wrong role: payments are finance' },
   'approve-dispatch-receipt': { roles: ['finance'], msg: 'wrong role: dispatch receipt approval is finance' },
-  'reject-order': { roles: ['order_management', 'planning', 'sales'], msg: 'no permission to cancel / delete' },
+  'reject-order': { roles: ['order_management', 'planning', 'sales', 'finance'], msg: 'no permission to cancel / delete' },
   'hard-delete-order': { roles: [], msg: 'Unauthorized: Only superusers or management can hard delete an order', raw: true },
 };
 const actionRoleDenied = (req, action) => {
@@ -2945,7 +2945,7 @@ const reconcileStockAllocations = (db, targetPath = null) => {
     });
     db.orders.forEach(order => {
         const isStock = isStockOrder(order);
-        if (!isStock) return;
+        if (!isStock || order.status === OrderStatus.REJECTED || order.status === 'REJECTED') return;
 
         if (order.loggingComplianceViolation) {
             order.loggingComplianceViolation = false;
@@ -6374,7 +6374,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                     if (invItem) {
                         // Release customer reservation
-                        invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - receivedQty);
+                        if (!isStockOrder(order) || comp.source === 'STOCK') invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - receivedQty);
                         invItem.lastCost = comp.unitCost || invItem.lastCost || 0;
                         invItem.lastUpdated = new Date().toISOString();
                         // Unlink from customer order
@@ -6898,7 +6898,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.items.forEach(item => {
                     (item.components || []).forEach(comp => {
                         if (['RESERVED', 'RECEIVED', 'STOCKED'].includes(comp.status)) {
-                            updateInventoryItem(db, comp, 'RELEASE', order);
+                            if (!isStockOrder(order) || comp.source === 'STOCK') updateInventoryItem(db, comp, 'RELEASE', order);
                             comp.status = 'IN_STOCK'; // Or specific status indicating released
                             delete comp.poNumber; delete comp.supplierId; delete comp.supplierName; comp.receivedQty = 0;
                         }
@@ -7345,7 +7345,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                 // Restore allocated quantity back to stock order if component was allocated from one
                 if (rcComp.allocatedFromStockOrderId) {
-                    const stockOrderIdx = (db.orders || []).findIndex(o => o.id === rcComp.allocatedFromStockOrderId);
+                    const stockOrderIdx = (db.orders || []).findIndex(o => o.id === rcComp.allocatedFromStockOrderId && o.status !== OrderStatus.REJECTED);
                     if (stockOrderIdx !== -1) {
                         let stockOrder = db.orders[stockOrderIdx];
                         const oldStockOrder = JSON.parse(JSON.stringify(stockOrder));

@@ -8389,7 +8389,24 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           </div>
 
                           {/* Status Badge */}
-                          <div className="min-w-28 text-end">
+                          <div className="min-w-28 text-end flex items-center justify-end gap-2">
+                            {order.status !== OrderStatus.REJECTED && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDecisionModal({
+                                    type: 'orderReject',
+                                    entityId: order.id,
+                                    entityName: order.internalOrderNumber || order.customerReferenceNumber
+                                  });
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 hover:border-rose-600 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                                title={language === 'ar' ? 'إلغاء / رفض أمر المخزون' : 'Cancel / Reject Stock Order'}
+                              >
+                                <i className="fa-solid fa-ban text-[10px]"></i>
+                                <span>{language === 'ar' ? 'إلغاء الطلب' : 'Cancel Order'}</span>
+                              </button>
+                            )}
                             <span className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider inline-block ${
                               order.status === OrderStatus.FULFILLED ? 'bg-emerald-600 text-white shadow-sm' :
                               order.status === OrderStatus.WAITING_SUPPLIERS ? 'bg-amber-100 text-amber-800' :
