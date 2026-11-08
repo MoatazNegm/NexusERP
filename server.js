@@ -4875,8 +4875,16 @@ const addToCollection = (col) => (req, res) => {
             // count, and a reference shared by orders of several customers without a customer name is refused (the money must not
             // land on another customer's order).
             const poKeyL = newItem.poNumber ? String(newItem.poNumber).trim().toLowerCase() : '';
+            // R34 round 14 (validator 13, low): when the entry names a customer, the order it names by orderId or internal number
+            // must be that customer's order too (the same rule as the reference lookup). The named customer's own orders are
+            // searched (id > internal number > reference); an orderId or internal number that matches only ANOTHER customer's
+            // order is refused (400), so the money never lands on another customer's order under this customer's name.
+            const entryCust = trimRef(newItem.customerName);
+            const ofEntryCust = (o) => !entryCust || sameCustomerName(o.customerName, entryCust);
+            const custMismatch = (o, how) => `Refused: order ${o.internalOrderNumber || o.id} (named by ${how}) belongs to customer "${trimRef(o.customerName)}", but the ledger entry names customer "${entryCust}"; a payment is booked only on an order of the customer the entry names - correct the customer name or the order.`;
             let targetOrder = (newItem.orderId && (db.orders || []).find(o => o.id === newItem.orderId)) || null;
-            if (!targetOrder && poKeyL) targetOrder = (db.orders || []).find(o => String(o.internalOrderNumber || '').trim().toLowerCase() === poKeyL) || null;
+            if (targetOrder && !ofEntryCust(targetOrder)) return res.status(400).json({ error: custMismatch(targetOrder, `order id "${newItem.orderId}"`) });
+            if (!targetOrder && poKeyL) targetOrder = (db.orders || []).find(o => String(o.internalOrderNumber || '').trim().toLowerCase() === poKeyL && ofEntryCust(o)) || null;
             if (!targetOrder && poKeyL) {
                 const byRef = (db.orders || []).filter(o => String(o.customerReferenceNumber || '').trim().toLowerCase() === poKeyL && (!trimRef(newItem.customerName) || sameCustomerName(o.customerName, newItem.customerName)));
                 const live = byRef.filter(o => !isRejectedStatus(o.status));
@@ -4884,6 +4892,10 @@ const addToCollection = (col) => (req, res) => {
                 const custs = new Set(pool.map(o => trimRef(o.customerName).toLowerCase()));
                 if (custs.size > 1) return res.status(400).json({ error: `Refused: the customer reference "${String(newItem.poNumber).trim()}" names orders of ${custs.size} customers (${pool.map(o => `${o.internalOrderNumber} / ${o.customerName}`).join(', ')}); name the order by its internal number or give the customer name.` });
                 targetOrder = pool[0] || null;
+            }
+            if (!targetOrder && poKeyL && entryCust) {
+                const other = (db.orders || []).find(o => String(o.internalOrderNumber || '').trim().toLowerCase() === poKeyL);
+                if (other) return res.status(400).json({ error: custMismatch(other, `internal number "${String(newItem.poNumber).trim()}"`) });
             }
 
             // R34 round 8 (validator 7, defect 5): no payment into a cancelled (REJECTED) PO, the same rule as record-payment.

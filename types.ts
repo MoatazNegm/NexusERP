@@ -318,6 +318,9 @@ export interface ManufacturingComponent {
   extendedAt?: string;
   splitFromExtensionPo?: string;
   splitReason?: string;
+  // v1.0001215: fields the maintainer's v1.0001202 search / stock-order views read (set by the server's stock reconcile)
+  partNumber?: string;
+  originalQuantity?: number;
 }
 
 
