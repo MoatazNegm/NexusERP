@@ -6681,7 +6681,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 const pl = (o as any).pl || getPL(o);
                 const isBlanketOrder = !!(o.blanketOrder || o.contractId || o.blanketContractId);
                 const showBlanketBadge = isBlanketOrder && isOrderNoRfpNeeded(o);
-                const isBreach = !isBlanketOrder && isMarginBreach(pl.costInOrderCurrency ?? pl.cost, pl.markupPct, config.settings.minimumMarginPct);
+                // R34 round 8 (validator 7, observation): the customer's own minimum margin when set, else the company minimum (the server gate).
+                const custMinB = customers.find(c => c.name === o.customerName)?.minimumMarginPct;
+                const isBreach = !isBlanketOrder && isMarginBreach(pl.costInOrderCurrency ?? pl.cost, pl.markupPct, (custMinB !== undefined && custMinB !== null) ? Number(custMinB) : config.settings.minimumMarginPct);
                 const showRow = activeTab === 'orders';
 
                 if (!showRow) return null;

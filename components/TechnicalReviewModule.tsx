@@ -1083,7 +1083,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   return (
     <div className="space-y-6">
       {/* Tab Bar */}
-      <div className="flex gap-1 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 w-fit">
+      <div className="flex flex-wrap gap-1 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 w-fit max-w-full">
         <button
           onClick={() => setActiveTab('review')}
           className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'review' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'}`}
@@ -1147,7 +1147,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
             </div>
           </div>
 
-          <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest">
                 <tr>
@@ -1279,18 +1279,19 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
           </div>
 
           {selectedOrder && (
-            <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-4 md:p-12 overflow-hidden animate-in fade-in duration-300">
-              <div className="bg-white w-full max-w-7xl h-full rounded-[3rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-500 border border-white/20">
+            <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[100] flex items-center justify-center p-2 md:p-12 overflow-hidden animate-in fade-in duration-300">
+              {/* R34 round 8 (validator 7, observation): phone width stacks the positions above the study and wraps the header; no horizontal scroll at 375 / 768 / 1366. */}
+              <div data-testid="tr-study-modal" className="bg-white w-full min-w-0 max-w-7xl h-full rounded-[2rem] md:rounded-[3rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-500 border border-white/20">
 
-                <div className="px-8 py-5 bg-slate-900 text-white flex justify-between items-center shrink-0">
-                  <div className="flex items-center gap-4">
+                <div className="px-4 md:px-8 py-4 md:py-5 bg-slate-900 text-white flex flex-wrap gap-3 justify-between items-center shrink-0">
+                  <div className="flex items-center gap-4 min-w-0">
                     <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-xl shadow-xl">
                       <i className="fa-solid fa-microscope"></i>
                     </div>
                     <div>
                       <div className="text-[9px] font-black uppercase tracking-[0.3em] text-blue-400 mb-0.5 leading-none">Active Engineering Study</div>
                       <h3 className="text-xl font-black tracking-tight leading-tight">{selectedOrder.customerName}</h3>
-                      <div className="text-[9px] font-bold text-slate-400 mt-0.5 uppercase flex items-center gap-2">
+                      <div className="text-[9px] font-bold text-slate-400 mt-0.5 uppercase flex flex-wrap items-center gap-2">
                         <span className="bg-slate-800 px-2 py-0.5 rounded leading-none">ID: {selectedOrder.internalOrderNumber}</span>
                         <span className="bg-slate-800 px-2 py-0.5 rounded leading-none">PO: {selectedOrder.customerReferenceNumber}</span>
                         {(() => {
@@ -1352,8 +1353,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                   </div>
                 )}
 
-                <div className="flex-1 flex overflow-hidden">
-                  <div className="w-80 bg-slate-50 border-r border-slate-100 flex flex-col overflow-hidden">
+                <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden min-w-0">
+                  <div className="w-full md:w-80 shrink-0 max-h-60 md:max-h-none bg-slate-50 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col overflow-hidden">
                     <div className="p-6 border-b border-slate-200">
                       <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Positions</h4>
                     </div>
@@ -1388,7 +1389,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-10 space-y-8 custom-scrollbar bg-slate-50/30">
+                  <div className="flex-1 min-w-0 md:overflow-y-auto p-4 md:p-10 space-y-8 custom-scrollbar bg-slate-50/30">
                     {selectedItem ? (
                       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
                         <div className="flex justify-between items-end border-b-2 border-slate-100 pb-6">
@@ -1459,11 +1460,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                           </div>
                         ) : (!selectedItem.isAccepted || (selectedItem.productionType === 'MANUFACTURING' || selectedItem.productionType === 'OUTSOURCING' || Boolean(selectedOrder.blanketOrder))) && (
 
-                          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6">
-                            <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                              <div className="flex items-center gap-6">
+                          <div className="bg-white p-4 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6">
+                            <div className="flex flex-wrap gap-3 justify-between items-center border-b border-slate-100 pb-4">
+                              <div className="flex flex-wrap items-center gap-3 md:gap-6 min-w-0">
                                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Workflow Mode</h4>
-                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                <div className="flex flex-wrap bg-slate-100 p-1 rounded-xl">
                                   <button
                                     onClick={() => dataService.setProductionType(selectedOrder.id, selectedItem.id, 'TRADING').then(o => updateOrderInState(o))}
                                     className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${selectedItem.productionType === 'TRADING' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
@@ -1905,8 +1906,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                           </div>
                         )}
 
-                        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
-                          <div className="p-6 bg-slate-900 text-slate-400 text-[10px] font-black uppercase tracking-widest flex justify-between items-center">
+                        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto">
+                          <div className="p-6 bg-slate-900 text-slate-400 text-[10px] font-black uppercase tracking-widest flex flex-wrap gap-2 justify-between items-center">
                             <span>Bill of Materials (BoM) Study</span>
                             {selectedItem.isAccepted && <span className="text-emerald-400 flex items-center gap-2"><i className="fa-solid fa-lock"></i> Accepted Configuration</span>}
                           </div>

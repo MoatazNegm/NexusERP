@@ -4824,6 +4824,8 @@ const addToCollection = (col) => (req, res) => {
                 ))
             );
 
+            // R34 round 8 (validator 7, defect 5): no payment into a cancelled (REJECTED) PO, the same rule as record-payment.
+            if (targetOrder && targetOrder.status === 'REJECTED') return res.status(400).json({ error: `Refused: order ${targetOrder.internalOrderNumber} is cancelled (REJECTED); no payment can be booked on it - record a customer advance to the general wallet instead.` });
             if (targetOrder) {
                 // R34 round 3 (validator 2, item 2): the entry is now this order's payment; it carries the order ID so Cash / Bank
                 // counts it once (as the order payment), never again as a manual addition.
@@ -5028,6 +5030,19 @@ const updateInCollection = (col) => (req, res) => {
             }
         }
 
+        // R34 round 8 (validator 7, defect 6): linking an order to a blanket contract by PUT follows the POST rule (server.js POST
+        // /orders): the contract must exist, be a blanket order and not be closed. Only a NEW link is checked (an unchanged one is not).
+        if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(req.body.blanketContractId).trim() !== '' && String(req.body.blanketContractId).trim() !== String(oldItem.blanketContractId || '').trim()) {
+            const blanketRefU = String(req.body.blanketContractId).trim();
+            const blanketU = (db.orders || []).find(o => o.id !== oldItem.id && (o.id === blanketRefU || o.internalOrderNumber === blanketRefU))
+                || (db.orders || []).find(o => o.id !== oldItem.id && o.blanketOrder && o.status !== 'REJECTED' && o.customerReferenceNumber === blanketRefU);
+            if (!blanketU) return res.status(400).json({ error: `Blanket contract "${blanketRefU}" not found.` });
+            if (!blanketU.blanketOrder || blanketU.blanketContractId) return res.status(400).json({ error: `Blanket contract "${blanketRefU}" is not a blanket order.` });
+            if (blanketU.contractClosed) return res.status(400).json({ error: `Blanket contract "${blanketU.internalOrderNumber || blanketRefU}" is closed; no new call-off can be raised on it.` });
+            updated.blanketContractId = blanketRefU;
+            updated.isSettlingOrder = true;
+        }
+
         if (Array.isArray(req.body.items)) {
             updated.items = req.body.items.map((it, idx) => {
                 const oldIt = (oldItem.items || []).find(oi => oi.id === it.id) || (oldItem.items || [])[idx];
@@ -5062,6 +5077,16 @@ const updateInCollection = (col) => (req, res) => {
     // carries the new name to all of them (orders, contracts, ledger customerName and the 'Customer <name> / ...' sub-account
     // labels); its receivable, wallets and PO accounts stay with it. A rename onto another customer's name is refused.
     if (col === 'customers') delete updated.storedWalletBalance; // derived read-only figure (computeCustomerWallet), never stored
+    // R34 round 8 (validator 7, defect 3): a generic PUT never stores wallet figures. GET returns the COMPUTED wallet (buckets incl.
+    // the PO money, G1 deduction), so storing an echo would double the PO money in the buckets. The stored buckets and total change
+    // only through the money actions (advance, refund, wallet transfer, pay-from-wallet, PO surplus / cancel, opening balance).
+    if (col === 'customers') {
+        ['walletBalances', 'walletBalance', 'unlinkedCostsDeducted'].forEach(f => { if (oldItem[f] === undefined) delete updated[f]; else updated[f] = oldItem[f]; });
+        if (['walletBalances', 'walletBalance', 'unlinkedCostsDeducted', 'storedWalletBalance'].some(f => req.body[f] !== undefined)) {
+            if (!updated.logs) updated.logs = [];
+            updated.logs.push(createAuditLog('Profile update: wallet figures in the request were ignored (wallets change only through money actions)', undefined, user));
+        }
+    }
     if (col === 'customers' && typeof req.body.name === 'string') {
         const normName = (x) => String(x || '').trim().replace(/\s+/g, ' ').toLowerCase();
         const oldName = String(oldItem.name || '');
@@ -5445,7 +5470,20 @@ const CUSTOMER_MONEY_FIELDS = {
     customers: ['walletBalances', 'walletBalance'],
     orders: ['payments', 'surplusMovedToWallet', 'surplusMovedToWalletLE', 'paymentMovedToWallet', 'paymentMovedToWalletLE']
 };
-const isCustomerMoneyLedgerEntry = (e) => Boolean(e) && String(e.category || '') !== 'Supplier Refund' && ((String(e.type || '').toUpperCase() === 'ADDITION' && Boolean(e.orderId || e.poNumber)) || String(e.category || '') === 'Customer Payment' || String(e.category || '') === 'Customer Payment Reversal');
+// R34 round 8 (validator 7, defect 2): also a customer refund (REFUND naming a customer / PO, or category 'Customer Refunds': Cash /
+// Bank drops), a customer advance (category 'Customer Advance' or an adv_cust_* row: Cash / Bank counts it), and a TRANSFER naming an
+// order or a receipt (Cash / Bank reads a TRANSFER with orderId + receipt as the wallet part of a pay-from-wallet).
+const isCustomerMoneyLedgerEntry = (e) => {
+    if (!e) return false;
+    const cat = String(e.category || ''), typ = String(e.type || '').toUpperCase();
+    if (cat === 'Supplier Refund') return false;
+    if (typ === 'ADDITION' && Boolean(e.orderId || e.poNumber)) return true;
+    if (cat === 'Customer Payment' || cat === 'Customer Payment Reversal') return true;
+    if (cat === 'Customer Refunds' || (typ === 'REFUND' && Boolean(e.customerName || e.orderId || e.poNumber))) return true;
+    if (cat === 'Customer Advance' || String(e.id || '').startsWith('adv_cust_')) return true;
+    if (typ === 'TRANSFER' && Boolean(e.orderId || e.receiptNumber)) return true;
+    return false;
+};
 const sameMoneyValue = (a, b) => {
     const emptyish = (v) => v === undefined || v === null || v === 0 || (Array.isArray(v) && v.length === 0) || (typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(x => !Number(x)));
     if (emptyish(a) && emptyish(b)) return true;
@@ -5455,9 +5493,24 @@ const genericMoneyWriteGate = (req, col, oldItem, body) => {
     const b = body || {};
     let what = null;
     if (col === 'ledger') {
-        if (isCustomerMoneyLedgerEntry(b) || (oldItem && isCustomerMoneyLedgerEntry(oldItem))) what = 'a customer payment ledger entry';
+        if (isCustomerMoneyLedgerEntry(b) || (oldItem && isCustomerMoneyLedgerEntry(oldItem))) {
+            // R34 round 8 (defect 2): the message names the kind of customer money (payment / refund / advance / wallet transfer)
+            const kindOf = (e) => {
+                if (!e || !isCustomerMoneyLedgerEntry(e)) return null;
+                const cat = String(e.category || ''), typ = String(e.type || '').toUpperCase();
+                if (cat === 'Customer Payment' || cat === 'Customer Payment Reversal' || (typ === 'ADDITION' && (e.orderId || e.poNumber))) return 'payment';
+                if (cat === 'Customer Refunds' || typ === 'REFUND') return 'refund';
+                if (cat === 'Customer Advance' || String(e.id || '').startsWith('adv_cust_')) return 'advance';
+                return 'wallet transfer';
+            };
+            what = `a customer ${kindOf(oldItem) || kindOf(b)} ledger entry`;
+        }
     } else if (CUSTOMER_MONEY_FIELDS[col]) {
-        const changed = CUSTOMER_MONEY_FIELDS[col].filter(f => b[f] !== undefined && !sameMoneyValue(b[f], oldItem ? oldItem[f] : undefined));
+        // R34 round 8 (validator 7, defect 3): a customer record echoed back from GET carries the COMPUTED wallet (buckets incl. PO
+        // money); that echo is no change attempt (the fields are dropped on PUT anyway), only a value that differs from both the
+        // stored and the computed figure is.
+        const computed = (col === 'customers' && oldItem && req) ? (() => { try { const dbc = getDb(req); return computeCustomerWallet(oldItem, dbc.orders || [], dbc.supplierPayments || [], dbc); } catch (e) { return null; } })() : null;
+        const changed = CUSTOMER_MONEY_FIELDS[col].filter(f => b[f] !== undefined && !sameMoneyValue(b[f], oldItem ? oldItem[f] : undefined) && !(computed && sameMoneyValue(b[f], computed[f])));
         if (changed.length) what = col === 'customers' ? `changing the customer wallet (${changed.join(', ')})` : `changing the order payments (${changed.join(', ')})`;
     }
     return what ? customerMoneyGate(req, what) : null;
@@ -5482,6 +5535,10 @@ app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
             if (t === 'ORDER') {
                 const o = (db.orders || []).find(x => x.customerName === customer.name && (x.id === a.ref || x.internalOrderNumber === a.ref));
                 if (!o) throw new Error(`Order ${a.ref} not found for this customer`);
+                // R34 round 8 (validator 7, defect 5): a cancelled (REJECTED) PO is no wallet account any more: its paid money already
+                // moved to the customer general wallet, so nothing is transferred into it (the money would leave the customer wallets
+                // while Cash / Bank keeps it) or out of it.
+                if (o.status === 'REJECTED') throw new Error(`Refused: order ${o.internalOrderNumber} is cancelled (REJECTED); no wallet transfer ${a === from ? 'out of' : 'into'} it - its paid money is already in the customer general wallet.`);
                 return { t, order: o, ref: o.internalOrderNumber };
             }
             throw new Error(`Unknown account type ${a.type}`);
@@ -6068,13 +6125,15 @@ app.get('/api/v1/reports/orders', (req, res) => {
     // User ruling 2026-10-21: revenue shown by the app is always the NET total of line values; payments stay in wallet/cash/AR figures only.
     const isOutsourcingBlanket = (o) => isBlanketRoot(o) && (o.items || []).length > 0 && (o.items || []).every(it => it.productionType === 'OUTSOURCING');
     // Blanket revenue = NET total of the line values actually called off (call-off lines; the contract's own lines when nothing was called off yet).
-    const blanketNetRevenue = (root) => { const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber) && x.status !== OrderStatus.REJECTED); return r2c(co.length ? co.reduce((t, x) => t + (Number(x.totalPrice) || 0), 0) : (Number(root.totalPrice) || 0)); };
+    const blanketNetRevenue = (root) => { const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber) && x.status !== OrderStatus.REJECTED); return r2c(co.length ? co.reduce((t, x) => t + (Number(x.totalPrice) || 0), 0) : (root.contractClosed ? 0 : (Number(root.totalPrice) || 0))); };
+    // R34 round 8 (validator 7, defect 4): a CLOSED blanket contract with nothing called off has revenue (and cost) 0: its own lines
+    // are no sale once it is closed (shared/orderMoney.js ownLinesAreSales), the same as Finance > Ledger and Profitability.
     // R34 round 7 (validator 6, defect 4): the same blanket revenue in the CONTRACT currency for revenueByCurrency (USD blanket
     // 10 x 100 at rate 50 = USD 1,000, not the L.E. 50,000). A call-off in the contract currency adds its own order-currency
     // value; a call-off in another currency is converted from its L.E. value at the contract rate.
     const blanketNetRevenueOC = (root) => {
         const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber) && x.status !== OrderStatus.REJECTED);
-        if (!co.length) return r2c(Number(root.totalPriceOrderCurrency) || 0);
+        if (!co.length) return root.contractClosed ? 0 : r2c(Number(root.totalPriceOrderCurrency) || 0);
         const rootCur = root.currency || 'L.E.';
         const rootFx = (root.currency && root.currency !== 'L.E.' && Number(root.conversionRate) > 0) ? Number(root.conversionRate) : 1;
         return r2c(co.reduce((t, x) => t + ((x.currency || 'L.E.') === rootCur ? (Number(x.totalPriceOrderCurrency) || 0) : (Number(x.totalPrice) || 0) / rootFx), 0));
@@ -6088,7 +6147,7 @@ app.get('/api/v1/reports/orders', (req, res) => {
             // Blanket revenue = NET total of the call-off lines; blanket cost = NET component cost of the call-offs (the contract's own lines when nothing was called off).
             const rev = blanketNetRevenue(o);
             const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === o.internalOrderNumber || x.blanketContractId === o.id || x.blanketContractId === o.customerReferenceNumber) && x.status !== OrderStatus.REJECTED);
-            const cost = co.length ? co.reduce((t, x) => t + (Number(x.totalRealCost) || 0), 0) : (Number(o.totalRealCost) || 0);
+            const cost = co.length ? co.reduce((t, x) => t + (Number(x.totalRealCost) || 0), 0) : (o.contractClosed ? 0 : (Number(o.totalRealCost) || 0));
             o.totalPrice = r2c(rev); o.totalPriceOrderCurrency = blanketNetRevenueOC(o); o.totalRealCost = r2c(cost); o.reportBasis = 'LINES';
         } else if (o.blanketContractId) { o.reportBasis = 'BLANKET_CALL_OFF'; }
     });
@@ -8200,6 +8259,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             case 'cancel-payment':
                 if (!order.payments || !order.payments[payload.index]) throw new Error("Payment index not found");
+                // R34 round 8 (validator 7, defect 1): a wallet-transfer row (money moved between the customer's own accounts, no cash)
+                // is never voided: a void would drop the PO money without giving it back to the source wallet (transfer in) or bring
+                // back money already sitting in the general wallet (transfer out, -N row), so Cash / Bank would no longer equal the
+                // customer wallets. The correction is a wallet transfer back.
+                if (order.payments[payload.index].transfer) {
+                    const tp = order.payments[payload.index];
+                    throw new Error(`Refused: payment ${tp.receiptNumber || payload.index} is a wallet transfer (${Number(tp.amount) < 0 ? 'out of' : 'into'} PO ${order.internalOrderNumber}), not a cash payment; it cannot be voided - use a wallet transfer back instead.`);
+                }
                 const [removed] = order.payments.splice(payload.index, 1);
                 order.logs.push(createAuditLog(`Payment of ${removed.amount} VOIDED: ${payload.reason || 'Correction'}`, order.status, user));
                 // R30 (2026-10-22): voiding a payment also takes back the part of it that had been moved to the customer general wallet as surplus; a fully paid PO that is no longer fully paid leaves WAITING_GOVE.
@@ -8368,6 +8435,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
                 break;
             }            case 'record-payment':
+                // R34 round 8 (validator 7, defect 5): a cancelled (REJECTED) PO takes no new money: its paid money already moved to the
+                // customer general wallet, a new payment would sit on a dead PO (Cash / Bank up, customer wallets not). Pay an advance
+                // into the general wallet instead.
+                if (order.status === OrderStatus.REJECTED) throw new Error(`Refused: order ${order.internalOrderNumber} is cancelled (REJECTED); no payment can be recorded on it - record a customer advance to the general wallet instead.`);
                 if (!order.payments) order.payments = [];
                 const paymentIndex = order.payments.length + 1;
                 // Create unique receipt number: RCV-{OrderNumber}-{PaymentIndex}-{Timestamp}

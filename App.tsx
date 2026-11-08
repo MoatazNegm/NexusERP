@@ -872,16 +872,16 @@ const App: React.FC = () => {
                  | User: <strong>{currentUser.name} ({currentUser.username})</strong>
                </span>
              </div>
-             <div className="flex items-center gap-3 flex-wrap">
+             <div className="flex items-center gap-3 flex-wrap min-w-0 max-w-full">
                 {adminSandboxes.length > 0 && (
-                  <div className="flex items-center gap-2 bg-amber-950/80 px-3 py-1 rounded-xl border border-amber-500/50 shadow-md">
+                  <div className="flex flex-wrap items-center gap-2 bg-amber-950/80 px-3 py-1 rounded-xl border border-amber-500/50 shadow-md max-w-full min-w-0">
                     <i className="fa-solid fa-users-gear text-amber-400 text-xs"></i>
                     <span className="text-[11px] font-black uppercase text-amber-300 tracking-wider">Switch Sandbox:</span>
                     <select
                       value={currentUser.sandboxOwner || currentUser.username}
                       disabled={isSwitchingSandbox}
                       onChange={e => handleSwitchSandbox(e.target.value)}
-                      className="bg-slate-900 text-amber-200 border border-amber-500/50 rounded-lg px-2.5 py-1 text-xs font-bold outline-none cursor-pointer hover:bg-slate-800 focus:ring-2 focus:ring-amber-400 transition-all"
+                      className="bg-slate-900 text-amber-200 border border-amber-500/50 rounded-lg px-2.5 py-1 text-xs font-bold outline-none cursor-pointer hover:bg-slate-800 focus:ring-2 focus:ring-amber-400 transition-all max-w-[11rem] sm:max-w-full min-w-0 truncate"
                     >
                       {adminSandboxes.map(sb => (
                         <option key={sb.owner} value={sb.owner} className="bg-slate-900 text-white">
