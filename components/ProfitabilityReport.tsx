@@ -419,7 +419,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Revenue (Excl Tax) — {DEFAULT_CURRENCY}</p>
-              <div className="text-2xl font-black text-slate-800">{(analysisTotals.revenueLE || 0).toLocaleString()} <span className="text-[10px] opacity-30">{DEFAULT_CURRENCY}</span></div>
+              <div className="text-2xl font-black text-slate-800" data-testid="ca-total-revenue">{(analysisTotals.revenueLE || 0).toLocaleString()} <span className="text-[10px] opacity-30">{DEFAULT_CURRENCY}</span></div>
               {Object.entries(analysisTotals.revenueByCurrency || {})
                 .filter(([cur]) => cur !== DEFAULT_CURRENCY)
                 .map(([cur, val]) => (
@@ -490,7 +490,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                             <span className="px-1 rounded bg-slate-900 text-white">{m.currency}</span>
                           </div>
                         </td>
-                        <td className="px-8 py-5 text-right font-black text-slate-700 text-xs">{m.revenueExclTax.toLocaleString()} {DEFAULT_CURRENCY}{m.currency !== DEFAULT_CURRENCY && <div className="text-[9px] font-bold text-slate-400">{m.revenueOrderCurrency.toLocaleString()} {m.currency}</div>}</td>
+                        <td className="px-8 py-5 text-right font-black text-slate-700 text-xs" data-testid={`ca-rev-${o.id}`}>{m.revenueExclTax.toLocaleString()} {DEFAULT_CURRENCY}{m.currency !== DEFAULT_CURRENCY && <div className="text-[9px] font-bold text-slate-400">{m.revenueOrderCurrency.toLocaleString()} {m.currency}</div>}</td>
                         <td className="px-8 py-5 text-right font-bold text-slate-500 text-xs" data-testid={`ca-cost-${o.id}`}>{m.totalCostNet.toLocaleString()} {DEFAULT_CURRENCY}</td>
                         <td data-testid={`ca-profit-${o.id}`} className={`px-8 py-5 text-right font-black text-xs ${m.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{m.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {DEFAULT_CURRENCY}</td>
                         <td className="px-8 py-5 text-center"><div className="inline-flex px-3 py-1 rounded bg-slate-100 text-[10px] font-black text-slate-700">{(m.revenueExclTax > 0 ? (m.netProfit / m.revenueExclTax) * 100 : 0).toFixed(1)}%</div></td>

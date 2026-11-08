@@ -1372,7 +1372,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-violet-300">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-violet-300" data-testid="ledger-realized-profit">
                   +{companyFinancials.totalRealizedProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
