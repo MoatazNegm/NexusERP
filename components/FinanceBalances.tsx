@@ -472,7 +472,7 @@ const StockValueBlock: React.FC<{ stock: Position['stock'] }> = ({ stock }) => {
       <div className="p-6 md:p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2"><i className="fa-solid fa-boxes-stacked text-slate-400"></i>{isAr ? 'قيمة المخزون الحالية' : 'Current Stock Value'}</h3>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{isAr ? 'بنفس قواعد تقييم شاشة المخزون' : 'Valued with the Inventory module rules'}</p>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5"><span data-testid="fp-stock-basis">{isAr ? 'مقيم بالتكلفة: المكونات بآخر تكلفة، المنتجات بالتكلفة الفعلية أو تكلفة المكونات (سعر البيع فقط عند عدم وجود تكلفة)' : 'Valued at cost: components at last cost, products at real or component cost (selling price only when no cost is known)'}</span></p>
         </div>
         <div className="text-end">
           <div className="text-2xl font-black text-slate-800" data-testid="fp-stock-total">{fmt(stock.totalOnHand)} {cur}</div>

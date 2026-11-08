@@ -43,6 +43,7 @@ import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank } from './shared/cashBank.js';
+import { computeReceivables, computePayables } from './shared/arap.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -4441,6 +4442,8 @@ const orderCommitmentGross = (order) => {
 const unlinkedCompanyCosts = (db) => {
     if (!db) return 0;
     let c = 0;
+    // R34 round 3 (item 4): a supplier refund lowers the advance it returns (refundOf), so its own record keeps only the part above
+    // all advances; a refund of opening money is opening money (like the isOpening advance) and never changes a customer wallet.
     (db.supplierPayments || []).forEach(sp => { if (!sp.orderId && !sp.poNumber && !sp.isOpening) c += Number(sp.unallocatedAdvance) || 0; });
     (db.ledger || []).forEach(l => { if (l && l.category === 'Tax Settlement' && l.type === 'COST') c += Number(l.amount) || 0; });
     return r2w(c);
@@ -4463,8 +4466,12 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db 
         if (uc) projectBalances['(General Advance / Future Orders)'] = r2w((projectBalances['(General Advance / Future Orders)'] || 0) - uc);
     }
     const totalBalance = Object.values(projectBalances).reduce((sum, val) => sum + (Number(val) || 0), 0);
+    // R34 round 3 (item 6): the stored general / project advance buckets (money held outside any PO) for the Ledger tab
+    // balance sheet; the PO part of the wallet is already in the receivable and the open-order lines there.
+    const storedWalletBalance = r2w(Object.values(customer.walletBalances || {}).reduce((sum, val) => sum + (Number(val) || 0), 0));
     return {
         ...customer,
+        storedWalletBalance,
         walletBalance: r2w(totalBalance),
         walletBalances: projectBalances
     };
@@ -4495,48 +4502,7 @@ const computeOrderWallet = (order, orders = [], supplierPayments = [], ledger = 
 
 // --- ACCOUNTS RECEIVABLE / PAYABLE (R30) ---
 // AR: what customers still owe, per PO / customer / project. Call-off payments count against their blanket contract.
-const computeReceivables = (orders = [], ledger = null, customers = null) => {
-    const rows = [];
-    orders.forEach(o => {
-        if (o.status === OrderStatus.REJECTED) return;
-        // A blanket order commits nothing by itself: the customer owes what is CALLED OFF (each call-off carries its own amount).
-        // The 1% withholding the customer keeps (base NET) is cleared in the Tax tab: it is not a receivable (ruling 2026-10-21 22:08).
-        const committed = o.blanketOrder ? 0 : r2w(orderCommitmentGross(o) - (o.appliesWithholdingTax ? orderWhtAmount(o) : 0));
-        const paid = orderPaidIn(o);
-        rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectName(o, orders) || '(No Project)', status: o.status, blanketOrder: Boolean(o.blanketOrder), committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) });
-    });
-    const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, receivable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.receivable = r2w(Math.max(0, e.committed - e.paid)); }); return Array.from(m.values()); };
-    const byCustomer = group(r => r.customerName, r => ({ customerName: r.customerName }));
-    // R34: opening AR balances (per customer) are added on top of the order-based receivable. M3: the opening is keyed by the
-    // customer ID (accountKey AR:<id>); the current customer name is looked up, so a renamed customer keeps its opening.
-    // Openings are customer-level (no project, no PO): they are in byCustomer and the total, not in byOrder / byProject.
-    if (ledger) {
-        const ob = new Map();
-        ledger.forEach(l => {
-            if (!(l && l.type === 'OPENING' && String(l.accountKey || '').startsWith('AR:'))) return;
-            const cid = String(l.accountKey).slice(3);
-            const cust = Array.isArray(customers) ? customers.find(c => c && c.id === cid) : null;
-            const name = (cust && cust.name) || l.customerName;
-            if (!name) return;
-            const e0 = ob.get(cid) || { name, customerId: cid, amount: 0 };
-            e0.name = name; e0.amount = r2w(e0.amount + (Number(l.amount) || 0));
-            ob.set(cid, e0);
-        });
-        ob.forEach(({ name, customerId, amount }) => {
-            let e = byCustomer.find(c => c.customerName === name);
-            if (!e) { e = { customerName: name, committed: 0, paid: 0, receivable: 0 }; byCustomer.push(e); }
-            e.customerId = customerId;
-            e.openingBalance = r2w((e.openingBalance || 0) + amount);
-            e.receivable = r2w(e.receivable + amount);
-        });
-    }
-    return {
-        total: r2w(byCustomer.reduce((s, r) => s + r.receivable, 0)),
-        byOrder: rows,
-        byCustomer,
-        byProject: group(r => r.customerName + '|' + r.projectName, r => ({ customerName: r.customerName, projectName: r.projectName }))
-    };
-};
+// computeReceivables (AR) lives in shared/arap.js (R34 round 3: one implementation for the server and the Finance > Ledger tab).
 // --- MISSING WITHHOLDING CERTIFICATES (R30) ---
 // The customer keeps 1% withholding tax. The certificate must be collected by 30 November of the order year;
 // after that deadline an SLA alert is sent (or queued in-app when no recipients/SMTP exist) for each missing item.
@@ -4553,50 +4519,7 @@ const computeMissingWht = (orders = [], today = new Date().toISOString().slice(0
     return { total: r2w(items.reduce((s, r) => s + r.amount, 0)), overdueCount: items.filter(i => i.overdue).length, items };
 };
 // AP: what the company still owes suppliers (gross), per supplier / PO / project.
-const computePayables = (db) => {
-    const orders = db.orders || [], sps = db.supplierPayments || [];
-    const allocPerComp = {}, allocPerOrder = {};
-    sps.forEach(sp => {
-        (sp.allocations || []).forEach(a => { allocPerComp[a.componentId] = (allocPerComp[a.componentId] || 0) + (Number(a.amount) || 0); });
-    });
-    const supName = id => (db.suppliers || []).find(s => s.id === id)?.name || 'Unknown';
-    const rows = [];
-    orders.forEach(o => {
-        if (o.status === OrderStatus.REJECTED) return;
-        const byOrderSupplier = new Map();
-        (o.items || []).forEach(it => (it.components || []).forEach(comp => {
-            if (!(comp.source === 'PROCUREMENT' || comp.source === 'CONSUMED') || ['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)) return;
-            const mul = 1 + ((comp.taxPercent !== undefined && comp.taxPercent !== null ? Number(comp.taxPercent) : 14) / 100);
-            const committed = ((comp.quantity || 0) + (comp.allocatedQty || 0)) * (comp.unitCost || 0) * mul;
-            const k = comp.supplierId || comp.supplierName || '';
-            if (!byOrderSupplier.has(k)) byOrderSupplier.set(k, { supplierId: comp.supplierId, supplierName: comp.supplierId ? supName(comp.supplierId) : (comp.supplierName || 'Unknown'), committed: 0, paid: 0 });
-            const e = byOrderSupplier.get(k); e.committed += committed; e.paid += Math.min(committed, allocPerComp[comp.id] || 0);
-        }));
-        let loose = allocPerOrder[o.id] || 0;
-        byOrderSupplier.forEach(e => { const take = Math.min(loose, Math.max(0, e.committed - e.paid)); e.paid += take; loose -= take; });
-        byOrderSupplier.forEach(e => rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, projectName: orderProjectName(o, orders) || '(No Project)', customerName: o.customerName, supplierId: e.supplierId, supplierName: e.supplierName, committed: r2w(e.committed), paid: r2w(e.paid), payable: r2w(Math.max(0, e.committed - e.paid)) }));
-    });
-    const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, payable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.payable = r2w(e.payable + r.payable); }); return Array.from(m.values()); };
-    // R34: opening AP balances (per supplier) are added on top of the PO-based payable.
-    const bySupplier = group(r => r.supplierId || r.supplierName, r => ({ supplierId: r.supplierId, supplierName: r.supplierName }));
-    let openingTotal = 0;
-    (db.ledger || []).forEach(l => {
-        if (!(l && l.type === 'OPENING' && String(l.accountKey || '').startsWith('AP:'))) return;
-        const sid = String(l.accountKey).slice(3), amt = Number(l.amount) || 0;
-        let e = bySupplier.find(x => x.supplierId === sid);
-        if (!e) { e = { supplierId: sid, supplierName: supName(sid), committed: 0, paid: 0, payable: 0 }; bySupplier.push(e); }
-        e.openingBalance = r2w((e.openingBalance || 0) + amt);
-        e.payable = r2w(e.payable + amt);
-        openingTotal += amt;
-    });
-    return {
-        total: r2w(rows.reduce((s, r) => s + r.payable, 0) + openingTotal),
-        byOrderSupplier: rows,
-        byOrder: group(r => r.orderId, r => ({ orderId: r.orderId, internalOrderNumber: r.internalOrderNumber, projectName: r.projectName })),
-        bySupplier,
-        byProject: group(r => r.projectName, r => ({ projectName: r.projectName }))
-    };
-};
+// computePayables (AP) lives in shared/arap.js (R34 round 3: one implementation for the server and the Finance > Ledger tab).
 
 // --- TECHNICAL REVIEW TOUCH RULE ---
 // A PO is LOGGED as soon as it is entered; the moment a technical-review user (a member of a
@@ -4882,6 +4805,10 @@ const addToCollection = (col) => (req, res) => {
             );
 
             if (targetOrder) {
+                // R34 round 3 (validator 2, item 2): the entry is now this order's payment; it carries the order ID so Cash / Bank
+                // counts it once (as the order payment), never again as a manual addition.
+                newItem.orderId = targetOrder.id;
+                if (!newItem.poNumber) newItem.poNumber = targetOrder.internalOrderNumber;
                 if (!targetOrder.payments) targetOrder.payments = [];
                 const paymentIndex = targetOrder.payments.length + 1;
                 const timestamp = Date.now().toString().slice(-4);
@@ -5092,6 +5019,36 @@ const updateInCollection = (col) => (req, res) => {
         reconcileInventory(oldItem, updated, db);
         if (!req.body.status) {
             updated.logs.push(createAuditLog('Order modified', updated.status, user));
+        }
+    }
+
+    // R34 round 3 (validator 2, item 7): a customer is linked to its orders, contracts and ledger entries by NAME, so a rename
+    // carries the new name to all of them (orders, contracts, ledger customerName and the 'Customer <name> / ...' sub-account
+    // labels); its receivable, wallets and PO accounts stay with it. A rename onto another customer's name is refused.
+    if (col === 'customers') delete updated.storedWalletBalance; // derived read-only figure (computeCustomerWallet), never stored
+    if (col === 'customers' && typeof req.body.name === 'string') {
+        const normName = (x) => String(x || '').trim().replace(/\s+/g, ' ').toLowerCase();
+        const oldName = String(oldItem.name || '');
+        const newName = String(req.body.name).trim().replace(/\s+/g, ' ');
+        if (!newName) return res.status(400).json({ error: 'Refused: name is required' });
+        if ((db.customers || []).some(x => x.id !== oldItem.id && normName(x.name) === normName(newName))) {
+            return res.status(400).json({ error: `Refused: duplicate name already exists ("${newName}")` });
+        }
+        updated.name = newName;
+        if (oldName && newName !== oldName) {
+            let nOrders = 0, nContracts = 0, nLedger = 0;
+            (db.orders || []).forEach(o => { if (o && o.customerName === oldName) { o.customerName = newName; nOrders++; } });
+            (db.contracts || []).forEach(k => { if (k && k.customerName === oldName) { k.customerName = newName; nContracts++; } });
+            const pre = `Customer ${oldName} / `;
+            (db.ledger || []).forEach(e => {
+                if (!e) return;
+                let hit = false;
+                if (e.customerName === oldName) { e.customerName = newName; hit = true; }
+                ['fromAccount', 'toAccount', 'account'].forEach(f => { if (typeof e[f] === 'string' && e[f].startsWith(pre)) { e[f] = `Customer ${newName} / ` + e[f].slice(pre.length); hit = true; } });
+                if (hit) nLedger++;
+            });
+            if (!updated.logs) updated.logs = [];
+            updated.logs.push(createAuditLog(`Customer renamed from "${oldName}" to "${newName}" (${nOrders} orders, ${nContracts} contracts, ${nLedger} ledger entries follow the new name)`, undefined, user));
         }
     }
 
@@ -5486,6 +5443,8 @@ app.post('/api/v1/customers/:id/refund', (req, res) => {
         if (bal + 0.005 < amt) return res.status(400).json({ error: `Insufficient general wallet credit: ${bal.toFixed(2)}, refund ${amt.toFixed(2)}` });
         const ord = orderId ? (db.orders || []).find(o => o.id === orderId || o.internalOrderNumber === orderId) : null;
         customer.walletBalances[SELF_WALLET_KEY] = Math.round((bal - amt) * 100) / 100;
+        // R34 round 3 (validator 2, item 3): the stored total follows the bucket, so a later pay-from-wallet sees the refund.
+        customer.walletBalance = Math.round(((Number(customer.walletBalance) || 0) - amt) * 100) / 100;
         ledgerPush(db, { type: 'REFUND', amount: amt, description: `Customer Refund: ${customer.name}${ord ? ` - PO ${ord.internalOrderNumber}` : ''} - ${memo || 'Refund of general wallet credit'}`, category: 'Customer Refunds', fromAccount: acctLabel(customer.name, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: customer.name, orderId: ord ? ord.id : undefined, poNumber: ord ? ord.internalOrderNumber : undefined }, user);
         writeDb(db, getDbPath(req));
         return res.json(computeCustomerWallet(customer, db.orders || [], db.supplierPayments || [], db));
@@ -5504,8 +5463,25 @@ app.post('/api/v1/supplierRefunds', (req, res) => {
         if (!supplierId || !amt || isNaN(amt) || amt <= 0) return res.status(400).json({ error: "supplierId and a positive amount are required" });
         const supplier = (db.suppliers || []).find(s => s.id === supplierId);
         if (!supplier) return res.status(404).json({ error: "Supplier not found" });
-        const rec = { id: `sp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, supplierId, supplierName: supplier.name, amount: -amt, isRefund: true, date: date ? new Date(date).toISOString() : new Date().toISOString(), memo: memo || 'Supplier refund received', user, orderId: orderId || undefined, poNumber: poNumber || undefined, unallocatedAdvance: -amt, allocations: [] };
         if (!db.supplierPayments) db.supplierPayments = [];
+        // R34 round 3 (validator 2, item 4): the refund returns money of the supplier's unallocated advances, so it lowers those
+        // advances (the one named by supplierPaymentId first, else the oldest first); a returned advance can no longer cover a later
+        // PO (autoCover). A refund of opening money (isOpening advance) is opening money too: it never touches a customer wallet.
+        // Only a refund above all unallocated advances stays as a negative unallocated amount on the refund record (as before).
+        const { supplierPaymentId } = req.body || {};
+        const advs = db.supplierPayments.filter(p => p && p.supplierId === supplierId && !p.isRefund && (Number(p.unallocatedAdvance) || 0) > 0.004)
+            .sort((a, b) => (a.id === supplierPaymentId ? -1 : b.id === supplierPaymentId ? 1 : new Date(a.date).getTime() - new Date(b.date).getTime()));
+        let restR = amt; const refundOf = [];
+        for (const p of advs) {
+            if (restR <= 0.004) break;
+            const take = Math.round(Math.min(restR, Number(p.unallocatedAdvance) || 0) * 100) / 100;
+            p.unallocatedAdvance = Math.round(((Number(p.unallocatedAdvance) || 0) - take) * 100) / 100;
+            p.refunded = Math.round(((Number(p.refunded) || 0) + take) * 100) / 100;
+            refundOf.push({ supplierPaymentId: p.id, amount: take, isOpening: Boolean(p.isOpening) });
+            restR = Math.round((restR - take) * 100) / 100;
+        }
+        const openingPart = Math.round(refundOf.filter(r => r.isOpening).reduce((t, r) => t + r.amount, 0) * 100) / 100;
+        const rec = { id: `sp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`, supplierId, supplierName: supplier.name, amount: -amt, isRefund: true, date: date ? new Date(date).toISOString() : new Date().toISOString(), memo: memo || 'Supplier refund received', user, orderId: orderId || undefined, poNumber: poNumber || undefined, unallocatedAdvance: restR > 0.004 ? -restR : 0, allocations: [], refundOf, openingRefund: openingPart || undefined };
         db.supplierPayments.push(rec);
         ledgerPush(db, { type: 'ADDITION', amount: amt, description: `Supplier Refund received: ${supplier.name} - ${memo || 'Refund'}`, category: 'Supplier Refund', fromAccount: `Supplier ${supplier.name} / Advance`, toAccount: 'Bank Account', orderId: orderId || undefined, poNumber: poNumber || undefined }, user);
         writeDb(db, getDbPath(req));
@@ -8033,6 +8009,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const take = Math.min(Number(removed.amount), movedToWallet);
                     custW.walletBalances = custW.walletBalances || {};
                     custW.walletBalances[SELF_WALLET_KEY] = Math.round(((custW.walletBalances[SELF_WALLET_KEY] || 0) - take) * 100) / 100;
+                    custW.walletBalance = Math.round(((Number(custW.walletBalance) || 0) - take) * 100) / 100; // R34 round 3 (item 3): stored total follows the bucket
                     order.paymentMovedToWallet = Math.round((movedToWallet - take) * 100) / 100;
                     ledgerPush(db, { type: 'REFUND', amount: take, description: `Payment VOIDED (cancelled PO ${order.internalOrderNumber}): refunded from customer general wallet - ${payload.reason || 'Correction'}`, category: 'Customer Refunds', voidOfPayment: true, fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
                 } else if (!removed.transfer && Number(removed.amount) > 0) {
@@ -8169,20 +8146,31 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 let walletUsedForLedger = 0;
                 if (payload.fromWallet && payload.amount > 0) {
                     const customer = (db.customers || []).find(c => c.name === order.customerName);
-                    if (customer && (customer.walletBalance || 0) > 0) {
-                        const deductAmt = Math.min(payload.amount, customer.walletBalance);
+                    // R34 round 3 (validator 2, item 3): the money available is what the stored wallet buckets hold (a refund or a
+                    // transfer lowers the bucket), not a stale total; the deduction is taken from the buckets in order until covered,
+                    // and the stored total follows the buckets.
+                    const bucketsW = (customer && customer.walletBalances) || {};
+                    const hasBucketsW = Object.keys(bucketsW).length > 0;
+                    const availW = customer ? (hasBucketsW ? Math.round(Object.values(bucketsW).reduce((t, v) => t + Math.max(0, Number(v) || 0), 0) * 100) / 100 : (Number(customer.walletBalance) || 0)) : 0;
+                    if (customer && availW > 0) {
+                        // the payment is typed in the ORDER currency, the wallet holds L.E. (item 1/3: a USD PO at rate 50 takes 50 L.E. per USD)
+                        const fxW = orderFx(order);
+                        const deductAmt = Math.round(Math.min(Number(payload.amount) || 0, availW / fxW) * 100) / 100;
+                        const deductLE = Math.round(Math.min(availW, deductAmt * fxW) * 100) / 100;
                         walletUsedForLedger = deductAmt;
-                        customer.walletBalance = Math.max(0, (customer.walletBalance || 0) - deductAmt);
-                        if (customer.walletBalances) {
+                        if (hasBucketsW) {
+                            let restW = deductLE;
                             for (const key of Object.keys(customer.walletBalances)) {
+                                if (restW <= 0.004) break;
                                 if (customer.walletBalances[key] > 0) {
-                                    const kDeduct = Math.min(deductAmt, customer.walletBalances[key]);
-                                    customer.walletBalances[key] -= kDeduct;
-                                    break;
+                                    const kDeduct = Math.min(restW, customer.walletBalances[key]);
+                                    customer.walletBalances[key] = Math.round((customer.walletBalances[key] - kDeduct) * 100) / 100;
+                                    restW = Math.round((restW - kDeduct) * 100) / 100;
                                 }
                             }
                         }
-                        order.logs.push(createAuditLog(`Applied ${deductAmt.toLocaleString()} L.E. from Customer Wallet balance. Remaining wallet: ${customer.walletBalance.toLocaleString()} L.E.`, order.status, user));
+                        customer.walletBalance = Math.max(0, Math.round(((customer.walletBalance || 0) - deductLE) * 100) / 100);
+                        order.logs.push(createAuditLog(`Applied ${deductLE.toLocaleString()} L.E. from Customer Wallet balance. Remaining wallet: ${customer.walletBalance.toLocaleString()} L.E.`, order.status, user));
                     }
                 }
 
@@ -10767,16 +10755,22 @@ const allocateToEntries = (db, supplierId, entries, amount) => {
 
 // Move the excess of named supplier payments (autoCover) onto the issued PO components of that supplier that still need cover (oldest payment, oldest component first)
 const autoCoverFromExcess = (db, supplierId, poNumber) => {
+    // R34 round 3 (item 4): never cover more than the supplier's NET unallocated money (advances minus refunds still held as a
+    // negative unallocated amount, e.g. refunds recorded before round 3), so a refunded advance is not used again.
+    let netFree = Math.round((db.supplierPayments || []).filter(sp => sp && sp.supplierId === supplierId).reduce((t, sp) => t + (Number(sp.unallocatedAdvance) || 0), 0) * 100) / 100;
     (db.supplierPayments || []).filter(sp => sp.supplierId === supplierId && sp.autoCover && !sp.isRefund && (Number(sp.unallocatedAdvance) || 0) > 0.004)
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         .forEach(sp => {
+            if (netFree <= 0.004) return;
             const entries = poComponentEntries(db, sp.supplierId, poNumber ? { poNumber } : { all: true });
             if (!entries.length) return;
-            const free = Number(sp.unallocatedAdvance) || 0;
+            const free = Math.min(Number(sp.unallocatedAdvance) || 0, netFree);
             const r = allocateToEntries(db, sp.supplierId, entries, free);
             if (!r.allocations.length) return;
+            const used = Math.round(r.allocations.reduce((t, a) => t + (Number(a.amount) || 0), 0) * 100) / 100;
             sp.allocations = (sp.allocations || []).concat(r.allocations);
-            sp.unallocatedAdvance = Math.round(r.rest * 100) / 100;
+            sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) - used) * 100) / 100;
+            netFree = Math.round((netFree - used) * 100) / 100;
         });
 };
 

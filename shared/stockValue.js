@@ -1,5 +1,5 @@
 // Stock value for Finance (R34, user order 2026-11-08). Used by the server endpoint /api/v1/finance/position
-// (Finance "Balances & stock value" tab and the Dashboard). The rules mirror the Inventory module
+// (Finance "Balances & stock value" tab and the Dashboard). Stock is valued AT COST (R34 round 3, validator item 8); the categories mirror the Inventory module
 // (components/InventoryModule.tsx): component value = quantityInStock x lastCost, product value = quantity x
 // product unit value AT COST (real cost per unit, else component cost per unit, else price per unit). Trade items are kept
 // apart from component stock, as in Inventory. The product hub counts what is CURRENTLY in the hub (received - dispatched),
