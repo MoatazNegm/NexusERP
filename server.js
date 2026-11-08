@@ -8348,7 +8348,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 {
                     const rootC = (order.blanketOrder && !order.blanketContractId) ? order : (order.blanketContractId ? blanketRootOf(order, db.orders || []) : null);
                     const prevC = rootC ? ((rootC.surplusMovedToWalletLE !== undefined && rootC.surplusMovedToWalletLE !== null) ? Number(rootC.surplusMovedToWalletLE) || 0 : (Number(rootC.surplusMovedToWallet) || 0) * orderFx(rootC)) : 0;
-                    if (rootC && rootC.contractClosed && prevC > 0.004) {
+                    if (rootC && rootC.contractClosed && prevC > 0.004 && order.status !== OrderStatus.REJECTED) {
                         const refsC = [rootC.id, rootC.internalOrderNumber].filter(Boolean);
                         const callsC = (db.orders || []).filter(o => o.blanketContractId && refsC.includes(o.blanketContractId) && o.status !== OrderStatus.REJECTED);
                         if (order !== rootC && !callsC.includes(order)) callsC.push(order);
