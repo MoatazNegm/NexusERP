@@ -365,7 +365,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                           <td className="px-4 py-4 text-right font-bold text-slate-500 text-xs" data-testid={`prof-cost-${d.id}`}>{d.cost.toLocaleString()} {DEFAULT_CURRENCY}</td>
                           <td className={`px-4 py-4 text-right font-black text-xs ${d.marginAmt < 0 ? 'text-rose-600' : 'text-emerald-700'}`} data-testid={`prof-margin-${d.id}`}>{d.marginAmt.toLocaleString()} {DEFAULT_CURRENCY}</td>
                           <td className="px-4 py-4 text-center font-bold text-slate-600 text-xs">{d.marginPctOnSales.toFixed(1)}%</td>
-                          <td className="px-4 py-4 text-center"><div className={`inline-flex px-2 py-0.5 rounded text-[10px] font-black ${d.isBelowThreshold ? 'bg-rose-600 text-white' : 'bg-emerald-100 text-emerald-800'}`}>{d.markupPct.toFixed(1)}%</div></td>
+                          <td className="px-4 py-4 text-center"><div data-testid={`prof-markup-${d.id}`} data-breach={d.isBelowThreshold ? 'yes' : 'no'} className={`inline-flex px-2 py-0.5 rounded text-[10px] font-black ${d.isBelowThreshold ? 'bg-rose-600 text-white' : 'bg-emerald-100 text-emerald-800'}`}>{d.markupPct.toFixed(1)}%</div></td>
                           <td className="px-4 py-4 text-right no-print">
                             <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border bg-${getDynamicOrderStatusStyle(d._originalOrder, config).color}-50 text-${getDynamicOrderStatusStyle(d._originalOrder, config).color}-600 border-${getDynamicOrderStatusStyle(d._originalOrder, config).color}-100`}>
                               {getDynamicOrderStatusStyle(d._originalOrder, config).label}

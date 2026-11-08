@@ -6907,7 +6907,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           <td key={col} className="px-3 py-4">
                             <div className="flex flex-col gap-1">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <div className={`px-2 py-0.5 rounded-lg border text-[10px] font-black shadow-xs ${isBreach ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-emerald-50 border-emerald-200 text-emerald-600'}`}>
+                                <div data-testid={`bill-markup-${o.id}`} data-breach={isBreach ? 'yes' : 'no'} className={`px-2 py-0.5 rounded-lg border text-[10px] font-black shadow-xs ${isBreach ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-emerald-50 border-emerald-200 text-emerald-600'}`}>
                                   {pl.markupPct.toFixed(1)}% {language === 'ar' ? 'هامش إضافة' : 'Markup'}
                                 </div>
                                 <span className="text-[9px] font-bold text-slate-400">({pl.marginPct.toFixed(1)}% {language === 'ar' ? 'ربحية' : 'Mgn'})</span>
