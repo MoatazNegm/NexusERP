@@ -729,7 +729,7 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
               </div>
 
               {/* Settlement Status Filter */}
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200">
+              <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200">
                 <button
                   type="button"
                   onClick={() => setSettlementFilter('all')}

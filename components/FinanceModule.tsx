@@ -1421,8 +1421,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         </button>
       </div>
 
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
-        <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden"><div data-testid="ledger-gl-scroll" className="overflow-x-auto">
+        <table data-testid="ledger-gl-table" className="w-full min-w-[900px] text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
           <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
             <tr>
               <th className="px-8 py-5">{t('finance.ledger.date')}</th>
@@ -1505,7 +1505,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
               </tr>
             )}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       {showAddModal && (
@@ -4016,7 +4016,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       {/* Blanket Contracts Tab — SAP/Oracle-style framework agreements */}
       {activeTab === 'contracts' && (
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh]">
           <div className="px-8 pt-8 pb-4 flex items-center justify-between flex-wrap gap-4 border-b border-slate-100">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center">
@@ -4062,7 +4062,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       {/* Blanket History Tab — blanket orders grouped by month, with each order's latest cost sheet */}
       {activeTab === 'blanket_history' && (
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh]">
           <div className="px-8 pt-8 pb-4 flex items-center gap-3 border-b border-slate-100">
             <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
               <i className="fa-solid fa-calendar-days text-xl"></i>
@@ -4161,7 +4161,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       {/* Customer Wallets Tab — wallet balances moved from CRM to Finance Operations */}
       {activeTab === 'customer_wallets' && (
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh] space-y-6">
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh] space-y-6">
           <div className="px-8 pt-8 pb-4 flex items-center justify-between gap-4 flex-wrap border-b border-slate-100">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl shadow-inner">
@@ -4178,7 +4178,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
 
             {/* Sub-view toggles */}
-            <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+            <div className="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
               <button
                 type="button"
                 onClick={() => setCustomerViewMode('all_accounts')}
@@ -4554,7 +4554,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               .map(({ customer, projects, customerTotal }) => (
                 <div key={customer.id} className={`border rounded-3xl overflow-hidden ${customerTotal < 0 ? 'border-rose-200' : 'border-slate-200'}`}>
                   {/* Customer header */}
-                  <div className={`flex items-center justify-between gap-4 px-6 py-4 ${customerTotal < 0 ? 'bg-rose-900' : 'bg-slate-900'}`}>
+                  <div className={`flex flex-wrap items-center justify-between gap-4 px-6 py-4 ${customerTotal < 0 ? 'bg-rose-900' : 'bg-slate-900'}`}>
                     <div className="flex items-center gap-3 min-w-0">
                       <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${customerTotal < 0 ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
                         <i className="fa-solid fa-building"></i>
@@ -4580,7 +4580,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       {language === 'ar' ? 'لا توجد تخصيصات لمحافظ المشاريع' : 'No project wallet allocations'}
                     </div>
                   ) : (
-                    <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+                    <div className="overflow-x-auto"><table className="w-full min-w-[480px] text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
                       <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest">
                         <tr>
                           <th className="px-6 py-3">{language === 'ar' ? 'المشروع' : 'Project'}</th>
@@ -4623,7 +4623,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </table></div>
                   )}
                 </div>
               ))}
@@ -4643,7 +4643,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       {/* Project Wallets Tab — wallet balances grouped by project */}
       {activeTab === 'project_wallets' && (
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh]">
           <div className="px-8 pt-8 pb-4 flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-2xl bg-violet-100 text-violet-700 flex items-center justify-center">
@@ -4660,7 +4660,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
 
             {/* Quick Toggle between Customer Wallets and Project Wallets */}
-            <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+            <div className="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
               <button
                 onClick={() => setActiveTab('customer_wallets')}
                 className="px-4 py-2 rounded-xl text-xs font-black uppercase transition-all text-slate-500 hover:text-slate-800 flex items-center gap-1.5"
@@ -4684,7 +4684,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               return (
                 <div key={item.projectName} className={`border rounded-3xl overflow-hidden ${isDebt ? 'border-rose-200' : 'border-slate-200'}`}>
                   {/* Project Header */}
-                  <div className={`flex items-center justify-between gap-4 px-6 py-4 ${isDebt ? 'bg-rose-900' : 'bg-slate-900'}`}>
+                  <div className={`flex flex-wrap items-center justify-between gap-4 px-6 py-4 ${isDebt ? 'bg-rose-900' : 'bg-slate-900'}`}>
                     <div className="flex items-center gap-3 min-w-0">
                       <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isDebt ? 'bg-rose-500/20 text-rose-300' : 'bg-violet-500/20 text-violet-300'}`}>
                         <i className="fa-solid fa-diagram-project"></i>
@@ -4830,9 +4830,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             {whtMissing && whtMissing.items && whtMissing.items.length > 0 && (
               <div data-testid="wht-missing" className="mt-6 bg-white border border-amber-300 rounded-2xl p-4">
                 <div className="text-xs font-black uppercase tracking-widest text-amber-700 mb-2">{language === 'ar' ? 'شهادات الخصم من المنبع المفقودة (يجب تحصيلها قبل 30 نوفمبر)' : 'Missing withholding certificates (collect by 30 November)'}: {Number(whtMissing.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                <table className="w-full text-xs"><thead><tr className="text-left text-slate-500"><th>Customer</th><th>PO</th><th>Date</th><th>Deadline</th><th className="text-right">Amount</th></tr></thead><tbody>
+                <div className="overflow-x-auto"><table className="w-full min-w-[480px] text-xs"><thead><tr className="text-left text-slate-500"><th>Customer</th><th>PO</th><th>Date</th><th>Deadline</th><th className="text-right">Amount</th></tr></thead><tbody>
                   {whtMissing.items.map((r: any) => (<tr key={r.orderId} className={r.overdue ? 'text-red-600 font-bold' : ''}><td className="py-1">{r.customerName}</td><td>{r.internalOrderNumber}</td><td>{r.date}</td><td>{r.deadline}{r.overdue ? ' (OVERDUE)' : ''}</td><td className="text-right">{Number(r.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
-                </tbody></table>
+                </tbody></table></div>
               </div>
             )}
 
@@ -4848,7 +4848,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
 
       {activeTab === 'supplier_reporting' ? (
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh] p-8 space-y-8">
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh] p-8 space-y-8">
           {/* Header & View Mode Switcher */}
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-slate-100 pb-6">
             <div>
@@ -4864,7 +4864,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
 
             {/* View Mode Switcher Pills */}
-            <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shadow-inner">
+            <div className="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shadow-inner">
               <button
                 type="button"
                 onClick={() => setSupplierPoViewMode('orders')}
@@ -5881,7 +5881,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                         <span className="w-2 h-2 rounded-full bg-blue-500"></span>
                                         {t("finance.ledger.paymentAllocation")}
                                       </div>
-                                      <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
+                                      <div className="bg-white border rounded-xl overflow-x-auto shadow-sm">
                                         <table className="w-full text-start">
                                           <thead>
                                             <tr className="bg-slate-50 border-b border-slate-100 text-[9px] font-black uppercase text-slate-400 italic">
@@ -8030,7 +8030,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
       {/* History Tab Content - Read-only transaction history only */}
       {activeTab === 'history' ? (
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden min-h-[60vh]">
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-x-auto min-h-[60vh]">
           <div className="p-8">
             <div className="flex items-center gap-3 mb-8">
               <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-600 flex items-center justify-center">

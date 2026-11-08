@@ -44,7 +44,7 @@ import { isMarginBreach } from './shared/margin.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank } from './shared/cashBank.js';
 import { computeReceivables, computePayables, orderPaidInLE } from './shared/arap.js';
-import { isInternalStockOrder, orderPaymentsLE, isRealizedSale, ownLinesAreSales } from './shared/orderMoney.js';
+import { isInternalStockOrder, orderPaymentsLE, isRealizedSale, ownLinesAreSales, paymentLE, blanketRootOf } from './shared/orderMoney.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -4714,6 +4714,7 @@ const orderFraction = (o) => {
 };
 const addToCollection = (col) => (req, res) => {
     { const gm = genericMoneyWriteGate(req, col, null, req.body); if (gm) return res.status(403).json({ error: gm }); }
+    { const sr = systemMoneyRowRefusal(col, null, req.body); if (sr) return res.status(400).json({ error: sr }); }
     const db = getDb(req);
     if (!db[col]) db[col] = [];
     if (col === 'orders') { const fq_ = orderFraction(req.body || {}); if (fq_ !== undefined) return res.status(400).json({ error: `Rejected: fraction ${fq_} is not allowed (whole units only).` }); }
@@ -4811,6 +4812,18 @@ const addToCollection = (col) => (req, res) => {
     if (['customers', 'suppliers', 'inventory', 'users', 'userGroups', 'settings'].includes(col)) {
         if (!newItem.logs) newItem.logs = [createAuditLog('Entity registered', undefined, user)];
         if (col === 'suppliers' && !newItem.priceList) newItem.priceList = [];
+    }
+    // R34 round 9 (validator 8, defect 3): a new customer starts with EMPTY wallets, the same rule as the generic PUT: wallet figures in
+    // the request are never stored (no money arrived); opening money is entered only through Finance > Initial Balances (audited,
+    // double confirmed). A zero / empty figure (the CRM form sends walletBalance 0) is dropped silently, any other value is logged.
+    if (col === 'customers') {
+        const sentW = ['walletBalances', 'walletBalance', 'unlinkedCostsDeducted', 'storedWalletBalance'].filter(f => newItem[f] !== undefined);
+        const realW = sentW.filter(f => !sameMoneyValue(newItem[f], undefined));
+        sentW.forEach(f => delete newItem[f]);
+        if (realW.length) {
+            newItem.logs = Array.isArray(newItem.logs) ? newItem.logs : [];
+            newItem.logs.push(createAuditLog(`Customer created: wallet figures in the request were ignored (${realW.join(', ')}; wallets change only through money actions, opening money through Finance > Initial Balances)`, undefined, user));
+        }
     }
 
     if (col === 'ledger') {
@@ -4919,6 +4932,7 @@ const updateInCollection = (col) => (req, res) => {
     const user = req.headers['x-user'] || 'System';
     const oldItem = db[col][index];
     { const gm = genericMoneyWriteGate(req, col, oldItem, req.body); if (gm) return res.status(403).json({ error: gm }); }
+    { const sr = systemMoneyRowRefusal(col, oldItem, req.body); if (sr) return res.status(400).json({ error: sr }); }
     let updated = { ...oldItem, ...req.body };
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
         return res.status(400).json({ error: 'Invalid orderDate.' });
@@ -5032,6 +5046,13 @@ const updateInCollection = (col) => (req, res) => {
 
         // R34 round 8 (validator 7, defect 6): linking an order to a blanket contract by PUT follows the POST rule (server.js POST
         // /orders): the contract must exist, be a blanket order and not be closed. Only a NEW link is checked (an unchanged one is not).
+        // R34 round 9 (validator 8, defect 5): a call-off of a CLOSED blanket contract is part of the close settlement (the close
+        // moved paid - called-off gross to the customer general wallet and the call-off is a realized sale); unlinking it ('' / null)
+        // or moving it to another contract would change a final settlement, so it is refused. An unchanged link stays allowed.
+        if (req.body.blanketContractId !== undefined && String(oldItem.blanketContractId || '').trim() !== '' && String(req.body.blanketContractId ?? '').trim() !== String(oldItem.blanketContractId).trim()) {
+            const rootOld = blanketRootOf(oldItem, db.orders || []);
+            if (rootOld && rootOld.contractClosed) return res.status(400).json({ error: `Refused: order ${oldItem.internalOrderNumber} is a call-off of the closed blanket contract ${rootOld.internalOrderNumber}; the closed settlement is final - it cannot be unlinked or moved to another contract.` });
+        }
         if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(req.body.blanketContractId).trim() !== '' && String(req.body.blanketContractId).trim() !== String(oldItem.blanketContractId || '').trim()) {
             const blanketRefU = String(req.body.blanketContractId).trim();
             const blanketU = (db.orders || []).find(o => o.id !== oldItem.id && (o.id === blanketRefU || o.internalOrderNumber === blanketRefU))
@@ -5514,6 +5535,45 @@ const genericMoneyWriteGate = (req, col, oldItem, body) => {
         if (changed.length) what = col === 'customers' ? `changing the customer wallet (${changed.join(', ')})` : `changing the order payments (${changed.join(', ')})`;
     }
     return what ? customerMoneyGate(req, what) : null;
+};
+// R34 round 9 (validator 8, defect 4): the generic POST / PUT on /ledger and /orders never write the rows that only the money actions
+// write, for ANY role (money roles included): a customer refund (REFUND naming a customer / PO, or category 'Customer Refunds'), a
+// customer advance (category 'Customer Advance', an adv_cust_* row), a customer wallet transfer (TRANSFER naming an order or a
+// receipt), a payment reversal (category 'Customer Payment Reversal'), and the payments / moved-to-wallet figures of an order. Those
+// rows move a customer wallet or Cash / Bank without the other side, so the books would no longer balance. A description-only edit
+// of such a ledger row, plain COST / ADDITION rows and a ledger payment naming a PO (ADDITION, round 3) stay allowed. Runs after the
+// role gate (a non-money role still gets the 403 of genericMoneyWriteGate first).
+const systemLedgerShape = (e) => {
+    if (!e) return null;
+    const cat = String(e.category || ''), typ = String(e.type || '').toUpperCase();
+    if (cat === 'Supplier Refund') return null;
+    if (cat === 'Customer Refunds' || (typ === 'REFUND' && Boolean(e.customerName || e.orderId || e.poNumber))) return { kind: 'a customer refund', use: 'the customer Refund action (POST /api/v1/customers/:id/refund)' };
+    if (cat === 'Customer Advance' || String(e.id || '').startsWith('adv_cust_')) return { kind: 'a customer advance', use: 'the customer Advance action (POST /api/v1/customers/:id/advance-payment)' };
+    if (typ === 'TRANSFER' && Boolean(e.orderId || e.receiptNumber)) return { kind: 'a customer wallet transfer', use: 'the wallet transfer action (POST /api/v1/customers/:id/wallet-transfer) or record-payment from the wallet' };
+    if (cat === 'Customer Payment Reversal') return { kind: 'a payment reversal', use: 'the cancel-payment action of the order' };
+    return null;
+};
+const LEDGER_FREE_EDIT_FIELDS = ['description', 'id'];
+const systemMoneyRowRefusal = (col, oldItem, body) => {
+    const b = body || {};
+    if (col === 'ledger') {
+        if (!oldItem) {
+            const sh = systemLedgerShape(b);
+            return sh ? `Refused: ${sh.kind} ledger row is written only by its own action - use ${sh.use}; the generic ledger entry cannot create it.` : null;
+        }
+        // A ledger payment naming a PO (ADDITION with orderId / poNumber) is created by the generic POST (it books the order payment
+        // at the same time), but editing it later would leave the order payment behind: only its description may change.
+        const payShape = (e) => (String(e.type || '').toUpperCase() === 'ADDITION' && String(e.category || '') !== 'Supplier Refund' && Boolean(e.orderId || e.poNumber) && !e.orderNotFound) ? { kind: 'a customer payment (naming a PO)', use: 'the cancel-payment action of the order and a new payment' } : null;
+        const sh = systemLedgerShape(oldItem) || systemLedgerShape({ ...oldItem, ...b }) || payShape(oldItem) || payShape({ ...oldItem, ...b });
+        if (!sh) return null;
+        const changed = Object.keys(b).filter(k => !LEDGER_FREE_EDIT_FIELDS.includes(k) && JSON.stringify(b[k]) !== JSON.stringify(oldItem[k]));
+        return changed.length ? `Refused: ${sh.kind} ledger row is changed only by its own action - use ${sh.use}; the generic ledger edit may change its description only (refused: ${changed.join(', ')}).` : null;
+    }
+    if (col === 'orders') {
+        const changed = CUSTOMER_MONEY_FIELDS.orders.filter(f => b[f] !== undefined && !sameMoneyValue(b[f], oldItem ? oldItem[f] : undefined));
+        if (changed.length) return `Refused: the ${changed.includes('payments') ? 'payments' : 'moved-to-wallet figures'} of an order change only through the money actions (record-payment, cancel-payment, wallet transfer, a ledger payment naming the PO); the generic order ${oldItem ? 'edit' : 'create'} cannot ${oldItem ? 'change' : 'set'} ${changed.join(', ')}.`;
+    }
+    return null;
 };
 app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
     const gateW = customerMoneyGate(req, 'a customer wallet transfer');
@@ -8267,7 +8327,62 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const tp = order.payments[payload.index];
                     throw new Error(`Refused: payment ${tp.receiptNumber || payload.index} is a wallet transfer (${Number(tp.amount) < 0 ? 'out of' : 'into'} PO ${order.internalOrderNumber}), not a cash payment; it cannot be voided - use a wallet transfer back instead.`);
                 }
+                // R34 round 9 (validator 8, defect 1): money moved OUT of this PO by wallet transfer (the -N rows, net of transfers in)
+                // came out of the money paid in. Voiding a cash payment may not leave less paid-in money (payments without the transfer
+                // rows) than the net moved out: the PO wallet would go below zero, AR above the PO gross and the customer wallets would
+                // keep money the bank no longer holds. The money has to be transferred back first.
+                {
+                    const fxC1 = orderFx(order);
+                    const pv = order.payments[payload.index];
+                    const paidInAfterLE = r2w(orderPaymentsLE(order, p => !p.transfer) - paymentLE(pv, fxC1));
+                    const netOutLE = r2w(-orderPaymentsLE(order, p => Boolean(p.transfer)));
+                    if (netOutLE > 0.004 && paidInAfterLE < netOutLE - 0.004) {
+                        throw new Error(`Refused: ${netOutLE.toFixed(2)} L.E. of PO ${order.internalOrderNumber} was moved out by wallet transfer; voiding payment ${pv.receiptNumber || payload.index} would leave only ${Math.max(0, paidInAfterLE).toFixed(2)} L.E. paid in - transfer the moved money back first (wallet transfer into the PO), then void the payment.`);
+                    }
+                }
+                // R34 round 9 (validator 8, defect 2): a payment on a CLOSED blanket contract or on a call-off of a closed contract is part
+                // of the close settlement: the close moved (paid - called-off gross) to the customer general wallet (surplusMovedToWalletLE
+                // on the contract). A void takes back what the close would no longer have moved; when the general wallet no longer holds
+                // that money the void is refused.
+                let closedTakeBack = null;
+                {
+                    const rootC = (order.blanketOrder && !order.blanketContractId) ? order : (order.blanketContractId ? blanketRootOf(order, db.orders || []) : null);
+                    const prevC = rootC ? ((rootC.surplusMovedToWalletLE !== undefined && rootC.surplusMovedToWalletLE !== null) ? Number(rootC.surplusMovedToWalletLE) || 0 : (Number(rootC.surplusMovedToWallet) || 0) * orderFx(rootC)) : 0;
+                    if (rootC && rootC.contractClosed && prevC > 0.004) {
+                        const refsC = [rootC.id, rootC.internalOrderNumber].filter(Boolean);
+                        const callsC = (db.orders || []).filter(o => o.blanketContractId && refsC.includes(o.blanketContractId) && o.status !== OrderStatus.REJECTED);
+                        if (order !== rootC && !callsC.includes(order)) callsC.push(order);
+                        const r2c = x => Math.round((x + Number.EPSILON) * 100) / 100;
+                        let delOC = 0, delLE = 0;
+                        callsC.forEach(o => { const fxD = orderFx(o); (o.items || []).forEach(it => { const ln = r2c((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0)); const g = ln + r2c(ln * (it.taxPercent || 0) / 100); delOC += g; delLE += g * fxD; }); });
+                        const pv = order.payments[payload.index];
+                        const paidOC = [rootC, ...callsC].reduce((t, o) => t + (o.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0), 0) - (Number(pv.amount) || 0);
+                        const paidLE = r2w([rootC, ...callsC].reduce((t, o) => t + orderPaymentsLE(o), 0) - paymentLE(pv, orderFx(order)));
+                        const keepLE = Math.max(0, r2w(paidLE - r2w(delLE)));
+                        const keepOC = Math.max(0, r2w(paidOC - r2w(delOC)));
+                        const backLE = r2w(prevC - keepLE);
+                        if (backLE > 0.004) {
+                            const custC = (db.customers || []).find(c => c.name === order.customerName);
+                            const inG = custC ? r2w(Number((custC.walletBalances || {})[SELF_WALLET_KEY]) || 0) : 0;
+                            if (!custC || inG < backLE - 0.004) {
+                                throw new Error(`Refused: the close of blanket contract ${rootC.internalOrderNumber} moved ${prevC.toFixed(2)} L.E. to the customer general wallet; voiding payment ${pv.receiptNumber || payload.index} takes back ${backLE.toFixed(2)} L.E., but the general wallet holds only ${inG.toFixed(2)} L.E. - bring the money back to the general wallet first, then void the payment.`);
+                            }
+                            closedTakeBack = { rootC, custC, backLE, keepLE, keepOC };
+                        }
+                    }
+                }
                 const [removed] = order.payments.splice(payload.index, 1);
+                if (closedTakeBack) {
+                    const { rootC, custC, backLE, keepLE, keepOC } = closedTakeBack;
+                    custC.walletBalances = custC.walletBalances || {};
+                    custC.walletBalances[SELF_WALLET_KEY] = r2w((Number(custC.walletBalances[SELF_WALLET_KEY]) || 0) - backLE);
+                    custC.walletBalance = r2w((Number(custC.walletBalance) || 0) - backLE);
+                    rootC.surplusMovedToWallet = keepOC;
+                    rootC.surplusMovedToWalletLE = keepLE;
+                    const msgC = `Payment voided on closed blanket contract ${rootC.internalOrderNumber}${order !== rootC ? ` (call-off ${order.internalOrderNumber})` : ''}: ${backLE.toFixed(2)} L.E. of the close overpayment taken back from the customer general wallet.`;
+                    order.logs.push(createAuditLog(msgC, order.status, user));
+                    if (order !== rootC) { rootC.logs = rootC.logs || []; rootC.logs.push(createAuditLog(msgC, rootC.status, user)); }
+                }
                 order.logs.push(createAuditLog(`Payment of ${removed.amount} VOIDED: ${payload.reason || 'Correction'}`, order.status, user));
                 // R30 (2026-10-22): voiding a payment also takes back the part of it that had been moved to the customer general wallet as surplus; a fully paid PO that is no longer fully paid leaves WAITING_GOVE.
                 if (!order.blanketOrder && !order.blanketContractId && Number(order.surplusMovedToWallet) > 0) {
