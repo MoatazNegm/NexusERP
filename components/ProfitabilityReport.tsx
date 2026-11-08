@@ -242,7 +242,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
     <div className="space-y-8 pb-20 animate-in fade-in duration-500">
       {/* Top Nav & Print */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 no-print">
-        <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex flex-wrap max-w-full bg-white p-1 rounded-2xl border border-slate-200 shadow-sm">{/* R34 round 5: tabs wrap on phones (no page h-scroll) */}
           <button onClick={() => setActiveTab('audit')} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'audit' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}>
             <i className="fa-solid fa-list-check mr-2"></i> Financial Audit
           </button>
