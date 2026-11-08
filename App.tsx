@@ -9,6 +9,7 @@ import { SupplierModule } from './components/SupplierModule';
 import { ShipmentModule } from './components/ShipmentModule';
 import { ModuleGate } from './components/ModuleGate';
 import { DashboardCard } from './components/DashboardCard';
+import { DashboardFinanceCards } from './components/FinanceBalances';
 import { OrderDetailsModal } from './components/OrderDetailsModal';
 import { FinanceModule } from './components/FinanceModule';
 import { GovEInvoiceModule } from './components/GovEInvoiceModule';
@@ -602,6 +603,9 @@ const App: React.FC = () => {
                 <div className="p-4"><div className="text-2xl font-black text-rose-600">{dashboardMetrics.riskCount}</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1">Blocked POs</div></div>
               </DashboardCard>
             </div>
+
+            {/* R34: account balances summary + stock value (finance, management, admin) */}
+            <DashboardFinanceCards refreshKey={refreshKey} />
 
             {/* Severe Margin Alerts Section */}
             {dashboardMetrics.negativeMarginOrders.length > 0 && (

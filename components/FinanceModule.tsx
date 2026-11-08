@@ -10,6 +10,7 @@ import { LanguageToggle } from './LanguageToggle';
 import { SortableTable, ColumnDef } from './SortableTable';
 import { extractCostSheetMetrics, extractCostSheetProjectMetrics } from './ProcurementModule';
 import { TaxClearancesView } from './TaxClearancesView';
+import { InitialBalancesView, FinancialPositionView } from './FinanceBalances';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -47,7 +48,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'stock_orders' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'project_wallets' | 'blanket_history';
+type FinanceTab = 'orders' | 'stock_orders' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'project_wallets' | 'blanket_history' | 'initial_balances' | 'financial_position';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   if (order.status === OrderStatus.DELIVERED) {
@@ -734,7 +735,13 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     const manualAdditions = entries.filter(e => e.type === 'ADDITION' && !e.id?.startsWith('adv_cust_') && !e.orderId).reduce((s, e) => s + (e.amount || 0), 0);
     const manualCosts = entries.filter(e => e.type === 'COST' && !e.id?.startsWith('sp_ledg_') && e.category !== 'Supplier Payment').reduce((s, e) => s + (e.amount || 0), 0);
 
-    const netCashInBank = (customerCashIn + manualAdditions) - (supplierCashOut + manualCosts);
+    // R34: opening balances booked on Cash/Bank (Finance > Initial Balances) are part of the cash figure; the counterpart is
+    // the opening balance equity (bank openings minus customer wallet openings, which already sit in the customer wallets).
+    const openingOf = (pred: (k: string) => boolean) => entries.filter(e => e.type === 'OPENING' && pred(String(e.accountKey || ''))).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const openingBank = openingOf(k => k === 'BANK');
+    const openingCustomerWallets = openingOf(k => k.startsWith('CUST_SELF:') || k.startsWith('CUST_PROJECT:') || k.startsWith('PO:'));
+    const openingEquity = openingBank - openingCustomerWallets;
+    const netCashInBank = (customerCashIn + manualAdditions) - (supplierCashOut + manualCosts) + openingBank;
 
     // Total Supplier Committed Gross Cost across all orders
     let totalSupplierCommitted = 0;
@@ -788,7 +795,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     const netTaxLiability = (totalOutputTax - totalInputTax) - govTaxPaid;
 
     const totalAssets = netCashInBank + totalAR + totalWIP;
-    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + netTaxLiability + totalRealizedProfit;
+    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + netTaxLiability + totalRealizedProfit + openingEquity;
     const variance = Math.abs(totalAssets - totalLiabilitiesAndProfit);
     const isBalanced = variance < 5.0;
 
@@ -810,6 +817,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       totalRealizedProfit,
       totalProjectedProfit,
       totalLiabilitiesAndProfit,
+      openingBank,
+      openingEquity,
       variance,
       isBalanced
     };
@@ -908,7 +917,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   const totals = useMemo(() => {
     return filteredEntries.reduce((acc, curr) => {
       if (curr.type === 'ADDITION') acc.additions += curr.amount;
-      else acc.costs += curr.amount;
+      else if (curr.type !== 'OPENING') acc.costs += curr.amount; // R34: opening balances are not cash movements
       return acc;
     }, { additions: 0, costs: 0 });
   }, [filteredEntries]);
@@ -1157,6 +1166,27 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 </div>
               </div>
 
+              {companyFinancials.openingEquity !== 0 && (
+              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-opening-equity">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-xs">
+                    <i className="fa-solid fa-scale-unbalanced-flip"></i>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white">
+                      {language === 'ar' ? 'حقوق ملكية الأرصدة الافتتاحية' : 'Opening Balance Equity'}
+                    </div>
+                    <div className="text-[9px] text-slate-400">
+                      {language === 'ar' ? 'أرصدة البنك الافتتاحية ناقص أرصدة محافظ العملاء الافتتاحية' : 'Opening bank balances minus opening customer wallet balances'}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-end font-mono font-black text-sm text-blue-300">
+                  {companyFinancials.openingEquity.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
+                </div>
+              </div>
+              )}
+
               <div className="flex justify-between items-center p-3 rounded-2xl bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-colors">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl bg-violet-500/20 text-violet-400 flex items-center justify-center text-xs">
@@ -1281,9 +1311,10 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 <td className="px-8 py-5">
                   <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
                     entry.type === 'ADDITION' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                    entry.type === 'OPENING' ? 'bg-blue-50 text-blue-600 border-blue-100' :
                     'bg-rose-50 text-rose-600 border-rose-100'
                   }`}>
-                    {entry.type === 'ADDITION' ? (language === 'ar' ? 'إضافة' : 'ADDITION') : (language === 'ar' ? 'تكلفة' : 'COST')}
+                    {entry.type === 'ADDITION' ? (language === 'ar' ? 'إضافة' : 'ADDITION') : entry.type === 'OPENING' ? (language === 'ar' ? 'رصيد افتتاحي' : 'OPENING') : (language === 'ar' ? 'تكلفة' : 'COST')}
                   </span>
                 </td>
                 <td className="px-8 py-5 text-end font-black text-slate-800 text-sm">
@@ -3687,7 +3718,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <div className="flex flex-col md:flex-row items-start md:items-center gap-4 w-full xl:w-auto overflow-hidden">
           <LanguageToggle />
           <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-full shadow-inner overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
-          {(['orders', 'stock_orders', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets', 'project_wallets'] as const).map(tab => (
+          {(['orders', 'stock_orders', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets', 'project_wallets', 'initial_balances', 'financial_position'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -3699,7 +3730,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           ))}
           </div>
         </div>
-        {activeTab === 'tax_clearances' ? null : activeTab === 'history' ? (
+        {activeTab === 'tax_clearances' || activeTab === 'initial_balances' || activeTab === 'financial_position' ? null : activeTab === 'history' ? (
           <div className="relative w-full xl:w-96">
             <input
               type="text" placeholder={t("finance.history.searchHistory") || (language === 'ar' ? 'بحث في سجل المعاملات...' : "Search transaction history...")}
@@ -6126,6 +6157,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           getItemEffectiveStatus={getItemEffectiveStatus}
           getCustomerWalletBalance={getCustomerWalletBalance}
         />
+      ) : activeTab === 'initial_balances' ? (
+        <InitialBalancesView refreshKey={refreshKey} onChanged={fetchData} />
+      ) : activeTab === 'financial_position' ? (
+        <FinancialPositionView refreshKey={refreshKey} />
       ) : activeTab !== 'ledger' && activeTab !== 'history' && activeTab !== 'contracts' && activeTab !== 'customer_wallets' && activeTab !== 'blanket_history' && activeTab !== 'stock_orders' ? (
       <div className="space-y-4">
         {activeTab === 'orders' && (

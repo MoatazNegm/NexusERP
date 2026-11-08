@@ -28,7 +28,7 @@ export const translations: Record<string, any> = {
         orders: 'Orders', history: 'Transaction History',
         blacklist_hold: 'Blacklist & Hold', tax_clearances: 'Tax Clearances',
         supplier_reporting: 'Suppliers AP & Reporting', ledger: 'Ledger',
-        contracts: 'Blanket Contracts', customer_wallets: 'Customer Accounts & Wallets', project_wallets: 'Project Wallets',
+        contracts: 'Blanket Contracts', customer_wallets: 'Customer Accounts & Wallets', project_wallets: 'Project Wallets', initial_balances: 'Initial Balances', financial_position: 'Balances & Stock Value',
         blanket_history: 'Blanket History', stock_orders: 'Stock Orders',
       },
       blanketHistory: {
@@ -625,7 +625,7 @@ export const translations: Record<string, any> = {
         orders: 'الطلبات', history: 'سجل المعاملات',
         blacklist_hold: 'قائمة الحظر والتعليق', entities: 'الكيانات', tax_clearances: 'التخليص الضريبي',
         supplier_reporting: 'أوامر شراء الموردين والدائنين', ledger: 'دفتر الأستاذ',
-        contracts: 'العقود الإطارية', customer_wallets: 'حسابات ومحافظ العملاء', project_wallets: 'محافظ المشاريع',
+        contracts: 'العقود الإطارية', customer_wallets: 'حسابات ومحافظ العملاء', project_wallets: 'محافظ المشاريع', initial_balances: 'الأرصدة الافتتاحية', financial_position: 'الأرصدة وقيمة المخزون',
         blanket_history: 'سجل العقود الإطارية', stock_orders: 'طلبات المخزون',
       },
       blanketHistory: {

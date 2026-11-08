@@ -152,6 +152,23 @@ class DataService {
     if (!res.ok) throw new Error(`Failed to fetch accounts receivable: ${res.statusText}`);
     return res.json();
   }
+  // R34: finance account balances + stock value, and the two-step opening balance entry (review, then confirm)
+  async getFinancePosition(): Promise<any> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/finance/position`, { headers: this.getAuthHeaders() });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Failed to fetch the financial position: ${res.statusText}`); }
+    return res.json();
+  }
+  async getOpeningBalances(): Promise<any[]> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/finance/opening-balances`, { headers: this.getAuthHeaders() });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Failed to fetch opening balances: ${res.statusText}`); }
+    return res.json();
+  }
+  async reviewOpeningBalance(accountKey: string, amount: number, reason: string): Promise<any> {
+    return this.post<any>('finance/opening-balances/review', { accountKey, amount, reason });
+  }
+  async confirmOpeningBalance(reviewToken: string): Promise<any> {
+    return this.post<any>('finance/opening-balances/confirm', { reviewToken, confirm: true });
+  }
   async getMissingWht(): Promise<any> {
     const res = await fetch(`${BACKEND_URL}/api/v1/wht-missing`, { headers: this.getAuthHeaders() });
     if (!res.ok) throw new Error(`Failed to fetch missing withholding certificates: ${res.statusText}`);

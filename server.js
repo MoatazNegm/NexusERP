@@ -41,6 +41,7 @@ const sanitizeUsername = (username) => {
 import crypto from 'crypto';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
+import { computeStockValue } from './shared/stockValue.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -4377,6 +4378,21 @@ const withBlanketDrawdown = (order, orders = []) => {
 // per project, per PO and per customer. Commitments are not in the wallet; they are shown as Accounts Receivable
 // (/api/v1/ar, per customer / PO / project) and Accounts Payable (/api/v1/ap, per supplier / PO / project).
 const r2w = x => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
+// R34 (2026-11-08): opening balances are ledger entries of type OPENING (signed delta, whole units) keyed by an account key.
+// Sum of the opening deltas booked on one account key (0 when none, so every figure is unchanged without openings).
+// Per ledger array a map key -> sum is cached (rebuilt when the array length changes; opening entries are never edited).
+const openingCache = new WeakMap();
+const openingSumFor = (ledger, key) => {
+    if (!Array.isArray(ledger) || ledger.length === 0) return 0;
+    let c = openingCache.get(ledger);
+    if (!c || c.len !== ledger.length) {
+        const m = new Map();
+        ledger.forEach(l => { if (l && l.type === 'OPENING' && l.accountKey) m.set(l.accountKey, (m.get(l.accountKey) || 0) + (Number(l.amount) || 0)); });
+        c = { len: ledger.length, m };
+        openingCache.set(ledger, c);
+    }
+    return r2w(c.m.get(key) || 0);
+};
 const orderProjectName = (order, orders = []) => {
     let proj = String((order.projectName || '').trim());
     if (!proj && order.blanketContractId) {
@@ -4436,7 +4452,7 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db 
         projectBalances[k] = r2w((projectBalances[k] || 0) + (Number(bal) || 0));
     });
     orders.filter(o => o.customerName === customer.name).forEach(o => {
-        const net = r2w(r2w(orderPaidIn(o) * orderFx(o)) - orderPaidOut(o, supplierPayments));
+        const net = r2w(r2w(orderPaidIn(o) * orderFx(o)) - orderPaidOut(o, supplierPayments) + (db ? openingSumFor(db.ledger, `PO:${o.id}`) : 0));
         if (!net) return;
         const key = orderProjectName(o, orders) || '(No Project)';
         projectBalances[key] = r2w((projectBalances[key] || 0) + net);
@@ -4455,8 +4471,9 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db 
 
 // --- ORDER WALLET HELPER ---
 // Wallet of a single PO: x (customer payments) minus y (company payments to suppliers for it). No commitment.
-const computeOrderWallet = (order, orders = [], supplierPayments = []) => {
+const computeOrderWallet = (order, orders = [], supplierPayments = [], ledger = null) => {
     if (!order) return null;
+    const opening = ledger ? openingSumFor(ledger, `PO:${order.id}`) : 0; // R34 opening balance of this PO wallet
     const isCallOff = Boolean(order.blanketContractId) && !order.blanketOrder;
     const x = r2w(orderPaidIn(order) * orderFx(order)); // wallet in L.E.
     const y = orderPaidOut(order, supplierPayments);
@@ -4470,13 +4487,14 @@ const computeOrderWallet = (order, orders = [], supplierPayments = []) => {
         callOffOf: isCallOff ? order.blanketContractId : undefined,
         paid: x,
         paidOut: y,
-        walletBalance: r2w(x - y)
+        openingBalance: opening,
+        walletBalance: r2w(x - y + opening)
     };
 };
 
 // --- ACCOUNTS RECEIVABLE / PAYABLE (R30) ---
 // AR: what customers still owe, per PO / customer / project. Call-off payments count against their blanket contract.
-const computeReceivables = (orders = []) => {
+const computeReceivables = (orders = [], ledger = null) => {
     const rows = [];
     orders.forEach(o => {
         if (o.status === OrderStatus.REJECTED) return;
@@ -4488,6 +4506,17 @@ const computeReceivables = (orders = []) => {
     });
     const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, receivable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.receivable = r2w(Math.max(0, e.committed - e.paid)); }); return Array.from(m.values()); };
     const byCustomer = group(r => r.customerName, r => ({ customerName: r.customerName }));
+    // R34: opening AR balances (per customer) are added on top of the order-based receivable.
+    if (ledger) {
+        const ob = new Map();
+        ledger.forEach(l => { if (l && l.type === 'OPENING' && String(l.accountKey || '').startsWith('AR:') && l.customerName) ob.set(l.customerName, r2w((ob.get(l.customerName) || 0) + (Number(l.amount) || 0))); });
+        ob.forEach((amt, name) => {
+            let e = byCustomer.find(c => c.customerName === name);
+            if (!e) { e = { customerName: name, committed: 0, paid: 0, receivable: 0 }; byCustomer.push(e); }
+            e.openingBalance = amt;
+            e.receivable = r2w(e.receivable + amt);
+        });
+    }
     return {
         total: r2w(byCustomer.reduce((s, r) => s + r.receivable, 0)),
         byOrder: rows,
@@ -4535,11 +4564,23 @@ const computePayables = (db) => {
         byOrderSupplier.forEach(e => rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, projectName: orderProjectName(o, orders) || '(No Project)', customerName: o.customerName, supplierId: e.supplierId, supplierName: e.supplierName, committed: r2w(e.committed), paid: r2w(e.paid), payable: r2w(Math.max(0, e.committed - e.paid)) }));
     });
     const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, payable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.payable = r2w(e.payable + r.payable); }); return Array.from(m.values()); };
+    // R34: opening AP balances (per supplier) are added on top of the PO-based payable.
+    const bySupplier = group(r => r.supplierId || r.supplierName, r => ({ supplierId: r.supplierId, supplierName: r.supplierName }));
+    let openingTotal = 0;
+    (db.ledger || []).forEach(l => {
+        if (!(l && l.type === 'OPENING' && String(l.accountKey || '').startsWith('AP:'))) return;
+        const sid = String(l.accountKey).slice(3), amt = Number(l.amount) || 0;
+        let e = bySupplier.find(x => x.supplierId === sid);
+        if (!e) { e = { supplierId: sid, supplierName: supName(sid), committed: 0, paid: 0, payable: 0 }; bySupplier.push(e); }
+        e.openingBalance = r2w((e.openingBalance || 0) + amt);
+        e.payable = r2w(e.payable + amt);
+        openingTotal += amt;
+    });
     return {
-        total: r2w(rows.reduce((s, r) => s + r.payable, 0)),
+        total: r2w(rows.reduce((s, r) => s + r.payable, 0) + openingTotal),
         byOrderSupplier: rows,
         byOrder: group(r => r.orderId, r => ({ orderId: r.orderId, internalOrderNumber: r.internalOrderNumber, projectName: r.projectName })),
-        bySupplier: group(r => r.supplierId || r.supplierName, r => ({ supplierId: r.supplierId, supplierName: r.supplierName })),
+        bySupplier,
         byProject: group(r => r.projectName, r => ({ projectName: r.projectName }))
     };
 };
@@ -5096,7 +5137,7 @@ app.get('/api/v1/order-wallets', (req, res) => {
     const db = getDb(req);
     const orders = db.orders || [];
     const { customerName, projectName } = req.query;
-    let list = orders.map(o => computeOrderWallet(o, orders, db.supplierPayments || []));
+    let list = orders.map(o => computeOrderWallet(o, orders, db.supplierPayments || [], db.ledger));
     if (customerName) list = list.filter(w => w.customerName === customerName);
     if (projectName) list = list.filter(w => w.projectName === String(projectName).trim());
     res.json(list);
@@ -5107,15 +5148,15 @@ app.get('/api/v1/orders/:id/wallet', (req, res) => {
     const orders = db.orders || [];
     const order = orders.find(o => o.id === req.params.id || o.internalOrderNumber === req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json(computeOrderWallet(order, orders, db.supplierPayments || []));
+    res.json(computeOrderWallet(order, orders, db.supplierPayments || [], db.ledger));
 });
 
 // R30: Accounts Receivable (customers owe us) and Accounts Payable (we owe suppliers); commitments live here, not in the wallets.
 app.get('/api/v1/ar', (req, res) => {
     const db = getDb(req);
-    const out = computeReceivables(db.orders || []);
+    const out = computeReceivables(db.orders || [], db.ledger || []);
     const { customerName, projectName } = req.query;
-    if (customerName) { out.byOrder = out.byOrder.filter(r => r.customerName === customerName); out.byCustomer = out.byCustomer.filter(r => r.customerName === customerName); out.byProject = out.byProject.filter(r => r.customerName === customerName); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0)); }
+    if (customerName) { out.byOrder = out.byOrder.filter(r => r.customerName === customerName); out.byCustomer = out.byCustomer.filter(r => r.customerName === customerName); out.byProject = out.byProject.filter(r => r.customerName === customerName); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0) + out.byCustomer.reduce((s, r) => s + (r.openingBalance || 0), 0)); }
     if (projectName) { out.byOrder = out.byOrder.filter(r => r.projectName === String(projectName).trim()); out.byProject = out.byProject.filter(r => r.projectName === String(projectName).trim()); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0)); }
     res.json(out);
 });
@@ -5132,7 +5173,7 @@ app.get('/api/v1/ap', (req, res) => {
     const db = getDb(req);
     const out = computePayables(db);
     const { supplierId, projectName } = req.query;
-    if (supplierId) { out.byOrderSupplier = out.byOrderSupplier.filter(r => r.supplierId === supplierId); out.bySupplier = out.bySupplier.filter(r => r.supplierId === supplierId); out.total = r2w(out.byOrderSupplier.reduce((s, r) => s + r.payable, 0)); }
+    if (supplierId) { out.byOrderSupplier = out.byOrderSupplier.filter(r => r.supplierId === supplierId); out.bySupplier = out.bySupplier.filter(r => r.supplierId === supplierId); out.total = r2w(out.bySupplier.reduce((s, r) => s + r.payable, 0)); }
     if (projectName) { out.byOrderSupplier = out.byOrderSupplier.filter(r => r.projectName === String(projectName).trim()); out.byProject = out.byProject.filter(r => r.projectName === String(projectName).trim()); out.total = r2w(out.byOrderSupplier.reduce((s, r) => s + r.payable, 0)); }
     res.json(out);
 });
@@ -5893,6 +5934,252 @@ app.post('/api/v1/ledger', (req, res, next) => {
     if (!(amt > 0)) return res.status(400).json({ error: 'Refused: Amount must be greater than zero' });
     const roles = Array.isArray(req.roles) ? req.roles : [];
     if (roles.length && !roles.includes('finance') && !roles.includes('admin')) return res.status(403).json({ error: 'Refused: tax settlements are finance' });
+    return next();
+});
+
+// --- R34 (user order 2026-11-08): FINANCE INITIAL BALANCES, ACCOUNT BALANCES, STOCK VALUE ---
+// Every account used by the finance ledger is listed with its current balance (the app's own figure) plus the opening
+// balances the finance user booked on it. An opening balance is a signed whole-unit DELTA added to the current balance,
+// stored as an immutable ledger entry (type OPENING, category 'Opening Balance') with who / when / account / amount /
+// reason / old and new balance. It is entered in two steps: review (no write, returns a one-time token) and confirm.
+// Customer general (Self) and project general wallets are stored buckets: the delta is also added to the bucket so the
+// existing refund / transfer / pay-from-wallet checks see it. All other accounts add the OPENING sum in their compute
+// (PO wallet, AR, AP, supplier general wallet, Cash/Bank, taxes, other ledger accounts).
+const FIN_OPENING_CATEGORY = 'Opening Balance';
+const FIN_REVIEW_TTL_MS = 10 * 60 * 1000;
+const finReviewTokens = new Map(); // token -> { user, dbPath, accountKey, amount, reason, oldBalance, expires }
+const finRolesOf = (req) => {
+    if (Array.isArray(req.roles) && req.roles.length) return req.roles;
+    const name = String(req.headers['x-user'] || '').trim().toLowerCase();
+    if (!name) return [];
+    const find = (db) => (db.users || []).find(u => String(u.username || '').toLowerCase() === name);
+    const u = find(readDb(DB_PATH)) || (req.sandboxDbPath ? find(readDb(req.sandboxDbPath)) : null);
+    return u ? (u.roles || []) : [];
+};
+const finIsInternalCustomerName = (n) => String(n || '').trim().toLowerCase() === 'internal stock';
+const finIsInternalOrder = (o) => o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-'));
+const FIN_INVOICED = ['INVOICED', 'HUB_RELEASED', 'DELIVERED', 'WAITING_GOVE', 'FULFILLED'];
+// Cash/Bank: the same formula as the Finance ledger tab (customer payments + manual additions - supplier payments - manual costs).
+const finCashBankBase = (db) => {
+    let cashIn = 0;
+    (db.orders || []).forEach(o => { if (o.status === OrderStatus.REJECTED || finIsInternalOrder(o)) return; (o.payments || []).forEach(p => { cashIn += Number(p.amount) || 0; }); });
+    const out = (db.supplierPayments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const led = db.ledger || [];
+    const add = led.filter(e => e.type === 'ADDITION' && !String(e.id || '').startsWith('adv_cust_') && !e.orderId).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const cost = led.filter(e => e.type === 'COST' && !String(e.id || '').startsWith('sp_ledg_') && e.category !== 'Supplier Payment').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    return r2w(cashIn + add - out - cost);
+};
+// VAT: the same formula as the Finance ledger tab (output VAT on invoiced orders - input VAT - tax paid to the authority).
+const finVatBase = (db) => {
+    let outTax = 0, inTax = 0;
+    (db.orders || []).forEach(o => {
+        if (o.status === OrderStatus.REJECTED || finIsInternalOrder(o)) return;
+        const rate = (o.currency && o.currency !== 'L.E.' && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
+        let oOut = 0, oIn = 0;
+        (o.items || []).forEach(it => {
+            const lineNet = getItemEffectiveQty(it) * (it.pricePerUnit || 0);
+            oOut += lineNet * ((it.taxPercent !== undefined ? it.taxPercent : 14) / 100);
+            (it.components || []).forEach(c => { oIn += ((c.quantity || 0) * (c.unitCost || 0)) * ((c.taxPercent !== undefined ? c.taxPercent : 0) / 100); });
+        });
+        inTax += oIn * rate;
+        if (FIN_INVOICED.includes(o.status) || Boolean(o.invoiceNumber)) outTax += oOut;
+    });
+    const paid = (db.ledger || []).filter(e => e.type === 'COST' && (e.category === 'Tax Settlement' || e.category === 'Tax Payment' || String(e.toAccount || '').toLowerCase().includes('tax') || String(e.toAccount || '').includes('ضرائب'))).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    return r2w(outTax - inTax - paid);
+};
+// Map a ledger account label to an account key of the registry (labels the app itself writes).
+const finLabelToKey = (label, db) => {
+    const l = String(label || '').trim();
+    if (!l) return null;
+    if (l === 'Bank Account' || l === 'Cash/Bank') return 'BANK';
+    if (l === 'Tax Authority / Withholding') return 'TAX_WHT';
+    const m = l.match(/^Customer (.+) \/ (Self|Project (.+)|PO (.+))$/);
+    if (m) {
+        const cust = (db.customers || []).find(c => c.name === m[1]);
+        if (cust && m[2] === 'Self') return `CUST_SELF:${cust.id}`;
+        if (cust && m[3]) return `CUST_PROJECT:${cust.id}:${m[3]}`;
+        if (m[4]) { const o = (db.orders || []).find(x => x.customerName === m[1] && x.internalOrderNumber === m[4]); if (o) return `PO:${o.id}`; }
+    }
+    const sm = l.match(/^Supplier (.+) \/ Advance$/);
+    if (sm) { const s = (db.suppliers || []).find(x => x.name === sm[1]); if (s) return `SUP_GEN:${s.id}`; }
+    if (l === 'Accounts Payable') return 'AP_ALL';
+    return `LEDGER:${l}`;
+};
+// Build the full account list with balances. Groups: company, customer, supplier, ledger.
+const computeFinanceAccounts = (db) => {
+    const ledger = db.ledger || [];
+    const orders = db.orders || [];
+    const sps = db.supplierPayments || [];
+    const accounts = [];
+    const openCount = new Map();
+    ledger.forEach(l => { if (l && l.type === 'OPENING' && l.accountKey) openCount.set(l.accountKey, (openCount.get(l.accountKey) || 0) + 1); });
+    const push = (a) => { const opening = openingSumFor(ledger, a.key); accounts.push({ ...a, balance: r2w(a.balance), openingTotal: opening, openingCount: openCount.get(a.key) || 0 }); };
+    // Company accounts
+    push({ key: 'BANK', group: 'company', kind: 'asset', label: 'Cash / Bank', labelAr: 'النقدية / البنك', balance: finCashBankBase(db) + openingSumFor(ledger, 'BANK') });
+    push({ key: 'TAX_VAT', group: 'company', kind: 'liability', label: 'Net VAT liability', labelAr: 'صافي التزام ضريبة القيمة المضافة', balance: finVatBase(db) + openingSumFor(ledger, 'TAX_VAT') });
+    const whtFlow = ledger.reduce((s, e) => s + ((e && e.type !== 'OPENING') ? ((e.toAccount === 'Tax Authority / Withholding' ? (Number(e.amount) || 0) : 0) - (e.fromAccount === 'Tax Authority / Withholding' ? (Number(e.amount) || 0) : 0)) : 0), 0);
+    push({ key: 'TAX_WHT', group: 'company', kind: 'liability', label: 'Tax Authority / Withholding', labelAr: 'مصلحة الضرائب / الخصم من المنبع', balance: whtFlow + openingSumFor(ledger, 'TAX_WHT') });
+    // Customer accounts: general wallet (Self), project general wallets, PO wallets, receivable
+    const ar = computeReceivables(orders, ledger);
+    (db.customers || []).filter(c => c && c.name && !finIsInternalCustomerName(c.name)).sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(c => {
+        const w = computeCustomerWallet(c, orders, sps, db);
+        push({ key: `CUST_SELF:${c.id}`, group: 'customer', kind: 'liability', walletType: 'self', customerId: c.id, customerName: c.name, label: `${c.name} / General wallet`, labelAr: `${c.name} / المحفظة العامة`, balance: Number((w.walletBalances || {})[SELF_WALLET_KEY]) || 0 });
+        const projects = new Set();
+        Object.keys(c.walletBalances || {}).forEach(k => { const t = k.trim(); if (t && t !== SELF_WALLET_KEY && t !== '(No Project)') projects.add(t); });
+        orders.forEach(o => { if (o.customerName === c.name && o.status !== OrderStatus.REJECTED) { const p = orderProjectName(o, orders); if (p) projects.add(p); } });
+        Array.from(projects).sort().forEach(p => {
+            let stored = 0;
+            Object.entries(c.walletBalances || {}).forEach(([k, v]) => { if (k.trim() === p) stored += Number(v) || 0; });
+            push({ key: `CUST_PROJECT:${c.id}:${p}`, group: 'customer', kind: 'liability', walletType: 'project', customerId: c.id, customerName: c.name, projectName: p, label: `${c.name} / Project ${p} (general)`, labelAr: `${c.name} / مشروع ${p} (عام)`, balance: stored });
+        });
+        orders.filter(o => o.customerName === c.name && o.status !== OrderStatus.REJECTED && !finIsInternalOrder(o)).forEach(o => {
+            const ow = computeOrderWallet(o, orders, sps, ledger);
+            push({ key: `PO:${o.id}`, group: 'customer', kind: 'liability', walletType: 'po', customerId: c.id, customerName: c.name, orderId: o.id, orderNumber: o.internalOrderNumber, projectName: ow.projectName, label: `${c.name} / PO ${o.internalOrderNumber || o.id}`, labelAr: `${c.name} / أمر ${o.internalOrderNumber || o.id}`, balance: ow.walletBalance });
+        });
+        const arRow = ar.byCustomer.find(r => r.customerName === c.name);
+        push({ key: `AR:${c.id}`, group: 'customer', kind: 'asset', walletType: 'ar', customerId: c.id, customerName: c.name, label: `${c.name} / Accounts receivable`, labelAr: `${c.name} / ذمم مدينة`, balance: arRow ? arRow.receivable : 0 });
+    });
+    // Supplier accounts: general wallet (unallocated advances) and payable
+    const ap = computePayables(db);
+    (db.suppliers || []).filter(s => s && s.name).sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(s => {
+        const adv = sps.filter(p => p.supplierId === s.id).reduce((t, p) => t + (Number(p.unallocatedAdvance) || 0), 0);
+        push({ key: `SUP_GEN:${s.id}`, group: 'supplier', kind: 'asset', walletType: 'supplier_general', supplierId: s.id, supplierName: s.name, label: `${s.name} / General wallet`, labelAr: `${s.name} / المحفظة العامة`, balance: adv + openingSumFor(ledger, `SUP_GEN:${s.id}`) });
+        const apRow = ap.bySupplier.find(r => r.supplierId === s.id);
+        push({ key: `AP:${s.id}`, group: 'supplier', kind: 'liability', walletType: 'ap', supplierId: s.id, supplierName: s.name, label: `${s.name} / Accounts payable`, labelAr: `${s.name} / ذمم دائنة`, balance: apRow ? apRow.payable : 0 });
+    });
+    // Other ledger accounts: configured accounts plus every other label used in ledger entries (balance = money in - money out)
+    const settings = (db.settings || [])[0] || {};
+    const other = new Set((settings.ledgerAccounts || []).map(a => String(a).trim()).filter(Boolean));
+    ledger.forEach(e => { if (!e || e.type === 'OPENING') return; [e.fromAccount, e.toAccount].forEach(lbl => { const k = finLabelToKey(lbl, db); if (k && k.startsWith('LEDGER:')) other.add(k.slice(7)); }); });
+    Array.from(other).sort().forEach(name => {
+        const flow = ledger.reduce((s, e) => s + ((e && e.type !== 'OPENING') ? ((String(e.toAccount || '').trim() === name ? (Number(e.amount) || 0) : 0) - (String(e.fromAccount || '').trim() === name ? (Number(e.amount) || 0) : 0)) : 0), 0);
+        push({ key: `LEDGER:${name}`, group: 'ledger', kind: 'other', configured: (settings.ledgerAccounts || []).includes(name), label: name, labelAr: name, balance: flow + openingSumFor(ledger, `LEDGER:${name}`) });
+    });
+    const sum = (f) => r2w(accounts.filter(f).reduce((s, a) => s + a.balance, 0));
+    const summary = {
+        cashBank: sum(a => a.key === 'BANK'),
+        taxes: sum(a => a.key === 'TAX_VAT' || a.key === 'TAX_WHT'),
+        customerWallets: sum(a => a.group === 'customer' && ['self', 'project', 'po'].includes(a.walletType)),
+        receivables: sum(a => a.walletType === 'ar'),
+        supplierWallets: sum(a => a.walletType === 'supplier_general'),
+        payables: sum(a => a.walletType === 'ap'),
+        otherLedger: sum(a => a.group === 'ledger'),
+        openingTotal: r2w(ledger.filter(l => l && l.type === 'OPENING').reduce((s, l) => s + (Number(l.amount) || 0), 0)),
+        openingCount: ledger.filter(l => l && l.type === 'OPENING').length
+    };
+    return { accounts, summary };
+};
+const finAccountByKey = (db, key) => computeFinanceAccounts(db).accounts.find(a => a.key === key);
+const finCheckAmount = (raw) => {
+    if (raw === undefined || raw === null || String(raw).trim() === '') return { error: 'Refused: amount is required' };
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return { error: 'Refused: amount must be a number' };
+    if (!Number.isInteger(n)) return { error: `Rejected: fraction ${n} is not allowed (whole units only).` };
+    if (n === 0) return { error: 'Refused: amount must not be zero' };
+    if (Math.abs(n) > 1e12) return { error: 'Refused: amount is too large' };
+    return { amount: n };
+};
+
+// Read: every account with its balance, plus the stock value. Finance, management and admin.
+app.get('/api/v1/finance/position', (req, res) => {
+    const roles = finRolesOf(req);
+    if (!roles.some(r => ['finance', 'management', 'admin'].includes(r))) return res.status(403).json({ error: 'Refused: the financial position is for finance and management' });
+    const db = getDb(req);
+    const { accounts, summary } = computeFinanceAccounts(db);
+    const stock = computeStockValue(db.inventory || [], db.orders || []);
+    res.json({ generatedAt: new Date().toISOString(), accounts, summary, stock, canEnterOpening: roles.includes('finance') });
+});
+// Audit list of the opening balances.
+app.get('/api/v1/finance/opening-balances', (req, res) => {
+    const roles = finRolesOf(req);
+    if (!roles.some(r => ['finance', 'management', 'admin'].includes(r))) return res.status(403).json({ error: 'Refused: opening balances are for finance and management' });
+    const db = getDb(req);
+    res.json((db.ledger || []).filter(l => l && l.type === 'OPENING').sort((a, b) => String(b.date).localeCompare(String(a.date))));
+});
+// Step 1 of 2: review. Nothing is written; returns the old balance, the delta, the new balance and a one-time token.
+app.post('/api/v1/finance/opening-balances/review', (req, res) => {
+    const roles = finRolesOf(req);
+    if (!roles.includes('finance')) return res.status(403).json({ error: 'Refused: only finance users may enter opening balances' });
+    const { accountKey, amount, reason } = req.body || {};
+    const chk = finCheckAmount(amount);
+    if (chk.error) return res.status(400).json({ error: chk.error });
+    const why = String(reason || '').trim();
+    if (why.length < 3) return res.status(400).json({ error: 'Refused: a reason is required (at least 3 characters)' });
+    const db = getDb(req);
+    const acc = finAccountByKey(db, String(accountKey || ''));
+    if (!acc) return res.status(404).json({ error: `Refused: unknown account ${accountKey || '(none)'}` });
+    const token = `obr_${Date.now()}_${crypto.randomBytes(9).toString('hex')}`;
+    const user = String(req.headers['x-user'] || 'System');
+    const now = Date.now();
+    finReviewTokens.forEach((v, k) => { if (v.expires < now) finReviewTokens.delete(k); });
+    finReviewTokens.set(token, { user, dbPath: getDbPath(req), accountKey: acc.key, amount: chk.amount, reason: why, oldBalance: acc.balance, expires: now + FIN_REVIEW_TTL_MS });
+    res.json({ reviewToken: token, accountKey: acc.key, account: acc.label, accountAr: acc.labelAr, oldBalance: acc.balance, delta: chk.amount, newBalance: r2w(acc.balance + chk.amount), reason: why, expiresAt: new Date(now + FIN_REVIEW_TTL_MS).toISOString() });
+});
+// Step 2 of 2: confirm. Needs the token of step 1 and confirm: true; the balance must not have changed since the review.
+app.post('/api/v1/finance/opening-balances/confirm', (req, res) => {
+    const roles = finRolesOf(req);
+    if (!roles.includes('finance')) return res.status(403).json({ error: 'Refused: only finance users may enter opening balances' });
+    const { reviewToken, confirm } = req.body || {};
+    if (confirm !== true) return res.status(400).json({ error: 'Refused: the second confirmation is missing (confirm must be true)' });
+    const rv = reviewToken ? finReviewTokens.get(String(reviewToken)) : null;
+    if (!rv) return res.status(400).json({ error: 'Refused: no review found for this confirmation (review the amount first)' });
+    const user = String(req.headers['x-user'] || 'System');
+    if (rv.user !== user || rv.dbPath !== getDbPath(req)) return res.status(403).json({ error: 'Refused: the review belongs to another user or environment' });
+    if (rv.expires < Date.now()) { finReviewTokens.delete(String(reviewToken)); return res.status(400).json({ error: 'Refused: the review expired, review the amount again' }); }
+    const db = getDb(req);
+    const acc = finAccountByKey(db, rv.accountKey);
+    if (!acc) { finReviewTokens.delete(String(reviewToken)); return res.status(404).json({ error: 'Refused: the account no longer exists' }); }
+    if (Math.abs(acc.balance - rv.oldBalance) > 0.004) { finReviewTokens.delete(String(reviewToken)); return res.status(409).json({ error: `Refused: the balance changed since the review (was ${rv.oldBalance.toFixed(2)}, now ${acc.balance.toFixed(2)}); review again` }); }
+    finReviewTokens.delete(String(reviewToken));
+    const newBalance = r2w(acc.balance + rv.amount);
+    const entry = {
+        id: `ob_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+        date: new Date().toISOString(),
+        type: 'OPENING',
+        category: FIN_OPENING_CATEGORY,
+        amount: rv.amount,
+        accountKey: acc.key,
+        account: acc.label,
+        description: `Opening balance ${rv.amount > 0 ? '+' : ''}${rv.amount.toFixed(2)} on ${acc.label} - ${rv.reason}`,
+        reason: rv.reason,
+        fromAccount: 'Opening Balance Equity',
+        toAccount: acc.label,
+        oldBalance: acc.balance,
+        newBalance,
+        user,
+        customerName: acc.customerName || undefined,
+        openingOrderNumber: acc.orderNumber || undefined,
+        supplierId: acc.supplierId || undefined,
+        openingOrderId: acc.orderId || undefined
+    };
+    // Stored wallet buckets (customer Self / project general) carry the delta too, so refunds and transfers see it.
+    if (acc.walletType === 'self' || acc.walletType === 'project') {
+        const c = (db.customers || []).find(x => x.id === acc.customerId);
+        if (!c) return res.status(404).json({ error: 'Refused: customer not found' });
+        const bucket = acc.walletType === 'self' ? SELF_WALLET_KEY : acc.projectName;
+        c.walletBalances = c.walletBalances || {};
+        c.walletBalances[bucket] = r2w((Number(c.walletBalances[bucket]) || 0) + rv.amount);
+        c.walletBalance = r2w((Number(c.walletBalance) || 0) + rv.amount);
+        c.logs = c.logs || [];
+        c.logs.push(createAuditLog(`Opening balance ${rv.amount.toFixed(2)} L.E. on ${acc.label} (${rv.reason})`, 'OPENING_BALANCE', user));
+    }
+    if (!db.ledger) db.ledger = [];
+    db.ledger.push(entry);
+    if (!writeDb(db, getDbPath(req))) return res.status(503).json({ error: 'Refused: the database is read-only, nothing was saved' });
+    const after = finAccountByKey(db, acc.key);
+    res.json({ ok: true, entry, account: acc.label, oldBalance: acc.balance, delta: rv.amount, newBalance: after ? after.balance : newBalance });
+});
+// Opening entries are written only by the two-step flow above and never edited afterwards (audit trail).
+app.post('/api/v1/ledger', (req, res, next) => {
+    const b = req.body || {};
+    if (String(b.type || '').toUpperCase() === 'OPENING' || String(b.category || '') === FIN_OPENING_CATEGORY) return res.status(403).json({ error: 'Refused: opening balances are entered in Finance > Initial balances (review and confirm)' });
+    return next();
+});
+app.put('/api/v1/ledger/:id', (req, res, next) => {
+    const db = getDb(req);
+    const e = (db.ledger || []).find(l => l && l.id === req.params.id);
+    const b = req.body || {};
+    if ((e && e.type === 'OPENING') || String(b.type || '').toUpperCase() === 'OPENING' || String(b.category || '') === FIN_OPENING_CATEGORY) return res.status(403).json({ error: 'Refused: opening balance entries cannot be changed; book a new opening delta instead' });
     return next();
 });
 
