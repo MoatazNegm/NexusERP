@@ -4,6 +4,7 @@ import { dataService } from '../services/dataService';
 import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getItemEffectiveStatus, CustomerOrderItem, ManufacturingComponent, CostSheetRecord } from '../types';
 import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { isMarginBreach } from '../shared/margin';
+import { computeCashBank } from '../shared/cashBank';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
@@ -730,18 +731,31 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       }
     });
 
-    const supplierCashOut = (supplierPayments || []).reduce((s, p) => s + (p.amount || 0), 0);
+    // R34 round 2 (D1): Cash/Bank uses the shared formula of the server (shared/cashBank.js): customer cash on POs + customer
+    // advances - customer refunds + manual additions - supplier payments - manual costs; the same figure as Finance > Initial Balances.
+    const cashBank = computeCashBank(orders, entries, supplierPayments || []);
+    customerCashIn = cashBank.customerCashIn;
+    const supplierCashOut = cashBank.supplierCashOut;
+    const manualAdditions = cashBank.manualAdditions;
+    const manualCosts = cashBank.manualCosts;
 
-    const manualAdditions = entries.filter(e => e.type === 'ADDITION' && !e.id?.startsWith('adv_cust_') && !e.orderId).reduce((s, e) => s + (e.amount || 0), 0);
-    const manualCosts = entries.filter(e => e.type === 'COST' && !e.id?.startsWith('sp_ledg_') && e.category !== 'Supplier Payment').reduce((s, e) => s + (e.amount || 0), 0);
-
-    // R34: opening balances booked on Cash/Bank (Finance > Initial Balances) are part of the cash figure; the counterpart is
-    // the opening balance equity (bank openings minus customer wallet openings, which already sit in the customer wallets).
+    // R34: opening balances booked in Finance > Initial Balances. M1: every opening kind is part of the totals (Cash/Bank, AR,
+    // supplier general wallets on the asset side; customer wallets, AP, VAT and withholding on the liability side); the
+    // counterpart is the opening balance equity. Customer wallet openings already sit in the customer wallets.
     const openingOf = (pred: (k: string) => boolean) => entries.filter(e => e.type === 'OPENING' && pred(String(e.accountKey || ''))).reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const openingBank = openingOf(k => k === 'BANK');
     const openingCustomerWallets = openingOf(k => k.startsWith('CUST_SELF:') || k.startsWith('CUST_PROJECT:') || k.startsWith('PO:'));
-    const openingEquity = openingBank - openingCustomerWallets;
-    const netCashInBank = (customerCashIn + manualAdditions) - (supplierCashOut + manualCosts) + openingBank;
+    const openingAR = openingOf(k => k.startsWith('AR:'));
+    const openingAP = openingOf(k => k.startsWith('AP:'));
+    const openingVAT = openingOf(k => k === 'TAX_VAT');
+    const openingWHT = openingOf(k => k === 'TAX_WHT');
+    const openingSupplierWallets = openingOf(k => k.startsWith('SUP_GEN:'));
+    // a supplier general wallet opening is a stored supplier advance; the part already allocated to POs lowers the payable instead
+    const openingSupplierAllocated = (supplierPayments || []).filter((p: any) => p.isOpening).reduce((s: number, p: any) => s + (p.allocations || []).reduce((t: number, a: any) => t + (Number(a.amount) || 0), 0), 0);
+    const supplierWalletOpening = openingSupplierWallets - openingSupplierAllocated;
+    const openingEquity = openingBank + openingAR + openingSupplierWallets - openingCustomerWallets - openingAP - openingVAT - openingWHT;
+    const netCashInBank = cashBank.balance + openingBank;
+    totalAR += openingAR;
 
     // Total Supplier Committed Gross Cost across all orders
     let totalSupplierCommitted = 0;
@@ -757,7 +771,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       });
     });
 
-    const totalSupplierAP = Math.max(0, totalSupplierCommitted - supplierCashOut);
+    const totalSupplierAP = Math.max(0, totalSupplierCommitted - supplierCashOut - openingSupplierAllocated) + openingAP;
 
     // Customer Wallets (Prepaid liabilities / unearned revenue)
     let totalCustomerWallets = 0;
@@ -792,10 +806,10 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       ))
       .reduce((s, e) => s + (Number(e.amount) || 0), 0);
 
-    const netTaxLiability = (totalOutputTax - totalInputTax) - govTaxPaid;
+    const netTaxLiability = (totalOutputTax - totalInputTax) - govTaxPaid + openingVAT;
 
-    const totalAssets = netCashInBank + totalAR + totalWIP;
-    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + netTaxLiability + totalRealizedProfit + openingEquity;
+    const totalAssets = netCashInBank + totalAR + totalWIP + supplierWalletOpening;
+    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + netTaxLiability + openingWHT + totalRealizedProfit + openingEquity;
     const variance = Math.abs(totalAssets - totalLiabilitiesAndProfit);
     const isBalanced = variance < 5.0;
 
@@ -819,6 +833,13 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       totalLiabilitiesAndProfit,
       openingBank,
       openingEquity,
+      openingAR,
+      openingAP,
+      openingVAT,
+      openingWHT,
+      supplierWalletOpening,
+      advancesIn: cashBank.advancesIn,
+      refundsOut: cashBank.refundsOut,
       variance,
       isBalanced
     };
@@ -873,6 +894,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
 
     // 3. Supplier payments (these don't have from/to accounts, so they stay as-is)
     supplierPayments.forEach(sp => {
+      if (sp.isOpening) return; // R34 D4: an opening supplier advance is shown by its OPENING ledger entry, it is not a payment
       all.push({
         id: `supp_${sp.id}`,
         date: sp.date,
@@ -1036,8 +1058,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                     <div className="text-[9px] text-slate-400">
                       {language === 'ar'
-                        ? `مقبوضات العملاء (${companyFinancials.customerCashIn.toLocaleString()}) - مدفوعات الموردين (${companyFinancials.supplierCashOut.toLocaleString()}) + صافي التسويات اليدوية (${(companyFinancials.manualAdditions - companyFinancials.manualCosts).toLocaleString()})`
-                        : `Customer In (${companyFinancials.customerCashIn.toLocaleString()}) - Supplier Out (${companyFinancials.supplierCashOut.toLocaleString()}) + Net Manual ({(companyFinancials.manualAdditions - companyFinancials.manualCosts).toLocaleString()})`}
+                        ? `مقبوضات العملاء (${companyFinancials.customerCashIn.toLocaleString()}) + دفعات مقدمة (${companyFinancials.advancesIn.toLocaleString()}) - مردودات (${companyFinancials.refundsOut.toLocaleString()}) - مدفوعات الموردين (${companyFinancials.supplierCashOut.toLocaleString()}) + صافي التسويات اليدوية (${(companyFinancials.manualAdditions - companyFinancials.manualCosts).toLocaleString()})${companyFinancials.openingBank ? ` + أرصدة افتتاحية (${companyFinancials.openingBank.toLocaleString()})` : ''}`
+                        : `Customer In (${companyFinancials.customerCashIn.toLocaleString()}) + Advances (${companyFinancials.advancesIn.toLocaleString()}) - Refunds (${companyFinancials.refundsOut.toLocaleString()}) - Supplier Out (${companyFinancials.supplierCashOut.toLocaleString()}) + Net Manual (${(companyFinancials.manualAdditions - companyFinancials.manualCosts).toLocaleString()})${companyFinancials.openingBank ? ` + Opening (${companyFinancials.openingBank.toLocaleString()})` : ''}`}
                     </div>
                   </div>
                 </div>
@@ -1087,6 +1109,27 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                   {companyFinancials.totalWIP.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
+
+              {companyFinancials.supplierWalletOpening !== 0 && (
+              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-supplier-wallet-opening">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center text-xs">
+                    <i className="fa-solid fa-truck-fast"></i>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white">
+                      {language === 'ar' ? 'محافظ الموردين العامة (أرصدة افتتاحية)' : 'Supplier General Wallets (opening advances)'}
+                    </div>
+                    <div className="text-[9px] text-slate-400">
+                      {language === 'ar' ? 'دفعات مقدمة افتتاحية للموردين لم تخصص بعد لأوامر شراء' : 'Opening supplier advances not yet allocated to a PO'}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-end font-mono font-black text-sm text-rose-300">
+                  {companyFinancials.supplierWalletOpening.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
+                </div>
+              </div>
+              )}
             </div>
           </div>
 
@@ -1166,6 +1209,27 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                 </div>
               </div>
 
+              {companyFinancials.openingWHT !== 0 && (
+              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-wht-opening">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs">
+                    <i className="fa-solid fa-percent"></i>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white">
+                      {language === 'ar' ? 'مصلحة الضرائب / الخصم من المنبع (رصيد افتتاحي)' : 'Tax Authority / Withholding (opening)'}
+                    </div>
+                    <div className="text-[9px] text-slate-400">
+                      {language === 'ar' ? 'رصيد الخصم من المنبع الافتتاحي' : 'Opening withholding balance booked in Initial Balances'}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-end font-mono font-black text-sm text-indigo-300">
+                  {companyFinancials.openingWHT.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
+                </div>
+              </div>
+              )}
+
               {companyFinancials.openingEquity !== 0 && (
               <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-opening-equity">
                 <div className="flex items-center gap-3">
@@ -1177,7 +1241,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                       {language === 'ar' ? 'حقوق ملكية الأرصدة الافتتاحية' : 'Opening Balance Equity'}
                     </div>
                     <div className="text-[9px] text-slate-400">
-                      {language === 'ar' ? 'أرصدة البنك الافتتاحية ناقص أرصدة محافظ العملاء الافتتاحية' : 'Opening bank balances minus opening customer wallet balances'}
+                      {language === 'ar' ? 'الأرصدة الافتتاحية للأصول (البنك، الذمم المدينة، محافظ الموردين) ناقص أرصدة الخصوم الافتتاحية (محافظ العملاء، الذمم الدائنة، الضرائب)' : 'Opening asset balances (bank, receivables, supplier wallets) minus opening liability balances (customer wallets, payables, taxes)'}
                     </div>
                   </div>
                 </div>
@@ -5782,6 +5846,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               {(supplierPayments || []).filter(sp => !sp.isRefund && (sp.unallocatedAdvance || 0) > 0.004).map(sp => (
                 <div key={sp.id} className="flex flex-wrap items-center gap-2 py-1 text-xs">
                   <span className="font-bold">{sp.supplierName}</span>
+                  {sp.isOpening && <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase border bg-blue-50 text-blue-600 border-blue-100">{language === 'ar' ? 'رصيد افتتاحي' : 'Opening'}</span>}
                   <span className="font-mono">{Number(sp.unallocatedAdvance).toLocaleString()}</span>
                   <input id={`alloc-po-${sp.id}`} className="border border-slate-300 rounded px-2 py-1 text-xs" placeholder={language === 'ar' ? 'رقم أمر الشراء' : 'PO number'} />
                   <button className="px-3 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-black uppercase" onClick={async () => {

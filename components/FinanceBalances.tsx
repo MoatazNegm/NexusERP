@@ -99,6 +99,17 @@ const groupBadge = (a: Account, language: string) => {
   return <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${m[2]}`}>{language === 'ar' ? m[1] : m[0]}</span>;
 };
 
+// M4 (validator 2026-11-08): hints under accounts whose opening does not move a neighbouring account.
+const accountHint = (a: Account, isAr: boolean): string | null => {
+  if (a.walletType === 'po') return isAr
+    ? `رصيد محفظة الأمر هو مال محتجز لهذا الأمر ولا يخفض الذمم المدينة له؛ لتعديل المستحق استخدم "${a.customerName || ''} / ذمم مدينة".`
+    : `A PO wallet opening is money held for this PO; it does not reduce this PO's receivable. To change what the customer owes, use "${a.customerName || ''} / Accounts receivable".`;
+  if (a.walletType === 'supplier_general') return isAr
+    ? 'يسجل كدفعة مقدمة للمورد تغطي أوامر الشراء اللاحقة تلقائياً (أو بالتخصيص).'
+    : 'Stored as a supplier advance: it covers the supplier\'s later POs automatically (or by Allocate).';
+  return null;
+};
+
 // Accounts table (desktop) / card list (phone). With onAdjust it shows the entry button per account.
 const AccountsList: React.FC<{ accounts: Account[]; onAdjust?: (a: Account) => void }> = ({ accounts, onAdjust }) => {
   const { language } = useLanguage();
@@ -130,6 +141,7 @@ const AccountsList: React.FC<{ accounts: Account[]; onAdjust?: (a: Account) => v
                 <tr key={a.key} data-testid={`ob-row-${a.key}`} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-8 py-5">
                     <div className="font-black text-slate-800 text-sm">{isAr ? a.labelAr : a.label}</div>
+                    {accountHint(a, isAr) && <div className="text-[10px] font-bold text-slate-400 mt-1 max-w-xl" data-testid={`ob-hint-${a.key}`}>{accountHint(a, isAr)}</div>}
                   </td>
                   <td className="px-8 py-5">{groupBadge(a, language)}</td>
                   <td className="px-8 py-5 text-end text-xs font-bold text-slate-500">
@@ -162,6 +174,7 @@ const AccountsList: React.FC<{ accounts: Account[]; onAdjust?: (a: Account) => v
               <div className="font-black text-slate-800 text-sm break-words min-w-0">{isAr ? a.labelAr : a.label}</div>
               <div className="shrink-0">{groupBadge(a, language)}</div>
             </div>
+            {accountHint(a, isAr) && <div className="text-[10px] font-bold text-slate-400 break-words" data-testid={`ob-card-hint-${a.key}`}>{accountHint(a, isAr)}</div>}
             <div className="flex justify-between items-baseline gap-3">
               <span className="text-[10px] font-black text-slate-400 uppercase">{isAr ? 'الرصيد الحالي' : 'Current balance'}</span>
               <span className={`text-sm font-black ${a.balance < 0 ? 'text-rose-600' : 'text-slate-800'}`}>{fmt(a.balance)} {cur}</span>
@@ -229,7 +242,7 @@ export const InitialBalancesView: React.FC<{ refreshKey?: number; onChanged?: ()
     if (!target) return;
     const raw = amount.trim();
     const n = Number(raw);
-    if (!raw || !Number.isFinite(n) || n <= 0) { setFormError(isAr ? 'أدخل مبلغاً موجباً' : 'Enter a positive amount'); return; }
+    if (!raw || !/^\d+(\.\d+)?$/.test(raw) || !Number.isFinite(n) || n <= 0) { setFormError(isAr ? 'أدخل مبلغاً موجباً' : 'Enter a positive amount'); return; }
     if (!Number.isInteger(n)) { setFormError(isAr ? `مرفوض: الكسر ${n} غير مسموح (وحدات صحيحة فقط).` : `Rejected: fraction ${n} is not allowed (whole units only).`); return; }
     if (reason.trim().length < 3) { setFormError(isAr ? 'السبب إلزامي (3 أحرف على الأقل)' : 'A reason is required (at least 3 characters)'); return; }
     setBusy(true); setFormError(null);
@@ -350,6 +363,12 @@ export const InitialBalancesView: React.FC<{ refreshKey?: number; onChanged?: ()
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest break-words">{isAr ? target.labelAr : target.label}</p>
               </div>
             </div>
+
+            {accountHint(target, isAr) && (
+              <div className="mb-6 p-4 bg-blue-50 text-blue-700 rounded-2xl text-xs font-bold border border-blue-100 flex items-start gap-3" data-testid="ob-modal-hint">
+                <i className="fa-solid fa-circle-info mt-0.5"></i><span className="break-words min-w-0">{accountHint(target, isAr)}</span>
+              </div>
+            )}
 
             {formError && <div className="mb-6 p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3" data-testid="ob-error"><i className="fa-solid fa-circle-exclamation"></i>{formError}</div>}
 

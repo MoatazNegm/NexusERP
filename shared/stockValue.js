@@ -1,8 +1,9 @@
 // Stock value for Finance (R34, user order 2026-11-08). Used by the server endpoint /api/v1/finance/position
 // (Finance "Balances & stock value" tab and the Dashboard). The rules mirror the Inventory module
 // (components/InventoryModule.tsx): component value = quantityInStock x lastCost, product value = quantity x
-// product unit value (price per unit, else real cost, else component cost per unit). Trade items are kept apart
-// from component stock, as in Inventory. The product hub counts what is CURRENTLY in the hub (received - dispatched).
+// product unit value AT COST (real cost per unit, else component cost per unit, else price per unit). Trade items are kept
+// apart from component stock, as in Inventory. The product hub counts what is CURRENTLY in the hub (received - dispatched),
+// without trading goods that are already counted in the warehouse.
 
 const effQty = (item) => {
     const q = (item && item.alteredQty !== undefined && item.alteredQty !== null) ? item.alteredQty : (item && item.quantity);
@@ -40,13 +41,24 @@ const isItemTradeSV = (inv, orders) => {
         (it.components || []).some(c => c.inventoryItemId === inv.id || c.componentNumber === inv.sku || c.description === inv.description) ||
         it.orderNumber === inv.sku || it.description === inv.description));
 };
+// D3 (supervisor ruling 2026-11-08): finished products are valued at COST: the line's real cost per unit, then the
+// component cost per unit, the selling price only as the last fallback (nothing else known).
 const productUnitValueSV = (item) => {
-    if (item.pricePerUnit && item.pricePerUnit > 0) return Number(item.pricePerUnit);
     if (item.realCost && item.realCost > 0) return Number(item.realCost);
     const compTotal = (item.components || []).reduce((s, c) => s + ((c.quantity || 0) * (c.unitCost || 0)), 0);
     const q = effQty(item) || 1;
-    return compTotal > 0 && q > 0 ? compTotal / q : 0;
+    if (compTotal > 0 && q > 0) return compTotal / q;
+    if (item.pricePerUnit && item.pricePerUnit > 0) return Number(item.pricePerUnit);
+    return 0;
 };
+// D2: a trading line's goods that sit in the warehouse (supplier parts received via the warehouse, or warehouse stock
+// allocated to the line) are already counted as inventory (trading goods / components) until they are delivered;
+// they are not counted again as product-hub stock (server.js transferReceivedItemsToFreeStock subtracts them the same way).
+const warehouseBackedQtySV = (item) => (item.components || []).reduce((s, c) => {
+    if (c.viaWarehouse) return s + Math.max(0, (Number(c.receivedQty) || 0) - (Number(c.consumedQty) || 0));
+    if (c.source === 'STOCK' && c.inventoryItemId) return s + Math.max(0, (Number(c.quantity) || 0) - (Number(c.consumedQty) || 0));
+    return s;
+}, 0);
 const r2 = x => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
 
 export const STOCK_CATEGORIES = [
@@ -79,7 +91,8 @@ export const computeStockValue = (inventory = [], orders = []) => {
         if (order.status === 'REJECTED') return;
         (order.items || []).forEach(item => {
             if (!isStockOrderSV(order)) {
-                const inHub = Math.max(0, (Number(item.hubReceivedQty) || 0) - (Number(item.dispatchedQty) || 0));
+                const inWarehouse = item.productionType === 'TRADING' ? warehouseBackedQtySV(item) : 0;
+                const inHub = Math.max(0, (Number(item.hubReceivedQty) || 0) - (Number(item.dispatchedQty) || 0) - inWarehouse);
                 if (inHub > 0) {
                     const unit = productUnitValueSV(item);
                     add('product_hub', { id: `${order.id}:${item.id}`, sku: order.internalOrderNumber || '', description: item.description || '', ref: order.customerReferenceNumber || order.internalOrderNumber || '', customerName: order.customerName, quantity: inHub, unitValue: unit, value: inHub * unit });

@@ -42,6 +42,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { computeStockValue } from './shared/stockValue.js';
+import { computeCashBank } from './shared/cashBank.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -4440,7 +4441,7 @@ const orderCommitmentGross = (order) => {
 const unlinkedCompanyCosts = (db) => {
     if (!db) return 0;
     let c = 0;
-    (db.supplierPayments || []).forEach(sp => { if (!sp.orderId && !sp.poNumber) c += Number(sp.unallocatedAdvance) || 0; });
+    (db.supplierPayments || []).forEach(sp => { if (!sp.orderId && !sp.poNumber && !sp.isOpening) c += Number(sp.unallocatedAdvance) || 0; });
     (db.ledger || []).forEach(l => { if (l && l.category === 'Tax Settlement' && l.type === 'COST') c += Number(l.amount) || 0; });
     return r2w(c);
 };
@@ -4494,7 +4495,7 @@ const computeOrderWallet = (order, orders = [], supplierPayments = [], ledger = 
 
 // --- ACCOUNTS RECEIVABLE / PAYABLE (R30) ---
 // AR: what customers still owe, per PO / customer / project. Call-off payments count against their blanket contract.
-const computeReceivables = (orders = [], ledger = null) => {
+const computeReceivables = (orders = [], ledger = null, customers = null) => {
     const rows = [];
     orders.forEach(o => {
         if (o.status === OrderStatus.REJECTED) return;
@@ -4506,15 +4507,27 @@ const computeReceivables = (orders = [], ledger = null) => {
     });
     const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, receivable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.receivable = r2w(Math.max(0, e.committed - e.paid)); }); return Array.from(m.values()); };
     const byCustomer = group(r => r.customerName, r => ({ customerName: r.customerName }));
-    // R34: opening AR balances (per customer) are added on top of the order-based receivable.
+    // R34: opening AR balances (per customer) are added on top of the order-based receivable. M3: the opening is keyed by the
+    // customer ID (accountKey AR:<id>); the current customer name is looked up, so a renamed customer keeps its opening.
+    // Openings are customer-level (no project, no PO): they are in byCustomer and the total, not in byOrder / byProject.
     if (ledger) {
         const ob = new Map();
-        ledger.forEach(l => { if (l && l.type === 'OPENING' && String(l.accountKey || '').startsWith('AR:') && l.customerName) ob.set(l.customerName, r2w((ob.get(l.customerName) || 0) + (Number(l.amount) || 0))); });
-        ob.forEach((amt, name) => {
+        ledger.forEach(l => {
+            if (!(l && l.type === 'OPENING' && String(l.accountKey || '').startsWith('AR:'))) return;
+            const cid = String(l.accountKey).slice(3);
+            const cust = Array.isArray(customers) ? customers.find(c => c && c.id === cid) : null;
+            const name = (cust && cust.name) || l.customerName;
+            if (!name) return;
+            const e0 = ob.get(cid) || { name, customerId: cid, amount: 0 };
+            e0.name = name; e0.amount = r2w(e0.amount + (Number(l.amount) || 0));
+            ob.set(cid, e0);
+        });
+        ob.forEach(({ name, customerId, amount }) => {
             let e = byCustomer.find(c => c.customerName === name);
             if (!e) { e = { customerName: name, committed: 0, paid: 0, receivable: 0 }; byCustomer.push(e); }
-            e.openingBalance = amt;
-            e.receivable = r2w(e.receivable + amt);
+            e.customerId = customerId;
+            e.openingBalance = r2w((e.openingBalance || 0) + amount);
+            e.receivable = r2w(e.receivable + amount);
         });
     }
     return {
@@ -5154,10 +5167,15 @@ app.get('/api/v1/orders/:id/wallet', (req, res) => {
 // R30: Accounts Receivable (customers owe us) and Accounts Payable (we owe suppliers); commitments live here, not in the wallets.
 app.get('/api/v1/ar', (req, res) => {
     const db = getDb(req);
-    const out = computeReceivables(db.orders || [], db.ledger || []);
+    const out = computeReceivables(db.orders || [], db.ledger || [], db.customers || []);
     const { customerName, projectName } = req.query;
     if (customerName) { out.byOrder = out.byOrder.filter(r => r.customerName === customerName); out.byCustomer = out.byCustomer.filter(r => r.customerName === customerName); out.byProject = out.byProject.filter(r => r.customerName === customerName); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0) + out.byCustomer.reduce((s, r) => s + (r.openingBalance || 0), 0)); }
-    if (projectName) { out.byOrder = out.byOrder.filter(r => r.projectName === String(projectName).trim()); out.byProject = out.byProject.filter(r => r.projectName === String(projectName).trim()); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0)); }
+    if (projectName) {
+        out.byOrder = out.byOrder.filter(r => r.projectName === String(projectName).trim()); out.byProject = out.byProject.filter(r => r.projectName === String(projectName).trim()); out.total = r2w(out.byOrder.reduce((s, r) => s + r.receivable, 0));
+        // M3: opening receivables belong to a customer, not to a project: they are left out of a project total and named here.
+        out.openingExcluded = r2w(out.byCustomer.reduce((s, r) => s + (r.openingBalance || 0), 0));
+        out.openingNote = 'Opening receivables (Finance > Initial Balances) are per customer, not per project; they are not in this project total (see byCustomer[].openingBalance).';
+    }
     res.json(out);
 });
 app.get('/api/v1/wht-missing', (req, res) => {
@@ -5959,16 +5977,9 @@ const finRolesOf = (req) => {
 const finIsInternalCustomerName = (n) => String(n || '').trim().toLowerCase() === 'internal stock';
 const finIsInternalOrder = (o) => o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-'));
 const FIN_INVOICED = ['INVOICED', 'HUB_RELEASED', 'DELIVERED', 'WAITING_GOVE', 'FULFILLED'];
-// Cash/Bank: the same formula as the Finance ledger tab (customer payments + manual additions - supplier payments - manual costs).
-const finCashBankBase = (db) => {
-    let cashIn = 0;
-    (db.orders || []).forEach(o => { if (o.status === OrderStatus.REJECTED || finIsInternalOrder(o)) return; (o.payments || []).forEach(p => { cashIn += Number(p.amount) || 0; }); });
-    const out = (db.supplierPayments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-    const led = db.ledger || [];
-    const add = led.filter(e => e.type === 'ADDITION' && !String(e.id || '').startsWith('adv_cust_') && !e.orderId).reduce((s, e) => s + (Number(e.amount) || 0), 0);
-    const cost = led.filter(e => e.type === 'COST' && !String(e.id || '').startsWith('sp_ledg_') && e.category !== 'Supplier Payment').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-    return r2w(cashIn + add - out - cost);
-};
+// Cash/Bank (R34 round 2, D1): shared/cashBank.js, the same formula as the Finance ledger tab (customer cash on POs +
+// customer advances - customer refunds + manual additions - supplier payments - manual costs).
+const finCashBankBase = (db) => computeCashBank(db.orders || [], db.ledger || [], db.supplierPayments || []).balance;
 // VAT: the same formula as the Finance ledger tab (output VAT on invoiced orders - input VAT - tax paid to the authority).
 const finVatBase = (db) => {
     let outTax = 0, inTax = 0;
@@ -6003,6 +6014,15 @@ const finLabelToKey = (label, db) => {
     const sm = l.match(/^Supplier (.+) \/ Advance$/);
     if (sm) { const s = (db.suppliers || []).find(x => x.name === sm[1]); if (s) return `SUP_GEN:${s.id}`; }
     if (l === 'Accounts Payable') return 'AP_ALL';
+    // D5: internal labels the app writes for its own bookkeeping are not other ledger accounts:
+    // 'Customer Deposit' (source of a customer advance; the money sits in the customer general / project wallet),
+    // 'Customer X / Withholding held by customer' (display line of the 1% withholding; it is the Tax Authority / Withholding account),
+    // a customer or supplier sub-account whose customer / PO / supplier is no longer found (renamed or deleted),
+    // and the tax authority (tax payments are part of the Net VAT liability).
+    if (l === 'Customer Deposit') return 'INTERNAL';
+    if (/^Customer .+ \/ Withholding held by customer$/.test(l)) return 'TAX_WHT_HELD';
+    if (/^Customer .+ \/ (Self|Project .+|PO .+)$/.test(l) || /^Supplier .+ \/ Advance$/.test(l)) return 'INTERNAL';
+    if (l === 'Tax Authority' || l.includes('ضرائب')) return 'TAX_VAT';
     return `LEDGER:${l}`;
 };
 // Build the full account list with balances. Groups: company, customer, supplier, ledger.
@@ -6020,7 +6040,7 @@ const computeFinanceAccounts = (db) => {
     const whtFlow = ledger.reduce((s, e) => s + ((e && e.type !== 'OPENING') ? ((e.toAccount === 'Tax Authority / Withholding' ? (Number(e.amount) || 0) : 0) - (e.fromAccount === 'Tax Authority / Withholding' ? (Number(e.amount) || 0) : 0)) : 0), 0);
     push({ key: 'TAX_WHT', group: 'company', kind: 'liability', label: 'Tax Authority / Withholding', labelAr: 'مصلحة الضرائب / الخصم من المنبع', balance: whtFlow + openingSumFor(ledger, 'TAX_WHT') });
     // Customer accounts: general wallet (Self), project general wallets, PO wallets, receivable
-    const ar = computeReceivables(orders, ledger);
+    const ar = computeReceivables(orders, ledger, db.customers || []);
     (db.customers || []).filter(c => c && c.name && !finIsInternalCustomerName(c.name)).sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(c => {
         const w = computeCustomerWallet(c, orders, sps, db);
         push({ key: `CUST_SELF:${c.id}`, group: 'customer', kind: 'liability', walletType: 'self', customerId: c.id, customerName: c.name, label: `${c.name} / General wallet`, labelAr: `${c.name} / المحفظة العامة`, balance: Number((w.walletBalances || {})[SELF_WALLET_KEY]) || 0 });
@@ -6042,8 +6062,11 @@ const computeFinanceAccounts = (db) => {
     // Supplier accounts: general wallet (unallocated advances) and payable
     const ap = computePayables(db);
     (db.suppliers || []).filter(s => s && s.name).sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(s => {
+        // D4: an opening on the supplier general wallet is a stored supplier advance (supplierPayments isOpening), so it is part of
+        // the unallocated advances (allocation, auto-cover of later POs, refunds use it). Legacy opening entries without a stored record still add.
         const adv = sps.filter(p => p.supplierId === s.id).reduce((t, p) => t + (Number(p.unallocatedAdvance) || 0), 0);
-        push({ key: `SUP_GEN:${s.id}`, group: 'supplier', kind: 'asset', walletType: 'supplier_general', supplierId: s.id, supplierName: s.name, label: `${s.name} / General wallet`, labelAr: `${s.name} / المحفظة العامة`, balance: adv + openingSumFor(ledger, `SUP_GEN:${s.id}`) });
+        const legacyOpen = ledger.filter(l => l && l.type === 'OPENING' && l.accountKey === `SUP_GEN:${s.id}` && !l.supplierPaymentId).reduce((t, l) => t + (Number(l.amount) || 0), 0);
+        push({ key: `SUP_GEN:${s.id}`, group: 'supplier', kind: 'asset', walletType: 'supplier_general', supplierId: s.id, supplierName: s.name, label: `${s.name} / General wallet`, labelAr: `${s.name} / المحفظة العامة`, balance: adv + legacyOpen });
         const apRow = ap.bySupplier.find(r => r.supplierId === s.id);
         push({ key: `AP:${s.id}`, group: 'supplier', kind: 'liability', walletType: 'ap', supplierId: s.id, supplierName: s.name, label: `${s.name} / Accounts payable`, labelAr: `${s.name} / ذمم دائنة`, balance: apRow ? apRow.payable : 0 });
     });
@@ -6071,8 +6094,13 @@ const computeFinanceAccounts = (db) => {
 };
 const finAccountByKey = (db, key) => computeFinanceAccounts(db).accounts.find(a => a.key === key);
 const finCheckAmount = (raw) => {
-    if (raw === undefined || raw === null || String(raw).trim() === '') return { error: 'Refused: amount is required' };
-    const n = Number(raw);
+    if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return { error: 'Refused: amount is required' };
+    // M2: only a real number or a plain decimal string ("1500", "-200", "100.5"); booleans, arrays, objects, hex ("0x10"),
+    // exponents ("1e3"), "Infinity" and the like are refused.
+    let n;
+    if (typeof raw === 'number') n = raw;
+    else if (typeof raw === 'string' && /^[+-]?\d+(\.\d+)?$/.test(raw.trim())) n = Number(raw.trim());
+    else return { error: 'Refused: amount must be a number' };
     if (!Number.isFinite(n)) return { error: 'Refused: amount must be a number' };
     if (!Number.isInteger(n)) return { error: `Rejected: fraction ${n} is not allowed (whole units only).` };
     if (n === 0) return { error: 'Refused: amount must not be zero' };
@@ -6162,6 +6190,16 @@ app.post('/api/v1/finance/opening-balances/confirm', (req, res) => {
         c.walletBalance = r2w((Number(c.walletBalance) || 0) + rv.amount);
         c.logs = c.logs || [];
         c.logs.push(createAuditLog(`Opening balance ${rv.amount.toFixed(2)} L.E. on ${acc.label} (${rv.reason})`, 'OPENING_BALANCE', user));
+    }
+    // D4 (validator 2026-11-08): an opening on a supplier general wallet is stored as a supplier advance (no cash, isOpening) so
+    // Allocate, the automatic cover of the supplier's later POs (ruling 2026-10-22) and supplier refunds work on it.
+    if (acc.walletType === 'supplier_general') {
+        const sup = (db.suppliers || []).find(x => x.id === acc.supplierId);
+        if (!sup) return res.status(404).json({ error: 'Refused: supplier not found' });
+        const spRec = { id: `sp_open_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`, supplierId: sup.id, supplierName: sup.name, amount: rv.amount, isOpening: true, date: entry.date, memo: `Opening balance - ${rv.reason}`, user, unallocatedAdvance: rv.amount, allocations: [], autoCover: rv.amount > 0 ? true : undefined, openingLedgerId: entry.id };
+        if (!db.supplierPayments) db.supplierPayments = [];
+        db.supplierPayments.push(spRec);
+        entry.supplierPaymentId = spRec.id;
     }
     if (!db.ledger) db.ledger = [];
     db.ledger.push(entry);
@@ -7996,7 +8034,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     custW.walletBalances = custW.walletBalances || {};
                     custW.walletBalances[SELF_WALLET_KEY] = Math.round(((custW.walletBalances[SELF_WALLET_KEY] || 0) - take) * 100) / 100;
                     order.paymentMovedToWallet = Math.round((movedToWallet - take) * 100) / 100;
-                    ledgerPush(db, { type: 'REFUND', amount: take, description: `Payment VOIDED (cancelled PO ${order.internalOrderNumber}): refunded from customer general wallet - ${payload.reason || 'Correction'}`, category: 'Customer Refunds', fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
+                    ledgerPush(db, { type: 'REFUND', amount: take, description: `Payment VOIDED (cancelled PO ${order.internalOrderNumber}): refunded from customer general wallet - ${payload.reason || 'Correction'}`, category: 'Customer Refunds', voidOfPayment: true, fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
                 } else if (!removed.transfer && Number(removed.amount) > 0) {
                     ledgerPush(db, { type: 'DEDUCTION', amount: Number(removed.amount), description: `Payment VOIDED: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.reason || 'Correction'}`, category: 'Customer Payment Reversal', fromAccount: 'Bank Account', toAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
                 }
