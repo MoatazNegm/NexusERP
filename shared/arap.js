@@ -6,7 +6,7 @@
 // AP = every ISSUED supplier PO component (not NEW / PENDING_OFFER / RFP_SENT / AWARDED / CANCELLED), gross (net + tax),
 //      minus the supplier payments allocated to it, plus the supplier-level AP openings.
 
-import { isInternalStockOrder, orderFxRate, orderPaymentsLE, refNamesOrder, isClosedBlanketRoot, callOffsOfBlanket } from './orderMoney.js';
+import { isInternalStockOrder, orderFxRate, orderPaymentsLE, blanketRootOf, isClosedBlanketRoot, callOffsOfBlanket, sameCustomerName } from './orderMoney.js';
 
 const REJECTED = 'REJECTED';
 const r2w = x => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
@@ -51,7 +51,7 @@ export const orderPaidInLE = (order) => {
 const orderProjectNameAP = (order, orders = []) => {
     let proj = String((order.projectName || '').trim());
     if (!proj && order.blanketContractId) {
-        const parent = orders.find(p => refNamesOrder(order.blanketContractId, p) && p.status !== REJECTED);
+        const parent = blanketRootOf(order, orders); // R34 round 13: the shared link rule (same customer, id > number > reference)
         if (parent && parent.projectName) proj = String(parent.projectName).trim();
     }
     return proj;
@@ -60,25 +60,39 @@ const orderProjectNameAP = (order, orders = []) => {
 // The receivable committed by one order in L.E. (a blanket contract commits nothing by itself; the 1% withholding is no receivable).
 const orderCommittedLE = (o) => o.blanketOrder ? 0 : r2w(r2w(orderCommitmentGrossAP(o) - (o.appliesWithholdingTax ? orderWhtAmountAP(o) : 0)) * orderFxAP(o));
 // R34 round 12 (validator 11, defect 5): the money a CLOSED blanket contract keeps after its close (paid - the surplus moved to the
-// customer general wallet) is the payment for its call-offs. Per order it is applied to the open call-offs of that contract (same
-// customer, in order), up to what each still owes; the contract row shows it as applied. The totals do not change; the call-off of a
-// closed contract that the contract money covers shows 0 owing. Returns { covered: Map callOffId -> L.E., applied: Map rootId -> L.E. }.
+// customer general wallet) is the payment for its call-offs.
+// R34 round 13 (validator 12, defect 3): the close settles the contract and its call-offs as ONE account (paid on all of them minus the
+// called-off gross; the surplus went to the customer general wallet). So after the close a call-off keeps its own payments only up to
+// what it owes; what it paid above that (an overpaid call-off) joins the money the contract kept, and that pool pays the call-offs that
+// still owe (same customer, in order). The contract row shows what is left of the pool (0 after a balanced close, never the negative
+// kept money of a close whose surplus came from an overpaid call-off). The adjustments add up to 0, so the rows add up to the total.
+// Returns { covered: Map callOffId -> L.E. (+ paid by the pool, - its own overpayment taken into the pool), applied: Map rootId -> L.E.
+// (the net the contract row hands to its call-offs) }.
 export const closedContractCoverage = (orders = []) => {
     const covered = new Map(), applied = new Map();
     (orders || []).forEach(root => {
         if (!root || root.status === REJECTED || !isClosedBlanketRoot(root) || isInternalStockOrder(root)) return;
-        let avail = r2w(orderPaidInLE(root));
-        if (avail <= 0.004) return;
-        let used = 0;
-        callOffsOfBlanket(root, orders).forEach(c => {
-            if (avail <= 0.004 || isInternalStockOrder(c) || String(c.customerName || '') !== String(root.customerName || '')) return;
-            const open = r2w(orderCommittedLE(c) - orderPaidInLE(c) - (covered.get(c.id) || 0));
-            if (open <= 0.004) return;
-            const take = r2w(Math.min(open, avail));
-            covered.set(c.id, r2w((covered.get(c.id) || 0) + take));
-            avail = r2w(avail - take); used = r2w(used + take);
+        const calls = callOffsOfBlanket(root, orders).filter(c => !isInternalStockOrder(c) && sameCustomerName(c.customerName, root.customerName));
+        if (!calls.length) return;
+        let pool = r2w(orderPaidInLE(root));
+        const own = new Map();
+        calls.forEach(c => {
+            const committed = orderCommittedLE(c), paid = r2w(orderPaidInLE(c));
+            const over = r2w(paid - committed);
+            if (over > 0.004) { own.set(c.id, committed); pool = r2w(pool + over); covered.set(c.id, r2w((covered.get(c.id) || 0) - over)); }
+            else own.set(c.id, paid);
         });
-        if (used > 0.004) applied.set(root.id, used);
+        calls.forEach(c => {
+            if (pool <= 0.004) return;
+            const open = r2w(orderCommittedLE(c) - own.get(c.id));
+            if (open <= 0.004) return;
+            const take = r2w(Math.min(open, pool));
+            covered.set(c.id, r2w((covered.get(c.id) || 0) + take));
+            pool = r2w(pool - take);
+        });
+        const net = r2w(calls.reduce((t, c) => t + (covered.get(c.id) || 0), 0));
+        if (Math.abs(net) > 0.004) applied.set(root.id, net);
+        calls.forEach(c => { if (Math.abs(covered.get(c.id) || 0) <= 0.004) covered.delete(c.id); });
     });
     return { covered, applied };
 };
@@ -109,6 +123,9 @@ export const computeReceivables = (orders = [], ledger = null, customers = null)
         const row = { orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectNameAP(o, orders) || '(No Project)', status: o.status, blanketOrder: Boolean(o.blanketOrder), committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) };
         if (covLE > 0.004) row.coveredByContract = r2w(covLE);
         if (appLE > 0.004) row.appliedToCallOffs = r2w(appLE);
+        // R34 round 13 (defect 3): an overpayment of a call-off that the close already moved (with the contract) to the general wallet
+        if (covLE < -0.004) row.overpaymentSettledByClose = r2w(-covLE);
+        if (appLE < -0.004) row.callOffOverpaymentsSettled = r2w(-appLE);
         if (fx !== 1) Object.assign(row, { currency: o.currency, conversionRate: fx, committedOrderCurrency: committedOC, paidOrderCurrency: paidOC, receivableOrderCurrency: r2w(Math.max(0, committedOC - paidOC)) });
         rows.push(row);
     });

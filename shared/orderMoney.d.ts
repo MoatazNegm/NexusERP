@@ -5,5 +5,10 @@ export declare function orderPaymentsLE(order: any, filter?: ((p: any) => boolea
 export declare function isBlanketRootOrder(order: any): boolean;
 export declare function isClosedBlanketRoot(order: any): boolean;
 export declare function blanketRootOf(order: any, orders?: any[]): any | null;
+export declare function sameCustomerName(a: any, b: any): boolean;
+export declare function isRejectedStatus(s: any): boolean;
+export declare function resolveBlanketLink(ref: any, orders?: any[], customerName?: any, excludeId?: any): { root: any | null; key?: string; reason?: string; hit?: any };
+export declare function blanketLinkRefusal(ref: any, res: any, customerName?: any): string | null;
+export declare function blanketLinkMap(orders?: any[]): Map<any, string>;
 export declare function isRealizedSale(order: any, orders?: any[]): boolean;
 export declare function ownLinesAreSales(order: any): boolean;

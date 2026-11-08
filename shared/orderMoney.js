@@ -45,11 +45,64 @@ export const refNamesOrder = (ref, p) => {
     const r = trimRef(ref);
     return Boolean(r && p && (trimRef(p.id) === r || trimRef(p.internalOrderNumber) === r || trimRef(p.customerReferenceNumber) === r));
 };
+// R34 round 13 (validator 12, defects 1 and 5): the link never crosses customers and resolves in a FIXED priority. Only the live
+// (non-rejected) blanket contracts (blanketOrder, no blanketContractId of their own) of the call-off's OWN customer (names compared
+// trimmed, case-insensitive) are candidates; among them the link names the contract whose id matches, else whose internal number
+// matches, else whose customer reference matches. A link that names another customer's contract, a rejected contract or a normal
+// order resolves to no contract (the call-off is then an ordinary order); the POST / PUT link refuses it with the reason below.
+// ONE rule for the close, the drawdown, the guards, the void take-back, the orders report, AR and the project-name lookups.
+export const sameCustomerName = (a, b) => trimRef(a).toLowerCase() === trimRef(b).toLowerCase();
+export const isRejectedStatus = (s) => trimRef(s).toUpperCase() === 'REJECTED';
+const isBlanketRootShape = (p) => Boolean(p && p.blanketOrder && !trimRef(p.blanketContractId));
+export const BLANKET_LINK_KEYS = ['id', 'internalOrderNumber', 'customerReferenceNumber'];
+// Returns { root, key } for a valid link, else { root: null, reason, hit } with reason EMPTY | NOT_FOUND | NOT_BLANKET | CANCELLED |
+// OTHER_CUSTOMER (hit = the order the reference names, by the same key priority).
+export const resolveBlanketLink = (ref, orders = [], customerName = '', excludeId = null) => {
+    const r = trimRef(ref);
+    if (!r) return { root: null, reason: 'EMPTY', hit: null };
+    const list = orders || [];
+    const usable = (p) => Boolean(p) && (excludeId === null || excludeId === undefined || p.id !== excludeId);
+    const live = (p) => isBlanketRootShape(p) && !isRejectedStatus(p.status) && sameCustomerName(p.customerName, customerName);
+    for (const k of BLANKET_LINK_KEYS) {
+        const hit = list.find(p => usable(p) && live(p) && trimRef(p[k]) === r);
+        if (hit) return { root: hit, key: k };
+    }
+    for (const k of BLANKET_LINK_KEYS) {
+        // a customer reference is free text (many normal POs share one); only a blanket contract counts as a hit by reference
+        const cands = list.filter(p => usable(p) && trimRef(p[k]) === r && (k !== 'customerReferenceNumber' || isBlanketRootShape(p)));
+        if (!cands.length) continue;
+        const own = cands.find(p => sameCustomerName(p.customerName, customerName));
+        const liveOther = cands.find(p => isBlanketRootShape(p) && !isRejectedStatus(p.status));
+        if (!own && liveOther) return { root: null, reason: 'OTHER_CUSTOMER', hit: liveOther, key: k };
+        const pick = own || cands[0];
+        if (isBlanketRootShape(pick) && isRejectedStatus(pick.status)) return { root: null, reason: 'CANCELLED', hit: pick, key: k };
+        if (!isBlanketRootShape(pick)) return { root: null, reason: 'NOT_BLANKET', hit: pick, key: k };
+        return { root: null, reason: 'OTHER_CUSTOMER', hit: pick, key: k };
+    }
+    return { root: null, reason: 'NOT_FOUND', hit: null };
+};
+// The user-facing refusal of a link that does not resolve (POST / PUT of a call-off); null when it resolves to a contract.
+export const blanketLinkRefusal = (ref, res, customerName) => {
+    if (!res || res.root) return null;
+    const r = trimRef(ref), h = res.hit;
+    if (res.reason === 'EMPTY' || res.reason === 'NOT_FOUND') return `Blanket contract "${r}" not found.`;
+    if (res.reason === 'NOT_BLANKET') return `Blanket contract "${r}" is not a blanket order.`;
+    if (res.reason === 'CANCELLED') return `Blanket contract "${r}" is cancelled (REJECTED); no call-off can be raised on it or linked to it.`;
+    return `Blanket contract "${r}" belongs to customer "${trimRef(h && h.customerName)}"; a call-off of customer "${trimRef(customerName)}" cannot be linked to it (a call-off and its blanket contract must have the same customer).`;
+};
 export const blanketRootOf = (o, orders = []) => {
     if (!o) return null;
     const ref = trimRef(o.blanketContractId); // R34 round 10: a stored reference with stray spaces still names its contract
     if (!ref) return null;
-    return (orders || []).find(p => p && p.blanketOrder && p.status !== 'REJECTED' && refNamesOrder(ref, p)) || null;
+    return resolveBlanketLink(ref, orders, o.customerName, o.id).root || null;
+};
+// R34 round 13: the link map (call-off id -> resolved contract id or '') of every live (non-rejected) order with a link; the generic order
+// edit and the order create compare it before / after the change, so no change of another order moves or drops a call-off silently.
+// A rejected call-off no longer draws on its contract (round 12), so a rename of the contract it named stays allowed.
+export const blanketLinkMap = (orders = []) => {
+    const m = new Map();
+    (orders || []).forEach(c => { if (c && trimRef(c.blanketContractId) && !isRejectedStatus(c.status)) { const r = blanketRootOf(c, orders); m.set(c.id, r ? r.id : ''); } });
+    return m;
 };
 // The call-offs of a blanket contract: the orders whose link resolves (blanketRootOf) to this contract. Rejected call-offs are left
 // out unless includeRejected (a rejected call-off no longer draws on the contract).
@@ -57,7 +110,7 @@ export const callOffsOfBlanket = (root, orders = [], includeRejected = false) =>
     if (!root || !root.blanketOrder || trimRef(root.blanketContractId)) return [];
     return (orders || []).filter(c => {
         if (!c || c === root || c.id === root.id || !trimRef(c.blanketContractId)) return false;
-        if (!includeRejected && c.status === 'REJECTED') return false;
+        if (!includeRejected && isRejectedStatus(c.status)) return false;
         const r = blanketRootOf(c, orders);
         return Boolean(r && (r === root || r.id === root.id));
     });

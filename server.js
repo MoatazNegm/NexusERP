@@ -44,7 +44,7 @@ import { isMarginBreach } from './shared/margin.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank } from './shared/cashBank.js';
 import { computeReceivables, computePayables, orderPaidInLE, orderReceivableLE, closedContractCoverage } from './shared/arap.js';
-import { isInternalStockOrder, orderPaymentsLE, isRealizedSale, ownLinesAreSales, paymentLE, blanketRootOf, callOffsOfBlanket, refNamesOrder, trimRef } from './shared/orderMoney.js';
+import { isInternalStockOrder, orderPaymentsLE, isRealizedSale, ownLinesAreSales, paymentLE, blanketRootOf, callOffsOfBlanket, trimRef, resolveBlanketLink, blanketLinkRefusal, blanketLinkMap, isRejectedStatus, sameCustomerName } from './shared/orderMoney.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -4400,7 +4400,7 @@ const openingSumFor = (ledger, key) => {
 const orderProjectName = (order, orders = []) => {
     let proj = String((order.projectName || '').trim());
     if (!proj && order.blanketContractId) {
-        const parent = orders.find(p => refNamesOrder(order.blanketContractId, p) && p.status !== OrderStatus.REJECTED);
+        const parent = blanketRootOf(order, orders); // R34 round 13: the shared link rule (same customer, id > number > reference)
         if (parent && parent.projectName) proj = String(parent.projectName).trim();
     }
     return proj;
@@ -4742,6 +4742,13 @@ const addToCollection = (col) => (req, res) => {
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
         return res.status(400).json({ error: 'Invalid orderDate.' });
     }
+    // R34 round 13 (validator 12, defect 4): a status sent with the create is stored only as an OrderStatus value (normalised spelling);
+    // an unknown value is refused. No status (or an empty one) starts the order as LOGGED, as before.
+    if (col === 'orders' && req.body.status !== undefined && req.body.status !== null && req.body.status !== '') {
+        const canonP = canonicalOrderStatus(req.body.status);
+        if (!canonP || !ORDER_STATUS_VALUES.includes(canonP)) return res.status(400).json({ error: `Refused: "${String(req.body.status)}" is not an order status; the status must be one of ${ORDER_STATUS_VALUES.join(', ')}.` });
+        newItem.status = canonP;
+    }
     if (col === 'orders') {
         const itemValidationError = validateOrderItems(req.body.items, req.body.customerName, req.body.customerReferenceNumber || req.body.customerPoNumber);
         if (itemValidationError) {
@@ -4794,15 +4801,12 @@ const addToCollection = (col) => (req, res) => {
             newItem.isSettlingOrder = true;
             newItem.blanketContractId = String(newItem.blanketContractId).trim();
             const blanketRef = newItem.blanketContractId;
-            const blanket = db.orders.find(o =>
-                trimRef(o.id) === blanketRef || trimRef(o.internalOrderNumber) === blanketRef // R34 round 12: trimmed link rule
-            );
-            if (blanket && !blanket.blanketOrder) {
-                return res.status(400).json({ error: `Blanket contract "${blanketRef}" is not a blanket order.` });
-            }
-            if (!blanket) {
-                return res.status(400).json({ error: `Blanket contract "${blanketRef}" not found.` });
-            }
+            // R34 round 13 (validator 12, defects 1 and 5): the shared link rule (shared/orderMoney.js resolveBlanketLink): only a live
+            // blanket contract of the SAME customer, by id, then internal number, then customer reference; a cancelled (REJECTED)
+            // contract, another customer's contract or a normal order is refused with the reason.
+            const linkP = resolveBlanketLink(blanketRef, db.orders || [], newItem.customerName, newItem.id);
+            const blanket = linkP.root;
+            if (!blanket) return res.status(400).json({ error: blanketLinkRefusal(blanketRef, linkP, newItem.customerName) });
             // R34 round 7 (validator 6, defect 1): a closed blanket contract is settled; no new call-off may be raised on it.
             if (blanket.contractClosed) {
                 return res.status(400).json({ error: `Blanket contract "${blanket.internalOrderNumber || blanketRef}" is closed; no new call-off can be raised on it.` });
@@ -4811,6 +4815,9 @@ const addToCollection = (col) => (req, res) => {
             newItem.logs.push(createAuditLog(`Settling order linked to blanket contract ${blanket.internalOrderNumber || blanketRef}. Finance will receive this order automatically.`, OrderStatus.LOGGED, user));
         }
         newItem = processedOrderInternal(newItem, db, user, true, null);
+        // R34 round 13 (validator 12, defect 1): a new order never moves an existing call-off to another contract (e.g. a new contract
+        // whose internal number equals the customer reference another call-off is linked by).
+        { const sh = blanketLinkShiftRefusal(blanketLinkMap(db.orders || []), [...(db.orders || []), newItem], newItem.id, true); if (sh) return res.status(400).json({ error: sh }); }
         reconcileInventory(null, newItem, db);
     }
 
@@ -4834,13 +4841,21 @@ const addToCollection = (col) => (req, res) => {
     if (col === 'ledger') {
         // If an addition entry is assigned to a specific PO, reflect it into the order's payments
         if (newItem.type === 'ADDITION' && (newItem.orderId || newItem.poNumber)) {
-            const targetOrder = (db.orders || []).find(o =>
-                (newItem.orderId && o.id === newItem.orderId) ||
-                (newItem.poNumber && (
-                    String(o.customerReferenceNumber || '').trim().toLowerCase() === String(newItem.poNumber).trim().toLowerCase() ||
-                    String(o.internalOrderNumber || '').trim().toLowerCase() === String(newItem.poNumber).trim().toLowerCase()
-                ))
-            );
+            // R34 round 13 (validator 12, defect 1): the PO is found in a fixed priority - orderId, then internal number (unique), then
+            // customer reference. A customer reference is per customer: when the entry names a customer only that customer's orders
+            // count, and a reference shared by orders of several customers without a customer name is refused (the money must not
+            // land on another customer's order).
+            const poKeyL = newItem.poNumber ? String(newItem.poNumber).trim().toLowerCase() : '';
+            let targetOrder = (newItem.orderId && (db.orders || []).find(o => o.id === newItem.orderId)) || null;
+            if (!targetOrder && poKeyL) targetOrder = (db.orders || []).find(o => String(o.internalOrderNumber || '').trim().toLowerCase() === poKeyL) || null;
+            if (!targetOrder && poKeyL) {
+                const byRef = (db.orders || []).filter(o => String(o.customerReferenceNumber || '').trim().toLowerCase() === poKeyL && (!trimRef(newItem.customerName) || sameCustomerName(o.customerName, newItem.customerName)));
+                const live = byRef.filter(o => !isRejectedStatus(o.status));
+                const pool = live.length ? live : byRef;
+                const custs = new Set(pool.map(o => trimRef(o.customerName).toLowerCase()));
+                if (custs.size > 1) return res.status(400).json({ error: `Refused: the customer reference "${String(newItem.poNumber).trim()}" names orders of ${custs.size} customers (${pool.map(o => `${o.internalOrderNumber} / ${o.customerName}`).join(', ')}); name the order by its internal number or give the customer name.` });
+                targetOrder = pool[0] || null;
+            }
 
             // R34 round 8 (validator 7, defect 5): no payment into a cancelled (REJECTED) PO, the same rule as record-payment.
             if (targetOrder && targetOrder.status === 'REJECTED') return res.status(400).json({ error: `Refused: order ${targetOrder.internalOrderNumber} is cancelled (REJECTED); no payment can be booked on it - record a customer advance to the general wallet instead.` });
@@ -4919,6 +4934,26 @@ const ORDER_EDIT_LOCKED_REASON = (req, order) => {
     if (!order || ORDER_EDIT_EDITABLE_STATUSES.includes(String(order.status))) return null;
     return 'This order is locked: it has passed Technical Review and can no longer be edited.';
 };
+// R34 round 13 (validator 12, defect 1): the call-off links before a change (blanketLinkMap) against after it; the first call-off that would
+// resolve to another contract (or lose its contract) gives the refusal text, else null. skipSelf leaves out the edited order (its link
+// was changed on purpose and checked by the link rule).
+const blanketLinkShiftRefusal = (before, afterOrders, selfId, skipSelf) => {
+    const after = blanketLinkMap(afterOrders);
+    const nameOf = (id) => { const o = id ? afterOrders.find(x => x && x.id === id) : null; return o ? (o.internalOrderNumber || o.id) : 'no contract'; };
+    for (const [cid, b] of before) {
+        if (skipSelf && cid === selfId) continue;
+        if (!after.has(cid)) continue;
+        const a = after.get(cid) || '';
+        if (a === (b || '')) continue;
+        const c = afterOrders.find(x => x && x.id === cid) || {};
+        return `Refused: this change would move call-off ${c.internalOrderNumber || cid} (linked by "${trimRef(c.blanketContractId)}") from blanket contract ${b ? nameOf(b) : '(none)'} to ${a ? nameOf(a) : 'no contract'}; a call-off link never moves silently - change the call-off's own link instead (a call-off and its contract must have the same customer).`;
+    }
+    return null;
+};
+// R34 round 13 (validator 12, defect 4): the canonical spelling of an order status (trim, upper case, spaces / hyphens -> '_'); null for a
+// non-string or empty value. ORDER_STATUS_VALUES is the list the generic order edit accepts.
+const ORDER_STATUS_VALUES = Object.values(OrderStatus);
+const canonicalOrderStatus = (v) => (typeof v === 'string' && v.trim()) ? v.trim().toUpperCase().replace(/[\s-]+/g, '_') : null;
 // R34 round 10 (validator 9, defect 3): helpers for the lines of a call-off of a closed blanket contract.
 const closedRootOfCallOff = (o, orders) => { const r = (o && o.blanketContractId) ? blanketRootOf(o, orders || []) : null; return (r && r.contractClosed) ? r : null; };
 // R34 round 12 (validator 11, defect 5): the money a closed contract kept at its close pays its call-offs (shared/arap.js
@@ -4927,6 +4962,15 @@ const closedRootOfCallOff = (o, orders) => { const r = (o && o.blanketContractId
 // the same call-off is never collected twice. The part it still owes (an underpaid close) can be paid as usual. The D1 surplus move
 // (moveOrderSurplusToGeneralWallet) never applies to call-offs, so the refusal also covers a call-off that paid itself in full.
 const closedCallOffPaymentRefusal = (db, order, amountLE) => {
+    // R34 round 13 (validator 12, defect 2): a payment on the CLOSED contract itself is the same settlement money: it is accepted only up
+    // to what its call-offs still owe after the close (an underpaid close topped up on the contract); above that it is refused, as on a
+    // call-off (the excess would sit above the commitment of a settled PO).
+    if (order && order.blanketOrder && !trimRef(order.blanketContractId) && order.contractClosed && order.status !== OrderStatus.REJECTED) {
+        const callsP = callOffsOfBlanket(order, db.orders || []);
+        const oweP = r2w(callsP.reduce((t, c) => t + orderReceivableLE(c, db.orders || []), 0));
+        if (!(Number(amountLE) > oweP + 0.004)) return null;
+        return `Refused: blanket contract ${order.internalOrderNumber} is closed; the closed settlement is final and its call-offs still owe ${oweP.toFixed(2)} L.E. - a payment of ${(Number(amountLE) || 0).toFixed(2)} L.E. is above that; record a customer advance to the general wallet instead.`;
+    }
     const root = closedRootOfCallOff(order, (db && db.orders) || []);
     if (!root || order.status === OrderStatus.REJECTED) return null;
     const owe = orderReceivableLE(order, db.orders || []);
@@ -5169,11 +5213,26 @@ const updateInCollection = (col) => (req, res) => {
                     ? `Refused: order ${oldItem.internalOrderNumber} is rejected; the generic order edit cannot change its status (${stOld} -> ${stNew}); a rejected order stays rejected.`
                     : `Refused: the generic order edit cannot set the status REJECTED on order ${oldItem.internalOrderNumber}; use the reject-order action (it moves the paid money and releases stock).` });
             }
+            // R34 round 13 (validator 12, defect 4): the status is stored only as an OrderStatus value. A spelling of one ('fulfilled',
+            // ' FULFILLED', 'delivered', 'in hold', 'Technical-Review') is normalised (trim, upper case, spaces / hyphens -> '_') to the
+            // canonical value; anything else ('Cancelled', 'REJECT', '', null, a number) is refused. An unchanged echo of a stored legacy
+            // value keeps it. (A rejected order was handled above: its echo keeps 'REJECTED', anything else is refused.)
+            let stChanged = stNew !== stOld;
+            if (req.body.status !== undefined && !rjN(stOld)) {
+                const canonS = canonicalOrderStatus(req.body.status);
+                const oldCanon = canonicalOrderStatus(stOld) || stOld;
+                if (canonS && (ORDER_STATUS_VALUES.includes(canonS) || canonS === oldCanon)) {
+                    updated.status = canonS === oldCanon ? oldItem.status : canonS;
+                    stChanged = canonS !== oldCanon;
+                } else {
+                    return res.status(400).json({ error: `Refused: "${req.body.status === null ? 'null' : String(req.body.status)}" is not an order status; the status must be one of ${ORDER_STATUS_VALUES.join(', ')} (order ${oldItem.internalOrderNumber} keeps ${stOld}).` });
+                }
+            }
             const callsS = blanketCallOffsOf(oldItem, db.orders || []);
             if (oldItem.contractClosed || callsS.length) {
                 const whyS = oldItem.contractClosed ? `blanket contract ${oldItem.internalOrderNumber} is closed (the settlement is final)` : `blanket contract ${oldItem.internalOrderNumber} has call-offs`;
                 const chS = [];
-                if (stNew !== stOld) chS.push('status');
+                if (stChanged) chS.push('status');
                 if (req.body.internalOrderNumber !== undefined && String(req.body.internalOrderNumber ?? '').trim() !== String(oldItem.internalOrderNumber ?? '').trim()) chS.push('internalOrderNumber');
                 const crefOld = String(oldItem.customerReferenceNumber ?? '').trim();
                 if (req.body.customerReferenceNumber !== undefined && String(req.body.customerReferenceNumber ?? '').trim() !== crefOld && crefOld && callsS.some(x => String(x.blanketContractId).trim() === crefOld && crefOld !== String(oldItem.id) && crefOld !== String(oldItem.internalOrderNumber ?? '').trim())) chS.push('customerReferenceNumber');
@@ -5182,10 +5241,11 @@ const updateInCollection = (col) => (req, res) => {
         }
         if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(req.body.blanketContractId).trim() !== '' && String(req.body.blanketContractId).trim() !== String(oldItem.blanketContractId || '').trim()) {
             const blanketRefU = String(req.body.blanketContractId).trim();
-            const blanketU = (db.orders || []).find(o => o.id !== oldItem.id && (trimRef(o.id) === blanketRefU || trimRef(o.internalOrderNumber) === blanketRefU))
-                || (db.orders || []).find(o => o.id !== oldItem.id && o.blanketOrder && o.status !== 'REJECTED' && trimRef(o.customerReferenceNumber) === blanketRefU);
-            if (!blanketU) return res.status(400).json({ error: `Blanket contract "${blanketRefU}" not found.` });
-            if (!blanketU.blanketOrder || blanketU.blanketContractId) return res.status(400).json({ error: `Blanket contract "${blanketRefU}" is not a blanket order.` });
+            // R34 round 13 (validator 12, defects 1 and 5): the shared link rule (same customer, id > number > reference; a cancelled
+            // contract, another customer's contract or a normal order is refused with the reason).
+            const linkU = resolveBlanketLink(blanketRefU, db.orders || [], updated.customerName, oldItem.id);
+            const blanketU = linkU.root;
+            if (!blanketU) return res.status(400).json({ error: blanketLinkRefusal(blanketRefU, linkU, updated.customerName) });
             if (blanketU.contractClosed) return res.status(400).json({ error: `Blanket contract "${blanketU.internalOrderNumber || blanketRefU}" is closed; no new call-off can be raised on it.` });
             updated.blanketContractId = blanketRefU;
             updated.isSettlingOrder = true;
@@ -5225,6 +5285,14 @@ const updateInCollection = (col) => (req, res) => {
         }
 
         updated = processedOrderInternal(updated, db, user, false, oldItem);
+        // R34 round 13 (validator 12, defect 1): the edit never moves or drops a call-off link silently: no other order's call-off may
+        // resolve to another contract after it (a renamed reference, a changed customer or blanket flag), and the edited call-off keeps
+        // its contract unless its link itself was changed (that new link was checked by the link rule above).
+        {
+            const relinked = req.body.blanketContractId !== undefined && trimRef(req.body.blanketContractId) !== trimRef(oldItem.blanketContractId);
+            const sh = blanketLinkShiftRefusal(blanketLinkMap(db.orders || []), (db.orders || []).map(o => o.id === oldItem.id ? updated : o), oldItem.id, relinked);
+            if (sh) return res.status(400).json({ error: sh });
+        }
         reconcileInventory(oldItem, updated, db);
         if (!req.body.status) {
             updated.logs.push(createAuditLog('Order modified', updated.status, user));
@@ -5389,7 +5457,7 @@ app.get('/api/v1/project-wallets', (req, res) => {
                     const isBlanket = Boolean(o.blanketOrder || o.contractId || o.blanketContractId);
                     let ordProj = String((o.projectName || '').trim());
                     if (!ordProj && o.blanketContractId) {
-                        const parent = orders.find(p => refNamesOrder(o.blanketContractId, p) && p.status !== OrderStatus.REJECTED);
+                        const parent = blanketRootOf(o, orders); // R34 round 13: the shared link rule
                         if (parent && parent.projectName) ordProj = String(parent.projectName).trim();
                     }
                     return ordProj === trimmed;
