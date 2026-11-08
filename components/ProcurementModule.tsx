@@ -7,6 +7,7 @@ import { PartHistory } from './PartHistory';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
 import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
+import { getDynamicOrderStatusStyle } from '../constants';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -772,7 +773,15 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   };
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null);
   const poTemplateRef = useRef<HTMLDivElement>(null);
-  const [poPrintData, setPoPrintData] = useState<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier } | null>(null);
+  const [poPrintData, setPoPrintData] = useState<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier, fileNameSuffix?: string } | null>(null);
+  const [poPrintQueue, setPoPrintQueue] = useState<Array<{ order: CustomerOrder, items: { item: CustomerOrderItem, comp: ManufacturingComponent }[], supplier: Supplier, fileNameSuffix?: string }>>([]);
+  const [poDownloadModal, setPoDownloadModal] = useState<{
+    order: CustomerOrder;
+    clickedComp?: ManufacturingComponent;
+    entries: Array<{ item: CustomerOrderItem; comp: ManufacturingComponent; supplier: Supplier }>;
+  } | null>(null);
+  const [poDownloadMode, setPoDownloadMode] = useState<'SUPPLIER_GROUP' | 'PER_ITEM'>('SUPPLIER_GROUP');
+  const [poDownloadSelectedIds, setPoDownloadSelectedIds] = useState<string[]>([]);
   const [isPoPdfGenerating, setIsPoPdfGenerating] = useState<boolean>(false);
   const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
 
@@ -1689,7 +1698,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       const items: { item: CustomerOrderItem, comp: ManufacturingComponent }[] = [];
       freshOrder.items.forEach(i => {
         (i.components || []).forEach(c => {
-          if (c.poNumber === comp.poNumber && c.supplierId === comp.supplierId) {
+          if (c.supplierId === comp.supplierId && ((c.poNumber && comp.poNumber && c.poNumber === comp.poNumber) || (Boolean(c.poNumber) && Boolean(comp.awardId) && c.awardId === comp.awardId && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'STOCKED', 'RESERVED'].includes(c.status || '')))) {
             items.push({ item: i, comp: c });
           }
         });
@@ -1700,7 +1709,25 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         return;
       }
 
-      setPoPrintData({ order: freshOrder, items, supplier });
+      setPoDownloadModal({
+        order: freshOrder,
+        clickedComp: comp,
+        entries: (() => {
+          const allEntries: Array<{ item: CustomerOrderItem; comp: ManufacturingComponent; supplier: Supplier }> = [];
+          freshOrder.items.forEach(i => {
+            (i.components || []).forEach(c => {
+              if (c.poNumber && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RECEIVED', 'STOCKED', 'RESERVED', 'PARTIALLY_RECEIVED', 'DEPLETED'].includes(c.status || '')) {
+                const sup = suppliers.find(s => s.id === c.supplierId) || ({ id: c.supplierId || 'unknown', name: c.supplierName || 'Supplier' } as Supplier);
+                allEntries.push({ item: i, comp: c, supplier: sup });
+              }
+            });
+          });
+          return allEntries.length > 0 ? allEntries : items.map(x => ({ ...x, supplier }));
+        })()
+      });
+      const defaultIds = freshOrder.items.flatMap(i => (i.components || [])).filter(c => Boolean(c.poNumber)).map(c => c.id!).filter(Boolean);
+      setPoDownloadSelectedIds(defaultIds.length > 0 ? defaultIds : items.map(x => x.comp.id!).filter(Boolean));
+      setPoDownloadMode('SUPPLIER_GROUP');
     } catch (e: any) {
       alert("Failed to fetch order data: " + (e.message || "Unknown error"));
     }
@@ -1818,7 +1845,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
         const poNumber = poPrintData.items[0]?.comp.poNumber || 'UNKNOWN';
         const safeOrderNumber = sanitizeFileName(poPrintData.order.internalOrderNumber || 'ORDER');
-        pdf.save(`PO-${sanitizeFileName(poNumber)}-${safeOrderNumber}.pdf`);
+        const suffix = poPrintData.fileNameSuffix ? `-${sanitizeFileName(poPrintData.fileNameSuffix)}` : '';
+        pdf.save(`PO-${sanitizeFileName(poNumber)}-${safeOrderNumber}${suffix}.pdf`);
       } catch (err: any) {
         console.error("PDF generation failed:", err, err?.stack, {
           poPrintDataExists: !!poPrintData,
@@ -1832,6 +1860,14 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
         if (!cancelled) {
           setPoPrintData(null);
           setIsPoPdfGenerating(false);
+          setPoPrintQueue(prev => {
+            if (prev.length > 0) {
+              const [nextJob, ...rest] = prev;
+              setTimeout(() => setPoPrintData(nextJob), 250);
+              return rest;
+            }
+            return prev;
+          });
         }
       }
     };
@@ -2684,7 +2720,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                     <div style={{ fontSize: '14px', fontWeight: 900, color: '#0f172a', marginBottom: '15px' }}>{t("procurement.po.title") || "PURCHASE ORDER"}</div>
                     <div style={{ borderTop: '2px solid #0f172a', paddingTop: '8px', marginBottom: '8px' }}>
                       <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>{t("procurement.po.poNumber") || "PO NUMBER"}</div>
-                      <div style={{ fontSize: '16px', fontWeight: 900, color: '#2563eb' }}>{poPrintData.items[0]?.comp.poNumber}</div>
+                      <div style={{ fontSize: '16px', fontWeight: 900, color: '#2563eb' }}>{Array.from(new Set(poPrintData.items.map(x => x.comp.poNumber).filter(Boolean))).join(' / ') || poPrintData.items[0]?.comp.poNumber}</div>
                     </div>
                     <div style={{ borderTop: '2px solid #0f172a', paddingTop: '8px' }}>
                       <div style={{ fontSize: '10px', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>{t("procurement.po.poDate") || "PO DATE"}</div>
@@ -3123,6 +3159,22 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                   </span>
                                 )}
                                 {(() => {
+                                  const supplierPos = Array.from(new Set(comps.map(x => x.comp.poNumber).filter((p): p is string => Boolean(p))));
+                                  const statusStyle = getDynamicOrderStatusStyle(o, config);
+                                  return (
+                                    <>
+                                      {supplierPos.map(po => (
+                                        <span key={po} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 font-mono text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0" title="Issued Supplier PO Number">
+                                          <i className="fa-solid fa-file-invoice text-[8px]"></i> {po}
+                                        </span>
+                                      ))}
+                                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-${statusStyle.color}-50 text-${statusStyle.color}-600 border border-${statusStyle.color}-200 text-[9px] font-black uppercase tracking-tight shadow-xs whitespace-nowrap shrink-0`} title={`Order Workflow Status: ${statusStyle.label}`}>
+                                        <i className={`fa-solid ${statusStyle.icon} text-[8px]`}></i> {statusStyle.label}
+                                      </span>
+                                    </>
+                                  );
+                                })()}
+                                {(() => {
                                   const poType = isOrderBlanketType(o) ? 'Blanket' : getOrderPoType(o);
                                   const cfg = getPoTypeConfig(poType);
                                   return (
@@ -3471,6 +3523,19 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           </div>
                         ) : (
                           <>
+                            {comps.some(x => Boolean(x.comp.poNumber)) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const firstPoComp = comps.find(x => Boolean(x.comp.poNumber))?.comp;
+                                  if (firstPoComp) handleDownloadPO(o, firstPoComp);
+                                }}
+                                className="px-4 py-2 rounded-xl text-[9px] font-black uppercase bg-white border border-blue-600 text-blue-600 hover:bg-blue-50 shadow-xs flex items-center gap-2 transition-all"
+                                title="Download Supplier Purchase Order (Grouped by Supplier or Per Item)"
+                              >
+                                <i className="fa-solid fa-file-pdf"></i> {t('procurement.po.downloadPO') || 'Download PO'}
+                              </button>
+                            )}
                             {readyForPo && allOrderProcurementAwarded && (
                               <button
                                 disabled={(o.status === OrderStatus.NEGATIVE_MARGIN && !isOrderBlanketType(o)) || !allOrderProcurementAwarded}
@@ -3785,6 +3850,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                       dynamicStatus === 'GRACE_PERIOD' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
                                     }`}>{dynamicStatus.replace(/_/g, ' ')}</span>
                                   )}
+                                  {c.poNumber && (
+                                    <span className="text-[9px] font-black text-blue-700 uppercase border border-blue-200 bg-blue-50 px-2 py-0.5 rounded font-mono ml-1" title="Issued Supplier PO Number">
+                                      <i className="fa-solid fa-file-invoice mr-1"></i>{c.poNumber}
+                                    </span>
+                                  )}
                                   {c.rfpId && ['RFP_SENT', 'AWARDED'].includes(c.status || '') && (
                                     <span className="text-[9px] font-black text-blue-600 uppercase border border-blue-200 bg-blue-50 px-2 rounded ml-1" title="RFP Batch Group">
                                       BATCH: {c.rfpId.substring(0, 6)}
@@ -4015,11 +4085,11 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                         const sameRfp = comps.filter(x => x.comp.status === 'RFP_SENT' && c.rfpId && x.comp.rfpId === c.rfpId);
                                         const displayComps = sameRfp.length > 0 ? sameRfp : [comps.find(x => x.comp.id === c.id)!];
                                         setMultiComps(displayComps);
-                                        setSelectedCompIds([c.id!]); // Default to only current one selected
+                                        setSelectedCompIds(displayComps.map(x => x.comp.id!));
                                         setActiveAction({ type: 'AWARD', order: o, item: i, comp: c });
                                         const initialRfpSuppliers = c.rfpSupplierIds || (sameRfp.length > 0 ? sameRfp.find(x => x.comp.rfpSupplierIds?.length)?.comp.rfpSupplierIds : []);
                                         setAwardSupplierId(c.supplierId || (initialRfpSuppliers?.length === 1 ? initialRfpSuppliers[0] : ''));
-                                        setAwardCosts({ [c.id!]: (c.unitCost || 0).toString() });
+                                        setAwardCosts(Object.fromEntries(displayComps.map(x => [x.comp.id!, (x.comp.unitCost || 0).toString()])));
                                         setAwardTaxPercent((c.taxPercent || 14).toString());
                                       }}
                                         className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[9px] font-black uppercase shadow-sm hover:bg-amber-700 transition-all"
@@ -4045,7 +4115,9 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                                                 (c.awardId ? x.comp.awardId === c.awardId : true)
                                               );
                                               setMultiComps(sameAwardGroup);
-                                              setSelectedCompIds([c.id!]); // Default to only current
+                                              const existingAwardPo = comps.find(x => x.comp.supplierId === c.supplierId && c.awardId && x.comp.awardId === c.awardId && x.comp.poNumber && ['ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(x.comp.status))?.comp.poNumber;
+                                              if (existingAwardPo) setPoNumberInput(existingAwardPo);
+                                              setSelectedCompIds(sameAwardGroup.length > 0 ? sameAwardGroup.map(x => x.comp.id!) : [c.id!]);
                                               const contractInfo = deriveOutsourcingContractInfo(sameAwardGroup);
                                               setContractNumber(contractInfo.contractNumber);
                                               setContractStartDate(contractInfo.contractStartDate);
@@ -5746,6 +5818,411 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
               </div>
             )
           }
+
+          {/* PO Download Mode Selection Modal (Grouped by Supplier vs Per Item) */}
+          {poDownloadModal && (() => {
+            const modalOrder = poDownloadModal.order;
+            const entries = poDownloadModal.entries;
+            const clickedId = poDownloadModal.clickedComp?.id;
+            const supplierGroups = Array.from(
+              entries.reduce((map, entry) => {
+                const key = entry.supplier.id || entry.comp.supplierId || 'unknown';
+                if (!map.has(key)) {
+                  map.set(key, { supplier: entry.supplier, items: [] as typeof entries });
+                }
+                map.get(key)!.items.push(entry);
+                return map;
+              }, new Map<string, { supplier: Supplier; items: typeof entries }>()).values()
+            );
+
+            const triggerPrintJobs = (jobs: Array<{ order: CustomerOrder; items: { item: CustomerOrderItem; comp: ManufacturingComponent }[]; supplier: Supplier; fileNameSuffix?: string }>) => {
+              if (jobs.length === 0) return;
+              setPoDownloadModal(null);
+              setPoPrintData(jobs[0]);
+              setPoPrintQueue(jobs.slice(1));
+            };
+
+            return (
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setPoDownloadModal(null)}>
+                <div
+                  className="bg-white rounded-3xl max-w-2xl w-full max-h-[88vh] shadow-2xl overflow-hidden border border-slate-100 flex flex-col animate-in zoom-in-95 duration-200"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Header */}
+                  <div className="p-6 pb-4 border-b border-slate-100 flex items-start justify-between gap-4 bg-gradient-to-r from-blue-50/70 via-white to-indigo-50/50">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center text-lg shadow-md shadow-blue-200 shrink-0">
+                        <i className="fa-solid fa-file-pdf"></i>
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                          {isAr ? 'تحميل أمر الشراء للمورد (PO PDF)' : 'Download Purchase Order (PO)'}
+                        </h3>
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          <span className="font-mono text-xs font-black text-blue-600">{modalOrder.internalOrderNumber}</span>
+                          {modalOrder.customerReferenceNumber && (
+                            <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 font-mono">
+                              Ref: {modalOrder.customerReferenceNumber}
+                            </span>
+                          )}
+                          <span className="text-[10px] font-bold text-slate-500">
+                            • {entries.length} {entries.length === 1 ? 'Item' : 'Items'} ({supplierGroups.length} {supplierGroups.length === 1 ? 'Supplier' : 'Suppliers'})
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPoDownloadModal(null)}
+                      className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors shrink-0"
+                    >
+                      <i className="fa-solid fa-xmark text-sm"></i>
+                    </button>
+                  </div>
+
+                  {/* Mode Selector Tabs */}
+                  <div className="px-6 pt-4 pb-2 bg-slate-50/60 border-b border-slate-100">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                      {isAr ? 'اختر طريقة تحميل أمر الشراء:' : 'Choose how you want to download the Purchase Order:'}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPoDownloadMode('SUPPLIER_GROUP');
+                          setPoDownloadSelectedIds(entries.map(e => e.comp.id!).filter(Boolean));
+                        }}
+                        className={`p-3.5 rounded-2xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                          poDownloadMode === 'SUPPLIER_GROUP'
+                            ? 'bg-blue-50/90 border-blue-600 shadow-sm ring-2 ring-blue-100'
+                            : 'bg-white border-slate-200 hover:border-blue-300'
+                        }`}
+                      >
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm shrink-0 ${
+                          poDownloadMode === 'SUPPLIER_GROUP' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          <i className="fa-solid fa-layer-group"></i>
+                        </div>
+                        <div>
+                          <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                            <span>{isAr ? 'مجمع لكل مورد (أمر شراء موحد)' : 'Grouped by Supplier'}</span>
+                            <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                              {isAr ? 'موصى به' : 'Recommended'}
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-medium text-slate-500 mt-0.5 leading-snug">
+                            {isAr
+                              ? 'دمج جميع الأصناف الخاصة بنفس المورد في ملف PDF واحد'
+                              : 'Combine all items for the same supplier into one unified PO PDF'}
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPoDownloadMode('PER_ITEM');
+                          if (clickedId) {
+                            setPoDownloadSelectedIds([clickedId]);
+                          } else {
+                            setPoDownloadSelectedIds(entries.map(e => e.comp.id!).filter(Boolean));
+                          }
+                        }}
+                        className={`p-3.5 rounded-2xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                          poDownloadMode === 'PER_ITEM'
+                            ? 'bg-indigo-50/90 border-indigo-600 shadow-sm ring-2 ring-indigo-100'
+                            : 'bg-white border-slate-200 hover:border-indigo-300'
+                        }`}
+                      >
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm shrink-0 ${
+                          poDownloadMode === 'PER_ITEM' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          <i className="fa-solid fa-file-lines"></i>
+                        </div>
+                        <div>
+                          <div className="text-xs font-black text-slate-900">
+                            {isAr ? 'منفصل لكل صنف على حدة' : 'Per Individual Item'}
+                          </div>
+                          <div className="text-[10px] font-medium text-slate-500 mt-0.5 leading-snug">
+                            {isAr
+                              ? 'تحميل ملف PDF مستقل لكل صنف بمفرده'
+                              : 'Download a separate PO PDF for a single item or each item individually'}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Body */}
+                  <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+                    {poDownloadMode === 'SUPPLIER_GROUP' ? (
+                      <div className="space-y-4">
+                        {supplierGroups.map((grp, gIdx) => {
+                          const groupIds = grp.items.map(x => x.comp.id!).filter(Boolean);
+                          const selectedInGroup = grp.items.filter(x => poDownloadSelectedIds.includes(x.comp.id!));
+                          const posInGroup = Array.from(new Set(grp.items.map(x => x.comp.poNumber).filter(Boolean)));
+                          const groupSubtotal = (selectedInGroup.length > 0 ? selectedInGroup : grp.items).reduce(
+                            (sum, { comp }) => sum + ((comp.originalQuantity ?? comp.quantity ?? 0) * (comp.unitCost || 0)),
+                            0
+                          );
+                          return (
+                            <div key={grp.supplier.id || gIdx} className="rounded-2xl border border-slate-200 bg-slate-50/60 overflow-hidden shadow-2xs">
+                              <div className="p-4 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-sm font-black text-slate-900">
+                                      <i className="fa-solid fa-building-user text-blue-600 mr-1.5"></i>
+                                      {grp.supplier.name}
+                                    </span>
+                                    {posInGroup.map(po => (
+                                      <span key={po} className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 font-mono text-[10px] font-black">
+                                        {po}
+                                      </span>
+                                    ))}
+                                    <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-black">
+                                      {grp.items.length} {grp.items.length === 1 ? 'Item' : 'Items'}
+                                    </span>
+                                  </div>
+                                  <div className="text-[11px] font-bold text-slate-500 mt-1">
+                                    Subtotal (Excl. Tax): <span className="text-slate-800 font-black">{groupSubtotal.toLocaleString('en-US')} LE</span>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const targetItems = selectedInGroup.length > 0 ? selectedInGroup : grp.items;
+                                    triggerPrintJobs([{
+                                      order: modalOrder,
+                                      items: targetItems.map(({ item, comp }) => ({ item, comp })),
+                                      supplier: grp.supplier
+                                    }]);
+                                  }}
+                                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-wider shadow-md shadow-blue-100 flex items-center gap-2 transition-all cursor-pointer"
+                                >
+                                  <i className="fa-solid fa-file-arrow-down"></i>
+                                  <span>
+                                    {isAr
+                                      ? `تحميل أمر الشراء المجمع (${selectedInGroup.length || grp.items.length} أصناف في ملف واحد)`
+                                      : `Download Combined PO (${selectedInGroup.length || grp.items.length} ${(selectedInGroup.length || grp.items.length) === 1 ? 'Item' : 'Items'} in 1 PDF)`}
+                                  </span>
+                                </button>
+                              </div>
+
+                              <div className="divide-y divide-slate-200/70">
+                                {grp.items.map(({ item: ordItem, comp }, idx) => {
+                                  const isChecked = poDownloadSelectedIds.includes(comp.id!);
+                                  const qty = comp.originalQuantity ?? comp.quantity ?? 0;
+                                  const lineTotal = qty * (comp.unitCost || 0);
+                                  return (
+                                    <label
+                                      key={comp.id || idx}
+                                      className="p-3.5 px-4 flex items-center justify-between gap-3 hover:bg-white/80 transition-colors cursor-pointer select-none"
+                                    >
+                                      <div className="flex items-center gap-3 min-w-0">
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={(e) => {
+                                            const checked = e.target.checked;
+                                            setPoDownloadSelectedIds(prev =>
+                                              checked ? Array.from(new Set([...prev, comp.id!])) : prev.filter(id => id !== comp.id!)
+                                            );
+                                          }}
+                                          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                        />
+                                        <div className="min-w-0">
+                                          <div className="text-xs font-black text-slate-800 truncate flex items-center gap-2">
+                                            <span>{idx + 1}. {comp.description}</span>
+                                            {comp.id === clickedId && (
+                                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[8px] font-black uppercase shrink-0">
+                                                Clicked
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-[10px] font-bold text-slate-400 flex items-center gap-3 mt-0.5">
+                                            <span className="font-mono text-blue-600">{comp.componentNumber || comp.supplierPartNumber || 'N/A'}</span>
+                                            {comp.poNumber && <span className="font-mono">PO: {comp.poNumber}</span>}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="text-right shrink-0">
+                                        <div className="text-xs font-black text-slate-900">{qty.toLocaleString('en-US')} {comp.unit || 'pcs'}</div>
+                                        <div className="text-[10px] font-bold text-slate-500">
+                                          @ {(comp.unitCost || 0).toLocaleString('en-US')} LE = <span className="text-slate-800 font-black">{lineTotal.toLocaleString('en-US')} LE</span>
+                                        </div>
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            {isAr ? 'اختر صنفاً لتحميله منفرداً أو حدد عدة أصناف لتحميل كل منها في ملف مستقل:' : 'Download any single item directly or select multiple items to download separate PDFs:'}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setPoDownloadSelectedIds(entries.map(e => e.comp.id!).filter(Boolean))}
+                              className="text-[10px] font-black text-indigo-600 hover:underline"
+                            >
+                              Select All ({entries.length})
+                            </button>
+                            {clickedId && (
+                              <>
+                                <span className="text-slate-300">•</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setPoDownloadSelectedIds([clickedId])}
+                                  className="text-[10px] font-black text-slate-600 hover:underline"
+                                >
+                                  Only Clicked Item
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {entries.map((entry, idx) => {
+                          const { item: ordItem, comp, supplier: sup } = entry;
+                          const isChecked = poDownloadSelectedIds.includes(comp.id!);
+                          const qty = comp.originalQuantity ?? comp.quantity ?? 0;
+                          const lineTotal = qty * (comp.unitCost || 0);
+                          return (
+                            <div
+                              key={comp.id || idx}
+                              className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                                isChecked ? 'bg-indigo-50/40 border-indigo-300' : 'bg-white border-slate-200'
+                              }`}
+                            >
+                              <label className="flex items-start gap-3 cursor-pointer select-none min-w-0 flex-1">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setPoDownloadSelectedIds(prev =>
+                                      checked ? Array.from(new Set([...prev, comp.id!])) : prev.filter(id => id !== comp.id!)
+                                    );
+                                  }}
+                                  className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                />
+                                <div className="min-w-0">
+                                  <div className="text-xs font-black text-slate-900 flex items-center gap-2 flex-wrap">
+                                    <span>#{idx + 1} — {comp.description}</span>
+                                    {comp.id === clickedId && (
+                                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[9px] font-black uppercase">
+                                        Clicked Item
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] font-bold text-slate-500 flex items-center gap-3 flex-wrap mt-1">
+                                    <span className="text-slate-700"><i className="fa-solid fa-building-user text-slate-400 mr-1"></i>{sup.name}</span>
+                                    <span className="font-mono text-blue-600">{comp.poNumber}</span>
+                                    <span className="font-mono text-slate-400">{comp.componentNumber || comp.supplierPartNumber}</span>
+                                    <span>Qty: <strong className="text-slate-800">{qty.toLocaleString('en-US')} {comp.unit || 'pcs'}</strong></span>
+                                    <span>Total: <strong className="text-slate-800">{lineTotal.toLocaleString('en-US')} LE</strong></span>
+                                  </div>
+                                </div>
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  triggerPrintJobs([{
+                                    order: modalOrder,
+                                    items: [{ item: ordItem, comp }],
+                                    supplier: sup,
+                                    fileNameSuffix: `Item-${idx + 1}`
+                                  }]);
+                                }}
+                                className="px-3.5 py-2 rounded-xl bg-white border border-indigo-600 text-indigo-600 hover:bg-indigo-600 hover:text-white text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0 cursor-pointer self-end sm:self-center"
+                              >
+                                <i className="fa-solid fa-file-pdf"></i>
+                                <span>{isAr ? 'تحميل هذا الصنف فقط' : 'Download This Item PDF'}</span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="p-5 border-t border-slate-100 bg-slate-50/80 flex flex-wrap items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPoDownloadModal(null)}
+                      className="px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                    >
+                      {t('common.cancel') || 'Cancel'}
+                    </button>
+
+                    {poDownloadMode === 'SUPPLIER_GROUP' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const jobs = supplierGroups
+                            .map(grp => {
+                              const selectedInGroup = grp.items.filter(x => poDownloadSelectedIds.includes(x.comp.id!));
+                              const targetItems = selectedInGroup.length > 0 ? selectedInGroup : grp.items;
+                              return {
+                                order: modalOrder,
+                                items: targetItems.map(({ item, comp }) => ({ item, comp })),
+                                supplier: grp.supplier
+                              };
+                            })
+                            .filter(j => j.items.length > 0);
+                          triggerPrintJobs(jobs);
+                        }}
+                        className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-100 flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <i className="fa-solid fa-layer-group"></i>
+                        <span>
+                          {supplierGroups.length > 1
+                            ? (isAr ? `تحميل أوامر الشراء المجمعة (${supplierGroups.length} موردين)` : `Download All Grouped Supplier POs (${supplierGroups.length} PDFs)`)
+                            : (isAr ? `تحميل أمر الشراء المجمع للمورد (${poDownloadSelectedIds.length || entries.length} أصناف في ملف واحد)` : `Download Combined Supplier PO (${poDownloadSelectedIds.length || entries.length} Items in 1 PDF)`)}
+                        </span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={poDownloadSelectedIds.length === 0}
+                        onClick={() => {
+                          const targetEntries = entries.filter(e => poDownloadSelectedIds.includes(e.comp.id!));
+                          const jobs = targetEntries.map((entry, idx) => ({
+                            order: modalOrder,
+                            items: [{ item: entry.item, comp: entry.comp }],
+                            supplier: entry.supplier,
+                            fileNameSuffix: `Item-${entries.indexOf(entry) + 1}`
+                          }));
+                          triggerPrintJobs(jobs);
+                        }}
+                        className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${
+                          poDownloadSelectedIds.length === 0
+                            ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100 cursor-pointer'
+                        }`}
+                      >
+                        <i className="fa-solid fa-file-export"></i>
+                        <span>
+                          {isAr
+                            ? `تحميل الأصناف المحددة منفردة (${poDownloadSelectedIds.length} ملف PDF)`
+                            : `Download Selected Items Separately (${poDownloadSelectedIds.length} ${poDownloadSelectedIds.length === 1 ? 'PDF' : 'Separate PDFs'})`}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Hidden Template for Replacement PDF Extraction */}
           <div style={{ position: 'absolute', left: '-9999px', top: '-9999px' }}>

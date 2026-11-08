@@ -114,7 +114,19 @@ const BoMTable: React.FC<{ components: ManufacturingComponent[]; orderCurrency: 
               const isService = comp.unit.toLowerCase() === 'hr' || comp.description.toLowerCase().includes('labor');
               return (
                 <tr key={comp.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-4 py-3"><div className="font-mono text-[9px] text-blue-600 font-black">{comp.componentNumber}</div></td>
+                  <td className="px-4 py-3">
+                    <div className="font-mono text-[9px] text-blue-600 font-black">{comp.componentNumber}</div>
+                    {comp.poNumber && (
+                      <div className="font-mono text-[8px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-black uppercase mt-1 inline-block">
+                        PO: {comp.poNumber}
+                      </div>
+                    )}
+                    {comp.supplierName && (
+                      <div className="text-[8px] text-slate-400 font-bold uppercase mt-0.5 truncate max-w-[140px]">
+                        {comp.supplierName}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-3"><div className="flex items-center gap-2"><i className={`fa-solid ${isService ? 'fa-user-gear text-indigo-400' : 'fa-box text-amber-400'} text-[10px]`}></i><span className="font-bold text-slate-700">{comp.description}</span></div></td>
                   <td className="px-4 py-3 font-medium text-slate-500">{comp.quantity} <span className="text-[9px] uppercase">{comp.unit}</span></td>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-md text-[8px] font-black border uppercase tracking-tighter ${comp.source === 'STOCK' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>{comp.source}</span></td>

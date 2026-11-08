@@ -2842,8 +2842,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         for (const comp of (item.components || [])) {
           if ((comp.description || '').toLowerCase().includes(q)) return true;
           if ((comp.componentNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.poNumber || '').toLowerCase().includes(q)) return true;
           if ((comp.supplierPartNumber || '').toLowerCase().includes(q)) return true;
           if ((comp.supplierName || '').toLowerCase().includes(q)) return true;
+          if ((comp.partNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierPartNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierName || '').toLowerCase().includes(q)) return true;
+          if ((comp.poNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.partNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.rfpId || '').toLowerCase().includes(q)) return true;
+          if ((comp.awardId || '').toLowerCase().includes(q)) return true;
         }
       }
       return false;
@@ -3040,6 +3048,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         for (const comp of (item.components || [])) {
           if ((comp.description || '').toLowerCase().includes(q)) return true;
           if ((comp.componentNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.poNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierPartNumber || '').toLowerCase().includes(q)) return true;
+          if ((comp.supplierName || '').toLowerCase().includes(q)) return true;
+          if ((comp.partNumber || '').toLowerCase().includes(q)) return true;
         }
       }
 
@@ -8539,6 +8551,24 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-600">
                                 {language === 'ar' ? 'مخزون داخلي' : 'Internal Stock'}
                               </span>
+                              {(() => {
+                                const supplierPos = Array.from(new Set(allComps.map(c => c.poNumber).filter((p): p is string => Boolean(p))));
+                                return supplierPos.map(po => (
+                                  <span key={po} className="px-2.5 py-0.5 rounded-full text-[9px] font-black font-mono uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200" title="Issued Supplier PO Number">
+                                    <i className="fa-solid fa-file-invoice mr-1 text-[8px]"></i>{po}
+                                  </span>
+                                ));
+                              })()}
+                              {(() => {
+                                const st = STATUS_CONFIG[order.status || OrderStatus.LOGGED] || STATUS_CONFIG[OrderStatus.LOGGED];
+                                return (
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-${st.color}-50 text-${st.color}-700 border border-${st.color}-200`}>
+                                    <i className={`fa-solid ${st.icon} mr-1 text-[8px]`}></i>{st.label}
+                                  </span>
+                                );
+                              })()}
+                              <span className="hidden">
+                              </span>
                               {order.orderDate && (
                                 <span className="text-[10px] font-bold text-slate-400">
                                   <i className="fa-regular fa-calendar mr-1"></i>
@@ -8603,7 +8633,24 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           </div>
 
                           {/* Status Badge */}
-                          <div className="min-w-28 text-end">
+                          <div className="min-w-28 text-end flex items-center justify-end gap-2">
+                            {order.status !== OrderStatus.REJECTED && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDecisionModal({
+                                    type: 'orderReject',
+                                    entityId: order.id,
+                                    entityName: order.internalOrderNumber || order.customerReferenceNumber
+                                  });
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 hover:border-rose-600 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                                title={language === 'ar' ? 'إلغاء / رفض أمر المخزون' : 'Cancel / Reject Stock Order'}
+                              >
+                                <i className="fa-solid fa-ban text-[10px]"></i>
+                                <span>{language === 'ar' ? 'إلغاء الطلب' : 'Cancel Order'}</span>
+                              </button>
+                            )}
                             <span className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider inline-block ${
                               order.status === OrderStatus.FULFILLED ? 'bg-emerald-600 text-white shadow-sm' :
                               order.status === OrderStatus.WAITING_SUPPLIERS ? 'bg-amber-100 text-amber-800' :

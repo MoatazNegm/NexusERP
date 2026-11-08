@@ -213,7 +213,13 @@ const getItemEffectiveQty = (item) => {
 };
 
 // R34 round 5 (validator 4, item 7): ONE internal-stock test for the server, Cash / Bank, AR and stock value (shared/orderMoney.js)
-const isStockOrder = isInternalStockOrder;
+// Merge with origin/NexusVSC v1.0001203: a rejected stock order renamed REJ_<ts>_STOCK-... still counts as a stock order here.
+const isStockOrder = (order) => {
+    if (!order) return false;
+    if (isInternalStockOrder(order)) return true;
+    const po = typeof order.customerReferenceNumber === 'string' ? order.customerReferenceNumber.trim().toUpperCase() : '';
+    return /^REJ_[\d-]+_STOCK-/.test(po);
+};
 
 // --- MULTER CONFIG ---
 // All uploaded files land directly under UPLOADS_BASE/<subdir>/ (e.g. uploads/pod/,
@@ -1732,7 +1738,7 @@ const ACTION_ROLE_GATES = {
   // R34 round 7 (validator 6, defect 10): voiding a payment is a payment write too (same gate as record-payment).
   'cancel-payment': { roles: ['finance'], msg: 'wrong role: cancelling a payment is finance' },
   'approve-dispatch-receipt': { roles: ['finance'], msg: 'wrong role: dispatch receipt approval is finance' },
-  'reject-order': { roles: ['order_management', 'planning', 'sales'], msg: 'no permission to cancel / delete' },
+  'reject-order': { roles: ['order_management', 'planning', 'sales', 'finance'], msg: 'no permission to cancel / delete' },
   'hard-delete-order': { roles: [], msg: 'Unauthorized: Only superusers or management can hard delete an order', raw: true },
 };
 const actionRoleDenied = (req, action) => {
@@ -2926,10 +2932,31 @@ const reconcileStockAllocations = (db, targetPath = null) => {
         });
     });
 
-    // 2. Reconcile stock orders
+    // 2. Reconcile stock orders & repair item metadata / split award POs
+    db.orders.forEach(order => {
+        const isApproved = Boolean(order.technicalReviewFinishedAt) && !order.rolledBackToLogged && order.status && ![OrderStatus.LOGGED, OrderStatus.TECHNICAL_REVIEW, OrderStatus.REJECTED].includes(order.status);
+        (order.items || []).forEach((it, idx) => {
+            if (!it.orderNumber && order.internalOrderNumber) {
+                it.orderNumber = `${order.internalOrderNumber}-${idx + 1}`;
+                changed = true;
+            }
+            if (isApproved && it.isAccepted === false) {
+                it.isAccepted = true;
+                changed = true;
+            }
+            (it.components || []).forEach(c => {
+                if (c.awardId === 'yangyse' && c.supplierId === 'suppliers_1780909390618' && c.poNumber && c.poNumber !== 'PO-829515') {
+                    c.supersededPoNumber = c.poNumber;
+                    c.poNumber = 'PO-829515';
+                    c.sendPoId = '2euwy25';
+                    changed = true;
+                }
+            });
+        });
+    });
     db.orders.forEach(order => {
         const isStock = isStockOrder(order);
-        if (!isStock) return;
+        if (!isStock || order.status === OrderStatus.REJECTED || order.status === 'REJECTED') return;
 
         if (order.loggingComplianceViolation) {
             order.loggingComplianceViolation = false;
@@ -3217,6 +3244,7 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
     // 3. Process Items and Components
     order.items.forEach((item, idx) => {
         if (!item.id) item.id = `item_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 5)}`;
+        if (!item.orderNumber && order.internalOrderNumber) item.orderNumber = `${order.internalOrderNumber}-${idx + 1}`;
         if (!item.logs) item.logs = [];
         if (!item.components) item.components = [];
 
@@ -3239,9 +3267,10 @@ const processedOrderInternal = (order, db, user, isNew, oldOrder = null, skipSta
             const oldItem = (oldOrder.items || []).find(i => i.id === item.id);
             if (oldItem) {
                 // simple stringify check for BoM change
-                const oldComps = JSON.stringify(oldItem.components || []);
-                const newComps = JSON.stringify(item.components || []);
-                if (oldComps !== newComps && item.isAccepted) {
+                const oldComps = JSON.stringify((oldItem.components || []).map(c => ({ id: c.id, description: c.description, quantity: c.quantity, unit: c.unit, source: c.source, supplierPartNumber: c.supplierPartNumber })));
+                const newComps = JSON.stringify((item.components || []).map(c => ({ id: c.id, description: c.description, quantity: c.quantity, unit: c.unit, source: c.source, supplierPartNumber: c.supplierPartNumber })));
+                const isAlreadyPastTechReview = Boolean(order.technicalReviewFinishedAt) || (order.status && ![OrderStatus.LOGGED, OrderStatus.TECHNICAL_REVIEW].includes(order.status));
+                if (!isAlreadyPastTechReview && oldComps !== newComps && item.isAccepted) {
                     item.isAccepted = false;
                     order.logs.push(createAuditLog(`[AUTO] BoM mutation detected on item ${idx + 1}. Technical approval revoked.`, order.status, 'System'));
                 }
@@ -6367,7 +6396,32 @@ app.get('/api/v1/reports/orders', (req, res) => {
             (o.internalOrderNumber && o.internalOrderNumber.toLowerCase().includes(q)) ||
             (o.customerReferenceNumber && o.customerReferenceNumber.toLowerCase().includes(q)) ||
             (o.customerName && o.customerName.toLowerCase().includes(q)) ||
-            (o.projectName && o.projectName.toLowerCase().includes(q))
+            (o.projectName && o.projectName.toLowerCase().includes(q)) ||
+            (o.status && o.status.toLowerCase().includes(q)) ||
+            (o.contractId && o.contractId.toLowerCase().includes(q)) ||
+            (o.blanketContractId && o.blanketContractId.toLowerCase().includes(q)) ||
+            (o.invoiceNumber && o.invoiceNumber.toLowerCase().includes(q)) ||
+            (o.orderDate && o.orderDate.toLowerCase().includes(q)) ||
+            (isStockOrder(o) && 'stock order internal stock inventory replenishment'.includes(q)) ||
+            (o.items || []).some(i =>
+                (i.description && i.description.toLowerCase().includes(q)) ||
+                (i.orderNumber && i.orderNumber.toLowerCase().includes(q)) ||
+                (i.supplierPartNumber && i.supplierPartNumber.toLowerCase().includes(q)) ||
+                (i.components || []).some(c =>
+                    (c.poNumber && c.poNumber.toLowerCase().includes(q)) ||
+                    (c.supersededPoNumber && c.supersededPoNumber.toLowerCase().includes(q)) ||
+                    (c.cancelledPoNumber && c.cancelledPoNumber.toLowerCase().includes(q)) ||
+                    (c.revertedPoNumber && c.revertedPoNumber.toLowerCase().includes(q)) ||
+                    (c.componentNumber && c.componentNumber.toLowerCase().includes(q)) ||
+                    (c.partNumber && c.partNumber.toLowerCase().includes(q)) ||
+                    (c.supplierPartNumber && c.supplierPartNumber.toLowerCase().includes(q)) ||
+                    (c.supplierName && c.supplierName.toLowerCase().includes(q)) ||
+                    (c.description && c.description.toLowerCase().includes(q)) ||
+                    (c.rfpId && c.rfpId.toLowerCase().includes(q)) ||
+                    (c.awardId && c.awardId.toLowerCase().includes(q)) ||
+                    (c.contractNumber && c.contractNumber.toLowerCase().includes(q))
+                )
+            )
         );
     }
 
@@ -7171,7 +7225,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                     if (invItem) {
                         // Release customer reservation
-                        invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - receivedQty);
+                        if (!isStockOrder(order) || comp.source === 'STOCK') invItem.quantityReserved = Math.max(0, (invItem.quantityReserved || 0) - receivedQty);
                         invItem.lastCost = comp.unitCost || invItem.lastCost || 0;
                         invItem.lastUpdated = new Date().toISOString();
                         // Unlink from customer order
@@ -7696,7 +7750,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 order.items.forEach(item => {
                     (item.components || []).forEach(comp => {
                         if (['RESERVED', 'RECEIVED', 'STOCKED'].includes(comp.status)) {
-                            updateInventoryItem(db, comp, 'RELEASE', order);
+                            if (!isStockOrder(order) || comp.source === 'STOCK') updateInventoryItem(db, comp, 'RELEASE', order);
                             comp.status = 'IN_STOCK'; // Or specific status indicating released
                             delete comp.poNumber; delete comp.supplierId; delete comp.supplierName; comp.receivedQty = 0;
                         }
@@ -8146,7 +8200,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                 // Restore allocated quantity back to stock order if component was allocated from one
                 if (rcComp.allocatedFromStockOrderId) {
-                    const stockOrderIdx = (db.orders || []).findIndex(o => o.id === rcComp.allocatedFromStockOrderId);
+                    const stockOrderIdx = (db.orders || []).findIndex(o => o.id === rcComp.allocatedFromStockOrderId && o.status !== OrderStatus.REJECTED);
                     if (stockOrderIdx !== -1) {
                         let stockOrder = db.orders[stockOrderIdx];
                         const oldStockOrder = JSON.parse(JSON.stringify(stockOrder));
@@ -8342,7 +8396,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             }
 
             case 'issue-po-batch': {
-                const sendPoId = Math.random().toString(36).substring(2, 9);
+                const existingSiblingSendPoId = (order.items || []).flatMap(it => it.components || []).find(c => payload.poNumber && c.poNumber === payload.poNumber && c.sendPoId)?.sendPoId;
+                const sendPoId = existingSiblingSendPoId || Math.random().toString(36).substring(2, 9);
                 if (!payload.components || !Array.isArray(payload.components)) throw new Error("components array required");
 
                 const dbSettings = (db.settings && Array.isArray(db.settings) && db.settings.length > 0) ? db.settings[0] : (db.settings || {});
