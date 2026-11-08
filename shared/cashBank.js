@@ -12,8 +12,10 @@
 // A cancelled (rejected) PO keeps its paid cash in the company (it moved to the customer general wallet), so its
 // payments still count until they are voided or refunded.
 
-const isInternalOrderCB = (o) => o && (o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-')));
-const fxCB = (o) => (o && o.currency && o.currency !== 'L.E.' && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
+import { isInternalStockOrder, orderFxRate, paymentLE } from './orderMoney.js';
+// R34 round 5 (validator 4, item 7): the internal-stock test is the shared helper (also used by AR, stock value and the server).
+const isInternalOrderCB = isInternalStockOrder;
+const fxCB = orderFxRate;
 const r2 = (x) => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
 const isVoidRefund = (e) => Boolean(e.voidOfPayment) || String(e.description || '').startsWith('Payment VOIDED');
 
@@ -37,9 +39,11 @@ export const computeCashBank = (orders = [], ledger = [], supplierPayments = [])
         if (!o) return;
         (o.payments || []).forEach(p => { if (p && p.ledgerEntryId) paymentLedgerIds.add(p.ledgerEntryId); });
         if (isInternalOrderCB(o)) return;
-        const cash = (o.payments || []).reduce((s, p) => s + (p && !p.transfer ? (Number(p.amount) || 0) : 0), 0);
+        // R34 round 5 (validator 4, item 4): a payment entered in L.E. keeps its exact L.E. amount (amountLE), see shared/orderMoney.js
+        const fx = fxCB(o);
+        const cashLE = (o.payments || []).reduce((s, p) => s + (p && !p.transfer ? paymentLE(p, fx) : 0), 0);
         const walletPartLE = walletPartByOrder.get(o.id) || 0;
-        customerCashIn += cash * fxCB(o) - walletPartLE;
+        customerCashIn += cashLE - walletPartLE;
     });
     const advancesIn = led.filter(e => e && e.type === 'ADDITION' && String(e.id || '').startsWith('adv_cust_')).reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const refundsOut = led.filter(e => e && e.type === 'REFUND' && !isVoidRefund(e)).reduce((s, e) => s + (Number(e.amount) || 0), 0);

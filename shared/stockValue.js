@@ -5,16 +5,14 @@
 // apart from component stock, as in Inventory. The product hub counts what is CURRENTLY in the hub (received - dispatched),
 // without trading goods that are already counted in the warehouse.
 
+import { isInternalStockOrder } from './orderMoney.js';
+
 const effQty = (item) => {
     const q = (item && item.alteredQty !== undefined && item.alteredQty !== null) ? item.alteredQty : (item && item.quantity);
     return q || 1;
 };
-const isStockOrderSV = (order) => {
-    if (!order) return false;
-    const cust = String(order.customerName || '').trim().toLowerCase();
-    const po = typeof order.customerReferenceNumber === 'string' ? order.customerReferenceNumber.trim().toUpperCase() : '';
-    return cust === 'internal stock' || po.startsWith('STOCK-');
-};
+// R34 round 5 (validator 4, item 7): one shared internal-stock test (shared/orderMoney.js)
+const isStockOrderSV = isInternalStockOrder;
 const poTypeSV = (order) => {
     if (isStockOrderSV(order)) return 'Stock';
     if (order && (order.blanketOrder || order.contractId || order.blanketContractId)) return 'Blanket';

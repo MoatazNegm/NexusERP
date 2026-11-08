@@ -5,7 +5,8 @@ import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getIte
 import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { computeCashBank } from '../shared/cashBank';
-import { computeReceivables, computePayables, orderPaidInAP, orderWhtAmountAP, orderFxAP } from '../shared/arap';
+import { computeReceivables, computePayables, orderPaidInAP, orderPaidInLE, orderWhtAmountAP, orderFxAP } from '../shared/arap';
+import { paymentLE, orderPaymentsLE } from '../shared/orderMoney';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
@@ -729,7 +730,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         // stock orders: no sale; what the company bought for stock is an asset (it is in AP until paid); money received on them sits
         // with the order like an open order
         stockPoPurchases += apByOrder.get(o.id) || 0;
-        openOrders += orderPaidInAP(o) * rate + (arByOrder.get(o.id) || 0);
+        openOrders += orderPaidInLE(o) + (arByOrder.get(o.id) || 0); // round 5 item 4: L.E. received (exact amountLE)
         return;
       }
 
@@ -777,7 +778,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         if (o.appliesWithholdingTax && !o.blanketOrder) withholdingKept += orderWhtAmountAP(o) * rate;
       } else {
         totalWIP += costLE;
-        openOrders += orderPaidInAP(o) * rate + (arByOrder.get(o.id) || 0);
+        openOrders += orderPaidInLE(o) + (arByOrder.get(o.id) || 0); // round 5 item 4: L.E. received (exact amountLE)
       }
     });
 
@@ -817,12 +818,12 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     let totalSupplierCommitted = 0;
     orders.forEach(o => {
       if (o.status === OrderStatus.REJECTED) return;
-      const rate = getOrderConversionRate(o);
+      // R34 round 5 (validator 4, item 5, ruling C23): procurement costs are already in L.E.; no rate multiplication
       (o.items || []).forEach(it => {
         (it.components || []).forEach(c => {
           const cNet = (c.quantity || 0) * (c.unitCost || 0);
           const cTax = c.taxPercent !== undefined ? c.taxPercent : 0;
-          totalSupplierCommitted += (cNet + (cNet * (cTax / 100))) * rate;
+          totalSupplierCommitted += (cNet + (cNet * (cTax / 100)));
         });
       });
     });
@@ -933,18 +934,22 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     // R34 round 4 (validator 3, D7): a payment that already has a ledger entry with the same receipt number (record-payment writes
     // the cash part as an ADDITION and the wallet part as a TRANSFER) is shown once, by that ledger entry. A pay-from-wallet or an
     // account transfer is no new money: it is listed as a TRANSFER (in L.E.), never as an ADDITION.
+    // R34 round 5 (validator 4, item 2): an account transfer writes its ledger TRANSFER with the receipt number of the order
+    // payment(s), so it is ONE row; transfers booked before round 5 (no receipt on the ledger entry) are matched by their note.
     const ledgerReceipts = new Set(entries.filter(e => e.receiptNumber).map(e => String(e.receiptNumber)));
+    const ledgerTransferNotes = new Set(entries.filter(e => e.type === 'TRANSFER' && e.description).map(e => String(e.description)));
     orders.forEach(o => {
       const rateP = orderFxAP(o);
       (o.payments || []).forEach((p, idx) => {
         if ((p as any).ledgerEntryId) return;
         if (p.receiptNumber && ledgerReceipts.has(String(p.receiptNumber))) return;
+        if ((p as any).transfer && (p as any).memo && ledgerTransferNotes.has(String((p as any).memo))) return;
         const isTransferP = Boolean((p as any).transfer) || Boolean((p as any).fromWallet);
         all.push({
           id: `cust_${o.id}_${idx}`,
           date: p.date,
           type: isTransferP ? 'TRANSFER' : 'ADDITION',
-          amount: (Number(p.amount) || 0) * rateP,
+          amount: paymentLE(p, rateP), // L.E. (exact amountLE of a payment entered in L.E., round 5 item 4)
           description: `Payment: ${o.customerName}`,
           category: o.internalOrderNumber,
           user: p.user || 'System',
@@ -1459,12 +1464,15 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                   </span>
                 </td>
                 <td className="px-8 py-5">
-                  <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
+                  {/* R34 round 5 (validator 4, item 2): a TRANSFER (money moved between accounts, no cost) and a REFUND have their own badge */}
+                  <span data-testid="ledger-type-badge" className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
                     entry.type === 'ADDITION' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
                     entry.type === 'OPENING' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                    entry.type === 'TRANSFER' ? 'bg-slate-100 text-slate-600 border-slate-200' :
+                    entry.type === 'REFUND' ? 'bg-amber-50 text-amber-700 border-amber-100' :
                     'bg-rose-50 text-rose-600 border-rose-100'
                   }`}>
-                    {entry.type === 'ADDITION' ? (language === 'ar' ? 'إضافة' : 'ADDITION') : entry.type === 'OPENING' ? (language === 'ar' ? 'رصيد افتتاحي' : 'OPENING') : (language === 'ar' ? 'تكلفة' : 'COST')}
+                    {entry.type === 'ADDITION' ? (language === 'ar' ? 'إضافة' : 'ADDITION') : entry.type === 'OPENING' ? (language === 'ar' ? 'رصيد افتتاحي' : 'OPENING') : entry.type === 'TRANSFER' ? (language === 'ar' ? 'تحويل' : 'TRANSFER') : entry.type === 'REFUND' ? (language === 'ar' ? 'استرداد' : 'REFUND') : (language === 'ar' ? 'تكلفة' : 'COST')}
                   </span>
                 </td>
                 <td className="px-8 py-5 text-end font-black text-slate-800 text-sm">
@@ -2036,13 +2044,25 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       });
     });
 
-    const rate = getOrderConversionRate(order);
-    const costInOrderCurrency = cost * rate;
-    const grossCostInOrderCurrency = grossSourcedCost * rate;
-    const paid = (order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+    // R34 round 5 (validator 4, item 5, ruling R22 C23): procurement costs (and input VAT) are ALREADY in L.E.; prices and customer
+    // payments are in the order currency. Every money figure of this P/L is in L.E. (the same basis as Finance > Ledger, Initial
+    // Balances and the Profitability report): revenue, output VAT and payments x the order rate (a rate applies to a non-L.E.
+    // order only, shared/arap.js), costs as they are. The order-currency figures are kept apart (*OrderCurrency) for display and
+    // for the payment dialog (payments are typed in the order currency).
+    const rate = orderFxAP(order);
+    const revenueOrderCurrency = revenue;
+    const grossRevenueOrderCurrency = grossRevenue;
+    const paidOrderCurrency = (order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+    const targetRevOrderCurrency = order.appliesWithholdingTax ? grossRevenue * 0.99 : grossRevenue;
+    revenue = revenue * rate;
+    grossRevenue = grossRevenue * rate;
+    outputTax = outputTax * rate;
+    const costInOrderCurrency = cost; // kept name for callers: now the L.E. cost (no rate multiplication)
+    const grossCostInOrderCurrency = grossSourcedCost;
+    const paid = orderPaymentsLE(order as any);
     const marginPct = revenue > 0 ? ((revenue - costInOrderCurrency) / revenue) * 100 : 0;
     const markupPct = costInOrderCurrency > 0 ? ((revenue - costInOrderCurrency) / costInOrderCurrency) * 100 : (revenue > 0 ? 100 : 0);
-    const targetRev = order.appliesWithholdingTax ? grossRevenue * 0.99 : grossRevenue;
+    const targetRev = targetRevOrderCurrency * rate;
 
     const isInvoiced = [
       OrderStatus.INVOICED,
@@ -2092,8 +2112,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       targetRev,
       cost,
       costInOrderCurrency,
-      conversionRate: rate,
-      currency: getOrderCurrency(order),
+      costLE: cost,
+      conversionRate: Number(order.conversionRate) > 0 ? Number(order.conversionRate) : 1,
+      // money figures are L.E. (round 5 item 5); the order currency is shown with the rate
+      currency: 'L.E.',
+      orderCurrency: getOrderCurrency(order),
+      revenueOrderCurrency,
+      grossRevenueOrderCurrency,
+      paidOrderCurrency,
+      outstandingOrderCurrency: Math.max(0, targetRevOrderCurrency - paidOrderCurrency),
       paid,
       outstanding: Math.max(0, targetRev - paid),
       marginPct,
@@ -6767,7 +6794,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         if (col === 'currency') return (
                           <td key={col} className="px-2.5 py-4" onClick={e => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
-                              <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{pl.currency === 'L.E.' && language === 'ar' ? 'ج.م' : pl.currency}</span>
+                              <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-black uppercase">{pl.orderCurrency === 'L.E.' && language === 'ar' ? 'ج.م' : pl.orderCurrency}</span>
                               <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest leading-tight">
                                 <div>{language === 'ar' ? 'تحويل' : 'Conv.'}</div>
                                 <input
@@ -6776,7 +6803,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                   min="0"
                                   className="w-16 px-1 py-0.5 mt-0.5 border border-slate-200 rounded-md text-[9px] font-black text-slate-700 outline-none focus:border-blue-500"
                                   defaultValue={pl.conversionRate}
-                                  title="Multiplier to bring PO cost into the order's revenue currency. Used only for the P/L threshold check. Default 1 = no conversion."
+                                  title="Order currency to L.E. rate: prices and customer payments of a non-L.E. order x this rate = L.E.; procurement costs are already in L.E. (ruling C23). Default 1 = no conversion."
                                   onBlur={async (e) => {
                                     const v = parseFloat(e.target.value);
                                     const next = (!Number.isFinite(v) || v <= 0) ? 1 : v;
@@ -6797,13 +6824,18 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           <td key={col} className="px-3.5 py-4">
                             <div className="flex flex-col gap-1">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-black text-slate-800 text-xs">
+                                <span className="font-black text-slate-800 text-xs" data-testid={`bill-gross-${o.id}`}>
                                   {pl.grossRevenue.toLocaleString()} {pl.currency === 'L.E.' && language === 'ar' ? 'ج.م' : pl.currency}
                                 </span>
                                 <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded" title="Contract / Quoted Net Revenue excluding VAT">
                                   {language === 'ar' ? 'الصافي:' : 'Net:'} {pl.revenue.toLocaleString()}
                                 </span>
                               </div>
+                              {pl.orderCurrency !== pl.currency && (
+                                <div className="text-[9px] font-bold text-slate-400" data-testid={`bill-oc-${o.id}`}>
+                                  {pl.grossRevenueOrderCurrency.toLocaleString()} {pl.orderCurrency} @ {pl.conversionRate}
+                                </div>
+                              )}
                               <div className="text-[9px] font-bold flex items-center gap-1.5 flex-wrap">
                                 {pl.paid > 0 ? (
                                   <button
@@ -6862,7 +6894,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               </div>
                               <div className="text-[9px] font-bold flex items-center gap-1 flex-wrap">
                                 {pl.isInvoiced ? (
-                                  <span className="text-emerald-700 font-black bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60 flex items-center gap-1" title="Realized Profit recognized upon issuing invoice">
+                                  <span data-testid={`bill-profit-${o.id}`} className="text-emerald-700 font-black bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60 flex items-center gap-1" title="Realized Profit recognized upon issuing invoice">
                                     <i className="fa-solid fa-circle-check text-[8px]"></i>
                                     {language === 'ar' ? 'الربح:' : 'Profit:'} {pl.realizedProfit.toLocaleString()} {pl.currency === 'L.E.' && language === 'ar' ? 'ج.م' : pl.currency}
                                   </span>
@@ -6871,7 +6903,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                     <span className="text-amber-700 font-black bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60" title="Pre-invoicing costs held in Work In Progress (WIP) inventory asset">
                                       {language === 'ar' ? 'قيد التشغيل:' : 'WIP:'} {pl.wip.toLocaleString()}
                                     </span>
-                                    <span className="text-slate-500 text-[8px]" title="Projected pipeline profit upon invoicing">
+                                    <span data-testid={`bill-est-${o.id}`} className="text-slate-500 text-[8px]" title="Projected pipeline profit upon invoicing">
                                       {language === 'ar' ? 'متوقع:' : 'Est:'} {pl.projectedProfit.toLocaleString()}
                                     </span>
                                   </div>
@@ -6951,7 +6983,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               <button
                                 onClick={() => {
                                   setDecisionModal({ type: 'payment', entityId: o.id, entityName: o.internalOrderNumber });
-                                  setPaymentAmount(pl.outstanding > 0 ? pl.outstanding.toFixed(2) : '');
+                                  setPaymentAmount(pl.outstandingOrderCurrency > 0 ? pl.outstandingOrderCurrency.toFixed(2) : ''); // payments are typed in the order currency
                                 }}
                                 className="px-2 py-1 min-h-[32px] bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[8px] font-black uppercase shadow-sm shadow-emerald-200 shrink-0 flex flex-col items-center justify-center text-center leading-tight transition-all cursor-pointer"
                                 title={t("finance.orders.receivePayment") || "Receive Payment"}

@@ -6,6 +6,8 @@
 // AP = every ISSUED supplier PO component (not NEW / PENDING_OFFER / RFP_SENT / AWARDED / CANCELLED), gross (net + tax),
 //      minus the supplier payments allocated to it, plus the supplier-level AP openings.
 
+import { isInternalStockOrder, orderFxRate, orderPaymentsLE } from './orderMoney.js';
+
 const REJECTED = 'REJECTED';
 const r2w = x => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
 const effQtyAP = (item) => {
@@ -34,7 +36,18 @@ export const orderPaidInAP = (order) => {
 };
 // R34 round 4 (validator 3, D3): an order is typed in its own currency; AR (like Cash / Bank and the wallets) is in L.E., so a
 // foreign-currency order's commitment and the money received on it are converted at the order rate.
-export const orderFxAP = (o) => (o && o.currency && o.currency !== 'L.E.' && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
+export const orderFxAP = orderFxRate;
+// R34 round 5 (validator 4, item 4): the money received on a PO in L.E. Payments entered in L.E. keep their exact L.E. amount
+// (amountLE); the money moved from the PO to the customer general wallet (cancelled PO, surplus above the PO gross) is taken off
+// at the L.E. value that was credited to the wallet (paymentMovedToWalletLE / surplusMovedToWalletLE, else x the rate).
+export const orderPaidInLE = (order) => {
+    if (!order) return 0;
+    const fx = orderFxRate(order);
+    const paidLE = orderPaymentsLE(order);
+    const movedLE = (le, oc) => (le !== undefined && le !== null && Number.isFinite(Number(le))) ? Number(le) : (Number(oc) || 0) * fx;
+    if (order.status === REJECTED) return Math.max(0, r2w(paidLE - movedLE(order.paymentMovedToWalletLE, order.paymentMovedToWallet)));
+    return r2w(paidLE - movedLE(order.surplusMovedToWalletLE, order.surplusMovedToWallet));
+};
 const orderProjectNameAP = (order, orders = []) => {
     let proj = String((order.projectName || '').trim());
     if (!proj && order.blanketContractId) {
@@ -50,13 +63,15 @@ export const computeReceivables = (orders = [], ledger = null, customers = null)
         if (o.status === REJECTED) return;
         // R34 round 3 (item 6): the 'Internal Stock' customer is the company itself (stock orders), never a debtor; its orders are
         // no receivable (Initial Balances never listed that customer, so /ar, Initial Balances and the Ledger tab now agree).
-        if (String(o.customerName || '').trim().toLowerCase() === 'internal stock') return;
+        // R34 round 5 (validator 4, item 7): a customer PO reference 'STOCK-...' is an internal stock order as well (shared helper,
+        // the same test as Cash / Bank, stock value and the server).
+        if (isInternalStockOrder(o)) return;
         // A blanket order commits nothing by itself: the customer owes what is CALLED OFF (each call-off carries its own amount).
         // The 1% withholding the customer keeps (base NET) is cleared in the Tax tab: it is not a receivable (ruling 2026-10-21 22:08).
         const fx = orderFxAP(o);
         const committedOC = o.blanketOrder ? 0 : r2w(orderCommitmentGrossAP(o) - (o.appliesWithholdingTax ? orderWhtAmountAP(o) : 0));
         const paidOC = orderPaidInAP(o);
-        const committed = r2w(committedOC * fx), paid = r2w(paidOC * fx);
+        const committed = r2w(committedOC * fx), paid = r2w(orderPaidInLE(o));
         const row = { orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectNameAP(o, orders) || '(No Project)', status: o.status, blanketOrder: Boolean(o.blanketOrder), committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) };
         if (fx !== 1) Object.assign(row, { currency: o.currency, conversionRate: fx, committedOrderCurrency: committedOC, paidOrderCurrency: paidOC, receivableOrderCurrency: r2w(Math.max(0, committedOC - paidOC)) });
         rows.push(row);

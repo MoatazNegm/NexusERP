@@ -43,7 +43,8 @@ import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank } from './shared/cashBank.js';
-import { computeReceivables, computePayables } from './shared/arap.js';
+import { computeReceivables, computePayables, orderPaidInLE } from './shared/arap.js';
+import { isInternalStockOrder, orderPaymentsLE } from './shared/orderMoney.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -211,12 +212,8 @@ const getItemEffectiveQty = (item) => {
     return qty || 1;
 };
 
-const isStockOrder = (order) => {
-    if (!order) return false;
-    const cust = String(order.customerName || '').trim().toLowerCase();
-    const po = typeof order.customerReferenceNumber === 'string' ? order.customerReferenceNumber.trim().toUpperCase() : '';
-    return cust === 'internal stock' || po.startsWith('STOCK-');
-};
+// R34 round 5 (validator 4, item 7): ONE internal-stock test for the server, Cash / Bank, AR and stock value (shared/orderMoney.js)
+const isStockOrder = isInternalStockOrder;
 
 // --- MULTER CONFIG ---
 // All uploaded files land directly under UPLOADS_BASE/<subdir>/ (e.g. uploads/pod/,
@@ -4465,7 +4462,7 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db 
         projectBalances[k] = r2w((projectBalances[k] || 0) + (Number(bal) || 0));
     });
     orders.filter(o => o.customerName === customer.name).forEach(o => {
-        const net = r2w(r2w(orderPaidIn(o) * orderFx(o)) - orderPaidOut(o, supplierPayments) + (db ? openingSumFor(db.ledger, `PO:${o.id}`) : 0));
+        const net = r2w(orderPaidInLE(o) - orderPaidOut(o, supplierPayments) + (db ? openingSumFor(db.ledger, `PO:${o.id}`) : 0));
         if (!net) return;
         const key = orderProjectName(o, orders) || '(No Project)';
         projectBalances[key] = r2w((projectBalances[key] || 0) + net);
@@ -4496,7 +4493,7 @@ const computeOrderWallet = (order, orders = [], supplierPayments = [], ledger = 
     if (!order) return null;
     const opening = ledger ? openingSumFor(ledger, `PO:${order.id}`) : 0; // R34 opening balance of this PO wallet
     const isCallOff = Boolean(order.blanketContractId) && !order.blanketOrder;
-    const x = r2w(orderPaidIn(order) * orderFx(order)); // wallet in L.E.
+    const x = r2w(orderPaidInLE(order)); // wallet in L.E. (R34 round 5, item 4: exact L.E. of payments entered in L.E.)
     const y = orderPaidOut(order, supplierPayments);
     return {
         orderId: order.id,
@@ -4834,8 +4831,11 @@ const addToCollection = (col) => (req, res) => {
                 if (fxL !== 1) { newItem.orderCurrency = targetOrder.currency; newItem.orderAmount = paymentAmt; newItem.conversionRate = fxL; }
                 newItem.receiptNumber = receiptNumber;
 
+                // R34 round 5 (validator 4, item 4): the exact L.E. amount stays on the payment (amountLE); Cash / Bank, AR and the
+                // PO wallet use it (5,000 L.E. at rate 47.3 = 105.71 USD on the PO, Cash / Bank exactly 5,000.00 L.E.).
                 targetOrder.payments.push({
                     amount: paymentAmt,
+                    ...(fxL !== 1 ? { amountLE: Math.round((Number(newItem.amount) || 0) * 100) / 100, conversionRate: fxL } : {}),
                     date: newItem.date || new Date().toISOString(),
                     user: user || 'System',
                     memo: newItem.description || `Ledger Entry Payment (${newItem.toAccount || 'General Ledger'})`,
@@ -5281,6 +5281,15 @@ app.post('/api/v1/customers/merge', (req, res) => {
         if (!primaryId || !secondaryIds || !Array.isArray(secondaryIds)) {
             return res.status(400).json({ error: "Missing merge parameters" });
         }
+        // R34 round 5 (validator 4, item 3): a merge moves wallets, receivables and opening balances, so it is a finance-relevant
+        // customer write: the same role gate as the other money writes (enforced when the caller's roles are known; admin,
+        // management, finance, plus the CRM role that owns the customer records / the merge screen).
+        {
+            const rM = finRolesOf(req);
+            if (rM.length && !rM.some(x => ['admin', 'management', 'finance', 'crm'].includes(x))) return res.status(403).json({ error: 'refused: wrong role: merging customers is for crm / finance / management / admin' });
+        }
+        // a customer cannot be merged into itself (the record would be deleted with its wallet and openings)
+        if (secondaryIds.map(String).includes(String(primaryId))) return res.status(400).json({ error: "Refused: the primary customer cannot be one of the records merged into it" });
 
         const db = getDb(req);
         const primary = db.customers.find(c => c.id === primaryId);
@@ -5383,11 +5392,19 @@ function moveOrderSurplusToGeneralWallet(db, order, user) {
     const surplus = Math.round((totalPaid - (Number(order.surplusMovedToWallet) || 0) - gross) * 100) / 100;
     const custS = (db.customers || []).find(c => c.name === order.customerName);
     if (!(gross > 0 && surplus > 0.004 && custS)) return 0;
+    // R34 round 5 (validator 4, item 4): the L.E. credited is what the PO received in L.E. above its gross in L.E. (payments entered
+    // in L.E. keep their exact amountLE), so PO + wallet = the L.E. money received, without a rounding cent.
+    const fxS = orderFx(order);
+    const prevLE = (order.surplusMovedToWalletLE !== undefined && order.surplusMovedToWalletLE !== null) ? Number(order.surplusMovedToWalletLE) || 0 : (Number(order.surplusMovedToWallet) || 0) * fxS;
+    const surplusLE = (order.payments || []).some(p => p && p.amountLE !== undefined && p.amountLE !== null)
+        ? Math.max(0, Math.round((orderPaymentsLE(order) - prevLE - gross * fxS) * 100) / 100)
+        : Math.round(surplus * fxS * 100) / 100;
     custS.walletBalances = custS.walletBalances || {};
-    custS.walletBalances[SELF_WALLET_KEY] = Math.round(((custS.walletBalances[SELF_WALLET_KEY] || 0) + surplus * orderFx(order)) * 100) / 100;
-    custS.walletBalance = (custS.walletBalance || 0) + surplus * orderFx(order);
+    custS.walletBalances[SELF_WALLET_KEY] = Math.round(((custS.walletBalances[SELF_WALLET_KEY] || 0) + surplusLE) * 100) / 100;
+    custS.walletBalance = Math.round(((Number(custS.walletBalance) || 0) + surplusLE) * 100) / 100;
     order.surplusMovedToWallet = Math.round(((Number(order.surplusMovedToWallet) || 0) + surplus) * 100) / 100;
-    ledgerPush(db, { type: 'TRANSFER', amount: Math.round(surplus * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: payment above the PO gross credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', ''), customerName: order.customerName }, user);
+    order.surplusMovedToWalletLE = Math.round((prevLE + surplusLE) * 100) / 100;
+    ledgerPush(db, { type: 'TRANSFER', amount: surplusLE, description: `PO ${order.internalOrderNumber}: payment above the PO gross credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', ''), customerName: order.customerName }, user);
     order.logs = order.logs || [];
     order.logs.push(createAuditLog(`Payment above the PO gross: ${surplus.toFixed(2)} moved to the customer general wallet (no refund action).`, order.status, user));
     return surplus;
@@ -5417,20 +5434,36 @@ app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
         };
         const src = find(from), dst = find(to);
         if (src.t === dst.t && (src.key || src.order?.id) === (dst.key || dst.order?.id)) return res.status(400).json({ error: "Source and target accounts are the same" });
-        // source balance check
+        // source balance check. The transfer amount is in L.E. (wallets are L.E.); R34 round 5 (validator 4, item 6): an order account
+        // is checked by the L.E. money it holds (payments x the order rate, exact amountLE where the payment was entered in L.E.).
         if (src.t === 'ORDER') {
-            const paid = (src.order.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-            if (paid + 0.005 < amt) return res.status(400).json({ error: `Insufficient balance: order ${src.ref} holds ${paid.toFixed(2)}, transfer ${amt.toFixed(2)}` });
+            const paidLE = orderPaidInLE(src.order);
+            if (paidLE + 0.005 < amt) return res.status(400).json({ error: `Insufficient balance: order ${src.ref} holds ${paidLE.toFixed(2)} L.E., transfer ${amt.toFixed(2)}` });
+        } else if (src.t === 'SELF') {
+            // R34 round 5 (validator 4, item 1): rule G1 also limits a transfer OUT of the general wallet (like refund and
+            // pay-from-wallet): never more than availableGeneralWallet() (stored general bucket minus the company costs linked to no
+            // PO when the company has exactly one customer). A transfer to a project wallet is limited the same way, so the
+            // project wallet cannot be used to pay a PO with money G1 already took.
+            const storedG = Number(customer.walletBalances[src.key]) || 0;
+            const g1T = g1DeductionFor(db);
+            const availT = availableGeneralWallet(db, customer);
+            if (availT + 0.005 < amt) return res.status(400).json({ error: g1T ? `Insufficient general wallet credit: ${Math.max(0, availT).toFixed(2)} available (stored ${storedG.toFixed(2)} minus ${g1T.toFixed(2)} company costs linked to no PO), transfer ${amt.toFixed(2)}` : `Insufficient balance: account holds ${storedG.toFixed(2)}, transfer ${amt.toFixed(2)}` });
         } else if ((customer.walletBalances[src.key] || 0) + 0.005 < amt) {
             return res.status(400).json({ error: `Insufficient balance: account holds ${(customer.walletBalances[src.key] || 0).toFixed(2)}, transfer ${amt.toFixed(2)}` });
         }
         const now = new Date().toISOString();
         const note = `Account transfer ${amt.toFixed(2)}: ${acctLabel(customer.name, src.t, src.ref)} -> ${acctLabel(customer.name, dst.t, dst.ref)}${memo ? ' - ' + memo : ''}`;
-        const touchOrder = (o, delta) => {
+        // R34 round 5 (validator 4, item 2): ONE receipt number for the transfer, on the order payment(s) AND on the ledger TRANSFER,
+        // so the Finance > Ledger list shows the transfer once (by its ledger entry).
+        const trfReceipt = `TRF-${String(Date.now()).slice(-6)}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+        const touchOrder = (o, deltaLE) => {
+            // R34 round 5 (validator 4, item 6): the payment on an order is in the ORDER currency: L.E. / rate (5,000 L.E. on a USD
+            // PO at rate 50 = 100 USD); the exact L.E. amount stays in amountLE.
+            const fxT = orderFx(o);
             o.payments = o.payments || [];
-            o.payments.push({ amount: delta, date: now, user, memo: note, receiptNumber: `TRF-${String(Date.now()).slice(-6)}`, transfer: true });
+            o.payments.push({ amount: Math.round((deltaLE / fxT) * 100) / 100, ...(fxT !== 1 ? { amountLE: deltaLE, conversionRate: fxT } : {}), date: now, user, memo: note + (fxT !== 1 ? ` (${(deltaLE / fxT).toFixed(2)} ${o.currency} at rate ${fxT})` : ''), receiptNumber: trfReceipt, transfer: true });
             o.logs = o.logs || [];
-            o.logs.push(createAuditLog(note, o.status, user));
+            o.logs.push(createAuditLog(note + (fxT !== 1 ? ` (${(deltaLE / fxT).toFixed(2)} ${o.currency} at rate ${fxT})` : ''), o.status, user));
         };
         let walletDelta = 0;
         if (src.t === 'ORDER') touchOrder(src.order, -amt); else { customer.walletBalances[src.key] = Math.round(((customer.walletBalances[src.key] || 0) - amt) * 100) / 100; walletDelta -= amt; }
@@ -5438,7 +5471,8 @@ app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
         customer.walletBalance = Math.round(((customer.walletBalance || 0) + walletDelta) * 100) / 100;
         customer.logs = customer.logs || [];
         customer.logs.push(createAuditLog(note, 'WALLET_TRANSFER', user));
-        ledgerPush(db, { type: 'TRANSFER', amount: amt, description: note, category: 'Account Transfer', fromAccount: acctLabel(customer.name, src.t, src.ref), toAccount: acctLabel(customer.name, dst.t, dst.ref), customerName: customer.name }, user);
+        // no orderId on purpose: Cash / Bank reads a TRANSFER with orderId + receiptNumber as the wallet part of a pay-from-wallet
+        ledgerPush(db, { type: 'TRANSFER', amount: amt, description: note, category: 'Account Transfer', fromAccount: acctLabel(customer.name, src.t, src.ref), toAccount: acctLabel(customer.name, dst.t, dst.ref), customerName: customer.name, receiptNumber: trfReceipt, walletTransfer: true }, user);
         writeDb(db, getDbPath(req));
         return res.json({ ok: true, amount: amt, from: acctLabel(customer.name, src.t, src.ref), to: acctLabel(customer.name, dst.t, dst.ref), wallet: computeCustomerWallet(customer, db.orders || [], db.supplierPayments || [], db) });
     } catch (err) {
@@ -6023,7 +6057,7 @@ const finRolesOf = (req) => {
     return u ? (u.roles || []) : [];
 };
 const finIsInternalCustomerName = (n) => String(n || '').trim().toLowerCase() === 'internal stock';
-const finIsInternalOrder = (o) => o.customerName === 'Internal Stock' || (typeof o.customerReferenceNumber === 'string' && o.customerReferenceNumber.startsWith('STOCK-'));
+const finIsInternalOrder = isInternalStockOrder; // R34 round 5 (item 7): shared helper
 const FIN_INVOICED = ['INVOICED', 'HUB_RELEASED', 'DELIVERED', 'WAITING_GOVE', 'FULFILLED'];
 // Cash/Bank (R34 round 2, D1): shared/cashBank.js, the same formula as the Finance ledger tab (customer cash on POs +
 // customer advances - customer refunds + manual additions - supplier payments - manual costs).
@@ -7242,10 +7276,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const paidOnOrder = Math.round((order.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
                     const cust = (db.customers || []).find(c => c.name === order.customerName);
                     if (paidOnOrder > 0 && cust && !order.paymentMovedToWallet) {
+                        // R34 round 5 (item 4): the L.E. value of the payments (exact amountLE of payments entered in L.E.)
+                        const paidOnOrderLE = orderPaymentsLE(order);
                         cust.walletBalances = cust.walletBalances || {};
-                        cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + paidOnOrder * orderFx(order)) * 100) / 100;
+                        cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + paidOnOrderLE) * 100) / 100;
                         order.paymentMovedToWallet = paidOnOrder;
-                        ledgerPush(db, { type: 'TRANSFER', amount: Math.round(paidOnOrder * orderFx(order) * 100) / 100, description: `Cancelled PO ${oldInternal}: paid amount moved to customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', oldInternal), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id, poNumber: oldInternal }, user);
+                        order.paymentMovedToWalletLE = paidOnOrderLE;
+                        ledgerPush(db, { type: 'TRANSFER', amount: paidOnOrderLE, description: `Cancelled PO ${oldInternal}: paid amount moved to customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', oldInternal), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id, poNumber: oldInternal }, user);
                         order.logs.push(createAuditLog(`Paid amount ${paidOnOrder.toLocaleString()} L.E. moved to the customer general wallet (credit).`, order.status, user));
                     }
                 }
@@ -8072,10 +8109,16 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const backS = Math.round((Number(order.surplusMovedToWallet) - keepS) * 100) / 100;
                     const custV = (db.customers || []).find(c => c.name === order.customerName);
                     if (backS > 0.004 && custV) {
+                        // R34 round 5 (item 4): in L.E. the surplus kept is what the PO still holds above its gross in L.E.
+                        const fxV = orderFx(order);
+                        const prevLEV = (order.surplusMovedToWalletLE !== undefined && order.surplusMovedToWalletLE !== null) ? Number(order.surplusMovedToWalletLE) || 0 : Number(order.surplusMovedToWallet) * fxV;
+                        const keepLEV = keepS > 0 ? Math.max(0, Math.round((orderPaymentsLE(order) - orderCommitmentGross(order) * fxV) * 100) / 100) : 0;
+                        const backLEV = Math.round((prevLEV - keepLEV) * 100) / 100;
                         custV.walletBalances = custV.walletBalances || {};
-                        custV.walletBalances[SELF_WALLET_KEY] = Math.round(((custV.walletBalances[SELF_WALLET_KEY] || 0) - backS * orderFx(order)) * 100) / 100;
-                        custV.walletBalance = Math.round(((custV.walletBalance || 0) - backS * orderFx(order)) * 100) / 100;
+                        custV.walletBalances[SELF_WALLET_KEY] = Math.round(((custV.walletBalances[SELF_WALLET_KEY] || 0) - backLEV) * 100) / 100;
+                        custV.walletBalance = Math.round(((custV.walletBalance || 0) - backLEV) * 100) / 100;
                         order.surplusMovedToWallet = keepS;
+                        order.surplusMovedToWalletLE = keepLEV;
                         order.logs.push(createAuditLog(`Payment voided: ${backS.toFixed(2)} of the surplus taken back from the customer general wallet.`, order.status, user));
                     }
                 }
@@ -8091,6 +8134,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     custW.walletBalances[SELF_WALLET_KEY] = Math.round(((custW.walletBalances[SELF_WALLET_KEY] || 0) - take) * 100) / 100;
                     custW.walletBalance = Math.round(((Number(custW.walletBalance) || 0) - take) * 100) / 100; // R34 round 3 (item 3): stored total follows the bucket
                     order.paymentMovedToWallet = Math.round((movedToWallet - take) * 100) / 100;
+                    if (order.paymentMovedToWalletLE !== undefined && order.paymentMovedToWalletLE !== null) order.paymentMovedToWalletLE = Math.max(0, Math.round((Number(order.paymentMovedToWalletLE) - take * orderFx(order)) * 100) / 100);
                     ledgerPush(db, { type: 'REFUND', amount: take, description: `Payment VOIDED (cancelled PO ${order.internalOrderNumber}): refunded from customer general wallet - ${payload.reason || 'Correction'}`, category: 'Customer Refunds', voidOfPayment: true, fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
                 } else if (!removed.transfer && Number(removed.amount) > 0) {
                     ledgerPush(db, { type: 'DEDUCTION', amount: Number(removed.amount), description: `Payment VOIDED: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.reason || 'Correction'}`, category: 'Customer Payment Reversal', fromAccount: 'Bank Account', toAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
@@ -8725,6 +8769,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + diff) * 100) / 100;
                     cust.walletBalance = (cust.walletBalance || 0) + diff;
                     order.surplusMovedToWallet = diff;
+                    delete order.surplusMovedToWalletLE;
                     ledgerPush(db, { type: 'TRANSFER', amount: diff, description: `Blanket close ${order.internalOrderNumber}: overpayment credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id }, user);
                 }
                 order.contractClosed = true;
