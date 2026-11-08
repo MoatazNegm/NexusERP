@@ -6,7 +6,7 @@
 // AP = every ISSUED supplier PO component (not NEW / PENDING_OFFER / RFP_SENT / AWARDED / CANCELLED), gross (net + tax),
 //      minus the supplier payments allocated to it, plus the supplier-level AP openings.
 
-import { isInternalStockOrder, orderFxRate, orderPaymentsLE } from './orderMoney.js';
+import { isInternalStockOrder, orderFxRate, orderPaymentsLE, refNamesOrder, isClosedBlanketRoot, callOffsOfBlanket } from './orderMoney.js';
 
 const REJECTED = 'REJECTED';
 const r2w = x => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
@@ -51,14 +51,47 @@ export const orderPaidInLE = (order) => {
 const orderProjectNameAP = (order, orders = []) => {
     let proj = String((order.projectName || '').trim());
     if (!proj && order.blanketContractId) {
-        const parent = orders.find(p => (p.id === order.blanketContractId || p.internalOrderNumber === order.blanketContractId || p.customerReferenceNumber === order.blanketContractId) && p.status !== REJECTED);
+        const parent = orders.find(p => refNamesOrder(order.blanketContractId, p) && p.status !== REJECTED);
         if (parent && parent.projectName) proj = String(parent.projectName).trim();
     }
     return proj;
 };
 
+// The receivable committed by one order in L.E. (a blanket contract commits nothing by itself; the 1% withholding is no receivable).
+const orderCommittedLE = (o) => o.blanketOrder ? 0 : r2w(r2w(orderCommitmentGrossAP(o) - (o.appliesWithholdingTax ? orderWhtAmountAP(o) : 0)) * orderFxAP(o));
+// R34 round 12 (validator 11, defect 5): the money a CLOSED blanket contract keeps after its close (paid - the surplus moved to the
+// customer general wallet) is the payment for its call-offs. Per order it is applied to the open call-offs of that contract (same
+// customer, in order), up to what each still owes; the contract row shows it as applied. The totals do not change; the call-off of a
+// closed contract that the contract money covers shows 0 owing. Returns { covered: Map callOffId -> L.E., applied: Map rootId -> L.E. }.
+export const closedContractCoverage = (orders = []) => {
+    const covered = new Map(), applied = new Map();
+    (orders || []).forEach(root => {
+        if (!root || root.status === REJECTED || !isClosedBlanketRoot(root) || isInternalStockOrder(root)) return;
+        let avail = r2w(orderPaidInLE(root));
+        if (avail <= 0.004) return;
+        let used = 0;
+        callOffsOfBlanket(root, orders).forEach(c => {
+            if (avail <= 0.004 || isInternalStockOrder(c) || String(c.customerName || '') !== String(root.customerName || '')) return;
+            const open = r2w(orderCommittedLE(c) - orderPaidInLE(c) - (covered.get(c.id) || 0));
+            if (open <= 0.004) return;
+            const take = r2w(Math.min(open, avail));
+            covered.set(c.id, r2w((covered.get(c.id) || 0) + take));
+            avail = r2w(avail - take); used = r2w(used + take);
+        });
+        if (used > 0.004) applied.set(root.id, used);
+    });
+    return { covered, applied };
+};
+// What an order still owes in L.E. after the closed-contract coverage (the byOrder receivable).
+export const orderReceivableLE = (order, orders = []) => {
+    if (!order || order.status === REJECTED || isInternalStockOrder(order)) return 0;
+    const { covered, applied } = closedContractCoverage(orders);
+    return r2w(Math.max(0, orderCommittedLE(order) - (orderPaidInLE(order) + (covered.get(order.id) || 0) - (applied.get(order.id) || 0))));
+};
+
 export const computeReceivables = (orders = [], ledger = null, customers = null) => {
     const rows = [];
+    const cov = closedContractCoverage(orders);
     orders.forEach(o => {
         if (o.status === REJECTED) return;
         // R34 round 3 (item 6): the 'Internal Stock' customer is the company itself (stock orders), never a debtor; its orders are
@@ -70,9 +103,12 @@ export const computeReceivables = (orders = [], ledger = null, customers = null)
         // The 1% withholding the customer keeps (base NET) is cleared in the Tax tab: it is not a receivable (ruling 2026-10-21 22:08).
         const fx = orderFxAP(o);
         const committedOC = o.blanketOrder ? 0 : r2w(orderCommitmentGrossAP(o) - (o.appliesWithholdingTax ? orderWhtAmountAP(o) : 0));
-        const paidOC = orderPaidInAP(o);
-        const committed = r2w(committedOC * fx), paid = r2w(orderPaidInLE(o));
+        const covLE = cov.covered.get(o.id) || 0, appLE = cov.applied.get(o.id) || 0; // R34 round 12: closed-contract coverage
+        const paidOC = r2w(orderPaidInAP(o) + (covLE - appLE) / fx);
+        const committed = r2w(committedOC * fx), paid = r2w(orderPaidInLE(o) + covLE - appLE);
         const row = { orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectNameAP(o, orders) || '(No Project)', status: o.status, blanketOrder: Boolean(o.blanketOrder), committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) };
+        if (covLE > 0.004) row.coveredByContract = r2w(covLE);
+        if (appLE > 0.004) row.appliedToCallOffs = r2w(appLE);
         if (fx !== 1) Object.assign(row, { currency: o.currency, conversionRate: fx, committedOrderCurrency: committedOC, paidOrderCurrency: paidOC, receivableOrderCurrency: r2w(Math.max(0, committedOC - paidOC)) });
         rows.push(row);
     });

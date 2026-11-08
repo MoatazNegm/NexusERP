@@ -37,10 +37,30 @@ export const orderPaymentsLE = (order, filter = null) => {
 // (output VAT and profit on the called-off value only, counted once, whether or not the call-off itself was invoiced).
 export const isBlanketRootOrder = (o) => Boolean(o && o.blanketOrder && !o.blanketContractId);
 export const isClosedBlanketRoot = (o) => isBlanketRootOrder(o) && Boolean(o.contractClosed);
+// R34 round 12 (validator 11, defects 1 and 2): ONE link rule. A call-off names its contract in blanketContractId by the contract's id,
+// internal number or customer reference; both sides are compared trimmed (a stored reference or contract number with stray spaces
+// still links). Every guard, the close action, the drawdown, revenue and AR resolve the link with these helpers.
+export const trimRef = (v) => (v === undefined || v === null) ? '' : String(v).trim();
+export const refNamesOrder = (ref, p) => {
+    const r = trimRef(ref);
+    return Boolean(r && p && (trimRef(p.id) === r || trimRef(p.internalOrderNumber) === r || trimRef(p.customerReferenceNumber) === r));
+};
 export const blanketRootOf = (o, orders = []) => {
-    if (!o || !o.blanketContractId || !String(o.blanketContractId).trim()) return null;
-    const ref = String(o.blanketContractId).trim(); // R34 round 10: a stored reference with stray spaces still names its contract
-    return (orders || []).find(p => p && p.blanketOrder && p.status !== 'REJECTED' && (p.id === ref || p.internalOrderNumber === ref || p.customerReferenceNumber === ref)) || null;
+    if (!o) return null;
+    const ref = trimRef(o.blanketContractId); // R34 round 10: a stored reference with stray spaces still names its contract
+    if (!ref) return null;
+    return (orders || []).find(p => p && p.blanketOrder && p.status !== 'REJECTED' && refNamesOrder(ref, p)) || null;
+};
+// The call-offs of a blanket contract: the orders whose link resolves (blanketRootOf) to this contract. Rejected call-offs are left
+// out unless includeRejected (a rejected call-off no longer draws on the contract).
+export const callOffsOfBlanket = (root, orders = [], includeRejected = false) => {
+    if (!root || !root.blanketOrder || trimRef(root.blanketContractId)) return [];
+    return (orders || []).filter(c => {
+        if (!c || c === root || c.id === root.id || !trimRef(c.blanketContractId)) return false;
+        if (!includeRejected && c.status === 'REJECTED') return false;
+        const r = blanketRootOf(c, orders);
+        return Boolean(r && (r === root || r.id === root.id));
+    });
 };
 const INVOICED_STATUSES = ['INVOICED', 'HUB_RELEASED', 'DELIVERED', 'WAITING_GOVE', 'FULFILLED'];
 // An order whose sale is realized for the ledger (output VAT, realized profit): invoiced (status or invoice number), or a call-off

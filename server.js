@@ -43,8 +43,8 @@ import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank } from './shared/cashBank.js';
-import { computeReceivables, computePayables, orderPaidInLE } from './shared/arap.js';
-import { isInternalStockOrder, orderPaymentsLE, isRealizedSale, ownLinesAreSales, paymentLE, blanketRootOf } from './shared/orderMoney.js';
+import { computeReceivables, computePayables, orderPaidInLE, orderReceivableLE, closedContractCoverage } from './shared/arap.js';
+import { isInternalStockOrder, orderPaymentsLE, isRealizedSale, ownLinesAreSales, paymentLE, blanketRootOf, callOffsOfBlanket, refNamesOrder, trimRef } from './shared/orderMoney.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -4363,8 +4363,8 @@ const calculateOrderHealth = (order, settings) => {
 // excess = max(0, drawn - blanket). Added per blanket item (matched by description) and per order.
 const withBlanketDrawdown = (order, orders = []) => {
     if (!order || !order.blanketOrder) return order;
-    const refs = [order.id, order.internalOrderNumber].filter(Boolean);
-    const calls = orders.filter(o => o.blanketContractId && refs.includes(o.blanketContractId) && o.status !== OrderStatus.REJECTED);
+    // R34 round 12 (validator 11, defect 2): the call-offs by the shared link rule (id, internal number or customer reference, trimmed).
+    const calls = callOffsOfBlanket(order, orders);
     const key = d => String(d || '').trim().toLowerCase();
     let tb = 0, td = 0;
     const items = (order.items || []).map(it => {
@@ -4400,7 +4400,7 @@ const openingSumFor = (ledger, key) => {
 const orderProjectName = (order, orders = []) => {
     let proj = String((order.projectName || '').trim());
     if (!proj && order.blanketContractId) {
-        const parent = orders.find(p => (p.id === order.blanketContractId || p.internalOrderNumber === order.blanketContractId || p.customerReferenceNumber === order.blanketContractId) && p.status !== OrderStatus.REJECTED);
+        const parent = orders.find(p => refNamesOrder(order.blanketContractId, p) && p.status !== OrderStatus.REJECTED);
         if (parent && parent.projectName) proj = String(parent.projectName).trim();
     }
     return proj;
@@ -4795,7 +4795,7 @@ const addToCollection = (col) => (req, res) => {
             newItem.blanketContractId = String(newItem.blanketContractId).trim();
             const blanketRef = newItem.blanketContractId;
             const blanket = db.orders.find(o =>
-                o.id === blanketRef || o.internalOrderNumber === blanketRef
+                trimRef(o.id) === blanketRef || trimRef(o.internalOrderNumber) === blanketRef // R34 round 12: trimmed link rule
             );
             if (blanket && !blanket.blanketOrder) {
                 return res.status(400).json({ error: `Blanket contract "${blanketRef}" is not a blanket order.` });
@@ -4844,6 +4844,7 @@ const addToCollection = (col) => (req, res) => {
 
             // R34 round 8 (validator 7, defect 5): no payment into a cancelled (REJECTED) PO, the same rule as record-payment.
             if (targetOrder && targetOrder.status === 'REJECTED') return res.status(400).json({ error: `Refused: order ${targetOrder.internalOrderNumber} is cancelled (REJECTED); no payment can be booked on it - record a customer advance to the general wallet instead.` });
+            if (targetOrder) { const cpL = closedCallOffPaymentRefusal(db, targetOrder, Number(newItem.amount) || 0); if (cpL) return res.status(400).json({ error: cpL }); }
             if (targetOrder) {
                 // R34 round 3 (validator 2, item 2): the entry is now this order's payment; it carries the order ID so Cash / Bank
                 // counts it once (as the order payment), never again as a manual addition.
@@ -4920,13 +4921,24 @@ const ORDER_EDIT_LOCKED_REASON = (req, order) => {
 };
 // R34 round 10 (validator 9, defect 3): helpers for the lines of a call-off of a closed blanket contract.
 const closedRootOfCallOff = (o, orders) => { const r = (o && o.blanketContractId) ? blanketRootOf(o, orders || []) : null; return (r && r.contractClosed) ? r : null; };
+// R34 round 12 (validator 11, defect 5): the money a closed contract kept at its close pays its call-offs (shared/arap.js
+// closedContractCoverage; AR by order shows the covered call-off as 0 owing). A payment on a call-off of a closed contract above what
+// it still owes after that coverage is refused (record-payment, a ledger payment naming the PO, a wallet transfer into the PO), so
+// the same call-off is never collected twice. The part it still owes (an underpaid close) can be paid as usual. The D1 surplus move
+// (moveOrderSurplusToGeneralWallet) never applies to call-offs, so the refusal also covers a call-off that paid itself in full.
+const closedCallOffPaymentRefusal = (db, order, amountLE) => {
+    const root = closedRootOfCallOff(order, (db && db.orders) || []);
+    if (!root || order.status === OrderStatus.REJECTED) return null;
+    const owe = orderReceivableLE(order, db.orders || []);
+    if (!(Number(amountLE) > owe + 0.004)) return null;
+    const cov = closedContractCoverage(db.orders || []).covered.get(order.id) || 0;
+    return `Refused: order ${order.internalOrderNumber} is a call-off of the closed blanket contract ${root.internalOrderNumber}; the closed settlement is final and the call-off still owes ${owe.toFixed(2)} L.E.${cov > 0.004 ? ` (the money the contract kept at its close pays ${cov.toFixed(2)} L.E. of it)` : ''} - a payment of ${(Number(amountLE) || 0).toFixed(2)} L.E. is above that; record a customer advance to the general wallet instead.`;
+};
 // R34 round 11 (validator 10): the call-offs of a blanket contract (orders whose blanketContractId names it by id, internal number or
 // customer reference, as blanketRootOf resolves the link).
-const blanketCallOffsOf = (o, orders) => {
-    if (!o || !o.blanketOrder || (o.blanketContractId && String(o.blanketContractId).trim())) return [];
-    const refs = [o.id, o.internalOrderNumber, o.customerReferenceNumber].filter(x => x !== undefined && x !== null && String(x).trim() !== '').map(x => String(x).trim());
-    return (orders || []).filter(p => p && p !== o && p.id !== o.id && p.blanketContractId && refs.includes(String(p.blanketContractId).trim()));
-};
+// R34 round 12 (validator 11, defects 2 and 4): the shared link rule (callOffsOfBlanket); a REJECTED call-off is no live call-off any
+// more (the close and the drawdown skip it too), so it does not block the reject of its open contract.
+const blanketCallOffsOf = (o, orders) => callOffsOfBlanket(o, orders || []);
 // R34 round 11 (validator 10, defects 1 and 5): rejecting (cancelling) a closed blanket contract, a call-off of a closed contract or an
 // open blanket that has call-offs is refused. The close settlement (paid - called-off gross moved to the customer general wallet, the
 // call-offs realized sales) is final, and a rejected contract is renamed, so its call-offs would lose their root.
@@ -5105,6 +5117,14 @@ const updateInCollection = (col) => (req, res) => {
         if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(oldItem.blanketContractId || '').trim() !== '' && String(req.body.blanketContractId).trim() === String(oldItem.blanketContractId).trim()) {
             updated.blanketContractId = oldItem.blanketContractId;
         }
+        // R34 round 12 (validator 11, defect 1): an unchanged echo (trimmed values equal) of the internal number or the customer
+        // reference keeps the STORED value. The guards below compare trimmed values; storing the raw echo (' INT-2024-0001 ') would
+        // let it pass as unchanged and still change the stored reference the call-offs are linked by.
+        ['internalOrderNumber', 'customerReferenceNumber'].forEach(f => {
+            if (req.body[f] === undefined || req.body[f] === null || typeof req.body[f] === 'object') return;
+            if (trimRef(req.body[f]) !== trimRef(oldItem[f])) return;
+            if (oldItem[f] === undefined) delete updated[f]; else updated[f] = oldItem[f];
+        });
         // R34 round 10 (validator 9, defect 2): closing a blanket contract is the finance close action (R27); the generic order edit
         // (any role, admin included) never reopens a closed contract nor closes one, and never changes its closed (called-off) gross:
         // a reopened contract would let the call-offs move or change while the close money already sits in the customer general wallet.
@@ -5113,8 +5133,7 @@ const updateInCollection = (col) => (req, res) => {
         {
             const flagOf = (v) => Boolean(v) && v !== 'false';
             const sameNum = (a, b) => (a === undefined || a === null || a === '') ? (b === undefined || b === null || b === '') : (b !== undefined && b !== null && b !== '' && Math.abs(Number(a) - Number(b)) < 0.005);
-            const refsB = [oldItem.id, oldItem.internalOrderNumber].filter(Boolean);
-            const hasCallOffs = Boolean(oldItem.blanketOrder) && (db.orders || []).some(o => o.id !== oldItem.id && o.blanketContractId && refsB.includes(String(o.blanketContractId).trim()));
+            const hasCallOffs = Boolean(oldItem.blanketOrder) && blanketCallOffsOf(oldItem, db.orders || []).length > 0; // R34 round 12: shared link rule
             const rootCl = oldItem.blanketContractId ? blanketRootOf(oldItem, db.orders || []) : null;
             const changedB = [];
             if (req.body.contractClosed !== undefined && flagOf(req.body.contractClosed) !== flagOf(oldItem.contractClosed)) changedB.push('contractClosed');
@@ -5142,8 +5161,11 @@ const updateInCollection = (col) => (req, res) => {
         // call-off names the contract by it). Unchanged echoes stay allowed.
         {
             const stOld = String(oldItem.status ?? ''), stNew = req.body.status === undefined ? stOld : String(req.body.status ?? '');
-            if (stNew !== stOld && (stOld === OrderStatus.REJECTED || stNew === OrderStatus.REJECTED)) {
-                return res.status(400).json({ error: stOld === OrderStatus.REJECTED
+            // R34 round 12 (validator 11, defect 3): the REJECTED test is case- and space-insensitive ('rejected', ' REJECTED ').
+            const rjN = (v) => trimRef(v).toUpperCase() === OrderStatus.REJECTED;
+            if (stNew !== stOld && rjN(stOld) && rjN(stNew)) updated.status = oldItem.status; // an unchanged echo keeps the stored spelling
+            else if (stNew !== stOld && (rjN(stOld) || rjN(stNew))) {
+                return res.status(400).json({ error: rjN(stOld)
                     ? `Refused: order ${oldItem.internalOrderNumber} is rejected; the generic order edit cannot change its status (${stOld} -> ${stNew}); a rejected order stays rejected.`
                     : `Refused: the generic order edit cannot set the status REJECTED on order ${oldItem.internalOrderNumber}; use the reject-order action (it moves the paid money and releases stock).` });
             }
@@ -5160,8 +5182,8 @@ const updateInCollection = (col) => (req, res) => {
         }
         if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(req.body.blanketContractId).trim() !== '' && String(req.body.blanketContractId).trim() !== String(oldItem.blanketContractId || '').trim()) {
             const blanketRefU = String(req.body.blanketContractId).trim();
-            const blanketU = (db.orders || []).find(o => o.id !== oldItem.id && (o.id === blanketRefU || o.internalOrderNumber === blanketRefU))
-                || (db.orders || []).find(o => o.id !== oldItem.id && o.blanketOrder && o.status !== 'REJECTED' && o.customerReferenceNumber === blanketRefU);
+            const blanketU = (db.orders || []).find(o => o.id !== oldItem.id && (trimRef(o.id) === blanketRefU || trimRef(o.internalOrderNumber) === blanketRefU))
+                || (db.orders || []).find(o => o.id !== oldItem.id && o.blanketOrder && o.status !== 'REJECTED' && trimRef(o.customerReferenceNumber) === blanketRefU);
             if (!blanketU) return res.status(400).json({ error: `Blanket contract "${blanketRefU}" not found.` });
             if (!blanketU.blanketOrder || blanketU.blanketContractId) return res.status(400).json({ error: `Blanket contract "${blanketRefU}" is not a blanket order.` });
             if (blanketU.contractClosed) return res.status(400).json({ error: `Blanket contract "${blanketU.internalOrderNumber || blanketRefU}" is closed; no new call-off can be raised on it.` });
@@ -5367,7 +5389,7 @@ app.get('/api/v1/project-wallets', (req, res) => {
                     const isBlanket = Boolean(o.blanketOrder || o.contractId || o.blanketContractId);
                     let ordProj = String((o.projectName || '').trim());
                     if (!ordProj && o.blanketContractId) {
-                        const parent = orders.find(p => (p.id === o.blanketContractId || p.internalOrderNumber === o.blanketContractId || p.customerReferenceNumber === o.blanketContractId) && p.status !== OrderStatus.REJECTED);
+                        const parent = orders.find(p => refNamesOrder(o.blanketContractId, p) && p.status !== OrderStatus.REJECTED);
                         if (parent && parent.projectName) ordProj = String(parent.projectName).trim();
                     }
                     return ordProj === trimmed;
@@ -5746,6 +5768,7 @@ app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
         } else if ((customer.walletBalances[src.key] || 0) + 0.005 < amt) {
             return res.status(400).json({ error: `Insufficient balance: account holds ${(customer.walletBalances[src.key] || 0).toFixed(2)}, transfer ${amt.toFixed(2)}` });
         }
+        if (dst.t === 'ORDER') { const cpT = closedCallOffPaymentRefusal(db, dst.order, amt); if (cpT) return res.status(400).json({ error: cpT }); }
         const now = new Date().toISOString();
         const note = `Account transfer ${amt.toFixed(2)}: ${acctLabel(customer.name, src.t, src.ref)} -> ${acctLabel(customer.name, dst.t, dst.ref)}${memo ? ' - ' + memo : ''}`;
         // R34 round 5 (validator 4, item 2): ONE receipt number for the transfer, on the order payment(s) AND on the ledger TRANSFER,
@@ -6305,20 +6328,20 @@ app.get('/api/v1/reports/orders', (req, res) => {
     // User ruling 2026-10-21: revenue shown by the app is always the NET total of line values; payments stay in wallet/cash/AR figures only.
     const isOutsourcingBlanket = (o) => isBlanketRoot(o) && (o.items || []).length > 0 && (o.items || []).every(it => it.productionType === 'OUTSOURCING');
     // Blanket revenue = NET total of the line values actually called off (call-off lines; the contract's own lines when nothing was called off yet).
-    const blanketNetRevenue = (root) => { const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber) && x.status !== OrderStatus.REJECTED); return r2c(co.length ? co.reduce((t, x) => t + (Number(x.totalPrice) || 0), 0) : (root.contractClosed ? 0 : (Number(root.totalPrice) || 0))); };
+    const blanketNetRevenue = (root) => { const co = callOffsOfBlanket(root, enrichedOrders); return r2c(co.length ? co.reduce((t, x) => t + (Number(x.totalPrice) || 0), 0) : (root.contractClosed ? 0 : (Number(root.totalPrice) || 0))); };
     // R34 round 8 (validator 7, defect 4): a CLOSED blanket contract with nothing called off has revenue (and cost) 0: its own lines
     // are no sale once it is closed (shared/orderMoney.js ownLinesAreSales), the same as Finance > Ledger and Profitability.
     // R34 round 7 (validator 6, defect 4): the same blanket revenue in the CONTRACT currency for revenueByCurrency (USD blanket
     // 10 x 100 at rate 50 = USD 1,000, not the L.E. 50,000). A call-off in the contract currency adds its own order-currency
     // value; a call-off in another currency is converted from its L.E. value at the contract rate.
     const blanketNetRevenueOC = (root) => {
-        const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber) && x.status !== OrderStatus.REJECTED);
+        const co = callOffsOfBlanket(root, enrichedOrders);
         if (!co.length) return root.contractClosed ? 0 : r2c(Number(root.totalPriceOrderCurrency) || 0);
         const rootCur = root.currency || 'L.E.';
         const rootFx = (root.currency && root.currency !== 'L.E.' && Number(root.conversionRate) > 0) ? Number(root.conversionRate) : 1;
         return r2c(co.reduce((t, x) => t + ((x.currency || 'L.E.') === rootCur ? (Number(x.totalPriceOrderCurrency) || 0) : (Number(x.totalPrice) || 0) / rootFx), 0));
     };
-    const blanketIdsOf = (root) => (db.orders || []).filter(x => x.id === root.id || (x.blanketContractId && (x.blanketContractId === root.internalOrderNumber || x.blanketContractId === root.id || x.blanketContractId === root.customerReferenceNumber))).map(x => x.id);
+    const blanketIdsOf = (root) => [root.id, ...callOffsOfBlanket((db.orders || []).find(x => x.id === root.id) || root, db.orders || [], true).map(x => x.id)];
     enrichedOrders.forEach(o => {
         if (o.status === OrderStatus.REJECTED) return;
         if (isOutsourcingBlanket(o)) { o.reportBasis = 'LINES'; const nr = blanketNetRevenue(o); o.totalPrice = nr; o.totalPriceOrderCurrency = blanketNetRevenueOC(o); }
@@ -6326,7 +6349,7 @@ app.get('/api/v1/reports/orders', (req, res) => {
             // User principle 2026-10-21: cost and revenue values never include VAT and never come from payments.
             // Blanket revenue = NET total of the call-off lines; blanket cost = NET component cost of the call-offs (the contract's own lines when nothing was called off).
             const rev = blanketNetRevenue(o);
-            const co = enrichedOrders.filter(x => x.blanketContractId && (x.blanketContractId === o.internalOrderNumber || x.blanketContractId === o.id || x.blanketContractId === o.customerReferenceNumber) && x.status !== OrderStatus.REJECTED);
+            const co = callOffsOfBlanket(o, enrichedOrders);
             const cost = co.length ? co.reduce((t, x) => t + (Number(x.totalRealCost) || 0), 0) : (o.contractClosed ? 0 : (Number(o.totalRealCost) || 0));
             o.totalPrice = r2c(rev); o.totalPriceOrderCurrency = blanketNetRevenueOC(o); o.totalRealCost = r2c(cost); o.reportBasis = 'LINES';
         } else if (o.blanketContractId) { o.reportBasis = 'BLANKET_CALL_OFF'; }
@@ -8470,8 +8493,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const rootC = (order.blanketOrder && !order.blanketContractId) ? order : (order.blanketContractId ? blanketRootOf(order, db.orders || []) : null);
                     const prevC = rootC ? ((rootC.surplusMovedToWalletLE !== undefined && rootC.surplusMovedToWalletLE !== null) ? Number(rootC.surplusMovedToWalletLE) || 0 : (Number(rootC.surplusMovedToWallet) || 0) * orderFx(rootC)) : 0;
                     if (rootC && rootC.contractClosed && prevC > 0.004 && order.status !== OrderStatus.REJECTED) {
-                        const refsC = [rootC.id, rootC.internalOrderNumber].filter(Boolean);
-                        const callsC = (db.orders || []).filter(o => o.blanketContractId && refsC.includes(o.blanketContractId) && o.status !== OrderStatus.REJECTED);
+                        const callsC = callOffsOfBlanket(rootC, db.orders || []); // R34 round 12: shared link rule
                         if (order !== rootC && !callsC.includes(order)) callsC.push(order);
                         const r2c = x => Math.round((x + Number.EPSILON) * 100) / 100;
                         let delOC = 0, delLE = 0;
@@ -8726,6 +8748,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 // customer general wallet, a new payment would sit on a dead PO (Cash / Bank up, customer wallets not). Pay an advance
                 // into the general wallet instead.
                 if (order.status === OrderStatus.REJECTED) throw new Error(`Refused: order ${order.internalOrderNumber} is cancelled (REJECTED); no payment can be recorded on it - record a customer advance to the general wallet instead.`);
+                { const cpR = closedCallOffPaymentRefusal(db, order, r2w((Number(payload && payload.amount) || 0) * orderFx(order))); if (cpR) throw new Error(cpR); }
                 if (!order.payments) order.payments = [];
                 const paymentIndex = order.payments.length + 1;
                 // Create unique receipt number: RCV-{OrderNumber}-{PaymentIndex}-{Timestamp}
@@ -9248,8 +9271,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     if (uRoles && !uRoles.includes('finance') && !uRoles.includes('admin')) throw new Error("Only finance users can close a blanket order");
                 }
                 if (order.contractClosed) throw new Error("Blanket order is already closed");
-                const refs = [order.id, order.internalOrderNumber].filter(Boolean);
-                const calls = db.orders.filter(o => o.blanketContractId && refs.includes(o.blanketContractId) && o.status !== OrderStatus.REJECTED);
+                // R34 round 12 (validator 11, defect 2): the call-offs by the shared link rule, the same as every guard and the
+                // realized-sale test (a call-off linked by the contract's customer reference, or with stray spaces, is settled too).
+                const calls = callOffsOfBlanket(order, db.orders || []);
                 let deliveredGross = 0;
                 calls.forEach(o => (o.items || []).forEach(it => {
                     const r2c = x => Math.round((x + Number.EPSILON) * 100) / 100;
