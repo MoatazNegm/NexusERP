@@ -4920,6 +4920,28 @@ const ORDER_EDIT_LOCKED_REASON = (req, order) => {
 };
 // R34 round 10 (validator 9, defect 3): helpers for the lines of a call-off of a closed blanket contract.
 const closedRootOfCallOff = (o, orders) => { const r = (o && o.blanketContractId) ? blanketRootOf(o, orders || []) : null; return (r && r.contractClosed) ? r : null; };
+// R34 round 11 (validator 10): the call-offs of a blanket contract (orders whose blanketContractId names it by id, internal number or
+// customer reference, as blanketRootOf resolves the link).
+const blanketCallOffsOf = (o, orders) => {
+    if (!o || !o.blanketOrder || (o.blanketContractId && String(o.blanketContractId).trim())) return [];
+    const refs = [o.id, o.internalOrderNumber, o.customerReferenceNumber].filter(x => x !== undefined && x !== null && String(x).trim() !== '').map(x => String(x).trim());
+    return (orders || []).filter(p => p && p !== o && p.id !== o.id && p.blanketContractId && refs.includes(String(p.blanketContractId).trim()));
+};
+// R34 round 11 (validator 10, defects 1 and 5): rejecting (cancelling) a closed blanket contract, a call-off of a closed contract or an
+// open blanket that has call-offs is refused. The close settlement (paid - called-off gross moved to the customer general wallet, the
+// call-offs realized sales) is final, and a rejected contract is renamed, so its call-offs would lose their root.
+const rejectSettlementRefusal = (o, orders) => {
+    if (!o) return null;
+    if (o.blanketOrder && !(o.blanketContractId && String(o.blanketContractId).trim())) {
+        if (o.contractClosed) return `Refused: blanket contract ${o.internalOrderNumber} is closed; the closed settlement is final - the contract cannot be rejected.`;
+        const calls = blanketCallOffsOf(o, orders);
+        if (calls.length) return `Refused: blanket contract ${o.internalOrderNumber} has ${calls.length} call-off(s) (${calls.map(x => x.internalOrderNumber).join(', ')}); it cannot be rejected, or the call-offs would lose their contract - close it with the finance close action (close-blanket-order) instead.`;
+        return null;
+    }
+    const root = closedRootOfCallOff(o, orders);
+    if (root) return `Refused: order ${o.internalOrderNumber} is a call-off of the closed blanket contract ${root.internalOrderNumber}; the closed settlement is final - the call-off cannot be rejected.`;
+    return null;
+};
 const callOffLinesChange = (oldItems, newItems) => {
     const num = (v) => (v === undefined || v === null || v === '' || isNaN(Number(v))) ? 0 : Number(v);
     const priceOf = (it) => num(it && (it.pricePerUnit ?? it.unitPrice ?? it.price));
@@ -5104,6 +5126,36 @@ const updateInCollection = (col) => (req, res) => {
                     : hasCallOffs ? `blanket contract ${oldItem.internalOrderNumber} has call-offs; a blanket contract is closed only by the finance close action`
                     : `a blanket contract is closed only by the finance close action (close-blanket-order)`;
                 return res.status(400).json({ error: `Refused: ${whyB}; the generic order edit cannot change ${changedB.join(', ')}.` });
+            }
+            // R34 round 11 (validator 10, low): an unchanged echo keeps the stored types (boolean flag, number gross), e.g. 'true' -> true.
+            [['contractClosed', 'flag'], ['closedDeliveredGross', 'num'], ['blanketOrder', 'flag']].forEach(([f, kind]) => {
+                if (req.body[f] === undefined) return;
+                const same = kind === 'flag' ? flagOf(req.body[f]) === flagOf(oldItem[f]) : sameNum(req.body[f], oldItem[f]);
+                if (!same) return;
+                if (oldItem[f] === undefined) delete updated[f]; else updated[f] = oldItem[f];
+            });
+        }
+        // R34 round 11 (validator 10, defect 2): the status REJECTED is set only by the reject-order action (it renames the PO, moves
+        // the paid money to the customer general wallet and releases stock and supplier POs); the generic edit never sets it nor lifts
+        // it, so cash and wallets cannot diverge. On a closed blanket contract and on a blanket that has call-offs the generic edit
+        // changes neither the status nor the references the call-offs are linked by (internal number; customer reference when a
+        // call-off names the contract by it). Unchanged echoes stay allowed.
+        {
+            const stOld = String(oldItem.status ?? ''), stNew = req.body.status === undefined ? stOld : String(req.body.status ?? '');
+            if (stNew !== stOld && (stOld === OrderStatus.REJECTED || stNew === OrderStatus.REJECTED)) {
+                return res.status(400).json({ error: stOld === OrderStatus.REJECTED
+                    ? `Refused: order ${oldItem.internalOrderNumber} is rejected; the generic order edit cannot change its status (${stOld} -> ${stNew}); a rejected order stays rejected.`
+                    : `Refused: the generic order edit cannot set the status REJECTED on order ${oldItem.internalOrderNumber}; use the reject-order action (it moves the paid money and releases stock).` });
+            }
+            const callsS = blanketCallOffsOf(oldItem, db.orders || []);
+            if (oldItem.contractClosed || callsS.length) {
+                const whyS = oldItem.contractClosed ? `blanket contract ${oldItem.internalOrderNumber} is closed (the settlement is final)` : `blanket contract ${oldItem.internalOrderNumber} has call-offs`;
+                const chS = [];
+                if (stNew !== stOld) chS.push('status');
+                if (req.body.internalOrderNumber !== undefined && String(req.body.internalOrderNumber ?? '').trim() !== String(oldItem.internalOrderNumber ?? '').trim()) chS.push('internalOrderNumber');
+                const crefOld = String(oldItem.customerReferenceNumber ?? '').trim();
+                if (req.body.customerReferenceNumber !== undefined && String(req.body.customerReferenceNumber ?? '').trim() !== crefOld && crefOld && callsS.some(x => String(x.blanketContractId).trim() === crefOld && crefOld !== String(oldItem.id) && crefOld !== String(oldItem.internalOrderNumber ?? '').trim())) chS.push('customerReferenceNumber');
+                if (chS.length) return res.status(400).json({ error: `Refused: ${whyS}; the generic order edit cannot change ${chS.join(', ')}.` });
             }
         }
         if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(req.body.blanketContractId).trim() !== '' && String(req.body.blanketContractId).trim() !== String(oldItem.blanketContractId || '').trim()) {
@@ -5927,6 +5979,8 @@ app.put('/api/v1/orders/:id/items/:itemId', (req, res) => {
     const itemIdx = order.items.findIndex(it => it.id === req.params.itemId);
     if (itemIdx === -1) return res.status(404).json({ error: "Order item not found" });
 
+    // R34 round 11 (validator 10, defect 3): the lines of a call-off of a closed blanket contract are final on every path.
+    { const rootP = closedRootOfCallOff(order, db.orders || []); if (rootP) return res.status(400).json({ error: `Refused: order ${order.internalOrderNumber} is a call-off of the closed blanket contract ${rootP.internalOrderNumber}; the closed settlement is final - no line can be changed.` }); }
     const oldItem = order.items[itemIdx];
     if (req.body.quantity !== undefined) {
         const q_ = Number(req.body.quantity);
@@ -5956,6 +6010,8 @@ app.delete('/api/v1/orders/:id/items/:itemId', (req, res) => {
     order.items = order.items || [];
     const itemIdx = order.items.findIndex(it => it.id === req.params.itemId);
     if (itemIdx === -1) return res.status(404).json({ error: "Order item not found" });
+    // R34 round 11 (validator 10, defect 3): the lines of a call-off of a closed blanket contract are final on every path.
+    { const rootD = closedRootOfCallOff(order, db.orders || []); if (rootD) return res.status(400).json({ error: `Refused: order ${order.internalOrderNumber} is a call-off of the closed blanket contract ${rootD.internalOrderNumber}; the closed settlement is final - no line can be removed.` }); }
 
     const removed = order.items.splice(itemIdx, 1)[0];
     order.logs = order.logs || [];
@@ -7507,6 +7563,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 else throw new Error("Database write failed");
 
             case 'reject-order':
+                { const rjS = rejectSettlementRefusal(order, db.orders || []); if (rjS) throw new Error(rjS); }
                 releaseSupplierAllocationsOfOrder(db, order);
                 // CX16: a rejected order cannot be rejected again.
                 if (order.status === OrderStatus.REJECTED) throw new Error('Refused: order already rejected');
@@ -8427,7 +8484,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         const backLE = r2w(prevC - keepLE);
                         if (backLE > 0.004) {
                             const custC = (db.customers || []).find(c => c.name === order.customerName);
-                            const inG = custC ? r2w(Number((custC.walletBalances || {})[SELF_WALLET_KEY]) || 0) : 0;
+                            const inG = custC ? r2w(availableGeneralWallet(db, custC)) : 0; // R34 round 11: rule G1 (spendable general wallet)
                             if (!custC || inG < backLE - 0.004) {
                                 throw new Error(`Refused: the close of blanket contract ${rootC.internalOrderNumber} moved ${prevC.toFixed(2)} L.E. to the customer general wallet; voiding payment ${pv.receiptNumber || payload.index} takes back ${backLE.toFixed(2)} L.E., but the general wallet holds only ${inG.toFixed(2)} L.E. - bring the money back to the general wallet first, then void the payment.`);
                             }
@@ -8476,7 +8533,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                     if (needG > 0.004) {
                         const custG = (db.customers || []).find(c => c.name === order.customerName);
-                        const inGG = custG ? r2w((Number((custG.walletBalances || {})[SELF_WALLET_KEY]) || 0) + backToG) : 0;
+                        // R34 round 11 (validator 10, defect 4): the general wallet the void can take back from is the spendable one (rule G1:
+                        // stored general bucket minus the company costs linked to no PO), as for refund and pay-from-wallet.
+                        const inGG = custG ? r2w(availableGeneralWallet(db, custG) + backToG) : 0;
                         if (!custG || inGG < needG - 0.004) {
                             throw new Error(`Refused: voiding payment ${pvG.receiptNumber || payload.index} of PO ${order.internalOrderNumber} takes back ${needG.toFixed(2)} L.E. from the customer general wallet (${order.status === OrderStatus.REJECTED ? 'the paid money of the cancelled PO moved there' : 'the PO surplus moved there'}), but the general wallet holds only ${inGG.toFixed(2)} L.E. - bring the money back to the general wallet first, then void the payment.`);
                         }
