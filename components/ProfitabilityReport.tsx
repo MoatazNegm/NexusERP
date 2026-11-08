@@ -159,12 +159,14 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
 
   const calculateAnalysisMetrics = (order: CustomerOrder) => {
     let revenueExclTax = 0;
-    let totalCostInclTax = 0;
+    // R34 round 6 (validator 5, D4): the cost is NET (the input VAT on the components is recoverable, it sits in the Net VAT
+    // liability), the same cost as the Financial Audit tab, the billing list and Finance > Ledger (EUR example: revenue 12,600 L.E.,
+    // cost 8,000 L.E. net, profit 4,600 L.E.; before: cost 9,120 incl. VAT, profit 3,480).
+    let totalCostNet = 0;
     order.items.forEach(item => {
       revenueExclTax += (getItemEffectiveQty(item) * item.pricePerUnit);
       item.components?.forEach(comp => {
-        const taxVal = (comp.taxPercent || 0) / 100;
-        totalCostInclTax += (comp.quantity * (comp.unitCost || 0) * (1 + taxVal));
+        totalCostNet += ((comp.quantity || 0) * (comp.unitCost || 0));
       });
     });
     if (order.appliesWithholdingTax) revenueExclTax *= 0.99;
@@ -173,9 +175,9 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
     const rate = orderFxRate(order);
     const revenueOrderCurrency = revenueExclTax;
     revenueExclTax = revenueExclTax * rate;
-    const costInOrderCurrency = totalCostInclTax; // L.E. (name kept)
+    const costInOrderCurrency = totalCostNet; // L.E. (name kept)
     const netProfit = revenueExclTax - costInOrderCurrency;
-    return { revenueExclTax, revenueOrderCurrency, totalCostInclTax, costInOrderCurrency, netProfit, currency: getOrderCurrency(order), conversionRate: rate };
+    return { revenueExclTax, revenueOrderCurrency, totalCostNet, costInOrderCurrency, netProfit, currency: getOrderCurrency(order), conversionRate: rate };
   };
 
   const analysisRange = useMemo(() => getDateRange(selectedPeriod), [selectedPeriod]);
@@ -197,7 +199,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       const m = calculateAnalysisMetrics(o);
       revenueByCurrency[m.currency] = (revenueByCurrency[m.currency] || 0) + m.revenueOrderCurrency;
       revenueLE += m.revenueExclTax;
-      cost += m.totalCostInclTax;
+      cost += m.totalCostNet;
       costInOrderCurrencyTotal += m.costInOrderCurrency;
       profit += m.netProfit;
     });
@@ -411,11 +413,11 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
             </div>
             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Cost ({DEFAULT_CURRENCY})</p>
-              <div className="text-2xl font-black text-slate-800">{(analysisTotals.costInOrderCurrency || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] opacity-30">{DEFAULT_CURRENCY}</span></div>
+              <div className="text-2xl font-black text-slate-800" data-testid="ca-total-cost">{(analysisTotals.costInOrderCurrency || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] opacity-30">{DEFAULT_CURRENCY}</span></div>
             </div>
             <div className={`p-6 rounded-[2rem] shadow-2xl text-white ${analysisTotals.profit >= 0 ? 'bg-slate-900' : 'bg-rose-900'} transition-all`}>
               <p className="text-[10px] font-black opacity-40 uppercase tracking-widest mb-1">Net Portfolio Profit ({DEFAULT_CURRENCY})</p>
-              <div className="text-2xl font-black">{analysisTotals.profit.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] opacity-30">{DEFAULT_CURRENCY}</span></div>
+              <div className="text-2xl font-black" data-testid="ca-total-profit">{analysisTotals.profit.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] opacity-30">{DEFAULT_CURRENCY}</span></div>
             </div>
             <div className="bg-indigo-600 p-6 rounded-[2rem] shadow-2xl text-white relative overflow-hidden group">
               <div className="absolute -right-4 -bottom-4 opacity-10 rotate-12 group-hover:rotate-0 transition-transform">
@@ -456,7 +458,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 text-[9px] font-black uppercase text-slate-400 tracking-widest border-b">
-                  <tr><th className="px-8 py-5">PO Identifier</th><th className="px-8 py-5 text-right">Revenue (Excl Tax)</th><th className="px-8 py-5 text-right">Cost (Incl Tax)</th><th className="px-8 py-5 text-right">Net Profit</th><th className="px-8 py-5 text-center">Margin %</th><th className="px-8 py-5 text-right">Status</th></tr>
+                  <tr><th className="px-8 py-5">PO Identifier</th><th className="px-8 py-5 text-right">Revenue (Excl Tax)</th><th className="px-8 py-5 text-right">Cost (Excl Tax)</th><th className="px-8 py-5 text-right">Net Profit</th><th className="px-8 py-5 text-center">Margin %</th><th className="px-8 py-5 text-right">Status</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {analysisOrdersFiltered.map(o => {
@@ -471,8 +473,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
                           </div>
                         </td>
                         <td className="px-8 py-5 text-right font-black text-slate-700 text-xs">{m.revenueExclTax.toLocaleString()} {DEFAULT_CURRENCY}{m.currency !== DEFAULT_CURRENCY && <div className="text-[9px] font-bold text-slate-400">{m.revenueOrderCurrency.toLocaleString()} {m.currency}</div>}</td>
-                        <td className="px-8 py-5 text-right font-bold text-slate-500 text-xs">{m.totalCostInclTax.toLocaleString()} {DEFAULT_CURRENCY}</td>
-                        <td className={`px-8 py-5 text-right font-black text-xs ${m.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{m.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {DEFAULT_CURRENCY}</td>
+                        <td className="px-8 py-5 text-right font-bold text-slate-500 text-xs" data-testid={`ca-cost-${o.id}`}>{m.totalCostNet.toLocaleString()} {DEFAULT_CURRENCY}</td>
+                        <td data-testid={`ca-profit-${o.id}`} className={`px-8 py-5 text-right font-black text-xs ${m.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{m.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {DEFAULT_CURRENCY}</td>
                         <td className="px-8 py-5 text-center"><div className="inline-flex px-3 py-1 rounded bg-slate-100 text-[10px] font-black text-slate-700">{(m.revenueExclTax > 0 ? (m.netProfit / m.revenueExclTax) * 100 : 0).toFixed(1)}%</div></td>
                         <td className="px-8 py-5 text-right"><span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border bg-${getDynamicOrderStatusStyle(o, config).color}-50 text-${getDynamicOrderStatusStyle(o, config).color}-600 border-${getDynamicOrderStatusStyle(o, config).color}-100`}>{getDynamicOrderStatusStyle(o, config).label}</span></td>
                       </tr>

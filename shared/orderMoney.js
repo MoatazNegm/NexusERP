@@ -30,3 +30,26 @@ export const orderPaymentsLE = (order, filter = null) => {
     const fx = orderFxRate(order);
     return r2m((order && order.payments || []).reduce((s, p) => s + ((!filter || filter(p)) ? paymentLE(p, fx) : 0), 0));
 };
+
+// R34 round 6 (validator 5, O5): closing a blanket contract (finance decision, ruling R27) settles what was CALLED OFF. The rulings
+// (R27 / R28 / R29) say nothing about VAT at the close, so the coder rule is: the contract's own lines are no sale once it is
+// closed (its closed value is the called-off gross, carried by the call-offs); the call-offs of a closed contract are realized
+// (output VAT and profit on the called-off value only, counted once, whether or not the call-off itself was invoiced).
+export const isBlanketRootOrder = (o) => Boolean(o && o.blanketOrder && !o.blanketContractId);
+export const isClosedBlanketRoot = (o) => isBlanketRootOrder(o) && Boolean(o.contractClosed);
+export const blanketRootOf = (o, orders = []) => {
+    if (!o || !o.blanketContractId) return null;
+    const ref = o.blanketContractId;
+    return (orders || []).find(p => p && p.blanketOrder && p.status !== 'REJECTED' && (p.id === ref || p.internalOrderNumber === ref || p.customerReferenceNumber === ref)) || null;
+};
+const INVOICED_STATUSES = ['INVOICED', 'HUB_RELEASED', 'DELIVERED', 'WAITING_GOVE', 'FULFILLED'];
+// An order whose sale is realized for the ledger (output VAT, realized profit): invoiced (status or invoice number), or a call-off
+// of a closed blanket contract.
+export const isRealizedSale = (o, orders = []) => {
+    if (!o || o.status === 'REJECTED') return false;
+    if (INVOICED_STATUSES.includes(o.status) || Boolean(o.invoiceNumber)) return true;
+    const root = blanketRootOf(o, orders);
+    return Boolean(root && root.contractClosed);
+};
+// Do the order's own lines count as a sale (revenue / output VAT)? Not for a closed blanket contract.
+export const ownLinesAreSales = (o) => !isClosedBlanketRoot(o);

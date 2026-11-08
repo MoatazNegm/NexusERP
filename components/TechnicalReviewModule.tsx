@@ -3,6 +3,7 @@ import { dataService } from '../services/dataService';
 import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent, OrderStatus, Supplier, SupplierPart, AppConfig, CompStatus, User, getItemEffectiveStatus } from '../types';
 import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, calculateCatalogMatchScore, getTechReviewStartTime, getOrderPoType, getPoTypeConfig } from '../utils';
 import { isMarginBreach } from '../shared/margin';
+import { isInternalStockOrder, orderFxRate } from '../shared/orderMoney';
 import { PartHistory } from './PartHistory';
 
 interface AlterLineItemsViewProps {
@@ -1044,15 +1045,16 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       });
     });
 
-    // Multi-currency amendment: bring the cost side into the order's revenue
-    // currency via the per-order conversion rate before checking the margin
-    // threshold. The displayed `cost` is the raw PO currency value.
-    const rate = getOrderConversionRate(selectedOrder);
-    const costInOrderCurrency = totalCost * rate;
-    const marginAmt = totalRevenue - costInOrderCurrency;
-    const markupPct = costInOrderCurrency > 0 ? (marginAmt / costInOrderCurrency) * 100 : (totalRevenue > 0 ? 100 : 0);
-    const isInternalStock = selectedOrder.customerName === 'Internal Stock' || (typeof selectedOrder.customerReferenceNumber === 'string' && selectedOrder.customerReferenceNumber.startsWith('STOCK-'));
-    const isViolated = !isInternalStock && !isOrderBlanket(selectedOrder) && isMarginBreach(costInOrderCurrency, markupPct, config.settings.minimumMarginPct, isOrderBlanket(selectedOrder));
+    // R34 round 6 (validator 5, O1, ruling R22 C23): procurement costs are entered in L.E.; only the revenue (order currency) is
+    // converted at the order rate, and only for a non-L.E. order (an L.E. order with a stray rate is not converted). The same
+    // rule as the server margin gate (server.js evaluateMarginStatus / canIssuePoForOrder). The markup is computed in L.E.
+    const rate = orderFxRate(selectedOrder);
+    const revenueLE = totalRevenue * rate;
+    const costInOrderCurrency = rate > 0 ? totalCost / rate : totalCost; // display only: the L.E. cost expressed in the order currency
+    const marginAmt = revenueLE - totalCost;
+    const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (revenueLE > 0 ? 100 : 0);
+    const isInternalStock = isInternalStockOrder(selectedOrder);
+    const isViolated = !isInternalStock && !isOrderBlanket(selectedOrder) && isMarginBreach(totalCost, markupPct, config.settings.minimumMarginPct, isOrderBlanket(selectedOrder));
 
     return {
       revenue: totalRevenue,

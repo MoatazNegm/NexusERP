@@ -6,7 +6,7 @@ import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatu
 import { isMarginBreach } from '../shared/margin';
 import { computeCashBank } from '../shared/cashBank';
 import { computeReceivables, computePayables, orderPaidInAP, orderPaidInLE, orderWhtAmountAP, orderFxAP } from '../shared/arap';
-import { paymentLE, orderPaymentsLE } from '../shared/orderMoney';
+import { paymentLE, orderPaymentsLE, isRealizedSale, ownLinesAreSales } from '../shared/orderMoney';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
@@ -720,6 +720,15 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     const apAll = computePayables({ orders: orders as any[], supplierPayments: (supplierPayments || []) as any[], suppliers: suppliers as any[], ledger: entries });
     const arByOrder = new Map<string, number>();
     arAll.byOrder.forEach((r: any) => arByOrder.set(r.orderId, Number(r.receivable) || 0));
+    // R34 round 6 (validator 5, O5): AR is netted per customer (shared/arap.js): money paid on one PO of a customer (a blanket
+    // contract) covers what is due on another (its call-offs). The open-order line adds the per-PO amounts, so the netted part is
+    // taken off once, and money left on a REALIZED order above its value (a closed blanket keeps what was called off) is added.
+    const overpaidByOrder = new Map<string, number>();
+    arAll.byOrder.forEach((r: any) => overpaidByOrder.set(r.orderId, Number(r.overpaid) || 0));
+    const netByCust = new Map<string, number>();
+    arAll.byOrder.forEach((r: any) => netByCust.set(r.customerName, (netByCust.get(r.customerName) || 0) + (Number(r.committed) || 0) - (Number(r.paid) || 0)));
+    const arNettingGap = arAll.byOrder.reduce((s: number, r: any) => s + (Number(r.receivable) || 0), 0) - Array.from(netByCust.values()).reduce((s, v) => s + Math.max(0, Math.round(v * 100) / 100), 0);
+    let overpaidRealized = 0;
     const apByOrder = new Map<string, number>();
     apAll.byOrderSupplier.forEach((r: any) => apByOrder.set(r.orderId, (apByOrder.get(r.orderId) || 0) + (Number(r.committed) || 0)));
 
@@ -738,9 +747,12 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       let orderOutputTax = 0;
       let netCost = 0;
       let orderInputTax = 0;
+      // R34 round 6 (validator 5, O5): a closed blanket contract's own lines are no sale (its closed value is what was called off,
+      // carried by the call-offs); the call-offs of a closed contract are realized (shared/orderMoney.js, same rule as the server VAT)
+      const salesLines = ownLinesAreSales(o);
 
       (o.items || []).forEach(it => {
-        const lineNet = getItemEffectiveQty(it) * (it.pricePerUnit || 0);
+        const lineNet = salesLines ? getItemEffectiveQty(it) * (it.pricePerUnit || 0) : 0;
         netRevenue += lineNet;
         const itTax = it.taxPercent !== undefined ? it.taxPercent : 14;
         orderOutputTax += lineNet * (itTax / 100);
@@ -757,13 +769,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       // procurement costs and input VAT are already in L.E. (ruling R22 C23) and are not converted. Every figure here is L.E.
       const revenueLE = netRevenue * rate;
       const costLE = netCost;
-      const isInvoiced = [
-        OrderStatus.INVOICED,
-        OrderStatus.HUB_RELEASED,
-        OrderStatus.DELIVERED,
-        OrderStatus.WAITING_GOVE,
-        OrderStatus.FULFILLED
-      ].includes(o.status) || Boolean(o.invoiceNumber);
+      const isInvoiced = isRealizedSale(o, orders as any[]); // invoiced (status / invoice number) or a call-off of a closed blanket
+      if (isInvoiced) overpaidRealized += overpaidByOrder.get(o.id) || 0;
 
       const projProfit = revenueLE - costLE;
       totalProjectedProfit += projProfit;
@@ -859,7 +866,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     const netTaxLiability = (totalOutputTax - totalInputTax) - govTaxPaid + openingVAT;
 
     const totalAssets = netCashInBank + totalAR + totalWIP + supplierWallets + withholdingKept + stockPoPurchases;
-    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + openingPoWallets + g1CostsInWallets + openOrders + netTaxLiability + openingWHT + totalRealizedProfit + otherEntriesNet + costsWithoutPayable + openingEquity;
+    const blanketNetting = overpaidRealized - arNettingGap;
+    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + openingPoWallets + g1CostsInWallets + openOrders + blanketNetting + netTaxLiability + openingWHT + totalRealizedProfit + otherEntriesNet + costsWithoutPayable + openingEquity;
     const variance = Math.abs(totalAssets - totalLiabilitiesAndProfit);
     const isBalanced = variance < 5.0;
 
@@ -892,6 +900,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       supplierWallets,
       withholdingKept,
       openOrders,
+      blanketNetting,
       costsWithoutPayable,
       stockPoPurchases,
       otherEntriesNet,
@@ -1272,6 +1281,9 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
               {ledgerLine('ledger-open-orders', companyFinancials.openOrders, 'fa-file-signature', 'bg-teal-500/20 text-teal-400', 'text-teal-300',
                 language === 'ar' ? 'الطلبات المفتوحة غير المفوترة' : 'Open orders not invoiced yet',
                 language === 'ar' ? 'المحصل + المتبقي على الطلبات قبل الفوترة (قيمة الطلب)' : 'Received + still due on orders before invoicing (order value)')}
+              {ledgerLine('ledger-blanket-netting', companyFinancials.blanketNetting, 'fa-arrows-left-right', 'bg-teal-500/20 text-teal-400', 'text-teal-300',
+                language === 'ar' ? 'مدفوعات على أمر آخر لنفس العميل (عقود إطارية)' : 'Paid on another PO of the customer (blanket contracts)',
+                language === 'ar' ? 'المحصل على العقد الإطاري يغطي المستحق على السحوبات؛ ما بقي على عقد مغلق' : 'Money on a blanket contract covers what its call-offs owe; what stays on a closed contract')}
 
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
@@ -2083,7 +2095,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
     // Supplier payments disbursed to this order via allocation
     const supplierPaidForOrder = (supplierPayments || []).reduce((s, sp) => {
-      const allocs = (sp.allocations || []).filter((a: any) => a.orderId === order.id);
+      const allocs = (sp.allocations || []).filter((a: any) => a.orderId === order.id || (a.orderNumber && a.orderNumber === order.internalOrderNumber));
       return s + allocs.reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
     }, 0);
 
@@ -2099,9 +2111,12 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
     const realizedProfit = isInvoiced ? projectedProfit : 0;
 
     // Double-Entry Balance Equation Check:
-    // Assets (Debit): Cash Collected + Customer AR + WIP
+    // Assets (Debit): Cash Collected - Paid to suppliers + Customer AR + WIP
     // Liabilities & Profit (Credit): Supplier AP + Customer Advance + Net Tax Owed + Realized Profit
-    const poAssets = paid + customerAR + wip;
+    // R34 round 6 (validator 5, O2): the money paid to the suppliers of this PO left the company cash, so it is taken off the
+    // assets (it already lowered the supplier AP); before, a fully paid order showed a variance equal to its supplier payments.
+    const netCashOnPo = paid - supplierPaidForOrder;
+    const poAssets = netCashOnPo + customerAR + wip;
     const poLiabilitiesAndProfit = supplierAP + customerAdvance + netTaxOwed + realizedProfit;
     const poVariance = Math.abs(poAssets - poLiabilitiesAndProfit);
     const isPoBalanced = poVariance < 0.05;
@@ -2136,6 +2151,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       customerAR,
       customerAdvance,
       supplierPaidForOrder,
+      netCashOnPo,
       supplierAP,
       wip,
       cogs,
@@ -6535,7 +6551,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 subtext={language === 'ar' ? `أرباح محققة: +${ordersSummaryMetrics.totalRealizedProfit.toLocaleString(undefined, { maximumFractionDigits: 0 })} ج.م` : `Realized Profit: +${ordersSummaryMetrics.totalRealizedProfit.toLocaleString(undefined, { maximumFractionDigits: 0 })} L.E.`}
                 badge={language === 'ar' ? `${ordersSummaryMetrics.balancedOrdersCount}/${ordersSummaryMetrics.totalOrdersCount} متطابق` : `${ordersSummaryMetrics.balancedOrdersCount}/${ordersSummaryMetrics.totalOrdersCount} OK`}
                 badgeClass={ordersSummaryMetrics.isOverallBalanced ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}
-                description={language === 'ar' ? 'مطابقة القيد المزدوج: التحقق من معادلة التوازن المحاسبي (الأصول = الخصوم + الربح المحقق). التباين 0.00 يؤكد توازن الدفاتر المحاسبية بالكامل.' : 'Double-Entry Verification: Checks that Total Assets (Cash + AR + WIP) exactly equal Total Liabilities + Realized Equity (AP + Advances + Net VAT + Realized Profit). A variance of 0.00 mathematically proves balanced books.'}
+                description={language === 'ar' ? 'مطابقة القيد المزدوج: التحقق من معادلة التوازن المحاسبي (الأصول = الخصوم + الربح المحقق). التباين 0.00 يؤكد توازن الدفاتر المحاسبية بالكامل.' : 'Double-Entry Verification: Checks that Total Assets (Cash collected - paid to suppliers + AR + WIP) exactly equal Total Liabilities + Realized Equity (AP + Advances + Net VAT + Realized Profit). A variance of 0.00 mathematically proves balanced books.'}
                 formula={language === 'ar' ? 'المعادلة: الأصول (نقدية+مدينون+WIP) = الخصوم (دائنون+دفعات+ضريبة) + الربح' : 'Equation: Assets (Cash + AR + WIP) === Liab (AP + Adv + Tax) + Realized Profit'}
                 alignBalloon="right"
                 isSelected={orderMetricFilter === 'variance'}
@@ -7053,12 +7069,12 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
                                       <div className="flex items-center gap-2">
                                         {pl.isPoBalanced ? (
-                                          <span className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-black inline-flex items-center gap-1.5 shadow-xs">
+                                          <span data-testid={`po-de-balance-${o.id}`} className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-black inline-flex items-center gap-1.5 shadow-xs">
                                             <i className="fa-solid fa-shield-halved"></i>
                                             <span>{language === 'ar' ? `متوازن (الفارق: 0.00 ${pl.currency === 'L.E.' ? 'ج.م' : pl.currency})` : `Balanced (Variance: 0.00 ${pl.currency})`}</span>
                                           </span>
                                         ) : (
-                                          <span className="px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-black inline-flex items-center gap-1.5 shadow-xs">
+                                          <span data-testid={`po-de-balance-${o.id}`} className="px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-black inline-flex items-center gap-1.5 shadow-xs">
                                             <i className="fa-solid fa-triangle-exclamation"></i>
                                             <span>{language === 'ar' ? `فارق: ${pl.poVariance.toFixed(2)} ${pl.currency === 'L.E.' ? 'ج.م' : pl.currency}` : `Variance: ${pl.poVariance.toFixed(2)} ${pl.currency}`}</span>
                                           </span>
@@ -7083,6 +7099,12 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                               <span>{language === 'ar' ? 'المحصل نقداً:' : 'Cash Collected:'}</span>
                                               <span className="font-mono font-bold">{pl.paid.toLocaleString()} {pl.currency === 'L.E.' && language === 'ar' ? 'ج.م' : pl.currency}</span>
                                             </div>
+                                            {(pl.supplierPaidForOrder || 0) !== 0 && (
+                                              <div className="flex justify-between items-center text-slate-600" data-testid={`po-de-supplier-paid-${o.id}`}>
+                                                <span>{language === 'ar' ? 'المدفوع للموردين:' : 'Paid to Suppliers:'}</span>
+                                                <span className="font-mono font-bold text-rose-600">-{(pl.supplierPaidForOrder || 0).toLocaleString()} {pl.currency === 'L.E.' && language === 'ar' ? 'ج.م' : pl.currency}</span>
+                                              </div>
+                                            )}
                                             <div className="flex justify-between items-center text-slate-600">
                                               <span>{language === 'ar' ? 'مستحقات العملاء (AR):' : 'Customer AR:'}</span>
                                               <span className="font-mono font-bold text-rose-600">{pl.customerAR.toLocaleString()} {pl.currency === 'L.E.' && language === 'ar' ? 'ج.م' : pl.currency}</span>
