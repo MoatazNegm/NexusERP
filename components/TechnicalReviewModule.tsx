@@ -1349,7 +1349,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
                       {selectedOrder.items.map(item => {
                         const itemCost = item.components?.reduce((s, c) => s + (c.quantity * c.unitCost), 0) || 0;
-                        const itemRev = getItemEffectiveQty(item) * item.pricePerUnit;
+                        // R34 round 6 (O1, C23): component costs are L.E.; the line price is in the order currency -> compare in L.E.
+                        const itemRev = getItemEffectiveQty(item) * item.pricePerUnit * orderFxRate(selectedOrder);
                         const isItemNegative = itemRev > 0 && itemCost > itemRev;
 
                         return (
@@ -1364,7 +1365,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                             </div>
                             <div className={`text-sm font-black tracking-tight leading-tight ${selectedItem?.id === item.id ? 'text-white' : 'text-slate-800'}`}>{item.description}</div>
                             {isItemNegative && (
-                              <div className="mt-1 text-[8px] font-black text-rose-500 uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">Profitability Integrity Breach</div>
+                              <div data-testid="tr-item-breach" className="mt-1 text-[8px] font-black text-rose-500 uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">Profitability Integrity Breach</div>
                             )}
                             <div className={`text-[9px] font-bold mt-2 flex justify-between ${selectedItem?.id === item.id ? 'text-indigo-200' : 'text-slate-400'}`}>
                               <span>{getItemEffectiveQty(item)} {item.unit}</span>
@@ -1427,8 +1428,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                           </div>
                           <div className="text-right">
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Accumulated BoM Cost</p>
-                            <div className="text-4xl font-black text-slate-900">
-                              {selectedItem.components?.reduce((s, c) => s + (c.quantity * c.unitCost), 0).toLocaleString()} <span className="text-sm font-bold opacity-30">{getOrderCurrency(selectedOrder)}</span>
+                            <div className="text-4xl font-black text-slate-900" data-testid="tr-bom-cost">
+                              {selectedItem.components?.reduce((s, c) => s + (c.quantity * c.unitCost), 0).toLocaleString()} <span className="text-sm font-bold opacity-30">L.E.</span>
                             </div>
                           </div>
                         </div>
@@ -2028,7 +2029,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                                   <i className={`fa-solid ${orderFinancials.isViolated ? 'fa-triangle-exclamation animate-pulse' : 'fa-shield-check'}`}></i>
                                 </div>
                                 <div>
-                                  <h4 className="text-lg font-black tracking-tight">{orderFinancials.isViolated ? 'Profitability Integrity Breach' : 'Full Engineering Authorization'}</h4>
+                                  <h4 className="text-lg font-black tracking-tight" data-testid="tr-margin-gate">{orderFinancials.isViolated ? 'Profitability Integrity Breach' : 'Full Engineering Authorization'}</h4>
                                   <p className="text-xs font-medium opacity-80 mt-1">
                                     {orderFinancials.isViolated
                                       ? `Order cannot be finalized due to profitability integrity breach. Please review BoM components or escalate for commercial adjustment.`
