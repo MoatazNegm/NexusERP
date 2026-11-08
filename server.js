@@ -4718,6 +4718,11 @@ const addToCollection = (col) => (req, res) => {
     const db = getDb(req);
     if (!db[col]) db[col] = [];
     if (col === 'orders') { const fq_ = orderFraction(req.body || {}); if (fq_ !== undefined) return res.status(400).json({ error: `Rejected: fraction ${fq_} is not allowed (whole units only).` }); }
+    // R34 round 10 (validator 9, defect 2): a blanket contract is closed only by the finance close action; the generic create cannot
+    // make an order that is already closed (no settlement would have run).
+    if (col === 'orders' && req.body && ((req.body.contractClosed !== undefined && Boolean(req.body.contractClosed) && req.body.contractClosed !== 'false') || (req.body.closedDeliveredGross !== undefined && req.body.closedDeliveredGross !== null && req.body.closedDeliveredGross !== ''))) {
+        return res.status(400).json({ error: 'Refused: a blanket contract is closed only by the finance close action (close-blanket-order); the generic order create cannot set contractClosed or closedDeliveredGross.' });
+    }
 
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     const user = req.headers['x-user'] || 'System';
@@ -4913,6 +4918,22 @@ const ORDER_EDIT_LOCKED_REASON = (req, order) => {
     if (!order || ORDER_EDIT_EDITABLE_STATUSES.includes(String(order.status))) return null;
     return 'This order is locked: it has passed Technical Review and can no longer be edited.';
 };
+// R34 round 10 (validator 9, defect 3): helpers for the lines of a call-off of a closed blanket contract.
+const closedRootOfCallOff = (o, orders) => { const r = (o && o.blanketContractId) ? blanketRootOf(o, orders || []) : null; return (r && r.contractClosed) ? r : null; };
+const callOffLinesChange = (oldItems, newItems) => {
+    const num = (v) => (v === undefined || v === null || v === '' || isNaN(Number(v))) ? 0 : Number(v);
+    const priceOf = (it) => num(it && (it.pricePerUnit ?? it.unitPrice ?? it.price));
+    if ((newItems || []).length !== (oldItems || []).length) return `lines ${(oldItems || []).length} -> ${(newItems || []).length}`;
+    for (let i = 0; i < newItems.length; i++) {
+        const n = newItems[i] || {};
+        const o = (oldItems || []).find(x => x && n.id && x.id === n.id) || oldItems[i] || {};
+        const lbl = o.description || n.description || `line ${i + 1}`;
+        if (getItemEffectiveQty(n) !== getItemEffectiveQty(o)) return `${lbl}: quantity ${getItemEffectiveQty(o)} -> ${getItemEffectiveQty(n)}`;
+        if (Math.abs(priceOf(n) - priceOf(o)) > 0.004) return `${lbl}: price ${priceOf(o)} -> ${priceOf(n)}`;
+        if (Math.abs(num(n.taxPercent) - num(o.taxPercent)) > 0.004) return `${lbl}: tax ${num(o.taxPercent)}% -> ${num(n.taxPercent)}%`;
+    }
+    return null;
+};
 const updateInCollection = (col) => (req, res) => {
     const db = getDb(req);
     if (!db[col]) db[col] = [];
@@ -4932,6 +4953,11 @@ const updateInCollection = (col) => (req, res) => {
     const user = req.headers['x-user'] || 'System';
     const oldItem = db[col][index];
     { const gm = genericMoneyWriteGate(req, col, oldItem, req.body); if (gm) return res.status(403).json({ error: gm }); }
+    // R34 round 10 (validator 9, defect 5): the id of a ledger row is its key (orders point at it by ledgerEntryId, the system rows are
+    // recognised by it); the generic edit sends it only unchanged.
+    if (col === 'ledger' && req.body && req.body.id !== undefined && String(req.body.id) !== String(oldItem.id)) {
+        return res.status(400).json({ error: `Refused: the id of a ledger row cannot change (stored ${oldItem.id}); the generic ledger edit may send it only unchanged.` });
+    }
     { const sr = systemMoneyRowRefusal(col, oldItem, req.body); if (sr) return res.status(400).json({ error: sr }); }
     let updated = { ...oldItem, ...req.body };
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
@@ -5053,6 +5079,33 @@ const updateInCollection = (col) => (req, res) => {
             const rootOld = blanketRootOf(oldItem, db.orders || []);
             if (rootOld && rootOld.contractClosed) return res.status(400).json({ error: `Refused: order ${oldItem.internalOrderNumber} is a call-off of the closed blanket contract ${rootOld.internalOrderNumber}; the closed settlement is final - it cannot be unlinked or moved to another contract.` });
         }
+        // R34 round 10: an unchanged link sent with stray spaces keeps the stored reference (the link stays exact).
+        if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(oldItem.blanketContractId || '').trim() !== '' && String(req.body.blanketContractId).trim() === String(oldItem.blanketContractId).trim()) {
+            updated.blanketContractId = oldItem.blanketContractId;
+        }
+        // R34 round 10 (validator 9, defect 2): closing a blanket contract is the finance close action (R27); the generic order edit
+        // (any role, admin included) never reopens a closed contract nor closes one, and never changes its closed (called-off) gross:
+        // a reopened contract would let the call-offs move or change while the close money already sits in the customer general wallet.
+        // The blanket flag of a closed contract, of a blanket that has call-offs and of a call-off of a closed contract is fixed too.
+        // An unchanged echo of these fields stays allowed. No reopen path exists.
+        {
+            const flagOf = (v) => Boolean(v) && v !== 'false';
+            const sameNum = (a, b) => (a === undefined || a === null || a === '') ? (b === undefined || b === null || b === '') : (b !== undefined && b !== null && b !== '' && Math.abs(Number(a) - Number(b)) < 0.005);
+            const refsB = [oldItem.id, oldItem.internalOrderNumber].filter(Boolean);
+            const hasCallOffs = Boolean(oldItem.blanketOrder) && (db.orders || []).some(o => o.id !== oldItem.id && o.blanketContractId && refsB.includes(String(o.blanketContractId).trim()));
+            const rootCl = oldItem.blanketContractId ? blanketRootOf(oldItem, db.orders || []) : null;
+            const changedB = [];
+            if (req.body.contractClosed !== undefined && flagOf(req.body.contractClosed) !== flagOf(oldItem.contractClosed)) changedB.push('contractClosed');
+            if (req.body.closedDeliveredGross !== undefined && !sameNum(req.body.closedDeliveredGross, oldItem.closedDeliveredGross)) changedB.push('closedDeliveredGross');
+            if (req.body.blanketOrder !== undefined && flagOf(req.body.blanketOrder) !== flagOf(oldItem.blanketOrder) && (oldItem.contractClosed || hasCallOffs || (rootCl && rootCl.contractClosed))) changedB.push('blanketOrder');
+            if (changedB.length) {
+                const whyB = oldItem.contractClosed ? `blanket contract ${oldItem.internalOrderNumber} is closed (the settlement is final; no reopen)`
+                    : (rootCl && rootCl.contractClosed) ? `order ${oldItem.internalOrderNumber} is a call-off of the closed blanket contract ${rootCl.internalOrderNumber} (the settlement is final)`
+                    : hasCallOffs ? `blanket contract ${oldItem.internalOrderNumber} has call-offs; a blanket contract is closed only by the finance close action`
+                    : `a blanket contract is closed only by the finance close action (close-blanket-order)`;
+                return res.status(400).json({ error: `Refused: ${whyB}; the generic order edit cannot change ${changedB.join(', ')}.` });
+            }
+        }
         if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(req.body.blanketContractId).trim() !== '' && String(req.body.blanketContractId).trim() !== String(oldItem.blanketContractId || '').trim()) {
             const blanketRefU = String(req.body.blanketContractId).trim();
             const blanketU = (db.orders || []).find(o => o.id !== oldItem.id && (o.id === blanketRefU || o.internalOrderNumber === blanketRefU))
@@ -5074,6 +5127,16 @@ const updateInCollection = (col) => (req, res) => {
                     pricePerUnit: price
                 };
             });
+        }
+        // R34 round 10 (validator 9, defect 3): the lines of a call-off of a CLOSED blanket contract are the called-off value the close
+        // settled (paid - called-off gross went to the customer general wallet; the call-off is a realized sale): their quantities,
+        // prices and tax cannot change any more, and no line is added or removed. Other fields (notes, ...) stay editable.
+        if (Array.isArray(req.body.items)) {
+            const rootI = closedRootOfCallOff(oldItem, db.orders || []);
+            if (rootI) {
+                const diffI = callOffLinesChange(oldItem.items || [], updated.items || []);
+                if (diffI) return res.status(400).json({ error: `Refused: order ${oldItem.internalOrderNumber} is a call-off of the closed blanket contract ${rootI.internalOrderNumber}; the closed settlement is final - its line quantities and prices cannot change (${diffI}).` });
+            }
         }
 
         // If order was rolled back to logged and is now updated by the Order Management / Logging team:
@@ -5821,6 +5884,7 @@ app.post('/api/v1/orders/:id/items', (req, res) => {
     const order = (db.orders || []).find(o => o.id === req.params.id);
     if (!order) return res.status(404).json({ error: "Order not found" });
 
+    { const rootN = closedRootOfCallOff(order, db.orders || []); if (rootN) return res.status(400).json({ error: `Refused: order ${order.internalOrderNumber} is a call-off of the closed blanket contract ${rootN.internalOrderNumber}; the closed settlement is final - no line can be added.` }); }
     const item = req.body;
     if (firstFraction([item.quantity]) !== undefined) return res.status(400).json({ error: `Rejected: fraction ${item.quantity} is not allowed (whole units only).` });
     if (!item.description || !item.unit) {
@@ -8371,6 +8435,53 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     }
                 }
+                // R34 round 10 (validator 9, defect 1): the void of a payment on a normal PO takes back from the customer general wallet
+                // (a) the part of the PO surplus that was moved there (R30) and is no longer covered once the payment is gone, and (b) on a
+                // cancelled (REJECTED) PO the cash part of the payment that sits there as moved paid money (R24 / C17, refunded to the bank).
+                // When the general wallet no longer holds that money (refunded or spent), the void would push it below zero: it is refused,
+                // as on a closed blanket contract. Checked before anything changes.
+                {
+                    const pvG = order.payments[payload.index];
+                    const fxG = orderFx(order);
+                    const pvLE = Math.round(paymentLE(pvG, fxG) * 100) / 100;
+                    let needG = 0;
+                    if (!order.blanketOrder && !order.blanketContractId && Number(order.surplusMovedToWallet) > 0) {
+                        const paidNowG = (order.payments || []).reduce((sm, pp) => sm + (pp.amount || 0), 0) - (Number(pvG.amount) || 0);
+                        const keepSG = Math.max(0, Math.round((paidNowG - orderCommitmentGross(order)) * 100) / 100);
+                        const backSG = Math.round((Number(order.surplusMovedToWallet) - keepSG) * 100) / 100;
+                        if (backSG > 0.004) {
+                            const prevLEG = (order.surplusMovedToWalletLE !== undefined && order.surplusMovedToWalletLE !== null) ? Number(order.surplusMovedToWalletLE) || 0 : Number(order.surplusMovedToWallet) * fxG;
+                            const keepLEG = keepSG > 0 ? Math.max(0, Math.round((orderPaymentsLE(order) - pvLE - orderCommitmentGross(order) * fxG) * 100) / 100) : 0;
+                            needG += Math.max(0, Math.round((prevLEG - keepLEG) * 100) / 100);
+                        }
+                    }
+                    const movedG = Number(order.paymentMovedToWallet) || 0;
+                    if (movedG > 0 && !pvG.transfer && Number(pvG.amount) > 0) {
+                        const wpG = Math.max(0, Math.min(pvLE, Math.round(((pvG.walletPartLE !== undefined && pvG.walletPartLE !== null) ? Number(pvG.walletPartLE) || 0 : (Number(pvG.walletPart) || 0) * fxG) * 100) / 100));
+                        const cashG = Math.max(0, Math.round((pvLE - wpG) * 100) / 100);
+                        const movedLEG = (order.paymentMovedToWalletLE !== undefined && order.paymentMovedToWalletLE !== null) ? Number(order.paymentMovedToWalletLE) || 0 : movedG * fxG;
+                        needG += Math.round(Math.min(cashG, Math.min(pvLE, movedLEG)) * 100) / 100;
+                    }
+                    needG = Math.round(needG * 100) / 100;
+                    // the wallet part of a pay-from-wallet payment (not on a cancelled PO) goes back to the wallet bucket(s) it came from
+                    // in the same void, so its general-wallet share counts as held money.
+                    let backToG = 0;
+                    if (needG > 0.004 && !(movedG > 0) && !pvG.transfer) {
+                        const wpR = Math.max(0, Math.min(pvLE, Math.round(((pvG.walletPartLE !== undefined && pvG.walletPartLE !== null) ? Number(pvG.walletPartLE) || 0 : (Number(pvG.walletPart) || 0) * fxG) * 100) / 100));
+                        if (wpR > 0.004) {
+                            const bkR = (pvG.walletBuckets && typeof pvG.walletBuckets === 'object' && Object.keys(pvG.walletBuckets).length) ? pvG.walletBuckets : { [SELF_WALLET_KEY]: wpR };
+                            const sumR = Object.values(bkR).reduce((t, v) => t + (Number(v) || 0), 0) || wpR;
+                            backToG = Math.round(wpR * (Number(bkR[SELF_WALLET_KEY]) || 0) / sumR * 100) / 100;
+                        }
+                    }
+                    if (needG > 0.004) {
+                        const custG = (db.customers || []).find(c => c.name === order.customerName);
+                        const inGG = custG ? r2w((Number((custG.walletBalances || {})[SELF_WALLET_KEY]) || 0) + backToG) : 0;
+                        if (!custG || inGG < needG - 0.004) {
+                            throw new Error(`Refused: voiding payment ${pvG.receiptNumber || payload.index} of PO ${order.internalOrderNumber} takes back ${needG.toFixed(2)} L.E. from the customer general wallet (${order.status === OrderStatus.REJECTED ? 'the paid money of the cancelled PO moved there' : 'the PO surplus moved there'}), but the general wallet holds only ${inGG.toFixed(2)} L.E. - bring the money back to the general wallet first, then void the payment.`);
+                        }
+                    }
+                }
                 const [removed] = order.payments.splice(payload.index, 1);
                 if (closedTakeBack) {
                     const { rootC, custC, backLE, keepLE, keepOC } = closedTakeBack;
@@ -8486,6 +8597,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!itemId) throw new Error("itemId is required for quantity alteration");
                 const targetItem = order.items.find(i => i.id === itemId);
                 if (!targetItem) throw new Error("Line item not found in order");
+                // R34 round 10 (validator 9, defect 3): the lines of a call-off of a closed blanket contract are settled.
+                { const rootA = closedRootOfCallOff(order, db.orders || []); if (rootA) throw new Error(`Refused: order ${order.internalOrderNumber} is a call-off of the closed blanket contract ${rootA.internalOrderNumber}; the closed settlement is final - its line quantities cannot change.`); }
                 const currentQty = targetItem.quantity || 1;
                 const delivered = targetItem.deliveredQty || 0;
                 if (newQty > currentQty) {

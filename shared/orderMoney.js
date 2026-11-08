@@ -38,8 +38,8 @@ export const orderPaymentsLE = (order, filter = null) => {
 export const isBlanketRootOrder = (o) => Boolean(o && o.blanketOrder && !o.blanketContractId);
 export const isClosedBlanketRoot = (o) => isBlanketRootOrder(o) && Boolean(o.contractClosed);
 export const blanketRootOf = (o, orders = []) => {
-    if (!o || !o.blanketContractId) return null;
-    const ref = o.blanketContractId;
+    if (!o || !o.blanketContractId || !String(o.blanketContractId).trim()) return null;
+    const ref = String(o.blanketContractId).trim(); // R34 round 10: a stored reference with stray spaces still names its contract
     return (orders || []).find(p => p && p.blanketOrder && p.status !== 'REJECTED' && (p.id === ref || p.internalOrderNumber === ref || p.customerReferenceNumber === ref)) || null;
 };
 const INVOICED_STATUSES = ['INVOICED', 'HUB_RELEASED', 'DELIVERED', 'WAITING_GOVE', 'FULFILLED'];

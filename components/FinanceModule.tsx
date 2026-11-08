@@ -4678,25 +4678,25 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             </div>
           </div>
 
-          <div className="px-8 pb-8 space-y-4">
+          <div className="px-3 sm:px-8 pb-8 space-y-4">
             {projectWallets.map(item => {
               const isDebt = item.totalBalance < 0;
               return (
                 <div key={item.projectName} className={`border rounded-3xl overflow-hidden ${isDebt ? 'border-rose-200' : 'border-slate-200'}`}>
                   {/* Project Header */}
-                  <div className={`flex flex-wrap items-center justify-between gap-4 px-6 py-4 ${isDebt ? 'bg-rose-900' : 'bg-slate-900'}`}>
-                    <div className="flex items-center gap-3 min-w-0">
+                  <div className={`flex flex-wrap items-center justify-between gap-4 px-4 sm:px-6 py-4 ${isDebt ? 'bg-rose-900' : 'bg-slate-900'}`}>
+                    <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1 basis-full sm:basis-auto">
                       <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isDebt ? 'bg-rose-500/20 text-rose-300' : 'bg-violet-500/20 text-violet-300'}`}>
                         <i className="fa-solid fa-diagram-project"></i>
                       </div>
-                      <div className="min-w-0">
-                        <div className="font-black text-white text-base truncate flex items-center gap-2">
-                          <span>{item.projectName}</span>
-                          <span className="px-2 py-0.5 rounded-md bg-white/10 text-white/80 font-sans text-[10px] font-black uppercase tracking-wider">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-black text-white text-base flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+                          <span className="min-w-0 break-words [overflow-wrap:anywhere]">{item.projectName}</span>
+                          <span className="shrink-0 px-2 py-0.5 rounded-md bg-white/10 text-white/80 font-sans text-[10px] font-black uppercase tracking-wider">
                             {item.orders.length} {item.orders.length === 1 ? (language === 'ar' ? 'طلب إطاري' : 'Blanket Order') : (language === 'ar' ? 'طلبات إطارية' : 'Blanket Orders')}
                           </span>
                         </div>
-                        <div className="text-[10px] text-slate-400 font-bold truncate mt-0.5">
+                        <div className="text-[10px] text-slate-400 font-bold break-words [overflow-wrap:anywhere] mt-0.5">
                           {item.allocations.length > 0 ? (
                             <span>{language === 'ar' ? 'العميل (العملاء):' : 'Customer(s):'} {item.allocations.map(a => a.customer.name).join(', ')}</span>
                           ) : (
@@ -4717,7 +4717,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   </div>
 
                   {/* Customer Allocations Table */}
-                  <div className="p-6 bg-slate-50/50 space-y-4">
+                  <div className="p-3 sm:p-6 bg-slate-50/50 space-y-4">
                     <div className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
                       {language === 'ar' ? 'تخصيصات العملاء والطلبات الإطارية للمشروع' : 'Customer Allocations & Project Blanket Orders'}
                     </div>
