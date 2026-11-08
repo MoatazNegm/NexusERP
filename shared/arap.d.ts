@@ -3,3 +3,4 @@ export declare function computePayables(db: { orders?: any[]; supplierPayments?:
 export declare function orderPaidInAP(order: any): number;
 export declare function orderWhtAmountAP(order: any): number;
 export declare function orderCommitmentGrossAP(order: any): number;
+export declare function orderFxAP(order: any): number;

@@ -25,7 +25,7 @@ interface Account {
 interface Position {
   generatedAt: string;
   accounts: Account[];
-  summary: { cashBank: number; taxes: number; customerWallets: number; receivables: number; supplierWallets: number; payables: number; otherLedger: number; openingTotal: number; openingCount: number };
+  summary: { cashBank: number; taxes: number; customerWallets: number; customerWalletsOutsidePOs?: number; poWallets?: number; receivables: number; supplierWallets: number; payables: number; otherLedger: number; openingTotal: number; openingCount: number };
   stock: { categories: { key: string; label: string; labelAr: string; onHand: boolean; value: number; quantity: number; lines: number; items: any[] }[]; totalOnHand: number; totalInTransit: number; totalWithTransit: number };
   canEnterOpening: boolean;
 }
@@ -564,6 +564,11 @@ export const FinancialPositionView: React.FC<{ refreshKey?: number }> = ({ refre
           <div key={tile.key} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm" data-testid={`fp-sum-${tile.key}`}>
             <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 flex items-center gap-2"><i className={`fa-solid ${tile.icon}`}></i>{isAr ? tile.ar : tile.en}</div>
             <div className={`text-2xl font-black tracking-tight break-words ${tile.color}`}>{fmt(pos.summary[tile.key] as number)} <span className="text-sm">{cur}</span></div>
+            {tile.key === 'customerWallets' && pos.summary.customerWalletsOutsidePOs !== undefined && (
+              <div className="text-[10px] font-bold text-slate-400 mt-2 break-words" data-testid="fp-sum-customerWallets-split">
+                {isAr ? `خارج أوامر الشراء ${fmt(pos.summary.customerWalletsOutsidePOs)} (= دفتر الأستاذ) · محافظ الأوامر ${fmt(pos.summary.poWallets || 0)}` : `Outside POs ${fmt(pos.summary.customerWalletsOutsidePOs)} (= Ledger) · PO wallets ${fmt(pos.summary.poWallets || 0)}`}
+              </div>
+            )}
           </div>
         ))}
         <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm" data-testid="fp-sum-stock">

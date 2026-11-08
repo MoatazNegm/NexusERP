@@ -1,7 +1,7 @@
 // Accounts Receivable / Accounts Payable (R30, R34). ONE implementation for the server (/api/v1/ar, /api/v1/ap,
 // Finance > Initial Balances, Balances & Stock Value, Dashboard) and the Finance > Ledger tab (R34 round 3, validator 2
 // item 6: the Ledger tab AR/AP are the same figures as /ar, /ap and Initial Balances).
-// AR = every open (non-rejected) order: committed gross (net of the 1% withholding the customer keeps; a blanket order commits
+// AR (in L.E.; a foreign-currency order x its rate, round 4 D3) = every open (non-rejected) order: committed gross (net of the 1% withholding the customer keeps; a blanket order commits
 //      nothing by itself, its call-offs do) minus the money received on it, plus the customer-level AR openings.
 // AP = every ISSUED supplier PO component (not NEW / PENDING_OFFER / RFP_SENT / AWARDED / CANCELLED), gross (net + tax),
 //      minus the supplier payments allocated to it, plus the supplier-level AP openings.
@@ -32,6 +32,9 @@ export const orderPaidInAP = (order) => {
     if (order.status === REJECTED) return Math.max(0, r2w(paid - (Number(order.paymentMovedToWallet) || 0)));
     return r2w(paid - (Number(order.surplusMovedToWallet) || 0));
 };
+// R34 round 4 (validator 3, D3): an order is typed in its own currency; AR (like Cash / Bank and the wallets) is in L.E., so a
+// foreign-currency order's commitment and the money received on it are converted at the order rate.
+export const orderFxAP = (o) => (o && o.currency && o.currency !== 'L.E.' && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
 const orderProjectNameAP = (order, orders = []) => {
     let proj = String((order.projectName || '').trim());
     if (!proj && order.blanketContractId) {
@@ -50,9 +53,13 @@ export const computeReceivables = (orders = [], ledger = null, customers = null)
         if (String(o.customerName || '').trim().toLowerCase() === 'internal stock') return;
         // A blanket order commits nothing by itself: the customer owes what is CALLED OFF (each call-off carries its own amount).
         // The 1% withholding the customer keeps (base NET) is cleared in the Tax tab: it is not a receivable (ruling 2026-10-21 22:08).
-        const committed = o.blanketOrder ? 0 : r2w(orderCommitmentGrossAP(o) - (o.appliesWithholdingTax ? orderWhtAmountAP(o) : 0));
-        const paid = orderPaidInAP(o);
-        rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectNameAP(o, orders) || '(No Project)', status: o.status, blanketOrder: Boolean(o.blanketOrder), committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) });
+        const fx = orderFxAP(o);
+        const committedOC = o.blanketOrder ? 0 : r2w(orderCommitmentGrossAP(o) - (o.appliesWithholdingTax ? orderWhtAmountAP(o) : 0));
+        const paidOC = orderPaidInAP(o);
+        const committed = r2w(committedOC * fx), paid = r2w(paidOC * fx);
+        const row = { orderId: o.id, internalOrderNumber: o.internalOrderNumber, customerName: o.customerName, projectName: orderProjectNameAP(o, orders) || '(No Project)', status: o.status, blanketOrder: Boolean(o.blanketOrder), committed, paid, receivable: r2w(Math.max(0, committed - paid)), overpaid: r2w(Math.max(0, paid - committed)) };
+        if (fx !== 1) Object.assign(row, { currency: o.currency, conversionRate: fx, committedOrderCurrency: committedOC, paidOrderCurrency: paidOC, receivableOrderCurrency: r2w(Math.max(0, committedOC - paidOC)) });
+        rows.push(row);
     });
     const group = (keyFn, extra) => { const m = new Map(); rows.forEach(r => { const k = keyFn(r); if (!m.has(k)) m.set(k, { ...extra(r), committed: 0, paid: 0, receivable: 0 }); const e = m.get(k); e.committed = r2w(e.committed + r.committed); e.paid = r2w(e.paid + r.paid); e.receivable = r2w(Math.max(0, e.committed - e.paid)); }); return Array.from(m.values()); };
     const byCustomer = group(r => r.customerName, r => ({ customerName: r.customerName }));

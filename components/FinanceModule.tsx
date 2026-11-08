@@ -5,7 +5,7 @@ import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getIte
 import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { computeCashBank } from '../shared/cashBank';
-import { computeReceivables, computePayables, orderPaidInAP, orderWhtAmountAP } from '../shared/arap';
+import { computeReceivables, computePayables, orderPaidInAP, orderWhtAmountAP, orderFxAP } from '../shared/arap';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
@@ -675,17 +675,17 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   // Compute Company Enterprise Balance Sheet & Double-Entry Financial Position
   // R34 round 3: one balance-sheet line of the Ledger tab (shown only when not zero), same look as the existing lines
   const ledgerLine = (testId: string, value: number, icon: string, iconCls: string, valueCls: string, title: string, sub: string) => (Math.abs(value) < 0.005 ? null : (
-    <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid={testId}>
-      <div className="flex items-center gap-3">
+    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid={testId}>
+      <div className="flex items-center gap-3 min-w-0">
         <div className={`w-8 h-8 rounded-xl ${iconCls} flex items-center justify-center text-xs`}>
           <i className={`fa-solid ${icon}`}></i>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-xs font-bold text-white">{title}</div>
           <div className="text-[9px] text-slate-400">{sub}</div>
         </div>
       </div>
-      <div className={`text-end font-mono font-black text-sm ${valueCls}`}>
+      <div className={`self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap ${valueCls}`}>
         {value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
       </div>
     </div>
@@ -724,7 +724,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
 
     orders.forEach(o => {
       if (o.status === OrderStatus.REJECTED) return;
-      const rate = getOrderConversionRate(o);
+      const rate = orderFxAP(o); // same rule as the server (shared/arap.js): a rate applies only to a non-L.E. order
       if (isInternal(o)) {
         // stock orders: no sale; what the company bought for stock is an asset (it is in AP until paid); money received on them sits
         // with the order like an open order
@@ -752,7 +752,10 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         });
       });
 
-      const costInOrderCurrency = netCost * rate;
+      // R34 round 4 (validator 3, D3): prices are in the order currency, so revenue and output VAT are converted at the order rate;
+      // procurement costs and input VAT are already in L.E. (ruling R22 C23) and are not converted. Every figure here is L.E.
+      const revenueLE = netRevenue * rate;
+      const costLE = netCost;
       const isInvoiced = [
         OrderStatus.INVOICED,
         OrderStatus.HUB_RELEASED,
@@ -761,19 +764,19 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         OrderStatus.FULFILLED
       ].includes(o.status) || Boolean(o.invoiceNumber);
 
-      const projProfit = netRevenue - costInOrderCurrency;
+      const projProfit = revenueLE - costLE;
       totalProjectedProfit += projProfit;
-      totalInputTax += orderInputTax * rate;
+      totalInputTax += orderInputTax;
       // cost counted here (net + input VAT) that has no supplier payable: components not on an issued PO yet, or taken from stock
-      costsWithoutPayable += (netCost + orderInputTax) * rate - (apByOrder.get(o.id) || 0);
+      costsWithoutPayable += (netCost + orderInputTax) - (apByOrder.get(o.id) || 0);
 
       if (isInvoiced) {
         totalRealizedProfit += projProfit;
-        totalOutputTax += orderOutputTax;
+        totalOutputTax += orderOutputTax * rate;
         // the 1% withholding the customer keeps is not in the receivable (ruling 2026-10-21 22:08); it is held as a tax certificate
-        if (o.appliesWithholdingTax && !o.blanketOrder) withholdingKept += orderWhtAmountAP(o);
+        if (o.appliesWithholdingTax && !o.blanketOrder) withholdingKept += orderWhtAmountAP(o) * rate;
       } else {
-        totalWIP += costInOrderCurrency;
+        totalWIP += costLE;
         openOrders += orderPaidInAP(o) * rate + (arByOrder.get(o.id) || 0);
       }
     });
@@ -797,7 +800,9 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     const openingVAT = openingOf(k => k === 'TAX_VAT');
     const openingWHT = openingOf(k => k === 'TAX_WHT');
     const openingSupplierWallets = openingOf(k => k.startsWith('SUP_GEN:'));
-    const openingEquity = openingBank + openingAR + openingSupplierWallets - openingCustomerWallets - openingAP - openingVAT - openingWHT;
+    // R34 round 4: openings on other ledger accounts are part of 'Other ledger entries' (= Initial Balances), credit side
+    const openingLedger = openingOf(k => k.startsWith('LEDGER:'));
+    const openingEquity = openingBank + openingAR + openingSupplierWallets - openingCustomerWallets - openingAP - openingVAT - openingWHT - openingLedger;
     const netCashInBank = cashBank.balance + openingBank;
 
     // AR = Initial Balances receivables (every customer except the company's own 'Internal Stock'), = /api/v1/ar total
@@ -825,11 +830,17 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     // Customer wallets outside POs: the stored general / project advance buckets (advances, refunds, transfers, pay-from-wallet,
     // cancelled-PO money, overpayments, general / project openings) plus the PO wallet openings. Money paid on a PO is in the
     // receivable / open-order line, never counted again here.
-    let totalCustomerWallets = openingPoWallets;
+    // R34 round 4 (validator 3, D5): the general wallet follows rule G1 (company costs linked to no PO are deducted from it,
+    // unlinkedCostsDeducted from the server), so this line is the same figure as Initial Balances (general + project wallets).
+    // The G1 costs keep the equation balanced on their own line; the PO wallet openings have their own line too.
+    let totalCustomerWallets = 0;
+    let g1CostsInWallets = 0;
     (customers || []).forEach(c => {
       if (String(c.name || '').trim().toLowerCase() === 'internal stock') return;
       const stored = (c as any).storedWalletBalance;
-      totalCustomerWallets += Number(stored !== undefined ? stored : (c.walletBalance || 0)) || 0;
+      const g1 = Number((c as any).unlinkedCostsDeducted) || 0;
+      totalCustomerWallets += (Number(stored !== undefined ? stored : (c.walletBalance || 0)) || 0) - g1;
+      g1CostsInWallets += g1;
     });
 
     const isTaxCost = (e: any) => e.type === 'COST' && (
@@ -840,12 +851,14 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     const govTaxPaid = entries.filter(isTaxCost).reduce((s, e) => s + (Number(e.amount) || 0), 0);
     // other ledger entries: manual additions (income) minus manual costs that are not tax payments (expenses)
     const manualTaxCosts = entries.filter(e => isTaxCost(e) && !String(e.id || '').startsWith('sp_ledg_') && e.category !== 'Supplier Payment').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-    const otherEntriesNet = manualAdditions - (manualCosts - manualTaxCosts);
+    // R34 round 4: same sign as Finance > Initial Balances 'Other ledger accounts' (money taken from the account into the company
+    // minus money paid to it), openings on those accounts included
+    const otherEntriesNet = manualAdditions - (manualCosts - manualTaxCosts) + openingLedger;
 
     const netTaxLiability = (totalOutputTax - totalInputTax) - govTaxPaid + openingVAT;
 
     const totalAssets = netCashInBank + totalAR + totalWIP + supplierWallets + withholdingKept + stockPoPurchases;
-    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + openOrders + netTaxLiability + openingWHT + totalRealizedProfit + otherEntriesNet + costsWithoutPayable + openingEquity;
+    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + openingPoWallets + g1CostsInWallets + openOrders + netTaxLiability + openingWHT + totalRealizedProfit + otherEntriesNet + costsWithoutPayable + openingEquity;
     const variance = Math.abs(totalAssets - totalLiabilitiesAndProfit);
     const isBalanced = variance < 5.0;
 
@@ -861,6 +874,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       totalSupplierCommitted,
       totalSupplierAP,
       totalCustomerWallets,
+      openingPoWallets,
+      g1CostsInWallets,
       totalOutputTax,
       totalInputTax,
       netTaxLiability,
@@ -915,14 +930,21 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     });
 
     // 2. Customer payments (these don't have from/to accounts, so they stay as-is)
+    // R34 round 4 (validator 3, D7): a payment that already has a ledger entry with the same receipt number (record-payment writes
+    // the cash part as an ADDITION and the wallet part as a TRANSFER) is shown once, by that ledger entry. A pay-from-wallet or an
+    // account transfer is no new money: it is listed as a TRANSFER (in L.E.), never as an ADDITION.
+    const ledgerReceipts = new Set(entries.filter(e => e.receiptNumber).map(e => String(e.receiptNumber)));
     orders.forEach(o => {
+      const rateP = orderFxAP(o);
       (o.payments || []).forEach((p, idx) => {
         if ((p as any).ledgerEntryId) return;
+        if (p.receiptNumber && ledgerReceipts.has(String(p.receiptNumber))) return;
+        const isTransferP = Boolean((p as any).transfer) || Boolean((p as any).fromWallet);
         all.push({
           id: `cust_${o.id}_${idx}`,
           date: p.date,
-          type: 'ADDITION',
-          amount: p.amount,
+          type: isTransferP ? 'TRANSFER' : 'ADDITION',
+          amount: (Number(p.amount) || 0) * rateP,
           description: `Payment: ${o.customerName}`,
           category: o.internalOrderNumber,
           user: p.user || 'System',
@@ -981,7 +1003,8 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   const totals = useMemo(() => {
     return filteredEntries.reduce((acc, curr) => {
       if (curr.type === 'ADDITION') acc.additions += curr.amount;
-      else if (curr.type !== 'OPENING') acc.costs += curr.amount; // R34: opening balances are not cash movements
+      // R34: opening balances are not cash movements; round 4 (D7): a TRANSFER moves money between accounts, it is no cost
+      else if (curr.type === 'COST' || curr.type === 'REFUND') acc.costs += curr.amount;
       return acc;
     }, { additions: 0, costs: 0 });
   }, [filteredEntries]);
@@ -1030,7 +1053,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       {/* Enterprise Financial Position & Double-Entry Accounting Verification */}
-      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 text-white rounded-[2.5rem] p-8 border border-slate-800 shadow-2xl space-y-6">
+      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 text-white rounded-[2rem] sm:rounded-[2.5rem] p-3 sm:p-8 border border-slate-800 shadow-2xl space-y-6 min-w-0">
         {/* Verification Banner */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-white/10 pb-6">
           <div className="flex items-center gap-4">
@@ -1077,20 +1100,20 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         {/* Dual Balanced Columns: Assets vs Liabilities & Profit */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* ASSETS (DEBITS) */}
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
-            <div className="flex justify-between items-center border-b border-white/10 pb-3">
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-2 sm:p-6 space-y-4 min-w-0">
+            <div className="flex flex-wrap justify-between items-center gap-2 border-b border-white/10 pb-3">
               <div className="flex items-center gap-2.5 text-xs font-black uppercase tracking-wider text-emerald-400">
                 <i className="fa-solid fa-vault"></i>
                 <span>{language === 'ar' ? 'أصول الشركة (مدين)' : 'Company Assets (Debit)'}</span>
               </div>
-              <div className="text-xl font-black text-emerald-300 font-mono">
+              <div className="text-lg sm:text-xl font-black text-emerald-300 font-mono ms-auto text-end break-all sm:break-normal">
                 {companyFinancials.totalAssets.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xs">{language === 'ar' ? 'ج.م' : 'L.E.'}</span>
               </div>
             </div>
 
             <div className="space-y-3">
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-building-columns"></i>
                   </div>
@@ -1105,13 +1128,13 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-emerald-300">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-emerald-300">
                   {companyFinancials.netCashInBank.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
 
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-file-invoice"></i>
                   </div>
@@ -1126,13 +1149,13 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-sky-300" data-testid="ledger-ar">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-sky-300" data-testid="ledger-ar">
                   {companyFinancials.totalAR.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
 
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-dolly"></i>
                   </div>
@@ -1147,14 +1170,14 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-amber-300">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-amber-300">
                   {companyFinancials.totalWIP.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
 
               {companyFinancials.supplierWallets !== 0 && (
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-supplier-wallet-opening">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-supplier-wallet-opening">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-truck-fast"></i>
                   </div>
@@ -1167,7 +1190,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-rose-300">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-rose-300">
                   {companyFinancials.supplierWallets.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
@@ -1182,20 +1205,20 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
           </div>
 
           {/* LIABILITIES + PROFIT (CREDITS) */}
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
-            <div className="flex justify-between items-center border-b border-white/10 pb-3">
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-2 sm:p-6 space-y-4 min-w-0">
+            <div className="flex flex-wrap justify-between items-center gap-2 border-b border-white/10 pb-3">
               <div className="flex items-center gap-2.5 text-xs font-black uppercase tracking-wider text-rose-400">
                 <i className="fa-solid fa-hand-holding-dollar"></i>
                 <span>{language === 'ar' ? 'الخصوم وحقوق الملكية / الأرباح (دائن)' : 'Liabilities & Equity / Profit (Credit)'}</span>
               </div>
-              <div className="text-xl font-black text-rose-300 font-mono">
+              <div className="text-lg sm:text-xl font-black text-rose-300 font-mono ms-auto text-end break-all sm:break-normal">
                 {companyFinancials.totalLiabilitiesAndProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xs">{language === 'ar' ? 'ج.م' : 'L.E.'}</span>
               </div>
             </div>
 
             <div className="space-y-3">
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-truck-ramp-box"></i>
                   </div>
@@ -1210,13 +1233,13 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-rose-300" data-testid="ledger-ap">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-rose-300" data-testid="ledger-ap">
                   {companyFinancials.totalSupplierAP.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
 
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-wallet"></i>
                   </div>
@@ -1226,21 +1249,27 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                     <div className="text-[9px] text-slate-400">
                       {language === 'ar'
-                        ? 'المحافظ العامة ومحافظ المشروعات (خارج أوامر الشراء) + الأرصدة الافتتاحية لمحافظ الأوامر'
-                        : 'General and project wallets held outside any PO + PO wallet openings'}
+                        ? 'المحافظ العامة ومحافظ المشروعات خارج أوامر الشراء، بعد قاعدة G1 (= الأرصدة الافتتاحية)'
+                        : 'General and project wallets held outside any PO, after rule G1 (= Initial Balances)'}
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-teal-300" data-testid="ledger-customer-wallets">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-teal-300" data-testid="ledger-customer-wallets">
                   {companyFinancials.totalCustomerWallets.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
+              {ledgerLine('ledger-po-wallet-openings', companyFinancials.openingPoWallets, 'fa-wallet', 'bg-teal-500/20 text-teal-400', 'text-teal-300',
+                language === 'ar' ? 'أرصدة افتتاحية لمحافظ أوامر الشراء' : 'PO wallet openings',
+                language === 'ar' ? 'أرصدة افتتاحية مسجلة على محافظ أوامر الشراء' : 'Opening balances booked on PO wallets in Initial Balances')}
+              {ledgerLine('ledger-g1-costs', companyFinancials.g1CostsInWallets, 'fa-scale-balanced', 'bg-teal-500/20 text-teal-400', 'text-teal-300',
+                language === 'ar' ? 'تكاليف الشركة غير المرتبطة بأمر (قاعدة G1)' : 'Company costs linked to no PO (rule G1)',
+                language === 'ar' ? 'مخصومة من المحفظة العامة للعميل؛ ما زالت دفعة مقدمة للمورد أو ضريبة مسددة' : 'Deducted from the customer general wallet; still a supplier advance or a tax payment')}
               {ledgerLine('ledger-open-orders', companyFinancials.openOrders, 'fa-file-signature', 'bg-teal-500/20 text-teal-400', 'text-teal-300',
                 language === 'ar' ? 'الطلبات المفتوحة غير المفوترة' : 'Open orders not invoiced yet',
                 language === 'ar' ? 'المحصل + المتبقي على الطلبات قبل الفوترة (قيمة الطلب)' : 'Received + still due on orders before invoicing (order value)')}
 
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-landmark"></i>
                   </div>
@@ -1255,14 +1284,14 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-indigo-300">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-indigo-300">
                   {companyFinancials.netTaxLiability.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
 
               {companyFinancials.openingWHT !== 0 && (
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-wht-opening">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-wht-opening">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-percent"></i>
                   </div>
@@ -1275,15 +1304,15 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-indigo-300">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-indigo-300">
                   {companyFinancials.openingWHT.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
               )}
 
               {companyFinancials.openingEquity !== 0 && (
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-opening-equity">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors" data-testid="ledger-opening-equity">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-scale-unbalanced-flip"></i>
                   </div>
@@ -1296,7 +1325,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-blue-300">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-blue-300">
                   {companyFinancials.openingEquity.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>
@@ -1304,12 +1333,12 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
 
               {ledgerLine('ledger-other-entries', companyFinancials.otherEntriesNet, 'fa-receipt', 'bg-slate-500/20 text-slate-300', 'text-slate-200',
                 language === 'ar' ? 'قيود دفتر أخرى (صافي)' : 'Other ledger entries (net)',
-                language === 'ar' ? 'إضافات يدوية ناقص تكاليف يدوية (بدون الضرائب)' : 'Manual additions minus manual costs (tax payments excluded)')}
+                language === 'ar' ? 'إضافات يدوية ناقص تكاليف يدوية (بدون الضرائب) + أرصدتها الافتتاحية (= الأرصدة الافتتاحية)' : 'Manual additions minus manual costs (tax payments excluded) + their openings (= Initial Balances)')}
               {ledgerLine('ledger-costs-no-payable', companyFinancials.costsWithoutPayable, 'fa-scale-balanced', 'bg-slate-500/20 text-slate-300', 'text-slate-200',
                 language === 'ar' ? 'تكاليف بدون مستحق لمورد' : 'Costs without a supplier payable',
                 language === 'ar' ? 'تكلفة مكونات ليست على أمر شراء صادر بعد أو مأخوذة من المخزون' : 'Component cost not on an issued supplier PO yet, or taken from stock')}
-              <div className="flex justify-between items-center p-3 rounded-2xl bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-colors">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-violet-500/20 text-violet-400 flex items-center justify-center text-xs">
                     <i className="fa-solid fa-chart-line"></i>
                   </div>
@@ -1324,7 +1353,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                     </div>
                   </div>
                 </div>
-                <div className="text-end font-mono font-black text-sm text-violet-300">
+                <div className="self-end sm:self-auto sm:shrink-0 max-w-full text-end font-mono font-black text-sm break-all sm:break-normal sm:whitespace-nowrap text-violet-300">
                   +{companyFinancials.totalRealizedProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {language === 'ar' ? 'ج.م' : 'L.E.'}
                 </div>
               </div>

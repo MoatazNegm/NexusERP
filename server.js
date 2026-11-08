@@ -4448,6 +4448,15 @@ const unlinkedCompanyCosts = (db) => {
     (db.ledger || []).forEach(l => { if (l && l.category === 'Tax Settlement' && l.type === 'COST') c += Number(l.amount) || 0; });
     return r2w(c);
 };
+// R34 round 4 (validator 3, D5): rule G1 also applies when the wallet money is USED. The general wallet a customer can spend
+// (pay-from-wallet, refund) is the stored general bucket minus the company costs linked to no PO (only when the company has
+// exactly one customer, as in computeCustomerWallet), i.e. the same figure as Finance > Initial Balances '<customer> / General wallet'.
+const g1DeductionFor = (db) => (db && (db.customers || []).length === 1) ? unlinkedCompanyCosts(db) : 0;
+const availableGeneralWallet = (db, customer) => {
+    if (!customer) return 0;
+    const stored = Number((customer.walletBalances || {})[SELF_WALLET_KEY]) || 0;
+    return r2w(stored - g1DeductionFor(db));
+};
 const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db = null) => {
     if (!customer) return customer;
     const projectBalances = {};
@@ -4461,9 +4470,10 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db 
         const key = orderProjectName(o, orders) || '(No Project)';
         projectBalances[key] = r2w((projectBalances[key] || 0) + net);
     });
+    let unlinkedCostsDeducted = 0;
     if (db && (db.customers || []).length === 1) {
         const uc = unlinkedCompanyCosts(db);
-        if (uc) projectBalances['(General Advance / Future Orders)'] = r2w((projectBalances['(General Advance / Future Orders)'] || 0) - uc);
+        if (uc) { projectBalances['(General Advance / Future Orders)'] = r2w((projectBalances['(General Advance / Future Orders)'] || 0) - uc); unlinkedCostsDeducted = uc; }
     }
     const totalBalance = Object.values(projectBalances).reduce((sum, val) => sum + (Number(val) || 0), 0);
     // R34 round 3 (item 6): the stored general / project advance buckets (money held outside any PO) for the Ledger tab
@@ -4472,6 +4482,9 @@ const computeCustomerWallet = (customer, orders = [], supplierPayments = [], db 
     return {
         ...customer,
         storedWalletBalance,
+        // R34 round 4 (D5): rule G1 deduction applied to the general wallet (company costs linked to no PO); the Ledger tab shows
+        // storedWalletBalance - unlinkedCostsDeducted, the same figure as Initial Balances (general + project wallets).
+        unlinkedCostsDeducted,
         walletBalance: r2w(totalBalance),
         walletBalances: projectBalances
     };
@@ -4814,7 +4827,12 @@ const addToCollection = (col) => (req, res) => {
                 const timestamp = Date.now().toString().slice(-4);
                 const orderShortId = (targetOrder.internalOrderNumber || targetOrder.id).replace(/[^\w]/g, '').slice(-6);
                 const receiptNumber = newItem.receiptNumber || `RCV-${orderShortId}-${String(paymentIndex).padStart(2, '0')}-${timestamp}`;
-                const paymentAmt = Number(newItem.amount) || 0;
+                // R34 round 4 (validator 3, D1): a ledger entry is in L.E.; the order payment is typed in the ORDER currency, so a
+                // foreign-currency PO gets amount / rate (5,000 L.E. on a USD PO at rate 50 = a 100 USD payment; Cash / Bank +5,000 L.E.).
+                const fxL = orderFx(targetOrder);
+                const paymentAmt = Math.round(((Number(newItem.amount) || 0) / fxL) * 100) / 100;
+                if (fxL !== 1) { newItem.orderCurrency = targetOrder.currency; newItem.orderAmount = paymentAmt; newItem.conversionRate = fxL; }
+                newItem.receiptNumber = receiptNumber;
 
                 targetOrder.payments.push({
                     amount: paymentAmt,
@@ -4828,7 +4846,7 @@ const addToCollection = (col) => (req, res) => {
                 if (!targetOrder.history) targetOrder.history = [];
                 targetOrder.history.push({
                     timestamp: new Date().toISOString(),
-                    message: `Payment from Ledger Entry: ${paymentAmt.toLocaleString()} L.E. - ${newItem.description || ''}`,
+                    message: `Payment from Ledger Entry: ${fxL !== 1 ? `${paymentAmt.toLocaleString()} ${targetOrder.currency} (${(Number(newItem.amount) || 0).toLocaleString()} L.E. at rate ${fxL})` : `${paymentAmt.toLocaleString()} L.E.`} - ${newItem.description || ''}`,
                     status: targetOrder.status,
                     user: user || 'System',
                     type: 'payment',
@@ -4836,11 +4854,18 @@ const addToCollection = (col) => (req, res) => {
                     receiptNumber
                 });
 
+                // D1: the same rule as record-payment: money above the PO gross moves to the customer general wallet.
+                moveOrderSurplusToGeneralWallet(db, targetOrder, user);
+
                 const settings = resolveSettings(db, isSandbox(req));
                 const orderIdx = db.orders.findIndex(o => o.id === targetOrder.id);
                 if (orderIdx !== -1) {
                     db.orders[orderIdx] = calculateOrderHealth(targetOrder, settings);
                 }
+            } else if (newItem.orderId) {
+                // R34 round 4 (D2): an orderId that matches no order is kept as typed but flagged; the entry is plain bank money
+                // (Cash / Bank counts it as a manual addition), it is no order payment.
+                newItem.orderNotFound = true;
             }
         }
     }
@@ -5294,9 +5319,33 @@ app.post('/api/v1/customers/merge', (req, res) => {
             }
         });
 
+        // R34 round 4 (validator 3, D6): the secondary's opening balances and ledger entries move to the primary as well: the
+        // opening keys AR:<id>, CUST_SELF:<id>, CUST_PROJECT:<id>:<project> are re-keyed to the primary ID, the ledger
+        // customerName and the 'Customer <name> / ...' / '<name> / ...' labels follow the primary name, contracts follow the
+        // primary name. The receivable and wallet openings stay complete and no orphan customer row remains in /ar.
+        let ledgerMigrated = 0;
+        (db.contracts || []).forEach(k => { if (k && secondaryNames.includes(k.customerName)) k.customerName = primary.name; });
+        (db.ledger || []).forEach(e => {
+            if (!e) return;
+            let hit = false;
+            if (secondaryNames.includes(e.customerName)) { e.customerName = primary.name; hit = true; }
+            if (typeof e.accountKey === 'string') {
+                const km = e.accountKey.match(/^(AR|CUST_SELF|CUST_PROJECT):([^:]+)(:.*)?$/);
+                if (km && deletedIds.includes(km[2])) { e.accountKey = `${km[1]}:${primary.id}${km[3] || ''}`; e.mergedFromCustomerId = km[2]; hit = true; }
+            }
+            secondaryNames.forEach(sn => {
+                ['fromAccount', 'toAccount', 'account'].forEach(f => {
+                    if (typeof e[f] !== 'string') return;
+                    if (e[f].startsWith(`Customer ${sn} / `)) { e[f] = `Customer ${primary.name} / ` + e[f].slice(`Customer ${sn} / `.length); hit = true; }
+                    else if (e.type === 'OPENING' && (f === 'account' || f === 'toAccount') && e[f].startsWith(`${sn} / `)) { e[f] = `${primary.name} / ` + e[f].slice(`${sn} / `.length); hit = true; }
+                });
+            });
+            if (hit) ledgerMigrated++;
+        });
+
         // Audit log for primary customer
         if (!primary.logs) primary.logs = [];
-        primary.logs.push(createAuditLog(`Merged ${deletedIds.length} duplicate records. Migrated ${ordersMigrated} orders.`, undefined, user));
+        primary.logs.push(createAuditLog(`Merged ${deletedIds.length} duplicate records. Migrated ${ordersMigrated} orders and ${ledgerMigrated} ledger entries (opening balances included).`, undefined, user));
 
         if (writeDb(db, getDbPath(req))) {
             console.log(`[Merge] Success. Deleted ${deletedIds.length} records, migrated ${ordersMigrated} orders.`);
@@ -5324,6 +5373,25 @@ const ledgerPush = (db, e, user) => {
     if (!db.ledger) db.ledger = [];
     db.ledger.push({ id: `led_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, date: new Date().toISOString(), user, ...e });
 };
+// User ruling 2026-10-21 (21:45): a customer payment above the PO gross moves to the customer GENERAL wallet (no refund action);
+// the PO keeps exactly its commitment. Used by record-payment and (R34 round 4, D1) by a ledger ADDITION that names the PO.
+// The surplus is in the order currency; the wallet holds L.E. (x the order rate).
+function moveOrderSurplusToGeneralWallet(db, order, user) {
+    if (!order || order.blanketOrder || order.blanketContractId) return 0;
+    const totalPaid = (order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const gross = orderCommitmentGross(order);
+    const surplus = Math.round((totalPaid - (Number(order.surplusMovedToWallet) || 0) - gross) * 100) / 100;
+    const custS = (db.customers || []).find(c => c.name === order.customerName);
+    if (!(gross > 0 && surplus > 0.004 && custS)) return 0;
+    custS.walletBalances = custS.walletBalances || {};
+    custS.walletBalances[SELF_WALLET_KEY] = Math.round(((custS.walletBalances[SELF_WALLET_KEY] || 0) + surplus * orderFx(order)) * 100) / 100;
+    custS.walletBalance = (custS.walletBalance || 0) + surplus * orderFx(order);
+    order.surplusMovedToWallet = Math.round(((Number(order.surplusMovedToWallet) || 0) + surplus) * 100) / 100;
+    ledgerPush(db, { type: 'TRANSFER', amount: Math.round(surplus * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: payment above the PO gross credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', ''), customerName: order.customerName }, user);
+    order.logs = order.logs || [];
+    order.logs.push(createAuditLog(`Payment above the PO gross: ${surplus.toFixed(2)} moved to the customer general wallet (no refund action).`, order.status, user));
+    return surplus;
+}
 
 app.post('/api/v1/customers/:id/wallet-transfer', (req, res) => {
     try {
@@ -5440,7 +5508,11 @@ app.post('/api/v1/customers/:id/refund', (req, res) => {
         if (!customer) return res.status(404).json({ error: "Customer not found" });
         customer.walletBalances = customer.walletBalances || {};
         const bal = customer.walletBalances[SELF_WALLET_KEY] || 0;
-        if (bal + 0.005 < amt) return res.status(400).json({ error: `Insufficient general wallet credit: ${bal.toFixed(2)}, refund ${amt.toFixed(2)}` });
+        // R34 round 4 (validator 3, D5, rule G1): the refund can pay out at most the AVAILABLE general wallet = stored general bucket
+        // minus the company costs linked to no PO (single-customer company), the same figure as Initial Balances; never below zero.
+        const g1R = g1DeductionFor(db);
+        const availR = Math.round((bal - g1R) * 100) / 100;
+        if (availR + 0.005 < amt) return res.status(400).json({ error: g1R ? `Insufficient general wallet credit: ${Math.max(0, availR).toFixed(2)} available (stored ${bal.toFixed(2)} minus ${g1R.toFixed(2)} company costs linked to no PO), refund ${amt.toFixed(2)}` : `Insufficient general wallet credit: ${bal.toFixed(2)}, refund ${amt.toFixed(2)}` });
         const ord = orderId ? (db.orders || []).find(o => o.id === orderId || o.internalOrderNumber === orderId) : null;
         customer.walletBalances[SELF_WALLET_KEY] = Math.round((bal - amt) * 100) / 100;
         // R34 round 3 (validator 2, item 3): the stored total follows the bucket, so a later pay-from-wallet sees the refund.
@@ -5968,8 +6040,10 @@ const finVatBase = (db) => {
             oOut += lineNet * ((it.taxPercent !== undefined ? it.taxPercent : 14) / 100);
             (it.components || []).forEach(c => { oIn += ((c.quantity || 0) * (c.unitCost || 0)) * ((c.taxPercent !== undefined ? c.taxPercent : 0) / 100); });
         });
-        inTax += oIn * rate;
-        if (FIN_INVOICED.includes(o.status) || Boolean(o.invoiceNumber)) outTax += oOut;
+        // R34 round 4 (validator 3, D3): the output VAT of a foreign-currency order is converted at the order rate (prices are in the
+        // order currency); procurement costs and their input VAT are already in L.E. (ruling R22 C23), they are not converted.
+        inTax += oIn;
+        if (FIN_INVOICED.includes(o.status) || Boolean(o.invoiceNumber)) outTax += oOut * rate;
     });
     const paid = (db.ledger || []).filter(e => e.type === 'COST' && (e.category === 'Tax Settlement' || e.category === 'Tax Payment' || String(e.toAccount || '').toLowerCase().includes('tax') || String(e.toAccount || '').includes('ضرائب'))).reduce((s, e) => s + (Number(e.amount) || 0), 0);
     return r2w(outTax - inTax - paid);
@@ -6046,12 +6120,14 @@ const computeFinanceAccounts = (db) => {
         const apRow = ap.bySupplier.find(r => r.supplierId === s.id);
         push({ key: `AP:${s.id}`, group: 'supplier', kind: 'liability', walletType: 'ap', supplierId: s.id, supplierName: s.name, label: `${s.name} / Accounts payable`, labelAr: `${s.name} / ذمم دائنة`, balance: apRow ? apRow.payable : 0 });
     });
-    // Other ledger accounts: configured accounts plus every other label used in ledger entries (balance = money in - money out)
+    // Other ledger accounts: configured accounts plus every other label used in ledger entries. R34 round 4: balance = money taken
+    // FROM the account into the company minus money paid TO it (an income account is positive, an expense account negative), the
+    // same sign as the Finance > Ledger tab line 'Other ledger entries (net)'; openings add on top.
     const settings = (db.settings || [])[0] || {};
     const other = new Set((settings.ledgerAccounts || []).map(a => String(a).trim()).filter(Boolean));
     ledger.forEach(e => { if (!e || e.type === 'OPENING') return; [e.fromAccount, e.toAccount].forEach(lbl => { const k = finLabelToKey(lbl, db); if (k && k.startsWith('LEDGER:')) other.add(k.slice(7)); }); });
     Array.from(other).sort().forEach(name => {
-        const flow = ledger.reduce((s, e) => s + ((e && e.type !== 'OPENING') ? ((String(e.toAccount || '').trim() === name ? (Number(e.amount) || 0) : 0) - (String(e.fromAccount || '').trim() === name ? (Number(e.amount) || 0) : 0)) : 0), 0);
+        const flow = ledger.reduce((s, e) => s + ((e && e.type !== 'OPENING') ? ((String(e.fromAccount || '').trim() === name ? (Number(e.amount) || 0) : 0) - (String(e.toAccount || '').trim() === name ? (Number(e.amount) || 0) : 0)) : 0), 0);
         push({ key: `LEDGER:${name}`, group: 'ledger', kind: 'other', configured: (settings.ledgerAccounts || []).includes(name), label: name, labelAr: name, balance: flow + openingSumFor(ledger, `LEDGER:${name}`) });
     });
     const sum = (f) => r2w(accounts.filter(f).reduce((s, a) => s + a.balance, 0));
@@ -6059,6 +6135,10 @@ const computeFinanceAccounts = (db) => {
         cashBank: sum(a => a.key === 'BANK'),
         taxes: sum(a => a.key === 'TAX_VAT' || a.key === 'TAX_WHT'),
         customerWallets: sum(a => a.group === 'customer' && ['self', 'project', 'po'].includes(a.walletType)),
+        // R34 round 4: the two parts of customerWallets. Outside POs (general + project wallets after rule G1) = the Ledger tab line
+        // 'Customer Wallets & Advances'; PO wallets (money paid on a PO minus its supplier cost) sit in AR / open orders there.
+        customerWalletsOutsidePOs: sum(a => a.group === 'customer' && ['self', 'project'].includes(a.walletType)),
+        poWallets: sum(a => a.group === 'customer' && a.walletType === 'po'),
         receivables: sum(a => a.walletType === 'ar'),
         supplierWallets: sum(a => a.walletType === 'supplier_general'),
         payables: sum(a => a.walletType === 'ap'),
@@ -8147,30 +8227,42 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (payload.fromWallet && payload.amount > 0) {
                     const customer = (db.customers || []).find(c => c.name === order.customerName);
                     // R34 round 3 (validator 2, item 3): the money available is what the stored wallet buckets hold (a refund or a
-                    // transfer lowers the bucket), not a stale total; the deduction is taken from the buckets in order until covered,
-                    // and the stored total follows the buckets.
+                    // transfer lowers the bucket), not a stale total; the stored total follows the buckets.
+                    // R34 round 4 (validator 3) RULINGS: D4 the PO's OWN project bucket is used first, then the general wallet only; the
+                    // money of another project is never used. D5 the general wallet can give at most the stored general bucket minus the
+                    // company costs linked to no PO (rule G1, = Initial Balances), so the wallet never goes negative.
                     const bucketsW = (customer && customer.walletBalances) || {};
                     const hasBucketsW = Object.keys(bucketsW).length > 0;
-                    const availW = customer ? (hasBucketsW ? Math.round(Object.values(bucketsW).reduce((t, v) => t + Math.max(0, Number(v) || 0), 0) * 100) / 100 : (Number(customer.walletBalance) || 0)) : 0;
+                    const projW = orderProjectName(order, db.orders || []);
+                    const projKeysW = projW ? Object.keys(bucketsW).filter(k => k !== SELF_WALLET_KEY && k.trim() === projW) : [];
+                    const projAvailW = Math.round(projKeysW.reduce((t, k) => t + Math.max(0, Number(bucketsW[k]) || 0), 0) * 100) / 100;
+                    const genAvailW = customer ? Math.max(0, hasBucketsW ? availableGeneralWallet(db, customer) : Math.round(((Number(customer.walletBalance) || 0) - g1DeductionFor(db)) * 100) / 100) : 0;
+                    const availW = Math.round((projAvailW + genAvailW) * 100) / 100;
                     if (customer && availW > 0) {
                         // the payment is typed in the ORDER currency, the wallet holds L.E. (item 1/3: a USD PO at rate 50 takes 50 L.E. per USD)
                         const fxW = orderFx(order);
                         const deductAmt = Math.round(Math.min(Number(payload.amount) || 0, availW / fxW) * 100) / 100;
                         const deductLE = Math.round(Math.min(availW, deductAmt * fxW) * 100) / 100;
                         walletUsedForLedger = deductAmt;
+                        const usedW = [];
                         if (hasBucketsW) {
                             let restW = deductLE;
-                            for (const key of Object.keys(customer.walletBalances)) {
+                            for (const key of projKeysW) {
                                 if (restW <= 0.004) break;
-                                if (customer.walletBalances[key] > 0) {
-                                    const kDeduct = Math.min(restW, customer.walletBalances[key]);
-                                    customer.walletBalances[key] = Math.round((customer.walletBalances[key] - kDeduct) * 100) / 100;
-                                    restW = Math.round((restW - kDeduct) * 100) / 100;
-                                }
+                                const kDeduct = Math.min(restW, Math.max(0, Number(customer.walletBalances[key]) || 0));
+                                if (kDeduct > 0) { customer.walletBalances[key] = Math.round((customer.walletBalances[key] - kDeduct) * 100) / 100; restW = Math.round((restW - kDeduct) * 100) / 100; usedW.push(`${key} ${kDeduct.toFixed(2)}`); }
+                            }
+                            if (restW > 0.004) {
+                                const gDeduct = Math.min(restW, genAvailW);
+                                customer.walletBalances[SELF_WALLET_KEY] = Math.round(((Number(customer.walletBalances[SELF_WALLET_KEY]) || 0) - gDeduct) * 100) / 100;
+                                restW = Math.round((restW - gDeduct) * 100) / 100;
+                                usedW.push(`general wallet ${gDeduct.toFixed(2)}`);
                             }
                         }
                         customer.walletBalance = Math.max(0, Math.round(((customer.walletBalance || 0) - deductLE) * 100) / 100);
-                        order.logs.push(createAuditLog(`Applied ${deductLE.toLocaleString()} L.E. from Customer Wallet balance. Remaining wallet: ${customer.walletBalance.toLocaleString()} L.E.`, order.status, user));
+                        paymentEntry.walletPart = deductAmt;
+                        if (deductAmt + 0.004 >= (Number(payload.amount) || 0)) paymentEntry.fromWallet = true;
+                        order.logs.push(createAuditLog(`Applied ${deductLE.toLocaleString()} L.E. from Customer Wallet balance${usedW.length ? ` (${usedW.join(', ')})` : ''}. Remaining wallet: ${customer.walletBalance.toLocaleString()} L.E.`, order.status, user));
                     }
                 }
 
@@ -8186,19 +8278,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }
 
                 // User ruling 2026-10-21 (21:45): no refund action. A customer payment above the PO gross moves to the customer GENERAL wallet; the PO keeps exactly its commitment.
-                if (!order.blanketOrder && !order.blanketContractId) {
-                    const gross = orderCommitmentGross(order);
-                    const surplus = Math.round((totalPaid - (Number(order.surplusMovedToWallet) || 0) - gross) * 100) / 100;
-                    const custS = (db.customers || []).find(c => c.name === order.customerName);
-                    if (gross > 0 && surplus > 0.004 && custS) {
-                        custS.walletBalances = custS.walletBalances || {};
-                        custS.walletBalances[SELF_WALLET_KEY] = Math.round(((custS.walletBalances[SELF_WALLET_KEY] || 0) + surplus * orderFx(order)) * 100) / 100;
-                        custS.walletBalance = (custS.walletBalance || 0) + surplus * orderFx(order);
-                        order.surplusMovedToWallet = Math.round(((Number(order.surplusMovedToWallet) || 0) + surplus) * 100) / 100;
-                        ledgerPush(db, { type: 'TRANSFER', amount: Math.round(surplus * orderFx(order) * 100) / 100, description: `PO ${order.internalOrderNumber}: payment above the PO gross credited to the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), toAccount: acctLabel(order.customerName, 'SELF', '') });
-                        order.logs.push(createAuditLog(`Payment above the PO gross: ${surplus.toFixed(2)} moved to the customer general wallet (no refund action).`, order.status, user));
-                    }
-                }
+                moveOrderSurplusToGeneralWallet(db, order, user);
 
                 // User ruling 2026-10-21 (22:52): the project wallet first shows the FULL payment incl. the 1% withholding, then the 1% goes to the tax-authority account (display lines only; wallet totals unchanged).
                 if (order.appliesWithholdingTax && !order.whtLedgerBooked && isOrderFullyPaid(order)) {

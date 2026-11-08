@@ -43,7 +43,10 @@ export const computeCashBank = (orders = [], ledger = [], supplierPayments = [])
     });
     const advancesIn = led.filter(e => e && e.type === 'ADDITION' && String(e.id || '').startsWith('adv_cust_')).reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const refundsOut = led.filter(e => e && e.type === 'REFUND' && !isVoidRefund(e)).reduce((s, e) => s + (Number(e.amount) || 0), 0);
-    const manualAdditions = led.filter(e => e && e.type === 'ADDITION' && !String(e.id || '').startsWith('adv_cust_') && !e.orderId && !(e.id && paymentLedgerIds.has(e.id)) && e.category !== 'Supplier Refund').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    // R34 round 4 (validator 3, D2): an ADDITION is an order payment (counted above) only when its orderId names an EXISTING order
+    // or the entry is linked to an order payment (payment.ledgerEntryId); an orderId that matches no order is still bank money.
+    const isOrderPaymentEntry = (e) => (e.orderId && byId.has(e.orderId)) || (e.id && paymentLedgerIds.has(e.id));
+    const manualAdditions = led.filter(e => e && e.type === 'ADDITION' && !String(e.id || '').startsWith('adv_cust_') && !isOrderPaymentEntry(e) && e.category !== 'Supplier Refund').reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const manualCosts = led.filter(e => e && e.type === 'COST' && !String(e.id || '').startsWith('sp_ledg_') && e.category !== 'Supplier Payment').reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const supplierCashOut = (supplierPayments || []).reduce((s, p) => s + (p && !p.isOpening ? (Number(p.amount) || 0) : 0), 0);
     const balance = customerCashIn + advancesIn - refundsOut + manualAdditions - supplierCashOut - manualCosts;
