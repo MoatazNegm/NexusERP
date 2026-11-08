@@ -64,8 +64,11 @@ export const MinimumsModule: React.FC<MinimumsModuleProps> = ({ currentUser, ref
 
     setSavingId(customerId);
     try {
+      // R34 round 7 (validator 6, defect 8): only the margin is written; the record from GET carries COMPUTED wallet figures
+      // (PO money included), which must never be written back over the stored wallet buckets.
+      const { walletBalance: _wb, walletBalances: _wbs, storedWalletBalance: _swb, unlinkedCostsDeducted: _ucd, ...customerFields } = customer as any;
       await dataService.updateCustomer(customerId, {
-        ...customer,
+        ...customerFields,
         minimumMarginPct: marginPct
       });
       // Clear the edit state for this customer upon success

@@ -226,7 +226,10 @@ export const CRMModule: React.FC<CRMModuleProps> = ({ refreshKey, currentUser })
 
     if (editingCustomer?.id) {
       // Fix: Pass currentUser.username as the third argument
-      await dataService.updateCustomer(editingCustomer.id, custForm);
+      // R34 round 7 (validator 6, defect 8): the customer form never writes wallet money (wallet changes go through the finance
+      // money actions); the walletBalance shown in the list is a computed figure, so it is not sent back.
+      const { walletBalance: _wb, ...custFields } = custForm as any;
+      await dataService.updateCustomer(editingCustomer.id, custFields);
     } else {
       // Fix: Pass currentUser.username as the second argument
       await dataService.addCustomer(custForm);

@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { CustomerOrder, AppConfig, OrderStatus, Customer, Supplier, LedgerEntry, DEFAULT_CURRENCY } from '../types';
 import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate } from '../utils';
 import { isMarginBreach } from '../shared/margin';
-import { orderFxRate } from '../shared/orderMoney';
+import { orderFxRate, isBlanketRootOrder, blanketRootOf, isInternalStockOrder } from '../shared/orderMoney';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { dataService } from '../services/dataService';
 
@@ -63,6 +63,19 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
     }
   };
 
+  // R34 round 7 (validator 6, O-c): the same counting rule as Finance > Ledger and /api/v1/reports/orders. A blanket contract whose
+  // value is carried by its call-offs (it has call-offs, or it is closed) adds nothing by itself (its call-offs carry the lines),
+  // so the contract lines are not counted on top of the call-offs; an internal stock order is no sale.
+  const coveredBlanketRootIds = useMemo(() => {
+    const ids = new Set<string>();
+    orders.forEach(o => {
+      if (isBlanketRootOrder(o) && (o as any).contractClosed) ids.add(o.id);
+      if (o.blanketContractId && o.status !== OrderStatus.REJECTED) { const r = blanketRootOf(o, orders as any[]); if (r) ids.add(r.id); }
+    });
+    return ids;
+  }, [orders]);
+  const ownLinesCount = (o: CustomerOrder) => !coveredBlanketRootIds.has(o.id) && !isInternalStockOrder(o);
+
   // --- LOGIC FOR TAB 1: FINANCIAL AUDIT (ORIGINAL) ---
   const auditOpenOrders = useMemo(() => orders.filter(o => ![OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE, OrderStatus.FULFILLED, OrderStatus.REJECTED].includes(o.status)), [orders]);
   const auditFulfilledOrders = useMemo(() => orders.filter(o => [OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE, OrderStatus.FULFILLED].includes(o.status)), [orders]);
@@ -72,7 +85,9 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       let revenue = 0;
       let cost = 0;
       let hasPendingCosts = false;
+      const counts = ownLinesCount(order);
       order.items.forEach(item => {
+        if (!counts) return;
         revenue += (getItemEffectiveQty(item) * item.pricePerUnit);
         item.components?.forEach(comp => {
           const componentTotal = comp.quantity * (comp.unitCost || 0);
@@ -80,7 +95,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
           if (comp.unitCost === 0 && comp.source === 'PROCUREMENT') hasPendingCosts = true;
         });
       });
-      if (order.appliesWithholdingTax) revenue *= 0.99;
+      // R34 round 7 (O-c): the 1% withholding the customer keeps is no revenue cut (ruling 2026-10-21 22:08: revenue = NET line
+      // values; the withholding is a Tax-tab item), the same as Finance > Ledger, the billing list and /reports/orders.
 
       // R34 round 5 (validator 4, item 5, ruling R22 C23): procurement costs are ALREADY in L.E.; the order prices are in the order
       // currency. Revenue is converted at the order rate (a rate applies to a non-L.E. order only, as in Finance > Ledger) and the
@@ -99,8 +115,8 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
     });
   };
 
-  const activeAuditData = useMemo(() => processAuditData(auditOpenOrders), [auditOpenOrders, config.settings.minimumMarginPct]);
-  const fulfilledAuditData = useMemo(() => processAuditData(auditFulfilledOrders), [auditFulfilledOrders, config.settings.minimumMarginPct]);
+  const activeAuditData = useMemo(() => processAuditData(auditOpenOrders), [auditOpenOrders, config.settings.minimumMarginPct, coveredBlanketRootIds]);
+  const fulfilledAuditData = useMemo(() => processAuditData(auditFulfilledOrders), [auditFulfilledOrders, config.settings.minimumMarginPct, coveredBlanketRootIds]);
 
   // Multi-currency amendment: totals split by currency. Margin totals are the
   // sum of the order-native margins (no cross-currency conversion).
@@ -163,13 +179,15 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
     // liability), the same cost as the Financial Audit tab, the billing list and Finance > Ledger (EUR example: revenue 12,600 L.E.,
     // cost 8,000 L.E. net, profit 4,600 L.E.; before: cost 9,120 incl. VAT, profit 3,480).
     let totalCostNet = 0;
+    const counts = ownLinesCount(order); // R34 round 7 (O-c): no blanket contract lines on top of its call-offs, no stock orders
     order.items.forEach(item => {
+      if (!counts) return;
       revenueExclTax += (getItemEffectiveQty(item) * item.pricePerUnit);
       item.components?.forEach(comp => {
         totalCostNet += ((comp.quantity || 0) * (comp.unitCost || 0));
       });
     });
-    if (order.appliesWithholdingTax) revenueExclTax *= 0.99;
+    // R34 round 7 (O-c): no 1% withholding cut (revenue = NET line values, as in Finance > Ledger)
 
     // R34 round 5 (validator 4, item 5, ruling C23): costs are L.E. already; revenue x the order rate; net profit in L.E.
     const rate = orderFxRate(order);
@@ -181,7 +199,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
   };
 
   const analysisRange = useMemo(() => getDateRange(selectedPeriod), [selectedPeriod]);
-  const companyAnalysisProfit = useMemo(() => orders.reduce((sum, o) => (isOrderInPeriod(o, analysisRange) && o.status !== OrderStatus.REJECTED ? sum + calculateAnalysisMetrics(o).netProfit : sum), 0), [orders, analysisRange]);
+  const companyAnalysisProfit = useMemo(() => orders.reduce((sum, o) => (isOrderInPeriod(o, analysisRange) && o.status !== OrderStatus.REJECTED ? sum + calculateAnalysisMetrics(o).netProfit : sum), 0), [orders, analysisRange, coveredBlanketRootIds]);
 
   const analysisOrdersFiltered = useMemo(() => orders.filter(o => {
     const custMatch = selectedCustomerId === 'all' || o.customerName === (customers.find(c => c.id === selectedCustomerId)?.name);
@@ -204,7 +222,7 @@ export const ProfitabilityReport: React.FC<ProfitabilityReportProps> = ({ orders
       profit += m.netProfit;
     });
     return { revenue: revenueLE, revenueLE, revenueByCurrency, cost, costInOrderCurrency: costInOrderCurrencyTotal, profit };
-  }, [analysisOrdersFiltered]);
+  }, [analysisOrdersFiltered, coveredBlanketRootIds]);
 
   const contributionWeight = companyAnalysisProfit > 0 ? (analysisTotals.profit / companyAnalysisProfit) * 100 : 0;
 

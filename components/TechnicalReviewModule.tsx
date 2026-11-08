@@ -254,6 +254,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  // R34 round 7 (validator 6, defect 5): the customer's own minimum margin (server.js evaluateMarginStatus customer override)
+  const [customerMinMargins, setCustomerMinMargins] = useState<Record<string, number>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
   const [selectedItem, setSelectedItem] = useState<CustomerOrderItem | null>(null);
@@ -336,6 +338,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     setOrders(o);
     setInventory(i);
     setSuppliers(s);
+    dataService.getCustomers().then(cs => {
+      const m: Record<string, number> = {};
+      (cs || []).forEach((c: any) => { if (c && c.name && c.minimumMarginPct !== undefined && c.minimumMarginPct !== null && c.minimumMarginPct !== '' && Number.isFinite(Number(c.minimumMarginPct))) m[c.name] = Number(c.minimumMarginPct); });
+      setCustomerMinMargins(m);
+    }).catch(() => { /* no customer access: the company minimum applies */ });
 
     if (keepSelection && selectedOrder) {
       const updatedOrder = o.find(x => x.id === selectedOrder.id);
@@ -1054,7 +1061,11 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     const marginAmt = revenueLE - totalCost;
     const markupPct = totalCost > 0 ? (marginAmt / totalCost) * 100 : (revenueLE > 0 ? 100 : 0);
     const isInternalStock = isInternalStockOrder(selectedOrder);
-    const isViolated = !isInternalStock && !isOrderBlanket(selectedOrder) && isMarginBreach(totalCost, markupPct, config.settings.minimumMarginPct, isOrderBlanket(selectedOrder));
+    // R34 round 7 (validator 6, defect 5): the same threshold as the server: the customer's own minimum margin when it is set,
+    // else the company minimum (a customer with 5% is not blocked at 11.1%, a 15% company minimum would be).
+    const custMin = customerMinMargins[selectedOrder.customerName];
+    const minMarginEff = custMin !== undefined ? custMin : config.settings.minimumMarginPct;
+    const isViolated = !isInternalStock && !isOrderBlanket(selectedOrder) && isMarginBreach(totalCost, markupPct, minMarginEff, isOrderBlanket(selectedOrder));
 
     return {
       revenue: totalRevenue,
@@ -1065,7 +1076,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       marginPct: markupPct,
       isViolated
     };
-  }, [selectedOrder, config.settings.minimumMarginPct]);
+  }, [selectedOrder, config.settings.minimumMarginPct, customerMinMargins]);
 
   const allItemsAccepted = selectedOrder?.items.every(it => it.isAccepted) || false;
 

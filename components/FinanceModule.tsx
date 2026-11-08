@@ -757,7 +757,9 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         const itTax = it.taxPercent !== undefined ? it.taxPercent : 14;
         orderOutputTax += lineNet * (itTax / 100);
 
-        (it.components || []).forEach(c => {
+        // R34 round 7 (validator 6, defect 6): the BoM of a closed blanket contract's own lines is no realized cost (its call-offs carry
+        // the real components), the same rule as the server VAT: no cost, no input VAT from it.
+        if (salesLines) (it.components || []).forEach(c => {
           const cNet = (c.quantity || 0) * (c.unitCost || 0);
           netCost += cNet;
           const cTax = c.taxPercent !== undefined ? c.taxPercent : 0;

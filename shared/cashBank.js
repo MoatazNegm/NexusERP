@@ -24,9 +24,14 @@ export const computeCashBank = (orders = [], ledger = [], supplierPayments = [])
     const byId = new Map();
     (orders || []).forEach(o => { if (o && o.id) byId.set(o.id, o); });
     // the wallet part of a pay-from-wallet payment: ledger TRANSFER wallet -> PO with the receipt of that payment (L.E.)
+    // R34 round 7 (validator 6, defect 7): only while the payment with that receipt still exists on the order; a VOIDED pay-from-wallet
+    // payment gave its wallet part back to the customer wallet (the advance money stays in Cash / Bank), so its TRANSFER no longer
+    // takes anything off the order cash.
     const walletPartByOrder = new Map();
     led.forEach(e => {
         if (!e || e.type !== 'TRANSFER' || !e.orderId || !e.receiptNumber) return;
+        const o = byId.get(e.orderId);
+        if (o && !(o.payments || []).some(p => p && p.receiptNumber && String(p.receiptNumber) === String(e.receiptNumber))) return;
         walletPartByOrder.set(e.orderId, (walletPartByOrder.get(e.orderId) || 0) + (Number(e.amount) || 0));
     });
     // R34 round 3 (validator 2, item 1): order payments are typed in the ORDER currency, so they are converted at the order rate;
