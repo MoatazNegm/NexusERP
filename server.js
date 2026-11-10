@@ -1731,6 +1731,13 @@ const ACTION_ROLE_GATES = {
   'send-rfp-batch': { roles: ['procurement', 'sourcing'], msg: 'procurement role required' },
   'award-tender-batch': { roles: ['procurement', 'sourcing'], msg: 'procurement role required' },
   'issue-po-batch': { roles: ['procurement', 'sourcing'], msg: 'procurement role required' },
+  // v1.0001217: supplier PO cancel / amend / revert were ungated (crm1 could cancel a PO). Procurement owns them; the order-cancel roles
+  // (order management, planning, sales, finance = the reject-order gate below) keep Cancel PO because the rollback / cancel screens
+  // (Technical Review, Procurement) resolve open POs with it. Revert to Award is a procurement decision only.
+  'cancel-component-po': { roles: ['procurement', 'sourcing', 'order_management', 'planning', 'sales', 'finance'], msg: 'no permission to cancel a supplier PO' },
+  'cancel-po-batch': { roles: ['procurement', 'sourcing', 'order_management', 'planning', 'sales', 'finance'], msg: 'no permission to cancel a supplier PO' },
+  'amend-po-extension': { roles: ['procurement', 'sourcing', 'order_management', 'planning', 'sales', 'finance'], msg: 'no permission to cancel a supplier PO' },
+  'revert-po': { roles: ['procurement', 'sourcing'], msg: 'procurement role required' },
   'receive-component': { roles: ['inventory', 'warehouse', 'sourcing', 'logistics'], msg: 'reception is for inv1' },
   'receive-hub-partial': { roles: ['inventory', 'warehouse', 'sourcing', 'logistics'], msg: 'reception is for inv1' },
   'issue-invoice': { roles: ['finance'], msg: 'invoicing is finance' },
@@ -7229,6 +7236,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (specificCompId && comp.id !== specificCompId) return;
 
                 const receivedQty = Number(comp.receivedQty) || (['RECEIVED', 'STOCKED', 'RESERVED'].includes(comp.status) ? Number(comp.quantity) || 0 : 0);
+                // v1.0001217 (CX06): a received outsourced service (procurement part of an Outsourcing line) never entered the warehouse
+                // (receive-component books no inventory for it), so it is not released to stock either: no inventory row, no stock
+                // movement; its received quantity stays on the component (the supplier ledger keeps the delivered value).
+                if (receivedQty > 0 && !isStockOrder(order) && item.productionType === 'OUTSOURCING' && comp.source !== 'STOCK') {
+                    if (!order.logs) order.logs = [];
+                    order.logs.push(createAuditLog(`Service receipt kept: ${receivedQty} ${comp.unit || 'period'} of ${comp.description} (PO: ${comp.poNumber || 'N/A'}) is a delivered service, not stock; nothing is moved to the warehouse (${reason}).`, order.status, user || 'System'));
+                    return;
+                }
                 if (receivedQty > 0) {
                     let invItem = db.inventory.find(i => i.id === comp.inventoryItemId);
                     if (!invItem) {
@@ -7298,9 +7313,15 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
     };
 
     // Helper: Execute Case 1 (Standard PO Cancel) or Case 2 (PO Extension & Amendment)
-    const executeComponentPoCancelOrExtension = (item, comp, cancelReason, isExtension) => {
+    // opts.orderCancelled (v1.0001217, reject-order only): the customer order is cancelled, opts.receivedQty is what the supplier delivered
+    // on this PO (captured before the cancel released goods to free stock). The PO is amended to the delivered quantity (or kept as it is when
+    // everything was delivered), the supplier link and the delivered value stay, and no leftover component is created (nothing is re-procured
+    // for a cancelled order). Money paid on the PO was already released to the supplier general wallet by releaseSupplierAllocationsOfOrder.
+    const executeComponentPoCancelOrExtension = (item, comp, cancelReason, isExtension, opts = {}) => {
         const originalQty = comp.quantity || 0;
-        const receivedQty = comp.receivedQty || 0;
+        const orderCancelled = Boolean(opts.orderCancelled);
+        // delivered on this PO = still held for the order (receivedQty) + already released to free stock by an order cancel (releasedToStockQty, v1.0001217)
+        const receivedQty = (opts.receivedQty !== undefined && opts.receivedQty !== null) ? (Number(opts.receivedQty) || 0) : ((Number(comp.receivedQty) || 0) + (Number(comp.releasedToStockQty) || 0));
         const compPaidAmount = getComponentAllocatedPaidAmount(comp);
         const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
         const grossUnitCost = (comp.unitCost || 0) * (1 + (taxRate / 100));
@@ -7314,11 +7335,25 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             // Case 2: System Extension & Amendment superseding original PO
             // R23 (C18): fractional quantities are rejected on a normal PO, so the paid-units quantity is taken in whole units.
-            const calculatedNewPoQty = Math.max(receivedQty, Math.floor(paidUnits + 1e-9));
+            // v1.0001217: on a cancelled customer order the PO keeps only what the supplier delivered (paid money is already back in the supplier general wallet).
+            const calculatedNewPoQty = orderCancelled ? receivedQty : Math.max(receivedQty, Math.floor(paidUnits + 1e-9));
             const newPoQty = Math.min(originalQty, calculatedNewPoQty);
-            const leftoverQty = Math.max(0, originalQty - newPoQty);
+            const leftoverQty = orderCancelled ? 0 : Math.max(0, originalQty - newPoQty);
 
             const oldPoNumber = comp.poNumber || 'N/A';
+            if (orderCancelled && newPoQty >= originalQty) {
+                // everything was delivered: the PO stays exactly as issued (no amendment), supplier link and delivered value kept
+                comp.statusUpdatedAt = new Date().toISOString();
+                if (!(!isStockOrder(order) && item.productionType === 'OUTSOURCING')) comp.status = 'IN_STOCK'; // goods were released to free stock by the cancel; a service keeps its contract status (CX06)
+                comp.lastAction = 'KEPT_ON_ORDER_CANCEL';
+                comp.lastActionComment = cancelReason;
+                order.logs.push(createAuditLog(
+                    `Supplier PO ${oldPoNumber} kept for: ${comp.description} (all ${originalQty} units delivered; supplier and delivered value stay on the PO). Reason: ${cancelReason}`,
+                    order.status,
+                    user
+                ));
+                return { type: 'KEPT', comp, originalQty, newPoQty, leftoverQty: 0, newCompCreated: null };
+            }
             comp.originalPoQuantity = originalQty;
             comp.quantity = newPoQty;
             comp.isExtension = true;
@@ -7328,7 +7363,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             comp.extendedAt = new Date().toISOString();
             comp.statusUpdatedAt = new Date().toISOString();
 
-            if (receivedQty >= newPoQty) {
+            if (orderCancelled) {
+                if (!(!isStockOrder(order) && item.productionType === 'OUTSOURCING')) comp.status = 'IN_STOCK'; // goods were released to free stock by the cancel; a service keeps its contract status (CX06)
+                comp.lastAction = 'KEPT_ON_ORDER_CANCEL';
+                comp.lastActionComment = cancelReason;
+            } else if (receivedQty >= newPoQty) {
                 comp.status = isStockOrder(order) ? 'STOCKED' : (item.productionType === 'TRADING' ? 'Manufactured' : 'RESERVED');
             } else {
                 comp.status = 'ORDERED';
@@ -7358,7 +7397,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             }
 
             order.logs.push(createAuditLog(
-                `PO ${oldPoNumber} amended via extension: ${comp.description} adjusted from ${originalQty} to ${newPoQty} units (superseding original PO). ${leftoverQty > 0.0001 ? `Remaining ${leftoverQty} units returned to Procurement (PENDING_OFFER). ` : ''}Reason: ${cancelReason}`,
+                `PO ${oldPoNumber} amended via extension: ${comp.description} adjusted from ${originalQty} to ${newPoQty} units (superseding original PO). ${leftoverQty > 0.0001 ? `Remaining ${leftoverQty} units returned to Procurement (PENDING_OFFER). ` : ''}${orderCancelled ? `Order cancelled: the ${newPoQty} delivered units stay on the PO with the supplier; the undelivered ${originalQty - newPoQty} units are cancelled (nothing re-procured). ` : ''}Reason: ${cancelReason}`,
                 order.status,
                 user
             ));
@@ -7421,6 +7460,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         if ([OrderStatus.LOGGED, OrderStatus.REJECTED, OrderStatus.TECHNICAL_REVIEW, OrderStatus.NEGATIVE_MARGIN].includes(order.status) &&
             ['start-production', 'register-manufacturing', 'consume-factory-component', 'finish-production', 'receive-hub', 'receive-hub-partial', 'issue-invoice', 'approve-dispatch-receipt', 'release-delivery', 'ship-items', 'confirm-delivery', 'request-einvoice', 'attach-einvoice'].includes(action) && !isStockOrder(order)) {
             throw new Error(`Refused: ${action} is not possible on an order in ${order.status} status (nothing manufactured or reserved).`);
+        }
+        // v1.0001217: a cancelled order receives nothing more; the supplier POs it kept hold only what was delivered before the cancel.
+        if (order.status === OrderStatus.REJECTED && action === 'receive-component' && !isStockOrder(order)) {
+            throw new Error('Refused: receive-component is not possible on a cancelled (REJECTED) order; its supplier POs keep only what was delivered before the cancel.');
         }
         { const denied = actionRoleDenied(req, action); if (denied) return res.status(403).json({ error: denied }); }
         switch (action) {
@@ -7736,14 +7779,24 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (!order.technicalReviewFinishedAt && [OrderStatus.LOGGED, OrderStatus.TECHNICAL_REVIEW, OrderStatus.NEGATIVE_MARGIN].includes(oldStatus)) {
                     order.technicalReviewFinishedAt = new Date().toISOString();
                 }
-                // Release all received components and trading items in Hub to general warehouse component stock
+                // v1.0001217: what each supplier PO delivered is captured BEFORE the release below (the release moves receivedQty of goods to releasedToStockQty).
+                const deliveredBeforeCancel = {};
+                order.items.forEach(item => (item.components || []).forEach(comp => { deliveredBeforeCancel[comp.id] = (Number(comp.receivedQty) || 0) + (Number(comp.releasedToStockQty) || 0); }));
+                // Release all received components and trading items in Hub to general warehouse component stock (a received service is not stock: CX06)
                 transferReceivedItemsToFreeStock(order, db, `Order Rejection: ${payload?.reason || 'Business decision'}`, user);
                 // CX12: supplier POs of the cancelled order that received nothing are cancelled (supplier commitment drops).
                 // v1.0001216 (test 124 OS07): an outsourcing PO whose contract start date has passed is RUNNING_CONTRACT (sweepContractStarts); it is cancelled like WAITING_CONTRACT_START.
+                // v1.0001217: a PO (ORDERED / WAITING_CONTRACT_START / RUNNING_CONTRACT) that delivered something is not cancelled: fully delivered it is kept as issued,
+                // partly delivered it is amended to the delivered quantity (extension path, no leftover re-procurement); the supplier link and delivered value stay.
                 order.items.forEach(item => {
                     (item.components || []).forEach(comp => {
-                        if (comp.source === 'PROCUREMENT' && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RUNNING_OUTSOURCING_CONTRACT'].includes(comp.status) && !(Number(comp.receivedQty) > 0) && comp.poNumber) {
-                            try { executeComponentPoCancelOrExtension(item, comp, `Order cancelled: ${payload?.reason || 'Business decision'}`, false); } catch (e) { comp.status = 'CANCELLED'; comp.cancelReason = 'Order cancelled'; comp.statusUpdatedAt = new Date().toISOString(); }
+                        if (comp.source === 'PROCUREMENT' && ['ORDERED', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT', 'RUNNING_OUTSOURCING_CONTRACT'].includes(comp.status) && comp.poNumber) {
+                            const delivered = deliveredBeforeCancel[comp.id] || 0;
+                            if (delivered > 0) {
+                                executeComponentPoCancelOrExtension(item, comp, `Order cancelled: ${payload?.reason || 'Business decision'}`, true, { orderCancelled: true, receivedQty: delivered });
+                            } else {
+                                try { executeComponentPoCancelOrExtension(item, comp, `Order cancelled: ${payload?.reason || 'Business decision'}`, false); } catch (e) { comp.status = 'CANCELLED'; comp.cancelReason = 'Order cancelled'; comp.statusUpdatedAt = new Date().toISOString(); }
+                            }
                         }
                     });
                 });
@@ -7765,7 +7818,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         if (['RESERVED', 'RECEIVED', 'STOCKED'].includes(comp.status)) {
                             if (!isStockOrder(order) || comp.source === 'STOCK') updateInventoryItem(db, comp, 'RELEASE', order);
                             comp.status = 'IN_STOCK'; // Or specific status indicating released
-                            delete comp.poNumber; delete comp.supplierId; delete comp.supplierName; comp.receivedQty = 0;
+                            // v1.0001217: a supplier PO that was delivered keeps its PO number and supplier, so the supplier ledger keeps the delivered value.
+                            if (comp.source !== 'PROCUREMENT' || !((deliveredBeforeCancel[comp.id] || 0) > 0)) { delete comp.poNumber; delete comp.supplierId; delete comp.supplierName; }
+                            comp.receivedQty = 0;
                         }
                     });
                 });
@@ -8486,7 +8541,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                 // Check Case 1 vs Case 2: if any component has received items or payments
                 const hasReceivedOrPaid = targets.some(({ comp }) => {
-                    const rec = comp.receivedQty || 0;
+                    const rec = (Number(comp.receivedQty) || 0) + (Number(comp.releasedToStockQty) || 0);
                     const paid = getComponentAllocatedPaidAmount(comp);
                     return rec > 0 || paid > 0.01;
                 });
