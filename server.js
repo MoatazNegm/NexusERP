@@ -4753,8 +4753,8 @@ const supplierPoGrossValue = (comp) => {
 function releaseSupplierAllocationsOfOrder(db, order) {
     // Cancel / reopen voids the order's POs: what was allocated to them returns to the supplier general wallet (unallocated advance, no refund).
     // v1.0001218: returns what was released ([{ sp, alloc }], payment order) so reattachKeptSupplierAllocations can put back the part a kept PO still covers.
-    const ids = new Set();
-    orderPoComponents(order).forEach(({ comp: c }) => { if (c.id) ids.add(c.id); });
+    const ids = new Set(), compById = {};
+    orderPoComponents(order).forEach(({ comp: c }) => { if (c.id) { ids.add(c.id); compById[c.id] = c; } });
     const released = [];
     (db.supplierPayments || []).forEach(sp => {
         const mine = (sp.allocations || []).filter(x => ids.has(x.componentId));
@@ -4762,24 +4762,54 @@ function releaseSupplierAllocationsOfOrder(db, order) {
         const back = mine.reduce((t, x) => t + (Number(x.amount) || 0), 0);
         sp.allocations = sp.allocations.filter(x => !ids.has(x.componentId));
         sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) + back) * 100) / 100;
-        mine.forEach(alloc => released.push({ sp, alloc }));
+        // v1.0001219: the PO (supplier + PO number) each released allocation sat on is captured here, before the cancel / reopen changes the components.
+        mine.forEach(alloc => { const c = compById[alloc.componentId]; released.push({ sp, alloc, poKey: supplierPoKey(c, sp) }); });
     });
     return released;
 }
 // v1.0001218 (wallet model: supplier PO wallet = money paid to that supplier PO, up to the PO price; the excess is the supplier general wallet):
 // after a cancel / reopen, money released from a supplier PO that the order KEPT (the supplier delivered on it) goes back onto that PO up to
 // the kept PO's gross value; only the part above it stays in the supplier general wallet (unallocated advance). Same payment records, oldest first.
+// v1.0001219 (validator pass 4, gap 1): the cap is per supplier PO (same supplier + PO number), not per component: money released from ANY
+// component of a PO (a cancelled sibling included) may go back onto ANY kept component of that same PO, up to the total kept value of the PO
+// (the same component first, then its kept siblings in order), oldest payment first; the excess stays in the supplier general wallet.
+// Example: PO = CNC 10 x 96 + powder 5 x 120 (14 %), 1000 paid, CNC 4/10 and powder 2/5 delivered, cancel -> 437.76 + 273.60 = 711.36 on the PO,
+// 288.64 in the supplier general wallet.
+function supplierPoKey(comp, sp) {
+    if (!comp || !comp.poNumber) return null;
+    const sup = comp.supplierId || (sp && sp.supplierId) || comp.supplierName || '';
+    return `${sup}|${String(comp.poNumber).trim()}`;
+}
 function reattachKeptSupplierAllocations(db, order, released) {
-    const capLeft = {};
-    orderPoComponents(order).forEach(({ comp }) => { if (comp.id && isKeptDeliveredPo(comp)) capLeft[comp.id] = supplierPoGrossValue(comp); });
-    (released || []).forEach(({ sp, alloc }) => {
-        const cap = capLeft[alloc.componentId];
-        if (!(cap > 0.004)) return;
-        const take = Math.round(Math.min(Number(alloc.amount) || 0, cap, Number(sp.unallocatedAdvance) || 0) * 100) / 100;
-        if (!(take > 0.004)) return;
-        sp.allocations = (sp.allocations || []).concat([{ ...alloc, amount: take }]);
-        sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) - take) * 100) / 100;
-        capLeft[alloc.componentId] = Math.round((cap - take) * 100) / 100;
+    const keptByPo = {};
+    orderPoComponents(order).forEach(({ comp }) => {
+        if (!comp.id || !isKeptDeliveredPo(comp)) return;
+        const key = supplierPoKey(comp);
+        if (!key) return;
+        (keptByPo[key] = keptByPo[key] || []).push({ comp, capLeft: supplierPoGrossValue(comp) });
+    });
+    const dateOf = (sp) => { const t = Date.parse(sp && sp.date); return Number.isFinite(t) ? t : 0; };
+    const ordered = (released || []).map((r, i) => ({ ...r, i })).sort((a, b) => (dateOf(a.sp) - dateOf(b.sp)) || (a.i - b.i));
+    ordered.forEach(({ sp, alloc, poKey }) => {
+        const kept = poKey && keptByPo[poKey];
+        if (!kept) return;
+        // a payment to one supplier never lands on another supplier's PO
+        if (sp.supplierId && kept[0].comp.supplierId && sp.supplierId !== kept[0].comp.supplierId) return;
+        let left = Math.round(Math.min(Number(alloc.amount) || 0, Number(sp.unallocatedAdvance) || 0) * 100) / 100;
+        const targets = kept.filter(k => k.comp.id === alloc.componentId).concat(kept.filter(k => k.comp.id !== alloc.componentId));
+        targets.forEach(k => {
+            if (!(left > 0.004) || !(k.capLeft > 0.004)) return;
+            const take = Math.round(Math.min(left, k.capLeft) * 100) / 100;
+            if (!(take > 0.004)) return;
+            const row = k.comp.id === alloc.componentId ? { ...alloc, amount: take } : { ...alloc, componentId: k.comp.id, itemDescription: k.comp.description || alloc.itemDescription, amount: take, movedFromComponentId: alloc.componentId };
+            // one allocation row per payment and component (merge when the same payment already covers that component)
+            const same = (sp.allocations || []).find(x => x.componentId === row.componentId && x.orderId === row.orderId);
+            if (same) same.amount = Math.round(((Number(same.amount) || 0) + take) * 100) / 100;
+            else sp.allocations = (sp.allocations || []).concat([row]);
+            sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) - take) * 100) / 100;
+            k.capLeft = Math.round((k.capLeft - take) * 100) / 100;
+            left = Math.round((left - take) * 100) / 100;
+        });
     });
 }
 const firstFraction = (vals) => (vals || []).map(Number).find(q => Number.isFinite(q) && Math.abs(q - Math.round(q)) > 1e-9);

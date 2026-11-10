@@ -5,7 +5,7 @@ import { CustomerOrder, Customer, Supplier, OrderStatus, AppConfig, User, getIte
 import { getItemEffectiveQty, getOrderConversionRate, getOrderCurrency, getStatusLimitHours, getTechReviewStartTime, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { computeCashBank } from '../shared/cashBank';
-import { computeReceivables, computePayables, orderPaidInAP, orderPaidInLE, orderWhtAmountAP, orderFxAP } from '../shared/arap';
+import { computeReceivables, computePayables, orderPaidInAP, orderPaidInLE, orderWhtAmountAP, orderFxAP, keptDeliveredPoCostByOrder } from '../shared/arap';
 import { paymentLE, orderPaymentsLE, isRealizedSale, ownLinesAreSales } from '../shared/orderMoney';
 import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
@@ -731,6 +731,13 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
     let overpaidRealized = 0;
     const apByOrder = new Map<string, number>();
     apAll.byOrderSupplier.forEach((r: any) => apByOrder.set(r.orderId, (apByOrder.get(r.orderId) || 0) + (Number(r.committed) || 0)));
+    // v1.0001219 (validator pass 4, gap 2): a supplier PO that an order cancel kept because the supplier delivered on it stays in AP
+    // (cancelled order) or in the reopened order's AP rows (keptSupplierPos), but it is no cost of any open order: its gross value
+    // (net + input VAT) is a company cost of the cancel, shown on its own line ('Kept delivered POs of cancelled or reopened orders')
+    // and taken off Equity & Profit, so the check balances whether the kept PO is unpaid (AP) or paid (cash out).
+    const keptPoByOrder = keptDeliveredPoCostByOrder(orders as any[]);
+    const keptPoCost = Array.from(keptPoByOrder.values()).reduce((s, v) => s + v, 0);
+    const apOwnByOrder = (id: string) => (apByOrder.get(id) || 0) - (keptPoByOrder.get(id) || 0);
 
     orders.forEach(o => {
       if (o.status === OrderStatus.REJECTED) return;
@@ -738,7 +745,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       if (isInternal(o)) {
         // stock orders: no sale; what the company bought for stock is an asset (it is in AP until paid); money received on them sits
         // with the order like an open order
-        stockPoPurchases += apByOrder.get(o.id) || 0;
+        stockPoPurchases += apOwnByOrder(o.id);
         openOrders += orderPaidInLE(o) + (arByOrder.get(o.id) || 0); // round 5 item 4: L.E. received (exact amountLE)
         return;
       }
@@ -778,7 +785,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       totalProjectedProfit += projProfit;
       totalInputTax += orderInputTax;
       // cost counted here (net + input VAT) that has no supplier payable: components not on an issued PO yet, or taken from stock
-      costsWithoutPayable += (netCost + orderInputTax) - (apByOrder.get(o.id) || 0);
+      costsWithoutPayable += (netCost + orderInputTax) - apOwnByOrder(o.id);
 
       if (isInvoiced) {
         totalRealizedProfit += projProfit;
@@ -869,7 +876,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
 
     const totalAssets = netCashInBank + totalAR + totalWIP + supplierWallets + withholdingKept + stockPoPurchases;
     const blanketNetting = overpaidRealized - arNettingGap;
-    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + openingPoWallets + g1CostsInWallets + openOrders + blanketNetting + netTaxLiability + openingWHT + totalRealizedProfit + otherEntriesNet + costsWithoutPayable + openingEquity;
+    const totalLiabilitiesAndProfit = totalSupplierAP + totalCustomerWallets + openingPoWallets + g1CostsInWallets + openOrders + blanketNetting + netTaxLiability + openingWHT + totalRealizedProfit + otherEntriesNet + costsWithoutPayable - keptPoCost + openingEquity;
     const variance = Math.abs(totalAssets - totalLiabilitiesAndProfit);
     const isBalanced = variance < 5.0;
 
@@ -904,6 +911,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
       openOrders,
       blanketNetting,
       costsWithoutPayable,
+      keptPoCost,
       stockPoPurchases,
       otherEntriesNet,
       advancesIn: cashBank.advancesIn,
@@ -1356,6 +1364,9 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
               {ledgerLine('ledger-costs-no-payable', companyFinancials.costsWithoutPayable, 'fa-scale-balanced', 'bg-slate-500/20 text-slate-300', 'text-slate-200',
                 language === 'ar' ? 'تكاليف بدون مستحق لمورد' : 'Costs without a supplier payable',
                 language === 'ar' ? 'تكلفة مكونات ليست على أمر شراء صادر بعد أو مأخوذة من المخزون' : 'Component cost not on an issued supplier PO yet, or taken from stock')}
+              {ledgerLine('ledger-kept-po-cost', -companyFinancials.keptPoCost, 'fa-file-circle-xmark', 'bg-orange-500/20 text-orange-400', 'text-orange-300',
+                language === 'ar' ? 'أوامر شراء مُسلَّمة محتفظ بها لطلبات ملغاة أو أعيد فتحها (تكلفة)' : 'Kept delivered POs of cancelled or reopened orders (cost)',
+                language === 'ar' ? 'ما سلّمه المورد على طلب ملغى (صافي + ضريبة المدخلات): تكلفة على الشركة، في الذمم الدائنة حتى يُدفع' : 'What a supplier delivered on a cancelled order (net + input VAT): a company cost, in payables until paid')}
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 p-3 rounded-2xl bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-violet-500/20 text-violet-400 flex items-center justify-center text-xs">
@@ -2347,14 +2358,23 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       isExtension?: boolean;
       paidUnreceivedQty?: number;
       paidUnreceivedValue?: number;
+      isKept?: boolean;
     }>();
 
+    // v1.0001219 (validator pass 4, item 3): a supplier PO that an order cancel kept because the supplier delivered on it is listed too
+    // (read-only): on a cancelled order its kept components are still on the lines (keptOnOrderCancel), on a reopened order they sit in
+    // order.keptSupplierPos. Same test as the server / shared/arap.js (kept = amended to the delivered quantity, so it is all received).
+    const isKeptPo = (c: any) => Boolean(c && c.poNumber && (c.keptOnOrderCancel || c.lastAction === 'KEPT_ON_ORDER_CANCEL') && !['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(String(c.status || '').toUpperCase()));
     (orders || []).forEach(o => {
-      if (o.status === OrderStatus.REJECTED) return;
-      (o.items || []).forEach(it => {
-        (it.components || []).forEach(c => {
+      const rejected = o.status === OrderStatus.REJECTED;
+      const lineGroups: { it: any; comps: any[] }[] = (o.items || []).map(it => ({ it, comps: (it.components || []).filter((c: any) => !rejected || isKeptPo(c)) }));
+      const keptOff = ((o as any).keptSupplierPos || []).filter((c: any) => isKeptPo(c));
+      if (keptOff.length) lineGroups.push({ it: { description: keptOff[0].keptFromItemDescription || '' }, comps: keptOff });
+      lineGroups.forEach(({ it, comps }) => {
+        comps.forEach((c: any) => {
           if (!c.supplierId && !c.supplierName) return;
           if (['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(c.status)) return;
+          const kept = isKeptPo(c);
 
           const sId = c.supplierId || (suppliers || []).find(s => s.name?.trim().toLowerCase() === c.supplierName?.trim().toLowerCase())?.id || 'unknown';
           const sName = c.supplierName || (suppliers || []).find(s => s.id === c.supplierId)?.name || 'Unknown Supplier';
@@ -2365,8 +2385,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           const taxRate = c.taxPercent !== undefined ? c.taxPercent : 14;
           const tax = net * (taxRate / 100);
           const gross = net + tax;
-          const recQty = c.receivedQty || 0;
-          const isRec = c.status === 'RECEIVED' || c.status === 'STOCKED' || (recQty >= (c.quantity || 0) && (c.quantity || 0) > 0);
+          const recQty = kept ? (c.quantity || 0) : (c.receivedQty || 0);
+          const isRec = kept || c.status === 'RECEIVED' || c.status === 'STOCKED' || (recQty >= (c.quantity || 0) && (c.quantity || 0) > 0);
+          const itemDesc = (c as any).keptFromItemDescription || it.description;
 
           if (!posMap.has(groupKey)) {
             posMap.set(groupKey, {
@@ -2394,14 +2415,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               payments: [],
               isExtension: false,
               paidUnreceivedQty: 0,
-              paidUnreceivedValue: 0
+              paidUnreceivedValue: 0,
+              isKept: false
             });
           }
 
           const po = posMap.get(groupKey)!;
+          if (kept) po.isKept = true;
           po.components.push({
             ...c,
-            parentItemDesc: it.description,
+            parentItemDesc: itemDesc,
             netCost: net,
             taxRate,
             taxAmount: tax,
@@ -5232,6 +5255,12 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                       <span>{language === 'ar' ? 'معدل / ملحق' : 'Amended / Ext'}</span>
                                     </span>
                                   )}
+                                  {po.isKept && (
+                                    <span data-testid="supplier-po-kept-badge" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-orange-50 text-orange-700 border border-orange-200" title={language === 'ar' ? 'أمر شراء سلّم المورد عليه وأُبقي عند إلغاء الطلب (عرض فقط)' : 'Delivered PO kept when the order was cancelled (read-only)'}>
+                                      <i className="fa-solid fa-file-circle-xmark text-[7px]"></i>
+                                      <span>{language === 'ar' ? 'محتفظ به بعد الإلغاء' : 'Kept on order cancel'}</span>
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-xs font-bold text-slate-700 mt-1 flex items-center gap-1">
                                   <i className="fa-solid fa-truck text-[9px] text-slate-400"></i>
@@ -5321,6 +5350,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
                               {/* Actions */}
                               <td className="px-6 py-4 text-end">
+                                {po.isKept ? (
+                                  <span data-testid="supplier-po-kept-readonly" className="text-[9px] font-bold text-slate-500 inline-block max-w-[160px] text-end">
+                                    {language === 'ar' ? 'عرض فقط: أُبقي بعد إلغاء الطلب؛ مدفوعاته ومستحقاته في دفتر المورد' : 'Read-only: kept on order cancel; its payments and payable follow the supplier ledger'}
+                                  </span>
+                                ) : (
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -5336,6 +5370,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                   <i className="fa-solid fa-credit-card text-[9px]"></i>
                                   <span>{po.isSettled ? (language === 'ar' ? 'إضافة دفعة' : 'Add Payment') : (language === 'ar' ? 'سداد للمورد' : 'Pay Supplier')}</span>
                                 </button>
+                                )}
                               </td>
                             </tr>
 
@@ -5453,6 +5488,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                           {language === 'ar' ? 'المدفوعات والإيصالات المرفقة' : 'Disbursements & Receipts Attached'} ({po.payments.length})
                                         </span>
                                       </div>
+                                      {!po.isKept && (
                                       <button
                                         type="button"
                                         onClick={() => openSupplierPoPaymentModal(po)}
@@ -5461,6 +5497,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                         <i className="fa-solid fa-plus text-[8px]"></i>
                                         <span>{language === 'ar' ? 'إضافة دفعة جديدة' : 'Add New Payment'}</span>
                                       </button>
+                                      )}
                                     </div>
 
                                     {po.payments.length === 0 ? (

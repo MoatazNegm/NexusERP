@@ -167,6 +167,25 @@ export const computeReceivables = (orders = [], ledger = null, customers = null)
 
 // v1.0001218: a supplier PO kept by an order cancel because the supplier delivered on it (same test as isKeptDeliveredPo in server.js).
 const isKeptDeliveredPoAP = (comp) => Boolean(comp && comp.poNumber && (comp.keptOnOrderCancel || comp.lastAction === 'KEPT_ON_ORDER_CANCEL') && !['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(String(comp.status || '').toUpperCase()));
+// v1.0001219 (validator pass 4, gap 2): the gross value (net + input VAT) of the supplier POs an order cancel kept because the supplier
+// delivered on them, per order: kept components on the lines of a cancelled (REJECTED) order, plus order.keptSupplierPos of a reopened one.
+// Same formula and filters as the AP rows below, so the Finance > Ledger balance check can show the kept cost on its own line.
+export const keptDeliveredPoCostByOrder = (orders = []) => {
+    const out = new Map();
+    (orders || []).forEach(o => {
+        const comps = [];
+        if (o.status === REJECTED) (o.items || []).forEach(it => (it.components || []).forEach(comp => { if (isKeptDeliveredPoAP(comp)) comps.push(comp); }));
+        (o.keptSupplierPos || []).forEach(comp => { if (isKeptDeliveredPoAP(comp)) comps.push(comp); });
+        let v = 0;
+        comps.forEach(comp => {
+            if (!(comp.source === 'PROCUREMENT' || comp.source === 'CONSUMED') || ['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)) return;
+            const mul = 1 + ((comp.taxPercent !== undefined && comp.taxPercent !== null ? Number(comp.taxPercent) : 14) / 100);
+            v += ((comp.quantity || 0) + (comp.allocatedQty || 0)) * (comp.unitCost || 0) * mul;
+        });
+        if (v > 0.004) out.set(o.id, r2w(v));
+    });
+    return out;
+};
 // AP: what the company still owes suppliers (gross), per supplier / PO / project. db = { orders, supplierPayments, suppliers, ledger }.
 export const computePayables = (db) => {
     const orders = db.orders || [], sps = db.supplierPayments || [];
