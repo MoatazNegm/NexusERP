@@ -4,7 +4,8 @@
 // AR (in L.E.; a foreign-currency order x its rate, round 4 D3) = every open (non-rejected) order: committed gross (net of the 1% withholding the customer keeps; a blanket order commits
 //      nothing by itself, its call-offs do) minus the money received on it, plus the customer-level AR openings.
 // AP = every ISSUED supplier PO component (not NEW / PENDING_OFFER / RFP_SENT / AWARDED / CANCELLED), gross (net + tax),
-//      minus the supplier payments allocated to it, plus the supplier-level AP openings.
+//      minus the supplier payments allocated to it, plus the supplier-level AP openings. A cancelled (REJECTED) order counts only the supplier POs
+//      its cancel kept because the supplier delivered on them (v1.0001218).
 
 import { isInternalStockOrder, orderFxRate, orderPaymentsLE, blanketRootOf, isClosedBlanketRoot, callOffsOfBlanket, sameCustomerName } from './orderMoney.js';
 
@@ -164,6 +165,8 @@ export const computeReceivables = (orders = [], ledger = null, customers = null)
     };
 };
 
+// v1.0001218: a supplier PO kept by an order cancel because the supplier delivered on it (same test as isKeptDeliveredPo in server.js).
+const isKeptDeliveredPoAP = (comp) => Boolean(comp && comp.poNumber && (comp.keptOnOrderCancel || comp.lastAction === 'KEPT_ON_ORDER_CANCEL') && !['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(String(comp.status || '').toUpperCase()));
 // AP: what the company still owes suppliers (gross), per supplier / PO / project. db = { orders, supplierPayments, suppliers, ledger }.
 export const computePayables = (db) => {
     const orders = db.orders || [], sps = db.supplierPayments || [];
@@ -174,16 +177,23 @@ export const computePayables = (db) => {
     const supName = id => (db.suppliers || []).find(s => s.id === id)?.name || 'Unknown';
     const rows = [];
     orders.forEach(o => {
-        if (o.status === REJECTED) return;
+        // v1.0001218 (validator G3): a cancelled (REJECTED) order owes nothing for itself, but a supplier PO its cancel kept because the supplier
+        // delivered on it (keptOnOrderCancel, amended to the delivered quantity) is still owed to the supplier, as the supplier ledger shows.
+        // A reopened cancelled order carries those POs in keptSupplierPos (off the order lines), whatever its status.
+        const rejected = o.status === REJECTED;
+        const comps = [];
+        (o.items || []).forEach(it => (it.components || []).forEach(comp => { if (!rejected || isKeptDeliveredPoAP(comp)) comps.push(comp); }));
+        (o.keptSupplierPos || []).forEach(comp => { if (isKeptDeliveredPoAP(comp)) comps.push(comp); });
+        if (rejected && !comps.length) return;
         const byOrderSupplier = new Map();
-        (o.items || []).forEach(it => (it.components || []).forEach(comp => {
+        comps.forEach(comp => {
             if (!(comp.source === 'PROCUREMENT' || comp.source === 'CONSUMED') || ['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(comp.status)) return;
             const mul = 1 + ((comp.taxPercent !== undefined && comp.taxPercent !== null ? Number(comp.taxPercent) : 14) / 100);
             const committed = ((comp.quantity || 0) + (comp.allocatedQty || 0)) * (comp.unitCost || 0) * mul;
             const k = comp.supplierId || comp.supplierName || '';
             if (!byOrderSupplier.has(k)) byOrderSupplier.set(k, { supplierId: comp.supplierId, supplierName: comp.supplierId ? supName(comp.supplierId) : (comp.supplierName || 'Unknown'), committed: 0, paid: 0 });
             const e = byOrderSupplier.get(k); e.committed += committed; e.paid += Math.min(committed, allocPerComp[comp.id] || 0);
-        }));
+        });
         let loose = allocPerOrder[o.id] || 0;
         byOrderSupplier.forEach(e => { const take = Math.min(loose, Math.max(0, e.committed - e.paid)); e.paid += take; loose -= take; });
         byOrderSupplier.forEach(e => rows.push({ orderId: o.id, internalOrderNumber: o.internalOrderNumber, projectName: orderProjectNameAP(o, orders) || '(No Project)', customerName: o.customerName, supplierId: e.supplierId, supplierName: e.supplierName, committed: r2w(e.committed), paid: r2w(e.paid), payable: r2w(Math.max(0, e.committed - e.paid)) }));

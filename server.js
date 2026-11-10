@@ -4452,10 +4452,13 @@ const orderPaidIn = (order) => {
     return r2w(paid - (Number(order.surplusMovedToWallet) || 0));
 };
 // y: money the company paid to suppliers for this PO (gross); supplier refunds are negative payments
+// v1.0001218: money kept on a delivered supplier PO of a cancelled order (or of a reopened one, keptSupplierPos) is a company cost of the cancelled
+// order, not of the customer: it is left out here, so customer and PO wallets read as before the cancel kept it (rejected orders are ignored).
 const orderPaidOut = (order, supplierPayments = []) => {
     let y = 0;
+    const keptIds = new Set(orderPoComponents(order).filter(x => isKeptDeliveredPo(x.comp)).map(x => x.comp.id));
     (supplierPayments || []).forEach(sp => {
-        const allocs = (sp.allocations || []).filter(a => a.orderId === order.id || (a.orderNumber && a.orderNumber === order.internalOrderNumber));
+        const allocs = (sp.allocations || []).filter(a => (a.orderId === order.id || (a.orderNumber && a.orderNumber === order.internalOrderNumber)) && !keptIds.has(a.componentId));
         if (allocs.length) allocs.forEach(a => { y += Number(a.amount) || 0; });
     });
     return r2w(y);
@@ -4730,16 +4733,53 @@ const validateOrderItems = (items, customerName, customerPoNumber = '') => {
 };
 
 // R30 (23:00): units cannot be partitioned: every quantity is a whole number, blanket orders and call-offs included.
+// v1.0001218: every supplier PO component of an order, including the delivered POs a cancelled order kept and that a later reopen
+// moved off the order lines (order.keptSupplierPos): the supplier still delivered them, so the supplier ledger, AP and payment
+// allocation keep reading them. Returns [{ item, comp }] (item is null for a kept PO moved off the lines).
+const orderPoComponents = (order) => {
+    const out = [];
+    ((order && order.items) || []).forEach(item => (item.components || []).forEach(comp => out.push({ item, comp })));
+    ((order && order.keptSupplierPos) || []).forEach(comp => out.push({ item: null, comp }));
+    return out;
+};
+// v1.0001218: a supplier PO component that an order cancel kept because the supplier delivered on it (amended to the delivered quantity,
+// or kept as issued when everything was delivered). Older cancels (v1.0001217) only set lastAction.
+const isKeptDeliveredPo = (comp) => Boolean(comp && comp.poNumber && (comp.keptOnOrderCancel || comp.lastAction === 'KEPT_ON_ORDER_CANCEL') && !['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(String(comp.status || '').toUpperCase()));
+// gross value of a supplier PO component = what the supplier ledger commits for it (net x (1 + tax), quantity + quantity allocated away)
+const supplierPoGrossValue = (comp) => {
+    const mul = 1 + ((comp.taxPercent !== undefined && comp.taxPercent !== null ? Number(comp.taxPercent) : 14) / 100);
+    return Math.round(((Number(comp.quantity) || 0) + (Number(comp.allocatedQty) || 0)) * (Number(comp.unitCost) || 0) * mul * 100) / 100;
+};
 function releaseSupplierAllocationsOfOrder(db, order) {
     // Cancel / reopen voids the order's POs: what was allocated to them returns to the supplier general wallet (unallocated advance, no refund).
+    // v1.0001218: returns what was released ([{ sp, alloc }], payment order) so reattachKeptSupplierAllocations can put back the part a kept PO still covers.
     const ids = new Set();
-    (order.items || []).forEach(it => (it.components || []).forEach(c => { if (c.id) ids.add(c.id); }));
+    orderPoComponents(order).forEach(({ comp: c }) => { if (c.id) ids.add(c.id); });
+    const released = [];
     (db.supplierPayments || []).forEach(sp => {
         const mine = (sp.allocations || []).filter(x => ids.has(x.componentId));
         if (!mine.length) return;
         const back = mine.reduce((t, x) => t + (Number(x.amount) || 0), 0);
         sp.allocations = sp.allocations.filter(x => !ids.has(x.componentId));
         sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) + back) * 100) / 100;
+        mine.forEach(alloc => released.push({ sp, alloc }));
+    });
+    return released;
+}
+// v1.0001218 (wallet model: supplier PO wallet = money paid to that supplier PO, up to the PO price; the excess is the supplier general wallet):
+// after a cancel / reopen, money released from a supplier PO that the order KEPT (the supplier delivered on it) goes back onto that PO up to
+// the kept PO's gross value; only the part above it stays in the supplier general wallet (unallocated advance). Same payment records, oldest first.
+function reattachKeptSupplierAllocations(db, order, released) {
+    const capLeft = {};
+    orderPoComponents(order).forEach(({ comp }) => { if (comp.id && isKeptDeliveredPo(comp)) capLeft[comp.id] = supplierPoGrossValue(comp); });
+    (released || []).forEach(({ sp, alloc }) => {
+        const cap = capLeft[alloc.componentId];
+        if (!(cap > 0.004)) return;
+        const take = Math.round(Math.min(Number(alloc.amount) || 0, cap, Number(sp.unallocatedAdvance) || 0) * 100) / 100;
+        if (!(take > 0.004)) return;
+        sp.allocations = (sp.allocations || []).concat([{ ...alloc, amount: take }]);
+        sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) - take) * 100) / 100;
+        capLeft[alloc.componentId] = Math.round((cap - take) * 100) / 100;
     });
 }
 const firstFraction = (vals) => (vals || []).map(Number).find(q => Number.isFinite(q) && Math.abs(q - Math.round(q)) > 1e-9);
@@ -4761,6 +4801,7 @@ const addToCollection = (col) => (req, res) => {
     }
 
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
+    if (col === 'orders') delete newItem.keptSupplierPos; // v1.0001218: server-owned (reopen of a cancelled order)
     const user = req.headers['x-user'] || 'System';
 
     // CX16: two records created in the same millisecond must never share an id.
@@ -5086,6 +5127,8 @@ const updateInCollection = (col) => (req, res) => {
     }
     { const sr = systemMoneyRowRefusal(col, oldItem, req.body); if (sr) return res.status(400).json({ error: sr }); }
     let updated = { ...oldItem, ...req.body };
+    // v1.0001218: the delivered supplier POs a reopened cancelled order kept are server-owned (only reject-order / rollback-to-logged write them).
+    if (col === 'orders') { if (oldItem.keptSupplierPos !== undefined) updated.keptSupplierPos = oldItem.keptSupplierPos; else delete updated.keptSupplierPos; }
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
         return res.status(400).json({ error: 'Invalid orderDate.' });
     }
@@ -7462,7 +7505,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
             throw new Error(`Refused: ${action} is not possible on an order in ${order.status} status (nothing manufactured or reserved).`);
         }
         // v1.0001217: a cancelled order receives nothing more; the supplier POs it kept hold only what was delivered before the cancel.
-        if (order.status === OrderStatus.REJECTED && action === 'receive-component' && !isStockOrder(order)) {
+        // v1.0001218 (validator G1): internal stock orders too (a STOCK- order cancelled after 4 of 10 took a second receipt: stock 8, delivered 875.52 on 437.76, REJECTED -> FULFILLED).
+        if (order.status === OrderStatus.REJECTED && action === 'receive-component') {
             throw new Error('Refused: receive-component is not possible on a cancelled (REJECTED) order; its supplier POs keep only what was delivered before the cancel.');
         }
         { const denied = actionRoleDenied(req, action); if (denied) return res.status(403).json({ error: denied }); }
@@ -7544,7 +7588,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
 
             case 'rollback-to-logged':
-                releaseSupplierAllocationsOfOrder(db, order);
+                // v1.0001218: what is released here is put back onto the delivered POs a cancelled order kept (reattachKeptSupplierAllocations below).
+                const rbReleased = releaseSupplierAllocationsOfOrder(db, order);
                 const rollbackOld = JSON.parse(JSON.stringify(order));
                 const nowIso = new Date().toISOString();
                 const todayDate = nowIso.split('T')[0];
@@ -7623,6 +7668,14 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 // Release all received components and trading items in Hub to general warehouse component stock
                 transferReceivedItemsToFreeStock(order, db, `Rollback to Logged: ${payload?.reason || 'Manual rollback'}`, user);
 
+                // v1.0001218: reopening a cancelled order keeps the supplier POs its cancel kept because the supplier delivered on them: they leave the
+                // order lines (the reopened order is planned from scratch and never receives on them) and move to order.keptSupplierPos, which the
+                // supplier ledger, AP and payment allocation still read; the money paid on them stays on them (up to their value).
+                order.items.forEach(item => (item.components || []).forEach(comp => {
+                    if (!isKeptDeliveredPo(comp)) return;
+                    order.keptSupplierPos = (order.keptSupplierPos || []).concat([{ ...comp, keptFromItemId: item.id, keptFromItemDescription: item.description, movedOffOrderLinesAt: nowIso }]);
+                    order.logs.push(createAuditLog(`Delivered supplier PO ${comp.poNumber} kept on reopen: ${comp.description} (${comp.quantity} ${comp.unit || 'pcs'}) stays with the supplier ledger and payables; it is no longer an order line.`, order.status, user));
+                }));
                 // Clear all components added in technical review & reset item approvals
                 order.items.forEach(item => {
                     // Preserve and recover line item price across rollback
@@ -7664,6 +7717,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 delete order.noRfpNeeded;
 
                 reconcileInventory(rollbackOld, order, db);
+                reattachKeptSupplierAllocations(db, order, rbReleased);
                 const orderTypeDesc = order.blanketOrder ? 'Blanket Order' : 'Standard Order';
                 order.logs.push(createAuditLog(`Rollback to Logged (${orderTypeDesc}): SLA reset from scratch, BoM components and cost sheets cleared. Reason: ${payload?.reason || 'Manual rollback'}`, order.status, user));
 
@@ -7764,7 +7818,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             case 'reject-order':
                 { const rjS = rejectSettlementRefusal(order, db.orders || []); if (rjS) throw new Error(rjS); }
-                releaseSupplierAllocationsOfOrder(db, order);
+                // v1.0001218 (validator G2): what is released here is put back onto the POs the cancel keeps (up to their value) by reattachKeptSupplierAllocations below.
+                const rjReleased = releaseSupplierAllocationsOfOrder(db, order);
                 // CX16: a rejected order cannot be rejected again.
                 if (order.status === OrderStatus.REJECTED) throw new Error('Refused: order already rejected');
                 const today = new Date().toISOString().split('T')[0];
@@ -7824,6 +7879,15 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     });
                 });
+                // v1.0001218 (validator G2, G3): every supplier PO the cancel keeps because the supplier delivered on it is marked keptOnOrderCancel
+                // (AP keeps it although the order is REJECTED; a reopen moves it to order.keptSupplierPos), and the money that was paid on it goes back
+                // onto it up to its kept value (supplier PO wallet); only the excess stays in the supplier general wallet.
+                order.items.forEach(item => (item.components || []).forEach(comp => {
+                    if ((comp.source === 'PROCUREMENT' || comp.source === 'CONSUMED') && comp.poNumber && (comp.supplierId || comp.supplierName)
+                        && !['CANCELLED', 'NEW', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED'].includes(String(comp.status || '').toUpperCase())
+                        && ((deliveredBeforeCancel[comp.id] || 0) > 0 || comp.source === 'CONSUMED')) comp.keptOnOrderCancel = true;
+                }));
+                reattachKeptSupplierAllocations(db, order, rjReleased);
                 // R23 (C17): money the customer paid on a cancelled order becomes credit in the customer GENERAL wallet.
                 {
                     const paidOnOrder = Math.round((order.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
@@ -11582,7 +11646,7 @@ const allocatedPerComponent = (db, supplierId) => {
 };
 const poComponentEntries = (db, supplierId, { orderId, poNumber, componentId, all } = {}) => {
     const out = [];
-    (db.orders || []).forEach(order => (order.items || []).forEach(item => (item.components || []).forEach(comp => {
+    (db.orders || []).forEach(order => orderPoComponents(order).forEach(({ comp }) => {  // v1.0001218: kept delivered POs of a reopened order too
         // a fully consumed procured component keeps its PO and supplier (source turns CONSUMED), so payments to that PO still allocate to it
         if (!(comp.source === 'PROCUREMENT' || (comp.source === 'CONSUMED' && comp.poNumber)) || comp.supplierId !== supplierId) return;
         if (NOT_COMMITTED_STATUSES.includes(String(comp.status || '').toUpperCase())) return;
@@ -11590,7 +11654,7 @@ const poComponentEntries = (db, supplierId, { orderId, poNumber, componentId, al
         if (!hit) return;
         const taxRate = comp.taxPercent !== undefined ? comp.taxPercent : 14;
         out.push({ componentId: comp.id, orderId: order.id, orderNumber: order.internalOrderNumber, itemDescription: comp.description, poNumber: comp.poNumber, totalCost: (comp.quantity || 0) * (comp.unitCost || 0) * (1 + taxRate / 100), at: comp.procurementStartedAt || comp.statusUpdatedAt || order.dataEntryTimestamp });
-    })));
+    }));
     out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     return out;
 };
@@ -11720,7 +11784,7 @@ app.get('/api/v1/supplier-ledger/:supplierId', (req, res) => {
         // Gather all components for the selected supplier(s)
         const components = [];
         (db.orders || []).forEach(order => {
-            order.items.forEach(item => {
+            [{ components: orderPoComponents(order).map(x => x.comp) }].forEach(item => {  // v1.0001218: order lines + kept delivered POs of a reopened cancelled order
                 (item.components || []).forEach(comp => {
                     const matchesSupplier = isAll || selectedIds.includes(comp.supplierId);
                     if (matchesSupplier && (comp.source === 'PROCUREMENT' || comp.source === 'CONSUMED') &&
