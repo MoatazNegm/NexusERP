@@ -4462,6 +4462,28 @@ const hasMovedLeftoverShares = (order) => order.movedLeftoverShared === true || 
 // its share like a cash payment (it cannot be voided: its share simply stays off the order). Rows out of the PO (negative) hold none.
 // v1.0001223 (validator 17 G3c): opts.holdersOnly (the re-spread of a share a void did not take) spreads only over payments that
 // already carry a share (they existed at that cancel); a payment recorded after the reopen never receives one, not even as fallback.
+// v1.0001224 (validator 18 G3e): the R30 surplus that sits in the general wallet counts as the NEWEST payments' money (free = payment
+// L.E. - its share). The reopen spread takes all payments newest first and marks each of them (payment.movedLeftoverAtSpread,
+// server-owned like the share); a later re-spread or a void takes the payments marked at the latest reopen first (newest first) and only
+// then the others (a payment recorded after that reopen was never surplus of the order). An order without the mark (earlier version)
+// takes the payments that carry a share first. Returns a Map payment -> its slice of surplusLE (L.E.).
+function surplusSlicesLE(order, surplusLE, fx, presentFirst) {
+    const pays = (order.payments || []).filter(p => p && Number(p.amount) > 0);
+    const slices = new Map();
+    const atSpread = (p) => p.movedLeftoverAtSpread === true;
+    const firstOf = pays.some(atSpread) ? atSpread : hasPaymentShare;
+    const groups = presentFirst && pays.some(firstOf) ? [pays.filter(firstOf), pays.filter(p => !firstOf(p))] : [pays];
+    let rest = Math.max(0, r2w(surplusLE));
+    groups.forEach(g => {
+        for (let k = g.length - 1; k >= 0; k--) {
+            const free = Math.max(0, r2w(paymentLE(g[k], fx) - (Number(g[k].movedLeftoverLE) || 0)));
+            const sl = r2w(Math.min(free, rest));
+            rest = r2w(rest - sl);
+            slices.set(g[k], sl);
+        }
+    });
+    return slices;
+}
 function spreadMovedLeftoverLE(order, deltaLE, opts = {}) {
     const d = r2w(deltaLE);
     if (!(d > 0.004)) return 0;
@@ -4470,15 +4492,12 @@ function spreadMovedLeftoverLE(order, deltaLE, opts = {}) {
     if (!pays.length) return 0;
     const holder = pays.map(p => !opts.holdersOnly || hasPaymentShare(p));
     if (!holder.some(Boolean)) return 0;
-    let surplusLE = (order.blanketOrder || order.blanketContractId) ? 0
+    const surplusLE = (order.blanketOrder || order.blanketContractId) ? 0
         : ((order.surplusMovedToWalletLE !== undefined && order.surplusMovedToWalletLE !== null) ? Number(order.surplusMovedToWalletLE) || 0 : (Number(order.surplusMovedToWallet) || 0) * fx);
-    const cap = new Array(pays.length).fill(0);
-    for (let k = pays.length - 1; k >= 0; k--) {
-        const free = Math.max(0, r2w(paymentLE(pays[k], fx) - (Number(pays[k].movedLeftoverLE) || 0)));
-        const s = Math.min(free, Math.max(0, surplusLE));
-        surplusLE = r2w(surplusLE - s);
-        cap[k] = holder[k] ? r2w(free - s) : 0;
-    }
+    // v1.0001224 (G3e): the reopen spread takes the surplus newest first over all payments; a re-spread (holdersOnly) over the payments
+    // of the latest reopen first, as the void does
+    const sliceOf = surplusSlicesLE(order, surplusLE, fx, Boolean(opts.holdersOnly));
+    const cap = pays.map((p, k) => holder[k] ? r2w(Math.max(0, r2w(paymentLE(p, fx) - (Number(p.movedLeftoverLE) || 0))) - (sliceOf.get(p) || 0)) : 0);
     let base = cap, baseSum = cap.reduce((t, v) => t + v, 0);
     if (!(baseSum > 0.004)) { base = pays.map((p, k) => holder[k] ? Math.max(0, paymentLE(p, fx)) : 0); baseSum = base.reduce((t, v) => t + v, 0); }
     if (!(baseSum > 0.004)) return 0;
@@ -4487,11 +4506,13 @@ function spreadMovedLeftoverLE(order, deltaLE, opts = {}) {
     part[big] = r2w(part[big] + r2w(d - part.reduce((t, v) => t + v, 0)));
     pays.forEach((p, k) => { if (holder[k] && (part[k] > 0.004 || p.movedLeftoverLE !== undefined)) p.movedLeftoverLE = Math.max(0, r2w((Number(p.movedLeftoverLE) || 0) + part[k])); });
     pays.forEach(p => { delete p.paidBeforeMovedLeftover; });
+    // v1.0001224 (G3e): the payments of this reopen (they existed at the cancel) are marked; a payment recorded later never is
+    if (!opts.holdersOnly) pays.forEach(p => { p.movedLeftoverAtSpread = true; });
     order.movedLeftoverShared = true;
     return d;
 }
 // v1.0001223: the share data of an order whose left-over is gone (nothing off the order any more)
-const clearMovedLeftoverShares = (order) => { (order.payments || []).forEach(pp => { if (pp) delete pp.movedLeftoverLE; }); delete order.movedLeftoverShared; };
+const clearMovedLeftoverShares = (order) => { (order.payments || []).forEach(pp => { if (pp) { delete pp.movedLeftoverLE; delete pp.movedLeftoverAtSpread; } }); delete order.movedLeftoverShared; };
 // x: money received from the customer on this PO (account transfers in/out of the PO included)
 const orderPaidIn = (order) => {
     const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
@@ -8967,12 +8988,29 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         // the money still counted on the order after the void is the other payments minus the OTHER payments' left-over
                         // (left-over minus this share). Before, the whole left-over was subtracted: the surplus step kept too little, took too
                         // much surplus and the share was only partly taken (the void result depended on the order of the voids).
-                        const paidNow = (order.payments || []).reduce((sm, pp) => sm + (Number(pp.amount) || 0), 0) - (Number(pv.amount) || 0) - r2w(leftOC - shareOC);
-                        keepSOC = Math.max(0, r2w(paidNow - gross));
-                        const bOC = r2w(Number(order.surplusMovedToWallet) - keepSOC);
+                        const paidAllOC = (order.payments || []).reduce((sm, pp) => sm + (Number(pp.amount) || 0), 0);
+                        const paidNow = paidAllOC - (Number(pv.amount) || 0) - r2w(leftOC - shareOC);
+                        const keepAfterOC = Math.max(0, r2w(paidNow - gross));
+                        // v1.0001224 (validator 18 G3e): a surplus moved to the general wallet BEFORE a cancel is no longer covered by the
+                        // order once a partial reopen left it underpaid (stale part = surplus - what the order holds above its gross before
+                        // the void, with the WHOLE left-over off the order). The reopen spread (spreadMovedLeftoverLE) counts that stale part
+                        // as the newest payments' money (free = payment L.E. - its share); the void takes back the same slice: the drop of
+                        // the covered surplus plus the voided payment's OWN slice of the stale part, the other slices stay in the general
+                        // wallet. A surplus that fits the payments has no stale part (figures unchanged).
+                        const prevLE = leOr(order.surplusMovedToWalletLE, order.surplusMovedToWallet);
+                        const surOC = Number(order.surplusMovedToWallet) || 0;
+                        const keepBeforeOC = Math.max(0, r2w(paidAllOC - leftOC - gross));
+                        const keepBeforeLE = Math.max(0, r2w(orderPaymentsLE(order) - leftLE - gross * fx));
+                        const staleOC = Math.max(0, r2w(surOC - keepBeforeOC));
+                        const staleLE = staleOC > 0.004 ? Math.max(0, r2w(prevLE - keepBeforeLE)) : 0;
+                        // the stale part is the newest payments' money among those of the latest reopen (a later payment never holds it)
+                        const sliceLE = staleLE > 0.004 ? (surplusSlicesLE(order, staleLE, fx, true).get(pv) || 0) : 0;
+                        const sliceOC = ocOf(sliceLE, staleLE, staleOC);
+                        keepSOC = r2w(keepAfterOC + Math.max(0, r2w(staleOC - sliceOC)));
+                        const bOC = r2w(surOC - keepSOC);
                         if (bOC > 0.004) {
-                            const prevLE = leOr(order.surplusMovedToWalletLE, order.surplusMovedToWallet);
-                            keepSLE = keepSOC > 0 ? Math.max(0, r2w(orderPaymentsLE(order) - pvLE - r2w(leftLE - shareLE) - gross * fx)) : 0;
+                            const keepAfterLE = keepAfterOC > 0 ? Math.max(0, r2w(orderPaymentsLE(order) - pvLE - r2w(leftLE - shareLE) - gross * fx)) : 0;
+                            keepSLE = r2w(keepAfterLE + Math.max(0, r2w(staleLE - sliceLE)));
                             backSOC = bOC;
                             backSLE = Math.max(0, r2w(prevLE - keepSLE));
                         }
