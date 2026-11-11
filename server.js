@@ -9024,7 +9024,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         // void (their covered part + their stale part without the voided payment's own slice) and (b) what all remaining
                         // payments hold above the gross. Without a later payment (b) <= (a) and (a) is the v1.0001224 figure (X10, N9,
                         // FB117-FB122 unchanged); a later payment's void takes back only the surplus it moved itself (V2: 200, not 400).
-                        const useSM = perPay && hasMarks && !rejected && (smStored || !hasLater);
+                        // v1.0001226 (validator 20 G3f-c): the same surplus keep on a cancelled (REJECTED) order. The money counted on the
+                        // order is the same there (leftOC / leftLE = the old left-over only, this cancel's credit is not part of it; the later
+                        // payments are kept out of the marked payments' covered part), so a void while the order is cancelled keeps the surplus
+                        // a void in the LOGGED state keeps; the rest of the cash part still comes from this cancel's credit (fromC below).
+                        // Probe W4: cancel #2, void P3, reopen = void P3, cancel #2, reopen (3,000 / 340 / 800 / 200).
+                        const useSM = perPay && hasMarks && (smStored || !hasLater);
                         if (useSM) {
                             const smOC = (smStored && hasLater) ? Math.max(0, Number(order.surplusAtSpread) || 0) : surOC;
                             const smLE = (smStored && hasLater) ? Math.max(0, leOr(order.surplusAtSpreadLE, order.surplusAtSpread)) : prevLE;
@@ -9158,7 +9163,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.logs.push(createAuditLog(`Payment voided: ${vPlan.backSOC.toFixed(2)} ${curVd}${curVd !== 'L.E.' ? ` (${vPlan.backSLE.toFixed(2)} L.E.)` : ''} of the surplus taken back from the customer general wallet.`, order.status, user));
                 }
                 // v1.0001225 (validator 19 G3f): the marked payments' surplus follows the void (server-owned, cleared with the shares);
-                // a void outside that rule (cancelled order, earlier data) never leaves it above the surplus the order still records.
+                // a void outside that rule (earlier data without the field) never leaves it above the surplus the order still records.
                 if (vPlan.smPlan) { order.surplusAtSpread = vPlan.smPlan.oc; order.surplusAtSpreadLE = vPlan.smPlan.le; }
                 else if (order.surplusAtSpread !== undefined && order.surplusAtSpread !== null) {
                     order.surplusAtSpread = r2w(Math.min(Number(order.surplusAtSpread) || 0, Number(order.surplusMovedToWallet) || 0));
