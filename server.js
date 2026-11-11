@@ -4508,11 +4508,14 @@ function spreadMovedLeftoverLE(order, deltaLE, opts = {}) {
     pays.forEach(p => { delete p.paidBeforeMovedLeftover; });
     // v1.0001224 (G3e): the payments of this reopen (they existed at the cancel) are marked; a payment recorded later never is
     if (!opts.holdersOnly) pays.forEach(p => { p.movedLeftoverAtSpread = true; });
+    // v1.0001225 (validator 19 G3f): the surplus the payments of this reopen hold (in the general wallet, stale or covered); a payment
+    // recorded later moves its own surplus on top of it, and a void keeps the two apart (cancel-payment surplus step)
+    if (!opts.holdersOnly) { order.surplusAtSpread = (order.blanketOrder || order.blanketContractId) ? 0 : r2w(Number(order.surplusMovedToWallet) || 0); order.surplusAtSpreadLE = r2w(surplusLE); }
     order.movedLeftoverShared = true;
     return d;
 }
 // v1.0001223: the share data of an order whose left-over is gone (nothing off the order any more)
-const clearMovedLeftoverShares = (order) => { (order.payments || []).forEach(pp => { if (pp) { delete pp.movedLeftoverLE; delete pp.movedLeftoverAtSpread; } }); delete order.movedLeftoverShared; };
+const clearMovedLeftoverShares = (order) => { (order.payments || []).forEach(pp => { if (pp) { delete pp.movedLeftoverLE; delete pp.movedLeftoverAtSpread; } }); delete order.movedLeftoverShared; delete order.surplusAtSpread; delete order.surplusAtSpreadLE; };
 // x: money received from the customer on this PO (account transfers in/out of the PO included)
 const orderPaidIn = (order) => {
     const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
@@ -4905,6 +4908,7 @@ const addToCollection = (col) => (req, res) => {
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     if (col === 'orders') delete newItem.keptSupplierPos; // v1.0001218: server-owned (reopen of a cancelled order)
     if (col === 'orders') delete newItem.movedLeftoverShared; // v1.0001223: server-owned share-model marker (validator 17 G3d)
+    if (col === 'orders') { delete newItem.surplusAtSpread; delete newItem.surplusAtSpreadLE; } // v1.0001225: server-owned (validator 19 G3f)
     const user = req.headers['x-user'] || 'System';
 
     // CX16: two records created in the same millisecond must never share an id.
@@ -5234,6 +5238,8 @@ const updateInCollection = (col) => (req, res) => {
     if (col === 'orders') { if (oldItem.keptSupplierPos !== undefined) updated.keptSupplierPos = oldItem.keptSupplierPos; else delete updated.keptSupplierPos; }
     // v1.0001223 (validator 17 G3d): the share-model marker is server-owned as well (only rollback-to-logged / cancel-payment write it).
     if (col === 'orders') { if (oldItem.movedLeftoverShared !== undefined) updated.movedLeftoverShared = oldItem.movedLeftoverShared; else delete updated.movedLeftoverShared; }
+    // v1.0001225 (validator 19 G3f): the marked payments' surplus of the latest reopen is server-owned too
+    if (col === 'orders') ['surplusAtSpread', 'surplusAtSpreadLE'].forEach(k => { if (oldItem[k] !== undefined) updated[k] = oldItem[k]; else delete updated[k]; });
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
         return res.status(400).json({ error: 'Invalid orderDate.' });
     }
@@ -8981,7 +8987,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const shareLE = isCash && perPay ? Math.max(0, Math.min(leftLE, r2w(Number(pv.movedLeftoverLE) || 0))) : 0;
                     const ocOf = (le, totLE, totOC) => totLE > 0.004 ? (le >= totLE - 0.004 ? totOC : r2w(totOC * le / totLE)) : 0;
                     const shareOC = ocOf(shareLE, leftLE, leftOC);
-                    let backSOC = 0, backSLE = 0, keepSOC = 0, keepSLE = 0;
+                    let backSOC = 0, backSLE = 0, keepSOC = 0, keepSLE = 0, smPlan = null;
                     if (!order.blanketOrder && !order.blanketContractId && Number(order.surplusMovedToWallet) > 0) {
                         const gross = orderCommitmentGross(order);
                         // v1.0001223 (validator 17 G3c): the voided payment's own share leaves the left-over together with the payment, so
@@ -9001,18 +9007,66 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         const surOC = Number(order.surplusMovedToWallet) || 0;
                         const keepBeforeOC = Math.max(0, r2w(paidAllOC - leftOC - gross));
                         const keepBeforeLE = Math.max(0, r2w(orderPaymentsLE(order) - leftLE - gross * fx));
-                        const staleOC = Math.max(0, r2w(surOC - keepBeforeOC));
-                        const staleLE = staleOC > 0.004 ? Math.max(0, r2w(prevLE - keepBeforeLE)) : 0;
-                        // the stale part is the newest payments' money among those of the latest reopen (a later payment never holds it)
-                        const sliceLE = staleLE > 0.004 ? (surplusSlicesLE(order, staleLE, fx, true).get(pv) || 0) : 0;
-                        const sliceOC = ocOf(sliceLE, staleLE, staleOC);
-                        keepSOC = r2w(keepAfterOC + Math.max(0, r2w(staleOC - sliceOC)));
-                        const bOC = r2w(surOC - keepSOC);
-                        if (bOC > 0.004) {
-                            const keepAfterLE = keepAfterOC > 0 ? Math.max(0, r2w(orderPaymentsLE(order) - pvLE - r2w(leftLE - shareLE) - gross * fx)) : 0;
-                            keepSLE = r2w(keepAfterLE + Math.max(0, r2w(staleLE - sliceLE)));
-                            backSOC = bOC;
-                            backSLE = Math.max(0, r2w(prevLE - keepSLE));
+                        // v1.0001225 (validator 19 G3g): the stale part is a rule of the SHARE model only (an order a partial reopen put on
+                        // the share model: shares / movedLeftoverShared). An order that never had a reopen spread (e.g. its gross was raised after an
+                        // overpayment, no cancel) keeps the v1.0001223 rule: the surplus kept is what the remaining payments hold above the
+                        // gross (R30 drop), so a void takes back every part of the surplus the order no longer covers.
+                        const isMarkedPay = (pp) => Boolean(pp) && Number(pp.amount) > 0 && pp.movedLeftoverAtSpread === true;
+                        const isLaterPay = (pp) => Boolean(pp) && Number(pp.amount) > 0 && pp.movedLeftoverAtSpread !== true;
+                        const hasMarks = (order.payments || []).some(isMarkedPay);
+                        const hasLater = hasMarks && (order.payments || []).some(isLaterPay);
+                        const smStored = order.surplusAtSpread !== undefined && order.surplusAtSpread !== null && Number.isFinite(Number(order.surplusAtSpread));
+                        // v1.0001225 (validator 19 G3f): on an order with reopen marks the surplus that the payments of the latest reopen
+                        // hold (order.surplusAtSpread, written by the reopen spread, server-owned, kept current by every void) is kept apart
+                        // from the surplus that payments recorded AFTER that reopen moved: such a later payment first filled what the order
+                        // was still owed (the stale part stays the marked payments' money) and only its rest moved on as its own surplus. A
+                        // void is the undo in that order of events: surplus kept = the larger of (a) the marked payments' surplus after the
+                        // void (their covered part + their stale part without the voided payment's own slice) and (b) what all remaining
+                        // payments hold above the gross. Without a later payment (b) <= (a) and (a) is the v1.0001224 figure (X10, N9,
+                        // FB117-FB122 unchanged); a later payment's void takes back only the surplus it moved itself (V2: 200, not 400).
+                        const useSM = perPay && hasMarks && !rejected && (smStored || !hasLater);
+                        if (useSM) {
+                            const smOC = (smStored && hasLater) ? Math.max(0, Number(order.surplusAtSpread) || 0) : surOC;
+                            const smLE = (smStored && hasLater) ? Math.max(0, leOr(order.surplusAtSpreadLE, order.surplusAtSpread)) : prevLE;
+                            const laterOC = (order.payments || []).filter(isLaterPay).reduce((sm, pp) => sm + (Number(pp.amount) || 0), 0);
+                            const laterLE = hasLater ? orderPaymentsLE(order, isLaterPay) : 0;
+                            const covMOC = Math.max(0, r2w(paidAllOC - leftOC - laterOC - gross));
+                            const covMLE = Math.max(0, r2w(orderPaymentsLE(order) - laterLE - leftLE - gross * fx));
+                            const staleMOC = Math.max(0, r2w(smOC - covMOC));
+                            const staleMLE = staleMOC > 0.004 ? Math.max(0, r2w(smLE - covMLE)) : 0;
+                            let smAfterOC = smOC, smAfterLE = smLE;
+                            if (isMarkedPay(pv)) {
+                                // the stale part is the newest payments' money among those of the latest reopen (a later payment never holds it)
+                                const sliceLE = staleMLE > 0.004 ? (surplusSlicesLE(order, staleMLE, fx, true).get(pv) || 0) : 0;
+                                const sliceOC = ocOf(sliceLE, staleMLE, staleMOC);
+                                const covM2OC = Math.max(0, r2w(paidNow - laterOC - gross));
+                                const covM2LE = covM2OC > 0 ? Math.max(0, r2w(orderPaymentsLE(order) - laterLE - pvLE - r2w(leftLE - shareLE) - gross * fx)) : 0;
+                                smAfterOC = r2w(covM2OC + Math.max(0, r2w(staleMOC - sliceOC)));
+                                smAfterLE = r2w(covM2LE + Math.max(0, r2w(staleMLE - sliceLE)));
+                            }
+                            const useB = keepAfterOC > smAfterOC + 0.004;
+                            keepSOC = Math.min(surOC, useB ? keepAfterOC : smAfterOC);
+                            smPlan = { oc: Math.min(smAfterOC, surOC), le: Math.min(smAfterLE, prevLE) };
+                            const bOC = r2w(surOC - keepSOC);
+                            if (bOC > 0.004) {
+                                const keepAfterLE = useB ? Math.max(0, r2w(orderPaymentsLE(order) - pvLE - r2w(leftLE - shareLE) - gross * fx)) : smAfterLE;
+                                keepSLE = Math.min(prevLE, keepAfterLE);
+                                backSOC = bOC;
+                                backSLE = Math.max(0, r2w(prevLE - keepSLE));
+                            }
+                        } else {
+                            const staleOC = perPay ? Math.max(0, r2w(surOC - keepBeforeOC)) : 0;
+                            const staleLE = staleOC > 0.004 ? Math.max(0, r2w(prevLE - keepBeforeLE)) : 0;
+                            const sliceLE = staleLE > 0.004 ? (surplusSlicesLE(order, staleLE, fx, true).get(pv) || 0) : 0;
+                            const sliceOC = ocOf(sliceLE, staleLE, staleOC);
+                            keepSOC = r2w(keepAfterOC + Math.max(0, r2w(staleOC - sliceOC)));
+                            const bOC = r2w(surOC - keepSOC);
+                            if (bOC > 0.004) {
+                                const keepAfterLE = keepAfterOC > 0 ? Math.max(0, r2w(orderPaymentsLE(order) - pvLE - r2w(leftLE - shareLE) - gross * fx)) : 0;
+                                keepSLE = r2w(keepAfterLE + Math.max(0, r2w(staleLE - sliceLE)));
+                                backSOC = bOC;
+                                backSLE = Math.max(0, r2w(prevLE - keepSLE));
+                            }
                         }
                     }
                     const rest = isCash ? Math.max(0, r2w(pvLE - backSLE)) : 0;
@@ -9032,7 +9086,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     // a cancelled PO whose cancel moved paid money: the whole cash part leaves the general wallet (its wallet part stays there)
                     const movedPath = rejected && movedOC > 0.004 && isCash;
                     const refundLE = movedPath ? r2w(Math.min(c, backSLE + fromC + fromL)) : r2w(Math.min(c, fromL));
-                    return { pv, pvLE, w, c, isCash, rejected, movedPath, movedOC, movedLE, creditOC, creditLE, leftOC, leftLE, backSOC, backSLE, keepSOC, keepSLE, fromC, fromL, perPay, shareLE,
+                    return { smPlan, pv, pvLE, w, c, isCash, rejected, movedPath, movedOC, movedLE, creditOC, creditLE, leftOC, leftLE, backSOC, backSLE, keepSOC, keepSLE, fromC, fromL, perPay, shareLE,
                         fromCOC: ocOf(fromC, creditLE, creditOC), fromLOC: ocOf(fromL, leftLE, leftOC), refundLE };
                 })();
                 {
@@ -9102,6 +9156,13 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.surplusMovedToWallet = vPlan.keepSOC;
                     order.surplusMovedToWalletLE = vPlan.keepSLE;
                     order.logs.push(createAuditLog(`Payment voided: ${vPlan.backSOC.toFixed(2)} ${curVd}${curVd !== 'L.E.' ? ` (${vPlan.backSLE.toFixed(2)} L.E.)` : ''} of the surplus taken back from the customer general wallet.`, order.status, user));
+                }
+                // v1.0001225 (validator 19 G3f): the marked payments' surplus follows the void (server-owned, cleared with the shares);
+                // a void outside that rule (cancelled order, earlier data) never leaves it above the surplus the order still records.
+                if (vPlan.smPlan) { order.surplusAtSpread = vPlan.smPlan.oc; order.surplusAtSpreadLE = vPlan.smPlan.le; }
+                else if (order.surplusAtSpread !== undefined && order.surplusAtSpread !== null) {
+                    order.surplusAtSpread = r2w(Math.min(Number(order.surplusAtSpread) || 0, Number(order.surplusMovedToWallet) || 0));
+                    order.surplusAtSpreadLE = r2w(Math.min(Number(order.surplusAtSpreadLE ?? order.surplusAtSpread) || 0, Number(order.surplusMovedToWalletLE ?? order.surplusMovedToWallet) || 0));
                 }
                 // the paid money of a cancel that the void takes off the order's markers (b: this cancel, c: an earlier one)
                 if ((vPlan.fromC > 0.004 || vPlan.fromL > 0.004) && custV) {
