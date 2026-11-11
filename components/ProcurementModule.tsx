@@ -1279,6 +1279,15 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
     );
   };
 
+  // v1.0001229: the 'Rollback Order' dialog starts on the order's real classification, the rule the server applies when the request names none
+  // (rollback-to-logged, v1.0001228): the blanket flag the order carries; without a flag only a blanket contract link (contractId). A call-off
+  // (blanketContractId, no flag) stays a call-off; an Outsourcing line or the Outsourcing tab never pre-selects 'Blanket Order'. The user's
+  // explicit choice in the dialog is still sent as isBlanket and stays authoritative.
+  const rollbackDefaultIsBlanket = (order: CustomerOrder): boolean => {
+    if (order.blanketOrder !== undefined && order.blanketOrder !== null) return Boolean(order.blanketOrder);
+    return Boolean(order.contractId);
+  };
+
 
   useEffect(() => { fetchData(); }, [refreshKey]);
 
@@ -2451,7 +2460,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
       setPendingRollbackOrder(order);
     } else {
       // No in-transit components, go straight to rollback reason
-      setRollbackIsBlanket(isOrderBlanketType(order) || activeTab === 'outsourcing');
+      setRollbackIsBlanket(rollbackDefaultIsBlanket(order));
       setActiveAction({ type: 'ORDER_ROLLBACK', order });
     }
   };
@@ -2460,7 +2469,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const handleConfirmResolutions = () => {
     if (!pendingRollbackOrder) return;
     // Move to the rollback reason dialog with order context
-    setRollbackIsBlanket(isOrderBlanketType(pendingRollbackOrder) || activeTab === 'outsourcing');
+    setRollbackIsBlanket(rollbackDefaultIsBlanket(pendingRollbackOrder));
     setActiveAction({ type: 'ORDER_ROLLBACK', order: pendingRollbackOrder });
   };
 
