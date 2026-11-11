@@ -4446,6 +4446,39 @@ const orderProjectName = (order, orders = []) => {
 };
 // R30 (23:00, OS09): wallets and costs are shown in L.E.; a foreign-currency order's customer money (typed in the order currency) is converted at the order rate.
 const orderFx = (o) => (o && o.currency && o.currency !== 'L.E.' && Number(o.conversionRate) > 0) ? Number(o.conversionRate) : 1;
+// v1.0001222 (validator 16 G3b): the paid money of a cancel that a reopen could not take back (spent or refunded from the customer
+// general wallet; it stays off the order as paymentMovedToWallet) is recorded PER PAYMENT as payment.movedLeftoverLE (L.E.): each
+// payment's own share of that left-over. A later void of a payment takes back only its own share (never another payment's share of
+// an earlier cancel). An order whose payments carry no share at all is an order of an earlier version (whole left-over, every payment).
+const hasMovedLeftoverShares = (order) => (order.payments || []).some(p => p && p.movedLeftoverLE !== undefined && p.movedLeftoverLE !== null && Number.isFinite(Number(p.movedLeftoverLE)));
+// Adds deltaLE to the payments' shares in proportion to what each payment still held on the order for the cancel that moved it: its
+// L.E. value minus its share so far minus its part of the R30 surplus (the newest payments are the surplus, already in the general
+// wallet). Two-decimal rounding; the cent rest goes to the payment with the largest part. Returns what was spread.
+function spreadMovedLeftoverLE(order, deltaLE) {
+    const d = r2w(deltaLE);
+    if (!(d > 0.004)) return 0;
+    const fx = orderFx(order);
+    const pays = (order.payments || []).filter(p => p && !p.transfer && Number(p.amount) > 0);
+    if (!pays.length) return 0;
+    let surplusLE = (order.blanketOrder || order.blanketContractId) ? 0
+        : ((order.surplusMovedToWalletLE !== undefined && order.surplusMovedToWalletLE !== null) ? Number(order.surplusMovedToWalletLE) || 0 : (Number(order.surplusMovedToWallet) || 0) * fx);
+    const cap = new Array(pays.length).fill(0);
+    for (let k = pays.length - 1; k >= 0; k--) {
+        const free = Math.max(0, r2w(paymentLE(pays[k], fx) - (Number(pays[k].movedLeftoverLE) || 0)));
+        const s = Math.min(free, Math.max(0, surplusLE));
+        surplusLE = r2w(surplusLE - s);
+        cap[k] = r2w(free - s);
+    }
+    let base = cap, baseSum = cap.reduce((t, v) => t + v, 0);
+    if (!(baseSum > 0.004)) { base = pays.map(p => Math.max(0, paymentLE(p, fx))); baseSum = base.reduce((t, v) => t + v, 0); }
+    if (!(baseSum > 0.004)) return 0;
+    const part = base.map(v => r2w(d * v / baseSum));
+    let big = 0; base.forEach((v, k) => { if (v > base[big]) big = k; });
+    part[big] = r2w(part[big] + r2w(d - part.reduce((t, v) => t + v, 0)));
+    pays.forEach((p, k) => { if (part[k] > 0.004 || p.movedLeftoverLE !== undefined) p.movedLeftoverLE = Math.max(0, r2w((Number(p.movedLeftoverLE) || 0) + part[k])); });
+    pays.forEach(p => { delete p.paidBeforeMovedLeftover; });
+    return d;
+}
 // x: money received from the customer on this PO (account transfers in/out of the PO included)
 const orderPaidIn = (order) => {
     const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
@@ -7789,12 +7822,16 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             order.logs.push(createAuditLog(`Reopen: paid amount ${takeOC.toLocaleString()} ${curB}${curB !== 'L.E.' ? ` (${takeLE.toFixed(2)} L.E.)` : ''} taken back from the customer general wallet onto the order.`, order.status, user));
                         }
                         const restOC = r2w(movedOC - takeOC), restLE = r2w(movedLE - takeLE);
-                        if (restOC <= 0.004) { delete order.paymentMovedToWallet; delete order.paymentMovedToWalletLE; }
+                        if (restOC <= 0.004) { delete order.paymentMovedToWallet; delete order.paymentMovedToWalletLE; (order.payments || []).forEach(pp => { if (pp) delete pp.movedLeftoverLE; }); }
                         else { order.paymentMovedToWallet = restOC; order.paymentMovedToWalletLE = Math.max(0, restLE); }
                         if (!all) {
-                            // the payments that exist now are the ones whose money this cancel moved: a later void of one of them takes the part
-                            // that was spent or refunded back from the general wallet; a payment recorded after this reopen is voided as usual.
-                            (order.payments || []).forEach(pp => { if (pp && !pp.transfer) pp.paidBeforeMovedLeftover = true; });
+                            // v1.0001222 (validator 16 G3b): the part of THIS cancel's credit that is no longer in the general wallet becomes
+                            // each payment's own share (payment.movedLeftoverLE, in proportion to what it held on the order for this cancel), so a
+                            // later void of a payment takes back only its own share; a payment recorded after this reopen has no share and is
+                            // voided as usual. An order of an earlier version with an old left-over and no shares gets them here as well
+                            // (the shares then add up to the whole left-over off the order).
+                            const sharesNow = (order.payments || []).reduce((t, pp) => t + (pp && !pp.transfer ? (Number(pp.movedLeftoverLE) || 0) : 0), 0);
+                            spreadMovedLeftoverLE(order, r2w(Math.max(0, restLE) - sharesNow));
                             const oldLeftLE = r2w(movedLE - creditLE);
                             order.logs.push(createAuditLog(`Reopen: ${r2w(creditLE - takeLE).toFixed(2)} L.E. of the paid amount is no longer in the customer general wallet (spent or refunded); it stays off this order, which shows it as unpaid.${oldLeftLE > 0.004 ? ` With the ${oldLeftLE.toFixed(2)} L.E. of an earlier cancel, ${Math.max(0, restLE).toFixed(2)} L.E. is off this order.` : ''}`, order.status, user));
                         }
@@ -7990,7 +8027,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     // v1.0001221 (validator 15e G1, G2): what THIS cancel credits is recorded apart (paymentMovedByCancel, in the order currency and
                     // in L.E.); paymentMovedToWallet stays the total paid money off the order (this credit + an earlier cancel's money that a reopen
                     // could not take back). A reopen takes back only this credit, never the old leftover or later unrelated wallet money.
-                    delete order.paymentMovedByCancel; delete order.paymentMovedByCancelLE;
+                    // v1.0001222 (validator 16 G1b): a cancel that moves nothing records a credit of 0 (not "no field", which a reopen reads
+                    // as an order of an earlier version: all moved money), so a later reopen never takes unrelated advance money onto the order.
+                    order.paymentMovedByCancel = 0; order.paymentMovedByCancelLE = 0;
                     if (moveOC > 0.004 && moveLE > 0.004 && cust) {
                         cust.walletBalances = cust.walletBalances || {};
                         cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + moveLE) * 100) / 100;
@@ -8911,14 +8950,26 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         }
                     }
                     const rest = isCash ? Math.max(0, r2w(pvLE - backSLE)) : 0;
+                    // v1.0001222 (validator 16 G3b): with per-payment shares (movedLeftoverLE) the voided payment reaches (c) only up to its
+                    // OWN share, and that share comes first (it is the part of this payment that is off the order); the rest of its cash part
+                    // then comes from this cancel's credit (b) on a cancelled PO. An order of an earlier version (no shares): every payment
+                    // reaches the whole left-over (a payment flagged paidBeforeMovedLeftover by v1.0001221 only when flagged), credit first.
+                    const perPay = hasMovedLeftoverShares(order);
+                    const shareLE = isCash && perPay ? Math.max(0, Math.min(leftLE, r2w(Number(pv.movedLeftoverLE) || 0))) : 0;
                     const eligible = Boolean(pv.paidBeforeMovedLeftover) || !(order.payments || []).some(pp => pp && pp.paidBeforeMovedLeftover);
-                    const fromC = rejected ? r2w(Math.min(rest, creditLE)) : 0;
-                    const fromL = (rejected || eligible) ? r2w(Math.max(0, Math.min(r2w(rest - fromC), leftLE))) : 0;
+                    let fromC, fromL;
+                    if (perPay) {
+                        fromL = r2w(Math.min(rest, shareLE));
+                        fromC = rejected ? r2w(Math.max(0, Math.min(r2w(rest - fromL), creditLE))) : 0;
+                    } else {
+                        fromC = rejected ? r2w(Math.min(rest, creditLE)) : 0;
+                        fromL = (rejected || eligible) ? r2w(Math.max(0, Math.min(r2w(rest - fromC), leftLE))) : 0;
+                    }
                     const ocOf = (le, totLE, totOC) => totLE > 0.004 ? (le >= totLE - 0.004 ? totOC : r2w(totOC * le / totLE)) : 0;
                     // a cancelled PO whose cancel moved paid money: the whole cash part leaves the general wallet (its wallet part stays there)
                     const movedPath = rejected && movedOC > 0.004 && isCash;
                     const refundLE = movedPath ? r2w(Math.min(c, backSLE + fromC + fromL)) : r2w(Math.min(c, fromL));
-                    return { pv, pvLE, w, c, isCash, rejected, movedPath, movedOC, movedLE, creditOC, creditLE, leftOC, leftLE, backSOC, backSLE, keepSOC, keepSLE, fromC, fromL,
+                    return { pv, pvLE, w, c, isCash, rejected, movedPath, movedOC, movedLE, creditOC, creditLE, leftOC, leftLE, backSOC, backSLE, keepSOC, keepSLE, fromC, fromL, perPay, shareLE,
                         fromCOC: ocOf(fromC, creditLE, creditOC), fromLOC: ocOf(fromL, leftLE, leftOC), refundLE };
                 })();
                 {
@@ -8941,10 +8992,20 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         // stored general bucket minus the company costs linked to no PO), as for refund and pay-from-wallet.
                         const inGG = custG ? r2w(availableGeneralWallet(db, custG) + backToG) : 0;
                         if (!custG || inGG < needG - 0.004) {
-                            // v1.0001221 (G5): the text names what the void takes back
-                            const why = vp.rejected ? ['the paid money of the cancelled PO moved there'] : [];
-                            if (!vp.rejected && vp.backSLE > 0.004) why.push('the PO surplus moved there');
-                            if (!vp.rejected && vp.fromL > 0.004) why.push('the paid money of an earlier cancel of this PO that was spent or refunded there and that the reopen could not take back');
+                            // v1.0001221 (G5) / v1.0001222 (validator 16 G5): the text names what the void takes back; when it takes more than one
+                            // part (surplus, this payment's share of an earlier cancel, this cancel's credit) each part is named with its amount,
+                            // in the order the plan takes them, up to the total (one part: the total already is its amount, text unchanged).
+                            const TXT_S = 'the PO surplus moved there', TXT_C = 'the paid money of the cancelled PO moved there';
+                            const TXT_L = 'the paid money of an earlier cancel of this PO that was spent or refunded there and that the reopen could not take back';
+                            const parts = [];
+                            let leftN = needG;
+                            const addWhy = (amt, txt) => { const a = r2w(Math.min(Math.max(0, amt), leftN)); if (a > 0.004) { parts.push([a, txt]); leftN = r2w(leftN - a); } };
+                            addWhy(vp.backSLE, TXT_S);
+                            if (vp.perPay) addWhy(vp.fromL, TXT_L);
+                            addWhy(vp.fromC, TXT_C);
+                            if (!vp.perPay) addWhy(vp.fromL, TXT_L);
+                            addWhy(leftN, vp.rejected ? TXT_C : TXT_L);
+                            const why = parts.length > 1 ? parts.map(([a, t]) => `${a.toFixed(2)} L.E. of ${t}`) : parts.map(([, t]) => t);
                             throw new Error(`Refused: voiding payment ${vp.pv.receiptNumber || payload.index} of PO ${order.internalOrderNumber} takes back ${needG.toFixed(2)} L.E. from the customer general wallet (${why.join('; ')}), but the general wallet holds only ${inGG.toFixed(2)} L.E. - bring the money back to the general wallet first, then void the payment.`);
                         }
                     }
@@ -8961,7 +9022,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.logs.push(createAuditLog(msgC, order.status, user));
                     if (order !== rootC) { rootC.logs = rootC.logs || []; rootC.logs.push(createAuditLog(msgC, rootC.status, user)); }
                 }
-                order.logs.push(createAuditLog(`Payment of ${removed.amount} VOIDED: ${payload.reason || 'Correction'}`, order.status, user));
+                // v1.0001222 (validator 16 G5): the void log carries the order currency (a foreign-currency order also shows the L.E.)
+                const curVd = order.currency && order.currency !== 'L.E.' ? order.currency : 'L.E.';
+                order.logs.push(createAuditLog(`Payment of ${(Number(removed.amount) || 0).toLocaleString()} ${curVd}${curVd !== 'L.E.' ? ` (${vPlan.pvLE.toFixed(2)} L.E.)` : ''} VOIDED: ${payload.reason || 'Correction'}`, order.status, user));
                 const custV = (db.customers || []).find(c => c.name === order.customerName);
                 const takeGeneral = (amt) => {
                     if (!custV || Math.abs(amt) <= 0.004) return;
@@ -8975,7 +9038,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     takeGeneral(vPlan.backSLE);
                     order.surplusMovedToWallet = vPlan.keepSOC;
                     order.surplusMovedToWalletLE = vPlan.keepSLE;
-                    order.logs.push(createAuditLog(`Payment voided: ${vPlan.backSOC.toFixed(2)} of the surplus taken back from the customer general wallet.`, order.status, user));
+                    order.logs.push(createAuditLog(`Payment voided: ${vPlan.backSOC.toFixed(2)} ${curVd}${curVd !== 'L.E.' ? ` (${vPlan.backSLE.toFixed(2)} L.E.)` : ''} of the surplus taken back from the customer general wallet.`, order.status, user));
                 }
                 // the paid money of a cancel that the void takes off the order's markers (b: this cancel, c: an earlier one)
                 if ((vPlan.fromC > 0.004 || vPlan.fromL > 0.004) && custV) {
@@ -8986,6 +9049,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         order.paymentMovedByCancelLE = Math.max(0, r2w(vPlan.creditLE - vPlan.fromC));
                     }
                 }
+                // v1.0001222 (validator 16 G3b): a share of the voided payment that the void did not take (its cash part went to the surplus
+                // first) stays off the order; it moves to the remaining payments so the shares still add up to the left-over.
+                if (vPlan.perPay && r2w(vPlan.shareLE - vPlan.fromL) > 0.004) spreadMovedLeftoverLE(order, r2w(vPlan.shareLE - vPlan.fromL));
+                if (!(Number(order.paymentMovedToWallet) > 0.004)) (order.payments || []).forEach(pp => { if (pp) delete pp.movedLeftoverLE; });
                 if (order.status === OrderStatus.WAITING_GOVE && !isOrderFullyPaid(order)) { order.status = OrderStatus.DELIVERED; setGovWaitLines(order, false); }
                 // R34 round 7 (validator 6, defect 7): every figure of the void is in L.E. A pay-from-wallet payment is split into its
                 // wallet part (walletPartLE: money that was already in the bank as a customer advance) and its cash part (the rest of the
