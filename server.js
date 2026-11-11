@@ -4450,16 +4450,26 @@ const orderFx = (o) => (o && o.currency && o.currency !== 'L.E.' && Number(o.con
 // general wallet; it stays off the order as paymentMovedToWallet) is recorded PER PAYMENT as payment.movedLeftoverLE (L.E.): each
 // payment's own share of that left-over. A later void of a payment takes back only its own share (never another payment's share of
 // an earlier cancel). An order whose payments carry no share at all is an order of an earlier version (whole left-over, every payment).
-const hasMovedLeftoverShares = (order) => (order.payments || []).some(p => p && p.movedLeftoverLE !== undefined && p.movedLeftoverLE !== null && Number.isFinite(Number(p.movedLeftoverLE)));
+// v1.0001223 (validator 17 G3d): once a reopen spread shares, the order is marked (order.movedLeftoverShared, server-owned) and stays
+// on the share model for good, also when no payment carries a share any more (e.g. the only share holder was voided): the rule of
+// an earlier version (whole left-over, every payment) applies only to an order without any share data.
+const hasPaymentShare = (p) => Boolean(p) && p.movedLeftoverLE !== undefined && p.movedLeftoverLE !== null && Number.isFinite(Number(p.movedLeftoverLE));
+const hasMovedLeftoverShares = (order) => order.movedLeftoverShared === true || (order.payments || []).some(hasPaymentShare);
 // Adds deltaLE to the payments' shares in proportion to what each payment still held on the order for the cancel that moved it: its
 // L.E. value minus its share so far minus its part of the R30 surplus (the newest payments are the surplus, already in the general
 // wallet). Two-decimal rounding; the cent rest goes to the payment with the largest part. Returns what was spread.
-function spreadMovedLeftoverLE(order, deltaLE) {
+// v1.0001223 (validator 17 G3d): a wallet-transfer row INTO the PO is money that was on the order at the cancel as well, so it holds
+// its share like a cash payment (it cannot be voided: its share simply stays off the order). Rows out of the PO (negative) hold none.
+// v1.0001223 (validator 17 G3c): opts.holdersOnly (the re-spread of a share a void did not take) spreads only over payments that
+// already carry a share (they existed at that cancel); a payment recorded after the reopen never receives one, not even as fallback.
+function spreadMovedLeftoverLE(order, deltaLE, opts = {}) {
     const d = r2w(deltaLE);
     if (!(d > 0.004)) return 0;
     const fx = orderFx(order);
-    const pays = (order.payments || []).filter(p => p && !p.transfer && Number(p.amount) > 0);
+    const pays = (order.payments || []).filter(p => p && Number(p.amount) > 0);
     if (!pays.length) return 0;
+    const holder = pays.map(p => !opts.holdersOnly || hasPaymentShare(p));
+    if (!holder.some(Boolean)) return 0;
     let surplusLE = (order.blanketOrder || order.blanketContractId) ? 0
         : ((order.surplusMovedToWalletLE !== undefined && order.surplusMovedToWalletLE !== null) ? Number(order.surplusMovedToWalletLE) || 0 : (Number(order.surplusMovedToWallet) || 0) * fx);
     const cap = new Array(pays.length).fill(0);
@@ -4467,18 +4477,21 @@ function spreadMovedLeftoverLE(order, deltaLE) {
         const free = Math.max(0, r2w(paymentLE(pays[k], fx) - (Number(pays[k].movedLeftoverLE) || 0)));
         const s = Math.min(free, Math.max(0, surplusLE));
         surplusLE = r2w(surplusLE - s);
-        cap[k] = r2w(free - s);
+        cap[k] = holder[k] ? r2w(free - s) : 0;
     }
     let base = cap, baseSum = cap.reduce((t, v) => t + v, 0);
-    if (!(baseSum > 0.004)) { base = pays.map(p => Math.max(0, paymentLE(p, fx))); baseSum = base.reduce((t, v) => t + v, 0); }
+    if (!(baseSum > 0.004)) { base = pays.map((p, k) => holder[k] ? Math.max(0, paymentLE(p, fx)) : 0); baseSum = base.reduce((t, v) => t + v, 0); }
     if (!(baseSum > 0.004)) return 0;
     const part = base.map(v => r2w(d * v / baseSum));
     let big = 0; base.forEach((v, k) => { if (v > base[big]) big = k; });
     part[big] = r2w(part[big] + r2w(d - part.reduce((t, v) => t + v, 0)));
-    pays.forEach((p, k) => { if (part[k] > 0.004 || p.movedLeftoverLE !== undefined) p.movedLeftoverLE = Math.max(0, r2w((Number(p.movedLeftoverLE) || 0) + part[k])); });
+    pays.forEach((p, k) => { if (holder[k] && (part[k] > 0.004 || p.movedLeftoverLE !== undefined)) p.movedLeftoverLE = Math.max(0, r2w((Number(p.movedLeftoverLE) || 0) + part[k])); });
     pays.forEach(p => { delete p.paidBeforeMovedLeftover; });
+    order.movedLeftoverShared = true;
     return d;
 }
+// v1.0001223: the share data of an order whose left-over is gone (nothing off the order any more)
+const clearMovedLeftoverShares = (order) => { (order.payments || []).forEach(pp => { if (pp) delete pp.movedLeftoverLE; }); delete order.movedLeftoverShared; };
 // x: money received from the customer on this PO (account transfers in/out of the PO included)
 const orderPaidIn = (order) => {
     const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
@@ -4870,6 +4883,7 @@ const addToCollection = (col) => (req, res) => {
 
     let newItem = { id: `${col}_${Date.now()}`, ...req.body };
     if (col === 'orders') delete newItem.keptSupplierPos; // v1.0001218: server-owned (reopen of a cancelled order)
+    if (col === 'orders') delete newItem.movedLeftoverShared; // v1.0001223: server-owned share-model marker (validator 17 G3d)
     const user = req.headers['x-user'] || 'System';
 
     // CX16: two records created in the same millisecond must never share an id.
@@ -5197,6 +5211,8 @@ const updateInCollection = (col) => (req, res) => {
     let updated = { ...oldItem, ...req.body };
     // v1.0001218: the delivered supplier POs a reopened cancelled order kept are server-owned (only reject-order / rollback-to-logged write them).
     if (col === 'orders') { if (oldItem.keptSupplierPos !== undefined) updated.keptSupplierPos = oldItem.keptSupplierPos; else delete updated.keptSupplierPos; }
+    // v1.0001223 (validator 17 G3d): the share-model marker is server-owned as well (only rollback-to-logged / cancel-payment write it).
+    if (col === 'orders') { if (oldItem.movedLeftoverShared !== undefined) updated.movedLeftoverShared = oldItem.movedLeftoverShared; else delete updated.movedLeftoverShared; }
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
         return res.status(400).json({ error: 'Invalid orderDate.' });
     }
@@ -7822,7 +7838,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             order.logs.push(createAuditLog(`Reopen: paid amount ${takeOC.toLocaleString()} ${curB}${curB !== 'L.E.' ? ` (${takeLE.toFixed(2)} L.E.)` : ''} taken back from the customer general wallet onto the order.`, order.status, user));
                         }
                         const restOC = r2w(movedOC - takeOC), restLE = r2w(movedLE - takeLE);
-                        if (restOC <= 0.004) { delete order.paymentMovedToWallet; delete order.paymentMovedToWalletLE; (order.payments || []).forEach(pp => { if (pp) delete pp.movedLeftoverLE; }); }
+                        if (restOC <= 0.004) { delete order.paymentMovedToWallet; delete order.paymentMovedToWalletLE; clearMovedLeftoverShares(order); }
                         else { order.paymentMovedToWallet = restOC; order.paymentMovedToWalletLE = Math.max(0, restLE); }
                         if (!all) {
                             // v1.0001222 (validator 16 G3b): the part of THIS cancel's credit that is no longer in the general wallet becomes
@@ -7830,7 +7846,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                             // later void of a payment takes back only its own share; a payment recorded after this reopen has no share and is
                             // voided as usual. An order of an earlier version with an old left-over and no shares gets them here as well
                             // (the shares then add up to the whole left-over off the order).
-                            const sharesNow = (order.payments || []).reduce((t, pp) => t + (pp && !pp.transfer ? (Number(pp.movedLeftoverLE) || 0) : 0), 0);
+                            // v1.0001223 (G3d): wallet-transfer rows into the PO hold shares too
+                            const sharesNow = (order.payments || []).reduce((t, pp) => t + (pp ? (Number(pp.movedLeftoverLE) || 0) : 0), 0);
                             spreadMovedLeftoverLE(order, r2w(Math.max(0, restLE) - sharesNow));
                             const oldLeftLE = r2w(movedLE - creditLE);
                             order.logs.push(createAuditLog(`Reopen: ${r2w(creditLE - takeLE).toFixed(2)} L.E. of the paid amount is no longer in the customer general wallet (spent or refunded); it stays off this order, which shows it as unpaid.${oldLeftLE > 0.004 ? ` With the ${oldLeftLE.toFixed(2)} L.E. of an earlier cancel, ${Math.max(0, restLE).toFixed(2)} L.E. is off this order.` : ''}`, order.status, user));
@@ -8936,26 +8953,35 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const creditOC = rejected ? Math.min(movedOC, hasCredit ? (Number(order.paymentMovedByCancel) || 0) : movedOC) : 0;
                     const creditLE = rejected ? Math.min(movedLE, hasCredit ? leOr(order.paymentMovedByCancelLE, order.paymentMovedByCancel) : movedLE) : 0;
                     const leftOC = Math.max(0, r2w(movedOC - creditOC)), leftLE = Math.max(0, r2w(movedLE - creditLE));
+                    // v1.0001222 (validator 16 G3b) / v1.0001223 (validator 17 G3d): with per-payment shares (movedLeftoverLE) the voided
+                    // payment reaches (c) only up to its OWN share. Once an order was on the share model it stays there (order marker):
+                    // a payment without a share (recorded after the reopen) reaches none of the left-over.
+                    const perPay = hasMovedLeftoverShares(order);
+                    const shareLE = isCash && perPay ? Math.max(0, Math.min(leftLE, r2w(Number(pv.movedLeftoverLE) || 0))) : 0;
+                    const ocOf = (le, totLE, totOC) => totLE > 0.004 ? (le >= totLE - 0.004 ? totOC : r2w(totOC * le / totLE)) : 0;
+                    const shareOC = ocOf(shareLE, leftLE, leftOC);
                     let backSOC = 0, backSLE = 0, keepSOC = 0, keepSLE = 0;
                     if (!order.blanketOrder && !order.blanketContractId && Number(order.surplusMovedToWallet) > 0) {
                         const gross = orderCommitmentGross(order);
-                        const paidNow = (order.payments || []).reduce((sm, pp) => sm + (Number(pp.amount) || 0), 0) - (Number(pv.amount) || 0) - leftOC;
+                        // v1.0001223 (validator 17 G3c): the voided payment's own share leaves the left-over together with the payment, so
+                        // the money still counted on the order after the void is the other payments minus the OTHER payments' left-over
+                        // (left-over minus this share). Before, the whole left-over was subtracted: the surplus step kept too little, took too
+                        // much surplus and the share was only partly taken (the void result depended on the order of the voids).
+                        const paidNow = (order.payments || []).reduce((sm, pp) => sm + (Number(pp.amount) || 0), 0) - (Number(pv.amount) || 0) - r2w(leftOC - shareOC);
                         keepSOC = Math.max(0, r2w(paidNow - gross));
                         const bOC = r2w(Number(order.surplusMovedToWallet) - keepSOC);
                         if (bOC > 0.004) {
                             const prevLE = leOr(order.surplusMovedToWalletLE, order.surplusMovedToWallet);
-                            keepSLE = keepSOC > 0 ? Math.max(0, r2w(orderPaymentsLE(order) - pvLE - leftLE - gross * fx)) : 0;
+                            keepSLE = keepSOC > 0 ? Math.max(0, r2w(orderPaymentsLE(order) - pvLE - r2w(leftLE - shareLE) - gross * fx)) : 0;
                             backSOC = bOC;
                             backSLE = Math.max(0, r2w(prevLE - keepSLE));
                         }
                     }
                     const rest = isCash ? Math.max(0, r2w(pvLE - backSLE)) : 0;
-                    // v1.0001222 (validator 16 G3b): with per-payment shares (movedLeftoverLE) the voided payment reaches (c) only up to its
-                    // OWN share, and that share comes first (it is the part of this payment that is off the order); the rest of its cash part
-                    // then comes from this cancel's credit (b) on a cancelled PO. An order of an earlier version (no shares): every payment
-                    // reaches the whole left-over (a payment flagged paidBeforeMovedLeftover by v1.0001221 only when flagged), credit first.
-                    const perPay = hasMovedLeftoverShares(order);
-                    const shareLE = isCash && perPay ? Math.max(0, Math.min(leftLE, r2w(Number(pv.movedLeftoverLE) || 0))) : 0;
+                    // v1.0001222 (validator 16 G3b): the voided payment's OWN share comes first (it is the part of this payment that is off
+                    // the order); the rest of its cash part then comes from this cancel's credit (b) on a cancelled PO. An order of an
+                    // earlier version (no share data at all): every payment reaches the whole left-over (a payment flagged
+                    // paidBeforeMovedLeftover by v1.0001221 only when flagged), credit first.
                     const eligible = Boolean(pv.paidBeforeMovedLeftover) || !(order.payments || []).some(pp => pp && pp.paidBeforeMovedLeftover);
                     let fromC, fromL;
                     if (perPay) {
@@ -8965,7 +8991,6 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         fromC = rejected ? r2w(Math.min(rest, creditLE)) : 0;
                         fromL = (rejected || eligible) ? r2w(Math.max(0, Math.min(r2w(rest - fromC), leftLE))) : 0;
                     }
-                    const ocOf = (le, totLE, totOC) => totLE > 0.004 ? (le >= totLE - 0.004 ? totOC : r2w(totOC * le / totLE)) : 0;
                     // a cancelled PO whose cancel moved paid money: the whole cash part leaves the general wallet (its wallet part stays there)
                     const movedPath = rejected && movedOC > 0.004 && isCash;
                     const refundLE = movedPath ? r2w(Math.min(c, backSLE + fromC + fromL)) : r2w(Math.min(c, fromL));
@@ -9049,10 +9074,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                         order.paymentMovedByCancelLE = Math.max(0, r2w(vPlan.creditLE - vPlan.fromC));
                     }
                 }
-                // v1.0001222 (validator 16 G3b): a share of the voided payment that the void did not take (its cash part went to the surplus
-                // first) stays off the order; it moves to the remaining payments so the shares still add up to the left-over.
-                if (vPlan.perPay && r2w(vPlan.shareLE - vPlan.fromL) > 0.004) spreadMovedLeftoverLE(order, r2w(vPlan.shareLE - vPlan.fromL));
-                if (!(Number(order.paymentMovedToWallet) > 0.004)) (order.payments || []).forEach(pp => { if (pp) delete pp.movedLeftoverLE; });
+                // v1.0001222 (validator 16 G3b): a share of the voided payment that the void did not take stays off the order; it moves to
+                // the remaining payments so the shares still add up to the left-over. v1.0001223 (validator 17 G3c): the surplus step now
+                // leaves the share whole, so this happens only on an order whose surplus figure no longer fits its payments; the share
+                // then moves only to payments that already carry one (never to a payment recorded after the reopen).
+                if (vPlan.perPay && r2w(vPlan.shareLE - vPlan.fromL) > 0.004) spreadMovedLeftoverLE(order, r2w(vPlan.shareLE - vPlan.fromL), { holdersOnly: true });
+                if (!(Number(order.paymentMovedToWallet) > 0.004)) clearMovedLeftoverShares(order);
                 if (order.status === OrderStatus.WAITING_GOVE && !isOrderFullyPaid(order)) { order.status = OrderStatus.DELIVERED; setGovWaitLines(order, false); }
                 // R34 round 7 (validator 6, defect 7): every figure of the void is in L.E. A pay-from-wallet payment is split into its
                 // wallet part (walletPartLE: money that was already in the bank as a customer advance) and its cash part (the rest of the
