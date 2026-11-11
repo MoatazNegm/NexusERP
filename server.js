@@ -7732,7 +7732,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 if (payload && payload.isBlanket !== undefined) {
                     order.blanketOrder = Boolean(payload.isBlanket);
                 } else if (order.blanketOrder === undefined) {
-                    order.blanketOrder = Boolean(order.contractId || order.blanketContractId || (order.items && order.items.some(i => i.productionType === 'OUTSOURCING')));
+                    // v1.0001228 (validator r24b): only a blanket contract root (contractId) defaults to blanket. An Outsourcing line or a
+                    // call-off link (blanketContractId) never makes a normal order a blanket root: that moved its AR to committed 0 and
+                    // turned a call-off into a root. payload.isBlanket stays authoritative; real blankets carry the flag from creation.
+                    order.blanketOrder = Boolean(order.contractId);
                 }
 
                 // Restore any stock-allocated components back to their source stock orders
