@@ -32,8 +32,11 @@ export const orderCommitmentGrossAP = (order) => {
 // money received from the customer on this PO (account transfers in/out of the PO included)
 export const orderPaidInAP = (order) => {
     const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
-    if (order.status === REJECTED) return Math.max(0, r2w(paid - (Number(order.paymentMovedToWallet) || 0)));
-    return r2w(paid - (Number(order.surplusMovedToWallet) || 0));
+    // v1.0001220 (N1): the surplus moved to the customer general wallet and the paid money of a cancel still sitting there
+    // (paymentMovedToWallet; a reopen takes it back and clears it) are counted in the wallet only, whatever the status.
+    const moved = r2w((Number(order.surplusMovedToWallet) || 0) + (Number(order.paymentMovedToWallet) || 0));
+    if (order.status === REJECTED) return Math.max(0, r2w(paid - moved));
+    return r2w(paid - moved);
 };
 // R34 round 4 (validator 3, D3): an order is typed in its own currency; AR (like Cash / Bank and the wallets) is in L.E., so a
 // foreign-currency order's commitment and the money received on it are converted at the order rate.
@@ -46,8 +49,11 @@ export const orderPaidInLE = (order) => {
     const fx = orderFxRate(order);
     const paidLE = orderPaymentsLE(order);
     const movedLE = (le, oc) => (le !== undefined && le !== null && Number.isFinite(Number(le))) ? Number(le) : (Number(oc) || 0) * fx;
-    if (order.status === REJECTED) return Math.max(0, r2w(paidLE - movedLE(order.paymentMovedToWalletLE, order.paymentMovedToWallet)));
-    return r2w(paidLE - movedLE(order.surplusMovedToWalletLE, order.surplusMovedToWallet));
+    // v1.0001220 (N1): both moves are taken off whatever the status (a reopened cancelled order keeps paymentMovedToWallet only for
+    // the part its reopen could not take back from the general wallet, so the customer money is counted once).
+    const outLE = r2w(movedLE(order.surplusMovedToWalletLE, order.surplusMovedToWallet) + movedLE(order.paymentMovedToWalletLE, order.paymentMovedToWallet));
+    if (order.status === REJECTED) return Math.max(0, r2w(paidLE - outLE));
+    return r2w(paidLE - outLE);
 };
 const orderProjectNameAP = (order, orders = []) => {
     let proj = String((order.projectName || '').trim());

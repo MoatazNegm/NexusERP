@@ -850,7 +850,10 @@ const orderWhtAmount = (order) => {
 
 const isOrderFullyPaid = (order) => {
     if (!order.payments) return false;
-    const totalPaid = order.payments.reduce((s, p) => s + (p.amount || 0), 0);
+    // v1.0001220 (N1): on a reopened cancelled order, paid money its reopen could not take back from the customer general wallet
+    // (paymentMovedToWallet left over: spent or refunded there) no longer pays this order.
+    const leftInWallet = order.status !== OrderStatus.REJECTED ? (Number(order.paymentMovedToWallet) || 0) : 0;
+    const totalPaid = order.payments.reduce((s, p) => s + (p.amount || 0), 0) - leftInWallet;
     let revenue = 0;
     (order.items || []).forEach(it => {
         revenue += ((getItemEffectiveQty(it) || 0) * (it.pricePerUnit || 0) * (1 + ((it.taxPercent || 0) / 100)));
@@ -4446,10 +4449,12 @@ const orderFx = (o) => (o && o.currency && o.currency !== 'L.E.' && Number(o.con
 // x: money received from the customer on this PO (account transfers in/out of the PO included)
 const orderPaidIn = (order) => {
     const paid = r2w((order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0));
+    // v1.0001220 (N1): money moved from the PO to the customer general wallet is counted there only, whatever the status: the surplus
+    // above the PO gross (R30, closed blanket overpayment) and the paid money of a cancel (R23 C17) that a reopen could not take back.
+    const moved = r2w((Number(order.surplusMovedToWallet) || 0) + (Number(order.paymentMovedToWallet) || 0));
     // a cancelled (rejected) PO keeps no customer money: what was paid moved to the customer general wallet
-    if (order.status === OrderStatus.REJECTED) return Math.max(0, r2w(paid - (Number(order.paymentMovedToWallet) || 0)));
-    // a closed blanket order's overpayment was moved to the customer general wallet (the payment records stay for the reports)
-    return r2w(paid - (Number(order.surplusMovedToWallet) || 0));
+    if (order.status === OrderStatus.REJECTED) return Math.max(0, r2w(paid - moved));
+    return r2w(paid - moved);
 };
 // y: money the company paid to suppliers for this PO (gross); supplier refunds are negative payments
 // v1.0001218: money kept on a delivered supplier PO of a cancelled order (or of a reopened one, keptSupplierPos) is a company cost of the cancelled
@@ -5770,7 +5775,9 @@ const ledgerPush = (db, e, user) => {
 // The surplus is in the order currency; the wallet holds L.E. (x the order rate).
 function moveOrderSurplusToGeneralWallet(db, order, user) {
     if (!order || order.blanketOrder || order.blanketContractId) return 0;
-    const totalPaid = (order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    // v1.0001220 (N1): paid money of a cancel still in the customer general wallet (a reopen could not take it back) is not on the PO.
+    const leftOC = Number(order.paymentMovedToWallet) || 0;
+    const totalPaid = (order.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0) - leftOC;
     const gross = orderCommitmentGross(order);
     const surplus = Math.round((totalPaid - (Number(order.surplusMovedToWallet) || 0) - gross) * 100) / 100;
     const custS = (db.customers || []).find(c => c.name === order.customerName);
@@ -5779,8 +5786,9 @@ function moveOrderSurplusToGeneralWallet(db, order, user) {
     // in L.E. keep their exact amountLE), so PO + wallet = the L.E. money received, without a rounding cent.
     const fxS = orderFx(order);
     const prevLE = (order.surplusMovedToWalletLE !== undefined && order.surplusMovedToWalletLE !== null) ? Number(order.surplusMovedToWalletLE) || 0 : (Number(order.surplusMovedToWallet) || 0) * fxS;
+    const leftLE = (order.paymentMovedToWalletLE !== undefined && order.paymentMovedToWalletLE !== null) ? Number(order.paymentMovedToWalletLE) || 0 : leftOC * fxS;
     const surplusLE = (order.payments || []).some(p => p && p.amountLE !== undefined && p.amountLE !== null)
-        ? Math.max(0, Math.round((orderPaymentsLE(order) - prevLE - gross * fxS) * 100) / 100)
+        ? Math.max(0, Math.round((orderPaymentsLE(order) - leftLE - prevLE - gross * fxS) * 100) / 100)
         : Math.round(surplus * fxS * 100) / 100;
     custS.walletBalances = custS.walletBalances || {};
     custS.walletBalances[SELF_WALLET_KEY] = Math.round(((custS.walletBalances[SELF_WALLET_KEY] || 0) + surplusLE) * 100) / 100;
@@ -7748,6 +7756,34 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
                 reconcileInventory(rollbackOld, order, db);
                 reattachKeptSupplierAllocations(db, order, rbReleased);
+                // v1.0001220 (N1): reopening a cancelled order takes the paid money its cancel moved to the customer general wallet (R23 C17)
+                // back onto the order, so the customer money is counted once (before: general wallet AND PO wallet, Ledger variance = the
+                // amount). It takes back what the spendable general wallet still holds (rule G1, as void / refund / pay-from-wallet); a part
+                // that was spent or refunded meanwhile stays recorded as paymentMovedToWallet and is not counted on the order (orderPaidIn).
+                {
+                    const movedOC = Number(order.paymentMovedToWallet) || 0;
+                    const custB = movedOC > 0.004 ? (db.customers || []).find(c => c.name === order.customerName) : null;
+                    if (custB) {
+                        const fxB = orderFx(order);
+                        const movedLE = (order.paymentMovedToWalletLE !== undefined && order.paymentMovedToWalletLE !== null && Number.isFinite(Number(order.paymentMovedToWalletLE))) ? Number(order.paymentMovedToWalletLE) : movedOC * fxB;
+                        const takeLE = r2w(Math.max(0, Math.min(movedLE, availableGeneralWallet(db, custB))));
+                        const all = takeLE >= movedLE - 0.004;
+                        const takeOC = all ? movedOC : (movedLE > 0 ? r2w(movedOC * takeLE / movedLE) : 0);
+                        if (takeLE > 0.004) {
+                            custB.walletBalances = custB.walletBalances || {};
+                            custB.walletBalances[SELF_WALLET_KEY] = r2w((Number(custB.walletBalances[SELF_WALLET_KEY]) || 0) - takeLE);
+                            custB.walletBalance = r2w((Number(custB.walletBalance) || 0) - takeLE);
+                            ledgerPush(db, { type: 'TRANSFER', amount: takeLE, description: `Reopened PO ${order.internalOrderNumber}: paid amount taken back from the customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, reopenTakeBack: true }, user);
+                            order.logs.push(createAuditLog(`Reopen: paid amount ${takeOC.toLocaleString()} L.E. taken back from the customer general wallet onto the order.`, order.status, user));
+                        }
+                        if (all) { delete order.paymentMovedToWallet; delete order.paymentMovedToWalletLE; }
+                        else {
+                            order.paymentMovedToWallet = r2w(movedOC - takeOC);
+                            order.paymentMovedToWalletLE = r2w(movedLE - takeLE);
+                            order.logs.push(createAuditLog(`Reopen: ${order.paymentMovedToWalletLE.toFixed(2)} L.E. of the paid amount is no longer in the customer general wallet (spent or refunded); it stays off this order, which shows it as unpaid.`, order.status, user));
+                        }
+                    }
+                }
                 const orderTypeDesc = order.blanketOrder ? 'Blanket Order' : 'Standard Order';
                 order.logs.push(createAuditLog(`Rollback to Logged (${orderTypeDesc}): SLA reset from scratch, BoM components and cost sheets cleared. Reason: ${payload?.reason || 'Manual rollback'}`, order.status, user));
 
@@ -7919,18 +7955,28 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 }));
                 reattachKeptSupplierAllocations(db, order, rjReleased);
                 // R23 (C17): money the customer paid on a cancelled order becomes credit in the customer GENERAL wallet.
+                // v1.0001220 (N1): only the money the PO still holds moves: the payments minus the surplus already moved to the general wallet
+                // (R30; before, a cancel of an overpaid PO credited the surplus a second time) minus paid money of an earlier cancel that is
+                // still in the general wallet (a reopen takes it back and clears paymentMovedToWallet; a reopen that could not take all of it
+                // back leaves the rest, and payments recorded after that reopen still move on the next cancel).
                 {
                     const paidOnOrder = Math.round((order.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
                     const cust = (db.customers || []).find(c => c.name === order.customerName);
-                    if (paidOnOrder > 0 && cust && !order.paymentMovedToWallet) {
-                        // R34 round 5 (item 4): the L.E. value of the payments (exact amountLE of payments entered in L.E.)
-                        const paidOnOrderLE = orderPaymentsLE(order);
+                    const fxC = orderFx(order);
+                    const leOr = (le, oc) => (le !== undefined && le !== null && Number.isFinite(Number(le))) ? Number(le) : (Number(oc) || 0) * fxC;
+                    const surplusOC = Number(order.surplusMovedToWallet) || 0, surplusLE = leOr(order.surplusMovedToWalletLE, order.surplusMovedToWallet);
+                    const earlierOC = Number(order.paymentMovedToWallet) || 0, earlierLE = leOr(order.paymentMovedToWalletLE, order.paymentMovedToWallet);
+                    const moveOC = r2w(paidOnOrder - surplusOC - earlierOC);
+                    // R34 round 5 (item 4): the L.E. value of the payments (exact amountLE of payments entered in L.E.)
+                    const moveLE = r2w(orderPaymentsLE(order) - surplusLE - earlierLE);
+                    if (moveOC > 0.004 && moveLE > 0.004 && cust) {
                         cust.walletBalances = cust.walletBalances || {};
-                        cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + paidOnOrderLE) * 100) / 100;
-                        order.paymentMovedToWallet = paidOnOrder;
-                        order.paymentMovedToWalletLE = paidOnOrderLE;
-                        ledgerPush(db, { type: 'TRANSFER', amount: paidOnOrderLE, description: `Cancelled PO ${oldInternal}: paid amount moved to customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', oldInternal), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id, poNumber: oldInternal }, user);
-                        order.logs.push(createAuditLog(`Paid amount ${paidOnOrder.toLocaleString()} L.E. moved to the customer general wallet (credit).`, order.status, user));
+                        cust.walletBalances[SELF_WALLET_KEY] = Math.round(((cust.walletBalances[SELF_WALLET_KEY] || 0) + moveLE) * 100) / 100;
+                        cust.walletBalance = r2w((Number(cust.walletBalance) || 0) + moveLE); // stored total follows the bucket (as the void)
+                        order.paymentMovedToWallet = r2w(earlierOC + moveOC);
+                        order.paymentMovedToWalletLE = r2w(earlierLE + moveLE);
+                        ledgerPush(db, { type: 'TRANSFER', amount: moveLE, description: `Cancelled PO ${oldInternal}: paid amount moved to customer general wallet`, category: 'Account Transfer', fromAccount: acctLabel(order.customerName, 'ORDER', oldInternal), toAccount: acctLabel(order.customerName, 'SELF', 'Self'), customerName: order.customerName, orderId: order.id, poNumber: oldInternal }, user);
+                        order.logs.push(createAuditLog(`Paid amount ${moveOC.toLocaleString()} L.E. moved to the customer general wallet (credit).${surplusOC > 0.004 ? ` The surplus ${surplusOC.toLocaleString()} was already there.` : ''}`, order.status, user));
                     }
                 }
                 order.logs.push(createAuditLog(`ORDER REJECTED: ${payload?.reason || 'Business decision'}. PO renamed from ${oldInternal} to ${order.internalOrderNumber}`, order.status, user));
@@ -8907,6 +8953,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     order.paymentMovedToWallet = Math.round((movedToWallet - takeOC) * 100) / 100;
                     if (order.paymentMovedToWalletLE !== undefined && order.paymentMovedToWalletLE !== null) order.paymentMovedToWalletLE = Math.max(0, Math.round((movedLEV - takeLE) * 100) / 100);
                     if (refundLE > 0.004) ledgerPush(db, { type: 'REFUND', amount: refundLE, description: `Payment VOIDED (cancelled PO ${order.internalOrderNumber}): refunded from customer general wallet - ${payload.reason || 'Correction'}`, category: 'Customer Refunds', voidOfPayment: true, fromAccount: acctLabel(order.customerName, 'SELF', 'Self'), toAccount: 'Bank Account', customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber }, user);
+                    // v1.0001220 (N1): on a reopened order only the part of the cancel that its reopen could not take back is still in the
+                    // general wallet; the rest of the voided cash was on the order again and is reversed out of the bank as a normal void.
+                    const restLEV = order.status !== OrderStatus.REJECTED ? Math.round((cashPartLEV - refundLE) * 100) / 100 : 0;
+                    if (restLEV > 0.004) ledgerPush(db, { type: 'DEDUCTION', amount: restLEV, description: `Payment VOIDED: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.reason || 'Correction'}${fxVd !== 1 ? ` (${(restLEV / fxVd).toFixed(2)} ${order.currency} at rate ${fxVd})` : ''}`, category: 'Customer Payment Reversal', fromAccount: 'Bank Account', toAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, voidOfPayment: true }, user);
                 } else if (!removed.transfer && Number(removed.amount) > 0) {
                     if (walletPartLEV > 0.004) {
                         const custR = (db.customers || []).find(c => c.name === order.customerName);
