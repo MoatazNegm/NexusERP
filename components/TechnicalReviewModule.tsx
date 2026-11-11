@@ -4,6 +4,7 @@ import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent
 import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, calculateCatalogMatchScore, getTechReviewStartTime, getOrderPoType, getPoTypeConfig } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { isInternalStockOrder, orderFxRate } from '../shared/orderMoney';
+import { canRollbackToLogged, ROLLBACK_TO_LOGGED_DENIED } from '../shared/orderPermissions';
 import { PartHistory } from './PartHistory';
 
 interface AlterLineItemsViewProps {
@@ -964,6 +965,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
 
   // Step 1: Check for outstanding ORDERED components before rollback
   const handleInitiateRollback = () => {
+    // v1.0001227: only the roles that may cancel the order may roll it back to Logged (the server refuses the others too).
+    if (!canRollbackToLogged(currentUser?.roles)) { alert('Refused: ' + ROLLBACK_TO_LOGGED_DENIED + '.'); return; }
     if (!selectedOrder) return;
     const found: OrderedCompRecord[] = [];
     selectedOrder.items.forEach(item => {
@@ -1319,8 +1322,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {!selectedOrder.rolledBackToLogged && (
+                    {!selectedOrder.rolledBackToLogged && canRollbackToLogged(currentUser?.roles) && (
                       <button
+                        data-testid="tr-rollback-btn"
                         onClick={handleInitiateRollback}
                         className="px-4 py-2 bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl hover:bg-rose-700 transition-all flex items-center gap-2"
                       >

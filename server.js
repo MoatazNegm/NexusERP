@@ -41,6 +41,7 @@ const sanitizeUsername = (username) => {
 import crypto from 'crypto';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
+import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED } from './shared/orderPermissions.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank } from './shared/cashBank.js';
 import { computeReceivables, computePayables, orderPaidInLE, orderReceivableLE, closedContractCoverage } from './shared/arap.js';
@@ -1728,6 +1729,7 @@ const isAdminUser = (req) => {
 
 // CX09: narrow role gate for dispatch actions. Enforced only when the caller's roles are known
 // (sandbox / API key); admin and management are always allowed.
+// v1.0001227: ORDER_CANCEL_ROLES (the roles that may cancel an order) and ROLLBACK_TO_LOGGED_DENIED come from shared/orderPermissions.js (client + server).
 const ACTION_ROLE_GATES = {
   'toggle-acceptance': { roles: ['planning'], msg: 'technical review is for tech1/planner1' },
   'finalize-study': { roles: ['planning'], msg: 'technical review is for tech1/planner1' },
@@ -1748,7 +1750,11 @@ const ACTION_ROLE_GATES = {
   // R34 round 7 (validator 6, defect 10): voiding a payment is a payment write too (same gate as record-payment).
   'cancel-payment': { roles: ['finance'], msg: 'wrong role: cancelling a payment is finance' },
   'approve-dispatch-receipt': { roles: ['finance'], msg: 'wrong role: dispatch receipt approval is finance' },
-  'reject-order': { roles: ['order_management', 'planning', 'sales', 'finance'], msg: 'no permission to cancel / delete' },
+  'reject-order': { roles: ORDER_CANCEL_ROLES, msg: 'no permission to cancel / delete' },
+  // v1.0001227 (supervisor ruling 2026-11-11): rolling an order back to LOGGED (Rollback to Logged / reopen of a cancelled order) is allowed only
+  // for the roles that may cancel the order (the reject-order gate: ORDER_CANCEL_ROLES, plus admin and management); the generic order edit that
+  // sets the status LOGGED uses the same gate. The UI hides the rollback buttons for the other roles (shared/orderPermissions.js).
+  'rollback-to-logged': { roles: ORDER_CANCEL_ROLES, msg: ROLLBACK_TO_LOGGED_DENIED },
   'hard-delete-order': { roles: [], msg: 'Unauthorized: Only superusers or management can hard delete an order', raw: true },
 };
 const actionRoleDenied = (req, action) => {
@@ -5430,6 +5436,8 @@ const updateInCollection = (col) => (req, res) => {
                     return res.status(400).json({ error: `Refused: "${req.body.status === null ? 'null' : String(req.body.status)}" is not an order status; the status must be one of ${ORDER_STATUS_VALUES.join(', ')} (order ${oldItem.internalOrderNumber} keeps ${stOld}).` });
                 }
             }
+            // v1.0001227: setting the status LOGGED on an order in another status is a rollback to Logged: same role gate as the rollback-to-logged action.
+            if (stChanged && updated.status === OrderStatus.LOGGED) { const deniedL = actionRoleDenied(req, 'rollback-to-logged'); if (deniedL) return res.status(403).json({ error: deniedL }); }
             const callsS = blanketCallOffsOf(oldItem, db.orders || []);
             if (oldItem.contractClosed || callsS.length) {
                 const whyS = oldItem.contractClosed ? `blanket contract ${oldItem.internalOrderNumber} is closed (the settlement is final)` : `blanket contract ${oldItem.internalOrderNumber} has call-offs`;

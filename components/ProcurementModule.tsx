@@ -8,6 +8,7 @@ import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
 import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { getDynamicOrderStatusStyle } from '../constants';
+import { canRollbackToLogged, ROLLBACK_TO_LOGGED_DENIED } from '../shared/orderPermissions';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -2419,6 +2420,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
 
   // Check for in-transit components before initiating a rollback
   const handleInitiateRollback = (order: CustomerOrder) => {
+    // v1.0001227: only the roles that may cancel the order may roll it back to Logged (the server refuses the others too).
+    if (!canRollbackToLogged(currentUser?.roles)) { alert('Refused: ' + ROLLBACK_TO_LOGGED_DENIED + '.'); return; }
     const IN_TRANSIT_STATUSES = ['ORDERED', 'AWARDED', 'RECEIVED', 'STOCKED', 'RESERVED'];
     const found: InTransitCompRecord[] = [];
     order.items.forEach(item => {
@@ -3257,8 +3260,10 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         </div>
                       </div>
                       <div className="flex items-center gap-3 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                        {/* Rollback button - blocked if any component has PO */}
+                        {/* Rollback button - blocked if any component has PO; v1.0001227: shown only to the roles that may cancel the order */}
+                        {canRollbackToLogged(currentUser?.roles) && (
                         <button
+                          data-testid="proc-rollback-btn"
                           onClick={(e) => {
                             e.stopPropagation();
                             if (anyOrdered) {
@@ -3274,6 +3279,7 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                           <i className="fa-solid fa-file-export fa-flip-horizontal"></i>
                           {anyOrdered ? t('procurement.actions.rollbackLocked') : t('procurement.actions.rollbackOrder')}
                         </button>
+                        )}
 
                         {/* Outsourcing Contract Bar vs Standard Purchasing Flow */}
                         {isOrderNoRfp(o) ? (
