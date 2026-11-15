@@ -4,7 +4,7 @@ import { CustomerOrder, CustomerOrderItem, InventoryItem, ManufacturingComponent
 import { getItemEffectiveQty, getOrderCurrency, getOrderConversionRate, calculateCatalogMatchScore, getTechReviewStartTime, getOrderPoType, getPoTypeConfig } from '../utils';
 import { isMarginBreach } from '../shared/margin';
 import { isInternalStockOrder, orderFxRate } from '../shared/orderMoney';
-import { canRollbackToLogged, ROLLBACK_TO_LOGGED_DENIED } from '../shared/orderPermissions';
+import { canRollbackToLogged, ROLLBACK_TO_LOGGED_DENIED, rollbackToLoggedStateRefusal } from '../shared/orderPermissions';
 import { PartHistory } from './PartHistory';
 
 interface AlterLineItemsViewProps {
@@ -968,6 +968,8 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
     // v1.0001227: only the roles that may cancel the order may roll it back to Logged (the server refuses the others too).
     if (!canRollbackToLogged(currentUser?.roles)) { alert('Refused: ' + ROLLBACK_TO_LOGGED_DENIED + '.'); return; }
     if (!selectedOrder) return;
+    // v1.0001233: state guard (already LOGGED, FULFILLED, closed blanket contract or its call-off): the server refuses the same way.
+    { const stRef = rollbackToLoggedStateRefusal(selectedOrder, orders); if (stRef) { alert(stRef); return; } }
     const found: OrderedCompRecord[] = [];
     selectedOrder.items.forEach(item => {
       (item.components || []).forEach(comp => {
@@ -1036,7 +1038,9 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
       setRollbackReason(null);
       fetchData();
     } catch (e: any) {
-      alert("Rollback failed.");
+      // v1.0001233: show the server's reason (role gate, state guard) instead of a bare 'Rollback failed.'
+      alert(`Rollback failed. ${e?.message || ''}`.trim());
+      fetchData();
     } finally {
       setIsProcessing(false);
     }
@@ -1322,7 +1326,7 @@ export const TechnicalReviewModule: React.FC<TechnicalReviewModuleProps> = ({ co
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {!selectedOrder.rolledBackToLogged && canRollbackToLogged(currentUser?.roles) && (
+                    {!selectedOrder.rolledBackToLogged && canRollbackToLogged(currentUser?.roles) && !rollbackToLoggedStateRefusal(selectedOrder, orders) && (
                       <button
                         data-testid="tr-rollback-btn"
                         onClick={handleInitiateRollback}

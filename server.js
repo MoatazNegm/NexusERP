@@ -41,7 +41,7 @@ const sanitizeUsername = (username) => {
 import crypto from 'crypto';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
-import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED } from './shared/orderPermissions.js';
+import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED, rollbackToLoggedStateRefusal } from './shared/orderPermissions.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank, cashBankMovements, legacyVoidOrigin } from './shared/cashBank.js';
 import { accountMatches } from './shared/accountSearch.js';
@@ -5464,6 +5464,9 @@ const updateInCollection = (col) => (req, res) => {
                 if (req.body.customerReferenceNumber !== undefined && String(req.body.customerReferenceNumber ?? '').trim() !== crefOld && crefOld && callsS.some(x => String(x.blanketContractId).trim() === crefOld && crefOld !== String(oldItem.id) && crefOld !== String(oldItem.internalOrderNumber ?? '').trim())) chS.push('customerReferenceNumber');
                 if (chS.length) return res.status(400).json({ error: `Refused: ${whyS}; the generic order edit cannot change ${chS.join(', ')}.` });
             }
+            // v1.0001233: the generic edit to status LOGGED is a rollback to Logged: same state guard as the action (FULFILLED, call-off of a
+            // closed contract; an unchanged LOGGED echo is no status change and passes).
+            if (stChanged && updated.status === OrderStatus.LOGGED) { const stRefL = rollbackToLoggedStateRefusal(oldItem, db.orders || []); if (stRefL) return res.status(400).json({ error: stRefL }); }
         }
         if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(req.body.blanketContractId).trim() !== '' && String(req.body.blanketContractId).trim() !== String(oldItem.blanketContractId || '').trim()) {
             const blanketRefU = String(req.body.blanketContractId).trim();
@@ -8029,6 +8032,10 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                 break;
 
             case 'rollback-to-logged':
+                // v1.0001233: state guard (shared/orderPermissions.js rollbackToLoggedStateRefusal): refused before any change when the order is
+                // already LOGGED (a second rollback only restarted the SLA clock and the dates), FULFILLED, a closed blanket contract or a call-off
+                // of one. The role gate (403) above still answers first; a cancelled (REJECTED) order is reopened as before.
+                { const stRef = rollbackToLoggedStateRefusal(order, db.orders || []); if (stRef) throw new Error(stRef); }
                 // v1.0001218: what is released here is put back onto the delivered POs a cancelled order kept (reattachKeptSupplierAllocations below).
                 const rbReleased = releaseSupplierAllocationsOfOrder(db, order);
                 const rollbackOld = JSON.parse(JSON.stringify(order));

@@ -8,7 +8,7 @@ import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
 import { getItemEffectiveQty, getOrderPoType, getPoTypeConfig, safeHtml2Canvas } from '../utils';
 import { getDynamicOrderStatusStyle } from '../constants';
-import { canRollbackToLogged, ROLLBACK_TO_LOGGED_DENIED } from '../shared/orderPermissions';
+import { canRollbackToLogged, ROLLBACK_TO_LOGGED_DENIED, rollbackToLoggedStateRefusal } from '../shared/orderPermissions';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -2431,6 +2431,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
   const handleInitiateRollback = (order: CustomerOrder) => {
     // v1.0001227: only the roles that may cancel the order may roll it back to Logged (the server refuses the others too).
     if (!canRollbackToLogged(currentUser?.roles)) { alert('Refused: ' + ROLLBACK_TO_LOGGED_DENIED + '.'); return; }
+    // v1.0001233: state guard (already LOGGED, FULFILLED, closed blanket contract or its call-off): the server refuses the same way.
+    { const stRef = rollbackToLoggedStateRefusal(order, allOrders); if (stRef) { alert(stRef); return; } }
     const IN_TRANSIT_STATUSES = ['ORDERED', 'AWARDED', 'RECEIVED', 'STOCKED', 'RESERVED'];
     const found: InTransitCompRecord[] = [];
     order.items.forEach(item => {
@@ -3269,8 +3271,8 @@ const ProcurementModuleInner: React.FC<ProcurementModuleProps> = ({ config, refr
                         </div>
                       </div>
                       <div className="flex items-center gap-3 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                        {/* Rollback button - blocked if any component has PO; v1.0001227: shown only to the roles that may cancel the order */}
-                        {canRollbackToLogged(currentUser?.roles) && (
+                        {/* Rollback button - blocked if any component has PO; v1.0001227: shown only to the roles that may cancel the order; v1.0001233: hidden where the state guard refuses (call-off / contract closed) */}
+                        {canRollbackToLogged(currentUser?.roles) && !rollbackToLoggedStateRefusal(o, allOrders) && (
                         <button
                           data-testid="proc-rollback-btn"
                           onClick={(e) => {
