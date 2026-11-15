@@ -43,7 +43,7 @@ import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED } from './shared/orderPermissions.js';
 import { computeStockValue } from './shared/stockValue.js';
-import { computeCashBank, cashBankMovements } from './shared/cashBank.js';
+import { computeCashBank, cashBankMovements, legacyVoidOrigin } from './shared/cashBank.js';
 import { accountMatches } from './shared/accountSearch.js';
 import { computeReceivables, computePayables, orderPaidInLE, orderReceivableLE, closedContractCoverage } from './shared/arap.js';
 import { isInternalStockOrder, orderPaymentsLE, isRealizedSale, ownLinesAreSales, paymentLE, blanketRootOf, callOffsOfBlanket, trimRef, resolveBlanketLink, blanketLinkRefusal, blanketLinkMap, isRejectedStatus, sameCustomerName } from './shared/orderMoney.js';
@@ -4832,6 +4832,16 @@ const supplierPoGrossValue = (comp) => {
     const mul = 1 + ((comp.taxPercent !== undefined && comp.taxPercent !== null ? Number(comp.taxPercent) : 14) / 100);
     return Math.round(((Number(comp.quantity) || 0) + (Number(comp.allocatedQty) || 0)) * (Number(comp.unitCost) || 0) * mul * 100) / 100;
 };
+// R35 round 2 (validator 1 G2): every LATER change of a supplier payment's allocations (allocate, auto-cover of a later PO, release on a
+// cancel / reopen / PO revert, put back onto a kept PO) is recorded as a dated move on the payment (sp.allocationMoves). Metadata only:
+// no stored money figure reads it; Finance > Account Status shows the movement of the supplier general wallet and the PO wallet on that
+// date (records without moves fall back to the payment date). du = change of the unallocated advance (- allocated, + released).
+const spRecordMove = (sp, du, info = {}) => {
+    const a = Math.round((Number(du) || 0) * 100) / 100;
+    if (!sp || Math.abs(a) <= 0.004) return;
+    sp.allocationMoves = Array.isArray(sp.allocationMoves) ? sp.allocationMoves : [];
+    sp.allocationMoves.push({ date: info.date || new Date().toISOString(), du: a, kind: info.kind || (a < 0 ? 'ALLOCATE' : 'RELEASE'), orderId: info.orderId || null, orderNumber: info.orderNumber || null, componentId: info.componentId || null });
+};
 function releaseSupplierAllocationsOfOrder(db, order) {
     // Cancel / reopen voids the order's POs: what was allocated to them returns to the supplier general wallet (unallocated advance, no refund).
     // v1.0001218: returns what was released ([{ sp, alloc }], payment order) so reattachKeptSupplierAllocations can put back the part a kept PO still covers.
@@ -4844,6 +4854,7 @@ function releaseSupplierAllocationsOfOrder(db, order) {
         const back = mine.reduce((t, x) => t + (Number(x.amount) || 0), 0);
         sp.allocations = sp.allocations.filter(x => !ids.has(x.componentId));
         sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) + back) * 100) / 100;
+        mine.forEach(x => spRecordMove(sp, Number(x.amount) || 0, { kind: 'RELEASE', orderId: x.orderId, orderNumber: x.orderNumber, componentId: x.componentId })); // R35 round 2 (G2)
         // v1.0001219: the PO (supplier + PO number) each released allocation sat on is captured here, before the cancel / reopen changes the components.
         mine.forEach(alloc => { const c = compById[alloc.componentId]; released.push({ sp, alloc, poKey: supplierPoKey(c, sp) }); });
     });
@@ -4883,12 +4894,13 @@ function reattachKeptSupplierAllocations(db, order, released) {
             if (!(left > 0.004) || !(k.capLeft > 0.004)) return;
             const take = Math.round(Math.min(left, k.capLeft) * 100) / 100;
             if (!(take > 0.004)) return;
-            const row = k.comp.id === alloc.componentId ? { ...alloc, amount: take } : { ...alloc, componentId: k.comp.id, itemDescription: k.comp.description || alloc.itemDescription, amount: take, movedFromComponentId: alloc.componentId };
+            const row = k.comp.id === alloc.componentId ? { ...alloc, amount: take, date: new Date().toISOString() } : { ...alloc, componentId: k.comp.id, itemDescription: k.comp.description || alloc.itemDescription, amount: take, movedFromComponentId: alloc.componentId, date: new Date().toISOString() };
             // one allocation row per payment and component (merge when the same payment already covers that component)
             const same = (sp.allocations || []).find(x => x.componentId === row.componentId && x.orderId === row.orderId);
             if (same) same.amount = Math.round(((Number(same.amount) || 0) + take) * 100) / 100;
             else sp.allocations = (sp.allocations || []).concat([row]);
             sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) - take) * 100) / 100;
+            spRecordMove(sp, -take, { kind: 'ALLOCATE', orderId: row.orderId, orderNumber: row.orderNumber, componentId: row.componentId }); // R35 round 2 (G2)
             k.capLeft = Math.round((k.capLeft - take) * 100) / 100;
             left = Math.round((left - take) * 100) / 100;
         });
@@ -4916,6 +4928,7 @@ const addToCollection = (col) => (req, res) => {
     if (col === 'orders') delete newItem.keptSupplierPos; // v1.0001218: server-owned (reopen of a cancelled order)
     if (col === 'orders') delete newItem.movedLeftoverShared; // v1.0001223: server-owned share-model marker (validator 17 G3d)
     if (col === 'orders') { delete newItem.surplusAtSpread; delete newItem.surplusAtSpreadLE; } // v1.0001225: server-owned (validator 19 G3f)
+    if (col === 'orders') delete newItem.voidedPayments; // R35 round 2 (G1): server-owned (cancel-payment only)
     const user = req.headers['x-user'] || 'System';
 
     // CX16: two records created in the same millisecond must never share an id.
@@ -5247,6 +5260,8 @@ const updateInCollection = (col) => (req, res) => {
     if (col === 'orders') { if (oldItem.movedLeftoverShared !== undefined) updated.movedLeftoverShared = oldItem.movedLeftoverShared; else delete updated.movedLeftoverShared; }
     // v1.0001225 (validator 19 G3f): the marked payments' surplus of the latest reopen is server-owned too
     if (col === 'orders') ['surplusAtSpread', 'surplusAtSpreadLE'].forEach(k => { if (oldItem[k] !== undefined) updated[k] = oldItem[k]; else delete updated[k]; });
+    // R35 round 2 (G1): the voided payments (dated history for Finance > Account Status) are server-owned (cancel-payment only)
+    if (col === 'orders') { if (oldItem.voidedPayments !== undefined) updated.voidedPayments = oldItem.voidedPayments; else delete updated.voidedPayments; }
     if (col === 'orders' && req.body.orderDate !== undefined && req.body.orderDate !== null && req.body.orderDate !== '' && isNaN(new Date(req.body.orderDate).getTime())) {
         return res.status(400).json({ error: 'Invalid orderDate.' });
     }
@@ -5965,6 +5980,8 @@ const genericMoneyWriteGate = (req, col, oldItem, body) => {
 const systemLedgerShape = (e) => {
     if (!e) return null;
     const cat = String(e.category || ''), typ = String(e.type || '').toUpperCase();
+    // R35 round 2 (G3): a display-only wallet row of Finance > Account Status is written only by the order action that changed the wallet
+    if (e.accountStatusOnly) return { kind: 'a display-only wallet row (Account Status)', use: 'the order action that changes the wallet' };
     if (cat === 'Supplier Refund') return null;
     if (cat === 'Customer Refunds' || (typ === 'REFUND' && Boolean(e.customerName || e.orderId || e.poNumber))) return { kind: 'a customer refund', use: 'the customer Refund action (POST /api/v1/customers/:id/refund)' };
     if (cat === 'Customer Advance' || String(e.id || '').startsWith('adv_cust_')) return { kind: 'a customer advance', use: 'the customer Advance action (POST /api/v1/customers/:id/advance-payment)' };
@@ -6803,7 +6820,7 @@ const computeFinanceAccounts = (db) => {
         });
         orders.filter(o => o.customerName === c.name && o.status !== OrderStatus.REJECTED && !finIsInternalOrder(o)).forEach(o => {
             const ow = computeOrderWallet(o, orders, sps, ledger);
-            push({ key: `PO:${o.id}`, group: 'customer', kind: 'liability', walletType: 'po', customerId: c.id, customerName: c.name, orderId: o.id, orderNumber: o.internalOrderNumber, projectName: ow.projectName, label: `${c.name} / PO ${o.internalOrderNumber || o.id}`, labelAr: `${c.name} / أمر ${o.internalOrderNumber || o.id}`, balance: ow.walletBalance });
+            push({ key: `PO:${o.id}`, group: 'customer', kind: 'liability', walletType: 'po', customerId: c.id, customerName: c.name, orderId: o.id, orderNumber: o.internalOrderNumber, customerReference: o.customerReferenceNumber ? String(o.customerReferenceNumber).trim() : undefined, projectName: ow.projectName, label: `${c.name} / PO ${o.internalOrderNumber || o.id}`, labelAr: `${c.name} / أمر ${o.internalOrderNumber || o.id}`, balance: ow.walletBalance });
         });
         const arRow = ar.byCustomer.find(r => r.customerName === c.name);
         push({ key: `AR:${c.id}`, group: 'customer', kind: 'asset', walletType: 'ar', customerId: c.id, customerName: c.name, label: `${c.name} / Accounts receivable`, labelAr: `${c.name} / ذمم مدينة`, balance: arRow ? arRow.receivable : 0 });
@@ -7019,10 +7036,26 @@ const computeAccountMovements = (db) => {
     const settings = (db.settings || [])[0] || {};
     const otherNames = new Set((settings.ledgerAccounts || []).map(a => String(a).trim()).filter(Boolean));
     ledger.forEach(e => { if (!e || e.type === 'OPENING') return; [e.fromAccount, e.toAccount].forEach(lbl => { const k = finLabelToKey(lbl, db); if (k && k.startsWith('LEDGER:')) otherNames.add(k.slice(7)); }); });
+    const payLedIds = new Set();
+    orders.forEach(o => (o && o.payments || []).forEach(p => { if (p && p.ledgerEntryId) payLedIds.add(p.ledgerEntryId); }));
     ledger.forEach(e => {
         if (!e) return;
         const amt = Number(e.amount) || 0;
         const desc = e.description || e.category || e.type;
+        // R35 round 2 (validator 1 G3): a display-only wallet row (accountStatusOnly, written by an order action that changed a customer
+        // wallet without a dated money row of its own) names its account keys; it changes no stored balance and nothing else reads it.
+        if (e.accountStatusOnly) {
+            if (e.toKey) add(e.toKey, e.date, amt, 'WALLET_MOVE', desc, e.id);
+            if (e.fromKey) add(e.fromKey, e.date, -amt, 'WALLET_MOVE', desc, e.id);
+            return;
+        }
+        // R35 round 2 (G1): a void recorded before order.voidedPayments existed: the PO wallet held the reversed cash part from the
+        // payment's ADDITION date until the reversal (the same rule as Cash / Bank, shared/cashBank.js legacyVoidOrigin)
+        if (e.type === 'DEDUCTION' && e.voidOfPayment && !e.voidRecorded && e.orderId && orderById.has(e.orderId) && Math.abs(amt) > 0.004) {
+            const orig = legacyVoidOrigin(ledger, e, orderById, payLedIds);
+            add(`PO:${e.orderId}`, orig || e.date, amt, 'CUSTOMER_PAYMENT', `Payment on PO ${e.poNumber || ''} (voided later)`, e.id);
+            add(`PO:${e.orderId}`, e.date, -amt, 'PAYMENT_VOID', desc, e.id);
+        }
         if (e.type === 'OPENING') {
             // an opening on a supplier general wallet is its stored advance record (counted below); legacy entries without one add here
             if (e.accountKey && !(String(e.accountKey).startsWith('SUP_GEN:') && e.supplierPaymentId)) add(e.accountKey, e.date, amt, 'OPENING', desc, e.id);
@@ -7041,7 +7074,18 @@ const computeAccountMovements = (db) => {
             if (k && (k.startsWith('CUST_SELF:') || k.startsWith('CUST_PROJECT:'))) add(k, e.date, amt, 'CUSTOMER_ADVANCE', desc, e.id);
         } else {
             // a PO label names the PO number of its day: a cancelled order is renamed (rej_...), so the entry's orderId decides
-            const poKey = (lbl) => { const k = finLabelToKey(lbl, db); if (/^Customer .+ \/ PO .+$/.test(lbl) && e.orderId && orderById.has(e.orderId)) return `PO:${e.orderId}`; return k; };
+            // R35 round 2: a row written before a cancel names the PO number of that day; the cancel renames the order rej_<date>_<number>,
+            // so a row without orderId is matched to the order of the same customer whose number is the same once the prefix is removed
+            const poKey = (lbl) => {
+                const k = finLabelToKey(lbl, db);
+                const pm = String(lbl || '').match(/^Customer (.+) \/ PO (.+)$/);
+                if (!pm) return k;
+                if (e.orderId && orderById.has(e.orderId)) return `PO:${e.orderId}`;
+                if (k && k.startsWith('PO:')) return k;
+                const strip = (x) => String(x || '').trim().replace(/^rej_\d{4}-\d{2}-\d{2}_/, '');
+                const hit = orders.filter(o => o && o.customerName === pm[1] && strip(o.internalOrderNumber) === strip(pm[2]));
+                return hit.length === 1 ? `PO:${hit[0].id}` : k;
+            };
             const kf = poKey(from), kt = poKey(to);
             // a pay-from-wallet payment takes its wallet part from the buckets named on the payment (walletBuckets: project bucket
             // first, then the general wallet), whatever the ledger label says
@@ -7064,11 +7108,28 @@ const computeAccountMovements = (db) => {
             }
         }
     });
-    // single-customer company (rule G1): company costs linked to no PO lower that customer's general wallet
+    // R35 round 2 (validator 1 G2): a supplier payment's unallocated advance on the payment date = today's figure + what refunds took
+    // from it later - its later dated moves (allocations -, releases +); each move then shows on its own date. Records without moves:
+    // the payment date (as before).
+    const movesOf = (sp) => (sp && Array.isArray(sp.allocationMoves) ? sp.allocationMoves : []).filter(m => m && Number.isFinite(Number(m.du)));
+    const refundTaken = new Map();
+    sps.forEach(sp => (sp && Array.isArray(sp.refundOf) ? sp.refundOf : []).forEach(r => { if (r && r.supplierPaymentId) refundTaken.set(r.supplierPaymentId, (refundTaken.get(r.supplierPaymentId) || 0) + (Number(r.amount) || 0)); }));
+    const advAtPayment = (sp) => (Number(sp.unallocatedAdvance) || 0) + (refundTaken.get(sp.id) || 0) - movesOf(sp).reduce((t, m) => t + Number(m.du), 0);
+    // single-customer company (rule G1): company costs linked to no PO lower that customer's general wallet (the unallocated advances of
+    // payments linked to no PO, dated like the supplier general wallet; a refund that returns such an advance raises it again on its date)
     if ((db.customers || []).length === 1) {
         const c = db.customers[0];
         const k = `CUST_SELF:${c.id}`;
-        sps.forEach(sp => { if (sp && !sp.orderId && !sp.poNumber && !sp.isOpening) add(k, sp.date, -(Number(sp.unallocatedAdvance) || 0), 'COMPANY_COST', `Supplier payment linked to no PO ${sp.supplierName || ''}`, sp.id); });
+        const unlinked = (sp) => sp && !sp.orderId && !sp.poNumber && !sp.isOpening;
+        const unlinkedIds = new Set(sps.filter(unlinked).map(sp => sp.id));
+        sps.forEach(sp => {
+            if (!sp) return;
+            if (unlinked(sp)) {
+                add(k, sp.date, -advAtPayment(sp), 'COMPANY_COST', `Supplier payment linked to no PO ${sp.supplierName || ''}`, sp.id);
+                movesOf(sp).forEach(m => add(k, m.date, -Number(m.du), 'COMPANY_COST', `Supplier payment ${sp.supplierName || ''} ${Number(m.du) < 0 ? 'allocated to' : 'released from'} PO ${m.orderNumber || ''}`, sp.id));
+            }
+            if (sp.isRefund) (Array.isArray(sp.refundOf) ? sp.refundOf : []).forEach(r => { if (r && unlinkedIds.has(r.supplierPaymentId)) add(k, sp.date, Number(r.amount) || 0, 'COMPANY_COST', `Supplier refund ${sp.supplierName || ''}`, sp.id); });
+        });
         ledger.forEach(l => { if (l && l.category === 'Tax Settlement' && l.type === 'COST') add(k, l.date, -(Number(l.amount) || 0), 'COMPANY_COST', l.description || 'Tax settlement', l.id); });
     }
     // PO wallets: customer payments (L.E.) in, supplier payments for the PO out
@@ -7076,23 +7137,41 @@ const computeAccountMovements = (db) => {
         if (!o || o.status === OrderStatus.REJECTED || finIsInternalOrder(o)) return;
         const fx = orderFx(o);
         (o.payments || []).forEach(p => { if (p) add(`PO:${o.id}`, p.date || o.orderDate, paymentLE(p, fx), p.transfer ? 'WALLET_TRANSFER' : 'CUSTOMER_PAYMENT', p.memo || `Payment on PO ${o.internalOrderNumber || o.id}${p.receiptNumber ? ' (' + p.receiptNumber + ')' : ''}`, p.receiptNumber || ''); });
+        // R35 round 2 (validator 1 G1): a voided payment stays on the PO from its date until the void (order.voidedPayments)
+        (Array.isArray(o.voidedPayments) ? o.voidedPayments : []).forEach(v => {
+            if (!v) return;
+            const rc = v.receiptNumber ? ' (' + v.receiptNumber + ')' : '';
+            add(`PO:${o.id}`, v.date || o.orderDate, Number(v.amountLE) || 0, 'CUSTOMER_PAYMENT', v.memo || `Payment on PO ${o.internalOrderNumber || o.id}${rc}`, v.receiptNumber || '');
+            // the void date shows what the PO wallet itself lost (poDeltaLE, measured by cancel-payment); the part the void took from the
+            // general wallet (surplus, close overpayment, a cancel's credit) shows on the general wallet
+            const dv = (v.poDeltaLE !== undefined && v.poDeltaLE !== null && Number.isFinite(Number(v.poDeltaLE))) ? Number(v.poDeltaLE) : -(Number(v.amountLE) || 0);
+            add(`PO:${o.id}`, v.voidedAt, dv, 'PAYMENT_VOID', `Payment voided${rc}${v.reason ? ' - ' + v.reason : ''}`, v.receiptNumber || '');
+        });
         const keptIds = new Set(orderPoComponents(o).filter(x => isKeptDeliveredPo(x.comp)).map(x => x.comp.id));
-        sps.forEach(sp => (sp.allocations || []).forEach(a => {
-            if ((a.orderId === o.id || (a.orderNumber && a.orderNumber === o.internalOrderNumber)) && !keptIds.has(a.componentId)) add(`PO:${o.id}`, sp.date, -(Number(a.amount) || 0), 'SUPPLIER_PAYMENT', `Supplier payment ${sp.supplierName || ''}${a.itemDescription ? ' - ' + a.itemDescription : ''}`, sp.id);
-        }));
+        const onPo = (a) => (a.orderId === o.id || (a.orderNumber && a.orderNumber === o.internalOrderNumber)) && !keptIds.has(a.componentId);
+        // R35 round 2 (G2): what a payment paid for this PO on the payment date = today's allocations + released - allocated later; each later
+        // allocation / release shows on its own date
+        sps.forEach(sp => {
+            if (!sp) return;
+            const cur = (sp.allocations || []).filter(onPo);
+            const mv = movesOf(sp).filter(onPo);
+            const atPay = cur.reduce((t, a) => t + (Number(a.amount) || 0), 0) + mv.reduce((t, m) => t + Number(m.du), 0);
+            const items = Array.from(new Set(cur.map(a => a.itemDescription).filter(Boolean))).join(', ');
+            add(`PO:${o.id}`, sp.date, -atPay, 'SUPPLIER_PAYMENT', `Supplier payment ${sp.supplierName || ''}${items ? ' - ' + items : ''}`, sp.id);
+            mv.forEach(m => add(`PO:${o.id}`, m.date, Number(m.du), Number(m.du) < 0 ? 'SUPPLIER_ALLOCATION' : 'SUPPLIER_RELEASE', `Supplier payment ${sp.supplierName || ''} ${Number(m.du) < 0 ? 'allocated to this PO' : 'released from this PO'}`, sp.id));
+        });
     });
-    // supplier general wallets: the advance each supplier payment left unallocated, plus what a later supplier refund took back from it
-    // (refundOf), which the refund pays out on its own date. Allocations to POs carry no date of their own: an advance allocated later
-    // counts as never having been unallocated.
-    const refundTaken = new Map();
-    sps.forEach(sp => (sp && Array.isArray(sp.refundOf) ? sp.refundOf : []).forEach(r => { if (r && r.supplierPaymentId) refundTaken.set(r.supplierPaymentId, (refundTaken.get(r.supplierPaymentId) || 0) + (Number(r.amount) || 0)); }));
+    // supplier general wallets: the advance each supplier payment left unallocated on its date, plus what a later supplier refund took
+    // back from it (refundOf), which the refund pays out on its own date; R35 round 2 (G2): an allocation made later (or a release on a
+    // cancel / reopen / PO revert) moves the money on its own date (sp.allocationMoves)
     sps.forEach(sp => {
         if (!sp || !sp.supplierId) return;
         const k = `SUP_GEN:${sp.supplierId}`;
         const took = Array.isArray(sp.refundOf) ? sp.refundOf.reduce((t, r) => t + (Number(r && r.amount) || 0), 0) : 0;
-        const own = (Number(sp.unallocatedAdvance) || 0) + (refundTaken.get(sp.id) || 0);
+        const own = advAtPayment(sp);
         if (sp.isRefund) add(k, sp.date, own - took, 'SUPPLIER_REFUND', sp.memo || `Supplier refund ${sp.supplierName || ''}`, sp.id);
         else add(k, sp.date, own, sp.isOpening ? 'OPENING' : 'SUPPLIER_ADVANCE', sp.memo || `Supplier advance ${sp.supplierName || ''}`, sp.id);
+        movesOf(sp).forEach(m => add(k, m.date, Number(m.du), Number(m.du) < 0 ? 'SUPPLIER_ALLOCATION' : 'SUPPLIER_RELEASE', `${Number(m.du) < 0 ? 'Allocated to' : 'Released from'} PO ${m.orderNumber || ''} - supplier payment ${sp.supplierName || ''}`, sp.id));
     });
     return rows;
 };
@@ -7112,13 +7191,62 @@ const computeAccountStatus = (db, from, to, tzMin, query) => {
         const opening = r2w(closing - entered + paid);
         return {
             key: a.key, group: a.group, kind: a.kind, walletType: a.walletType, label: a.label, labelAr: a.labelAr,
-            customerName: a.customerName, supplierName: a.supplierName, orderNumber: a.orderNumber, projectName: a.projectName,
+            customerName: a.customerName, supplierName: a.supplierName, orderNumber: a.orderNumber, customerReference: a.customerReference, projectName: a.projectName,
             currentBalance: a.balance, openingBalance: opening, entered, paid, net: r2w(entered - paid), closingBalance: closing,
             movementCount: inRange.length, undated: r2w(a.balance - sumOf(dated)),
             movements: inRange.map(m => ({ date: m.date, day: m.day, amount: m.amount, entered: m.amount > 0 ? m.amount : 0, paid: m.amount < 0 ? r2w(-m.amount) : 0, source: m.source, description: m.description, ref: m.ref }))
         };
     });
     return list;
+};
+// R35 round 2 (validator 1 G3): an order action (void, cancel, reopen, close, ...) can change a customer wallet (general, project or PO)
+// without a dated money row of its own (e.g. the void after a blanket close takes the close overpayment back from the general wallet).
+// The action measures, for the customer's wallets, the part of the balance that no dated movement explains (undated) before and after;
+// every change of it is written as a dated DISPLAY-ONLY ledger TRANSFER (accountStatusOnly, walletTransfer: true; fromKey / toKey name the
+// accounts, paired from the wallet that lost to the wallet that gained). No stored balance or money figure changes: Cash / Bank ignores
+// the row (TRANSFER without receipt), AR / AP / VAT / other ledger accounts never read it, and only Finance > Account Status counts it,
+// so every account keeps undated = 0 and the movement shows on the action's date.
+const ACCST_JOURNAL_TYPES = new Set(['self', 'project', 'po']);
+const accStJournalSnapshot = (db, customerName) => {
+    try {
+        if (!customerName) return null;
+        const { accounts } = computeFinanceAccounts(db);
+        const dated = new Map();
+        computeAccountMovements(db).forEach(m => { if (accStDay(m.date, 0)) dated.set(m.key, (dated.get(m.key) || 0) + m.amount); });
+        const out = new Map();
+        accounts.forEach(a => {
+            if (a.group !== 'customer' || !ACCST_JOURNAL_TYPES.has(a.walletType) || a.customerName !== customerName) return;
+            const label = a.walletType === 'po' ? acctLabel(a.customerName, 'ORDER', a.orderNumber || a.orderId) : a.walletType === 'project' ? acctLabel(a.customerName, 'PROJECT', a.projectName) : acctLabel(a.customerName, 'SELF', 'Self');
+            out.set(a.key, { undated: r2w(a.balance - (dated.get(a.key) || 0)), label, orderId: a.orderId || null });
+        });
+        return out;
+    } catch (e) { console.error('[AccountStatus] snapshot failed:', e && e.message); return null; }
+};
+const accStJournalWrite = (db, before, customerName, ctx, user) => {
+    try {
+        if (!before) return 0;
+        const after = accStJournalSnapshot(db, customerName);
+        if (!after) return 0;
+        const plus = [], minus = [];
+        after.forEach((v, k) => {
+            const d = r2w(v.undated - (before.has(k) ? before.get(k).undated : 0));
+            if (d > 0.004) plus.push({ k, v, left: d }); else if (d < -0.004) minus.push({ k, v, left: -d });
+        });
+        if (!plus.length && !minus.length) return 0;
+        const what = ctx.what || 'Order action';
+        // no orderId / receipt: Cash / Bank and the order's money rows never read it; the generic ledger write refuses to create or change it
+        const base = { type: 'TRANSFER', category: 'Account Transfer', walletTransfer: true, accountStatusOnly: true, customerName };
+        // a one-sided change (money left / entered the customer's wallets): for a payment void the other side is the bank reversal
+        const outside = ctx.outside || '';
+        const row = (amt, f, t) => ledgerPush(db, { ...base, amount: r2w(amt), fromKey: f ? f.k : undefined, toKey: t ? t.k : undefined, fromAccount: f ? f.v.label : outside, toAccount: t ? t.v.label : outside,
+            description: `${what}: ${r2w(amt).toFixed(2)} L.E. ${f && t ? `moved from ${f.v.label} to ${t.v.label}` : t ? `added to ${t.v.label}` : `taken from ${f.v.label}`} (wallet movement of this action, display only - no balance change)` }, user);
+        plus.sort((a, b) => b.left - a.left); minus.sort((a, b) => b.left - a.left);
+        let n = 0;
+        minus.forEach(m => plus.forEach(p => { const x = r2w(Math.min(m.left, p.left)); if (x > 0.004) { row(x, m, p); m.left = r2w(m.left - x); p.left = r2w(p.left - x); n++; } }));
+        minus.forEach(m => { if (m.left > 0.004) { row(m.left, m, null); n++; } });
+        plus.forEach(p => { if (p.left > 0.004) { row(p.left, null, p); n++; } });
+        return n;
+    } catch (e) { console.error('[AccountStatus] journal failed:', e && e.message); return 0; }
 };
 // Read: finance, management and admin (the same roles as the other finance reports). Query: from, to (YYYY-MM-DD, inclusive;
 // default the current month), q (any part of the account name), tz (the browser's getTimezoneOffset() in minutes, so a
@@ -7459,6 +7587,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
     const user = req.headers['x-user'] || 'System';
     let order = db.orders[index];
+    const accStBefore = accStJournalSnapshot(db, order && order.customerName); // R35 round 2 (G3)
     const oldStatus = order.status;
     const settings = resolveSettings(db);
 
@@ -9060,6 +9189,7 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const back = mine.reduce((t, x) => t + (Number(x.amount) || 0), 0);
                     sp.allocations = sp.allocations.filter(x => x.componentId !== comp.id);
                     sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) + back) * 100) / 100;
+                    mine.forEach(x => spRecordMove(sp, Number(x.amount) || 0, { kind: 'RELEASE', orderId: x.orderId, orderNumber: x.orderNumber, componentId: x.componentId })); // R35 round 2 (G2)
                 });
                 comp.status = 'AWARDED';
                 comp.statusUpdatedAt = new Date().toISOString();
@@ -9313,6 +9443,18 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     }
                 }
                 const [removed] = order.payments.splice(payload.index, 1);
+                // R35 round 2 (validator 1 G1): the voided payment is kept as dated metadata (server-owned, no money figure reads it), so
+                // Finance > Account Status still shows the money on the PO wallet and in Cash / Bank from the payment date until the void
+                // and the reversal on the void date (a closed month keeps its figures). The void's ledger rows are tagged voidRecorded.
+                const ledLenVoid = (db.ledger || []).length;
+                // the PO wallet before the void (the payment is already off the order: add it back), so the void date shows what the PO
+                // wallet itself lost; money the void takes from the general wallet (surplus, close overpayment, a cancel's credit) shows there
+                const poWalletOf = () => { try { return Number((computeOrderWallet(order, db.orders || [], db.supplierPayments || [], db.ledger || []) || {}).walletBalance) || 0; } catch (e) { return 0; } };
+                order.payments.splice(payload.index, 0, removed);
+                const poBeforeVoid = poWalletOf();
+                order.payments.splice(payload.index, 1);
+                order.voidedPayments = Array.isArray(order.voidedPayments) ? order.voidedPayments : [];
+                order.voidedPayments.push({ receiptNumber: removed.receiptNumber || null, date: removed.date || order.orderDate || null, memo: removed.memo || null, amount: Number(removed.amount) || 0, amountLE: r2w(vPlan.pvLE), cashLE: r2w(vPlan.c), walletLE: r2w(vPlan.w), voidedAt: new Date().toISOString(), user, reason: payload.reason || 'Correction' });
                 if (closedTakeBack) {
                     const { rootC, custC, backLE, keepLE, keepOC } = closedTakeBack;
                     custC.walletBalances = custC.walletBalances || {};
@@ -9413,6 +9555,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
                     const dedLE = r2w(cashPartLEV - (vPlan.fromL > 0.004 && custV ? vPlan.refundLE : 0));
                     if (dedLE > 0.004) ledgerPush(db, { type: 'DEDUCTION', amount: dedLE, description: `Payment VOIDED: ${order.customerName} - PO ${order.internalOrderNumber} - ${payload.reason || 'Correction'}${fxVd !== 1 ? ` (${(dedLE / fxVd).toFixed(2)} ${order.currency} at rate ${fxVd})` : ''}`, category: 'Customer Payment Reversal', fromAccount: 'Bank Account', toAccount: acctLabel(order.customerName, 'ORDER', order.internalOrderNumber), customerName: order.customerName, orderId: order.id, poNumber: order.internalOrderNumber, voidOfPayment: true }, user);
                 }
+                (db.ledger || []).slice(ledLenVoid).forEach(e => { if (e && e.voidOfPayment) e.voidRecorded = true; }); // R35 round 2 (G1)
+                { const vp = order.voidedPayments[order.voidedPayments.length - 1]; if (vp) vp.poDeltaLE = r2w(poWalletOf() - poBeforeVoid); }
                 break;
 
             case 'toggle-hold':
@@ -10303,6 +10447,8 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
         reconcileInventory(oldOrder, order, db);
 
         db.orders[index] = order;
+        // R35 round 2 (G3): dated display-only rows for wallet changes this action made without a money row of its own
+        accStJournalWrite(db, accStBefore, order.customerName, { what: `${action} on PO ${order.internalOrderNumber || order.id}`, orderId: order.id, poNumber: order.internalOrderNumber, outside: action === 'cancel-payment' ? 'Bank Account' : '' }, user);
         if (writeDb(db, getDbPath(req))) {
             res.json(order);
         } else {
@@ -12136,6 +12282,9 @@ app.post('/api/v1/supplierPayments/:id/allocate', (req, res) => {
         const r = allocateToEntries(db, sp.supplierId, entries, want);
         if (!r.allocations.length) return res.status(400).json({ error: 'refused: the PO is already fully covered' });
         const done = Math.round((want - r.rest) * 100) / 100;
+        // R35 round 2 (G2): an allocation made after the payment carries its own date; the move is dated as well
+        const nowA = new Date().toISOString();
+        r.allocations.forEach(a => { a.date = nowA; spRecordMove(sp, -(Number(a.amount) || 0), { date: nowA, kind: 'ALLOCATE', orderId: a.orderId, orderNumber: a.orderNumber, componentId: a.componentId }); });
         sp.allocations = (sp.allocations || []).concat(r.allocations);
         sp.unallocatedAdvance = Math.round((free - done) * 100) / 100;
         writeDb(db, getDbPath(req));
@@ -12204,6 +12353,8 @@ const autoCoverFromExcess = (db, supplierId, poNumber) => {
             const r = allocateToEntries(db, sp.supplierId, entries, free);
             if (!r.allocations.length) return;
             const used = Math.round(r.allocations.reduce((t, a) => t + (Number(a.amount) || 0), 0) * 100) / 100;
+            const nowC = new Date().toISOString(); // R35 round 2 (G2): auto-cover after the payment is a dated allocation
+            r.allocations.forEach(a => { a.date = nowC; spRecordMove(sp, -(Number(a.amount) || 0), { date: nowC, kind: 'ALLOCATE', orderId: a.orderId, orderNumber: a.orderNumber, componentId: a.componentId }); });
             sp.allocations = (sp.allocations || []).concat(r.allocations);
             sp.unallocatedAdvance = Math.round(((Number(sp.unallocatedAdvance) || 0) - used) * 100) / 100;
             netFree = Math.round((netFree - used) * 100) / 100;

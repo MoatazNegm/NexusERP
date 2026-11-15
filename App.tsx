@@ -9,9 +9,10 @@ import { SupplierModule } from './components/SupplierModule';
 import { ShipmentModule } from './components/ShipmentModule';
 import { ModuleGate } from './components/ModuleGate';
 import { DashboardCard } from './components/DashboardCard';
-import { DashboardFinanceCards } from './components/FinanceBalances';
+import { DashboardFinanceCards, AccountStatusView } from './components/FinanceBalances';
 import { OrderDetailsModal } from './components/OrderDetailsModal';
 import { FinanceModule } from './components/FinanceModule';
+import { LanguageProvider } from './contexts/LanguageContext';
 import { GovEInvoiceModule } from './components/GovEInvoiceModule';
 import { FactoryModule } from './components/FactoryModule';
 import { CRMModule } from './components/CRMModule';
@@ -236,6 +237,9 @@ const App: React.FC = () => {
       { id: 'shipment', icon: 'fa-truck-ramp-box', label: 'Shipment', roles: mapping['shipment'] || ['shipment'] as UserRole[], module: 'shipping' as keyof AppConfig['modules'] },
       { id: 'crm', icon: 'fa-users', label: 'CRM Contacts', roles: mapping['crm'] || ['crm'] as UserRole[], module: 'crm' as keyof AppConfig['modules'] },
       { id: 'suppliers', icon: 'fa-truck-field', label: 'Suppliers', roles: mapping['suppliers'] || ['procurement'] as UserRole[], module: 'suppliers' as keyof AppConfig['modules'] },
+      // R35 round 2 (validator 1 G5): management reads Finance > Account Status (read-only; the API already allows management) without
+      // the Finance Operations module; a finance user (and admin) has it inside Finance Operations, so the extra item is hidden there.
+      { id: 'accountStatus', icon: 'fa-money-bill-transfer', label: 'Account Status', roles: mapping['accountStatus'] || ['management'] as UserRole[], module: 'finance' as keyof AppConfig['modules'], hidden: hasRole('finance') },
       { id: 'reporting', icon: 'fa-chart-column', label: 'Profitability', roles: mapping['reporting'] || ['management'] as UserRole[], module: 'finance' as keyof AppConfig['modules'] },
       { id: 'govEInvoice', icon: 'fa-file-invoice-dollar', label: 'Gov.EInvoice', roles: mapping['govEInvoice'] || ['Gov.EInvoice'] as UserRole[], module: 'govEInvoice' as keyof AppConfig['modules'] },
       { id: 'minimums', icon: 'fa-percent', label: 'Minimums', roles: ['management'] as UserRole[], hidden: !isManager },
@@ -718,6 +722,7 @@ const App: React.FC = () => {
       case 'suppliers': return <SupplierModule currentUser={currentUser} userRoles={effectiveRoles} refreshKey={refreshKey} config={config} />;
       case 'crm': return <CRMModule refreshKey={refreshKey} currentUser={currentUser} />;
       case 'reporting': return <ProfitabilityReport orders={orders} config={config} />;
+      case 'accountStatus': return <LanguageProvider pageId="finance"><div className="p-4 md:p-8 max-w-[1600px] mx-auto" data-testid="mgmt-account-status"><AccountStatusView refreshKey={refreshKey} /></div></LanguageProvider>;
       case 'systemLogs': return <SystemLogs refreshKey={refreshKey} />;
       case 'govEInvoice': return <GovEInvoiceModule refreshKey={refreshKey} currentUser={currentUser} />;
       case 'minimums': return <MinimumsModule currentUser={currentUser} refreshKey={refreshKey} />;
@@ -1057,5 +1062,5 @@ const App: React.FC = () => {
   );
 };
 
-export type View = 'dashboard' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'sourcing' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice' | 'minimums' | 'help';
+export type View = 'dashboard' | 'accountStatus' | 'orders' | 'technicalReview' | 'procurement' | 'inventory' | 'shipment' | 'suppliers' | 'crm' | 'settings' | 'finance' | 'sourcing' | 'factory' | 'reporting' | 'systemLogs' | 'govEInvoice' | 'minimums' | 'help';
 export default App;

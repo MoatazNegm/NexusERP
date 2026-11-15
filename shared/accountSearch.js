@@ -18,7 +18,8 @@ export const normalizeAccountText = (s) => String(s === undefined || s === null 
     .replace(/\s+/g, ' ')
     .trim();
 // The names an account is found by: its English and Arabic labels and the customer / supplier / PO / project it belongs to.
-export const accountSearchText = (a) => normalizeAccountText([a && a.label, a && a.labelAr, a && a.customerName, a && a.supplierName, a && a.orderNumber, a && a.projectName].filter(Boolean).join(' | '));
+// R35 round 2 (validator 1 G4): a PO wallet is also found by the customer's own PO reference (customerReferenceNumber).
+export const accountSearchText = (a) => normalizeAccountText([a && a.label, a && a.labelAr, a && a.customerName, a && a.supplierName, a && a.orderNumber, a && a.customerReference, a && a.projectName].filter(Boolean).join(' | '));
 export const accountMatches = (a, query) => {
     const q = normalizeAccountText(query);
     if (!q) return true;

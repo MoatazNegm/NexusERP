@@ -597,7 +597,7 @@ export const FinancialPositionView: React.FC<{ refreshKey?: number }> = ({ refre
 // Per money account: opening balance before the range, Entered (money in), Paid (money out) and the balance at the end of the
 // range; default range = the current month; search by any part of the account name (English, Arabic or any other language).
 interface StatusMove { date: string; day: string; amount: number; entered: number; paid: number; source: string; description: string; ref: string }
-interface StatusAccount { key: string; group: Account['group']; walletType?: string; label: string; labelAr: string; customerName?: string; supplierName?: string; orderNumber?: string; projectName?: string; currentBalance: number; openingBalance: number; entered: number; paid: number; net: number; closingBalance: number; movementCount: number; undated: number; movements: StatusMove[] }
+interface StatusAccount { key: string; group: Account['group']; walletType?: string; label: string; labelAr: string; customerName?: string; supplierName?: string; orderNumber?: string; customerReference?: string; projectName?: string; currentBalance: number; openingBalance: number; entered: number; paid: number; net: number; closingBalance: number; movementCount: number; undated: number; movements: StatusMove[] }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 export const currentMonthRange = (d = new Date()) => {
@@ -646,6 +646,30 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
   // the part of the current balance no dated movement explains (it sits in every opening balance)
   const undatedNote = (u: number) => isAr ? `يشمل ${fmt(u)} ${cur} بدون حركة مؤرخة (ضمن رصيد أول الفترة)` : `Includes ${fmt(u)} ${cur} with no dated movement (in the opening balance)`;
   const money = (n: number, cls = 'text-slate-800') => <span className={n < 0 ? 'text-rose-600' : cls}>{fmt(n)} {cur}</span>;
+  const movesWord = (n: number) => isAr ? 'حركة' : (n === 1 ? 'movement' : 'movements');
+  // R35 round 2 (validator 1 G4): a PO wallet also shows the customer's own PO reference (searchable as well)
+  const refLine = (a: StatusAccount, tid: string) => a.customerReference ? <div className="text-[10px] font-bold text-slate-500 break-words mt-0.5" data-testid={tid}>{isAr ? 'أمر شراء العميل' : 'Customer PO'}: {a.customerReference}</div> : null;
+  // R35 round 2 (validator 1 G6): on phones / tablets (cards) each movement is stacked: date and amount on one line, the description
+  // below, so Entered / Paid are readable without a sideways swipe inside the card.
+  const MovesStacked: React.FC<{ a: StatusAccount }> = ({ a }) => (
+    a.movements.length === 0 ? (
+      <div className="text-[10px] font-bold text-slate-300 italic uppercase" data-testid={`as-moves-empty-${a.key}`}>{isAr ? 'لا توجد حركات في هذه الفترة' : 'No movements in this range'}</div>
+    ) : (
+      <ul className="rounded-2xl border border-slate-100 divide-y divide-slate-50 min-w-0" data-testid={`as-cmoves-${a.key}`} dir={isAr ? 'rtl' : 'ltr'}>
+        {a.movements.map((m, i) => (
+          <li key={i} className="px-3 py-2 space-y-1 min-w-0" data-testid={`as-cmove-${a.key}-${i}`}>
+            <div className="flex justify-between items-baseline gap-2">
+              <span className="text-[11px] font-bold text-slate-500 whitespace-nowrap">{m.day}</span>
+              {m.entered
+                ? <span className="text-xs font-black text-emerald-600 whitespace-nowrap">{isAr ? 'وارد' : 'Entered'} {fmt(m.entered)}</span>
+                : <span className="text-xs font-black text-rose-600 whitespace-nowrap">{isAr ? 'منصرف' : 'Paid'} {fmt(m.paid)}</span>}
+            </div>
+            <div className="text-[11px] font-bold text-slate-700 break-words">{m.description}</div>
+          </li>
+        ))}
+      </ul>
+    )
+  );
 
   const Moves: React.FC<{ a: StatusAccount }> = ({ a }) => (
     a.movements.length === 0 ? (
@@ -757,7 +781,8 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
                     <React.Fragment key={a.key}>
                       <tr data-testid={`as-row-${a.key}`} onClick={() => setOpen(open === a.key ? null : a.key)} className="hover:bg-slate-50/50 transition-colors cursor-pointer">
                         <td className="px-6 py-5"><div className="font-black text-slate-800 text-sm break-words">{name(a)}</div>
-                          <div className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{a.movementCount} {isAr ? 'حركة' : 'movements'}</div>
+                          {refLine(a, `as-ref-${a.key}`)}
+                          <div className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{a.movementCount} {movesWord(a.movementCount)}</div>
                           {Math.abs(a.undated) > 0.004 && <div className="text-[9px] font-bold text-amber-600 mt-0.5" data-testid={`as-undated-${a.key}`}>{undatedNote(a.undated)}</div>}</td>
                         <td className="px-6 py-5">{groupBadge(a as any, language)}</td>
                         <td className="px-6 py-5 text-end text-xs font-bold whitespace-nowrap" data-testid={`as-open-${a.key}`}>{money(a.openingBalance, 'text-slate-500')}</td>
@@ -779,7 +804,7 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
             {shown.map(a => (
               <div key={a.key} data-testid={`as-card-${a.key}`} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3 min-w-0">
                 <div className="flex justify-between items-start gap-3">
-                  <div className="font-black text-slate-800 text-sm break-words min-w-0">{name(a)}</div>
+                  <div className="min-w-0"><div className="font-black text-slate-800 text-sm break-words">{name(a)}</div>{refLine(a, `as-cref-${a.key}`)}</div>
                   <div className="shrink-0">{groupBadge(a as any, language)}</div>
                 </div>
                 {Math.abs(a.undated) > 0.004 && <div className="text-[10px] font-bold text-amber-600 break-words" data-testid={`as-card-undated-${a.key}`}>{undatedNote(a.undated)}</div>}
@@ -796,9 +821,9 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
                 ))}
                 <button onClick={() => setOpen(open === a.key ? null : a.key)} data-testid={`as-card-toggle-${a.key}`}
                   className="w-full py-3 min-h-[44px] bg-slate-100 text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all flex items-center justify-center gap-2">
-                  <i className={`fa-solid fa-chevron-${open === a.key ? 'up' : 'down'}`}></i> {a.movementCount} {isAr ? 'حركة' : 'movements'}
+                  <i className={`fa-solid fa-chevron-${open === a.key ? 'up' : 'down'}`}></i> {a.movementCount} {movesWord(a.movementCount)}
                 </button>
-                {open === a.key && <Moves a={a} />}
+                {open === a.key && <MovesStacked a={a} />}
               </div>
             ))}
           </div>

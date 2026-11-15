@@ -75,6 +75,20 @@ export const computeCashBank = (orders = [], ledger = [], supplierPayments = [])
 // computeCashBank(...).balance (proved by the R35 sheets). Rows: { date, amount (+ in, - out), source, description, ref }.
 // The wallet part of a pay-from-wallet payment is taken off the payment that carries its receipt (same day), so a payment
 // that was partly paid from the wallet shows only its cash part.
+// R35 round 2 (G1): the date of the ledger ADDITION of the payment a legacy void reversal undid: the latest ADDITION of the same order that
+// is no longer linked to a payment, dated on or before the reversal (amount closest first). Exported for the PO wallet rows as well.
+export const legacyVoidOrigin = (led, e, byId, paymentLedgerIds) => {
+    if (!e || !e.orderId) return null;
+    const o = byId && byId.get ? byId.get(e.orderId) : null;
+    const linked = new Set(paymentLedgerIds || []);
+    if (o) (o.payments || []).forEach(p => { if (p && p.ledgerEntryId) linked.add(p.ledgerEntryId); });
+    const live = new Set(((o && o.payments) || []).map(p => p && p.receiptNumber).filter(Boolean).map(String));
+    const amt = Number(e.amount) || 0;
+    const cands = (led || []).filter(x => x && x.type === 'ADDITION' && x.orderId === e.orderId && !linked.has(x.id) && !(x.receiptNumber && live.has(String(x.receiptNumber))) && String(x.date || '') <= String(e.date || '\uffff'));
+    if (!cands.length) return null;
+    cands.sort((a, b) => (Math.abs((Number(a.amount) || 0) - amt) - Math.abs((Number(b.amount) || 0) - amt)) || String(b.date || '').localeCompare(String(a.date || '')));
+    return cands[0].date || null;
+};
 export const cashBankMovements = (orders = [], ledger = [], supplierPayments = []) => {
     const led = Array.isArray(ledger) ? ledger : [];
     const rows = [];
@@ -100,13 +114,22 @@ export const cashBankMovements = (orders = [], ledger = [], supplierPayments = [
             let amt = paymentLE(p, fx);
             const k = p.receiptNumber ? `${o.id}|${p.receiptNumber}` : null;
             if (k && walletPart.has(k) && !taken.has(k)) { amt -= walletPart.get(k); taken.add(k); }
-            if (Math.abs(amt) > 0.004) rows.push({ date: p.date || o.orderDate || '', amount: r2(amt), source: 'ORDER_PAYMENT', description: `Customer payment ${o.customerName || ''} - PO ${o.internalOrderNumber || o.id}${p.receiptNumber ? ' (' + p.receiptNumber + ')' : ''}`, ref: o.internalOrderNumber || o.id });
+            if (Math.abs(amt) > 0.004) rows.push({ date: p.date || o.orderDate || '', amount: r2(amt), source: 'ORDER_PAYMENT', description: `Customer payment ${o.customerName || ''} - PO ${o.internalOrderNumber || o.id}${p.receiptNumber ? ' (' + p.receiptNumber + ')' : ''}`, ref: o.id });
+        });
+        // R35 round 2 (validator 1 G1): a VOIDED payment keeps its history: its cash part came in on the payment date and went out on
+        // the void date (order.voidedPayments, written by cancel-payment). The pair nets to 0, so the balance is unchanged.
+        (Array.isArray(o.voidedPayments) ? o.voidedPayments : []).forEach(v => {
+            const c = r2(Number(v && v.cashLE) || 0);
+            if (!v || Math.abs(c) <= 0.004) return;
+            const rc = v.receiptNumber ? ' (' + v.receiptNumber + ')' : '';
+            rows.push({ date: v.date || o.orderDate || '', amount: c, source: 'ORDER_PAYMENT', description: `Customer payment ${o.customerName || ''} - PO ${o.internalOrderNumber || o.id}${rc}`, ref: o.id });
+            rows.push({ date: v.voidedAt || '', amount: -c, source: 'PAYMENT_VOID', description: `Payment voided${rc}: ${o.customerName || ''} - PO ${o.internalOrderNumber || o.id}${v.reason ? ' - ' + v.reason : ''}`, ref: o.id });
         });
         // a wallet part whose receipt is on no cash payment of the order (only a transfer payment carries it) still comes off the order cash
         walletPart.forEach((v, k) => {
             if (taken.has(k) || !k.startsWith(`${o.id}|`)) return;
             const e = led.find(x => x && x.type === 'TRANSFER' && x.orderId === o.id && `${x.orderId}|${x.receiptNumber}` === k);
-            if (Math.abs(v) > 0.004) rows.push({ date: (e && e.date) || '', amount: r2(-v), source: 'ORDER_PAYMENT', description: `Wallet part of a payment - PO ${o.internalOrderNumber || o.id}`, ref: o.internalOrderNumber || o.id });
+            if (Math.abs(v) > 0.004) rows.push({ date: (e && e.date) || '', amount: r2(-v), source: 'ORDER_PAYMENT', description: `Wallet part of a payment - PO ${o.internalOrderNumber || o.id}`, ref: o.id });
         });
     });
     const isOrderPaymentEntry = (e) => (e.orderId && byId.has(e.orderId)) || (e.id && paymentLedgerIds.has(e.id));
@@ -118,6 +141,14 @@ export const cashBankMovements = (orders = [], ledger = [], supplierPayments = [
         else if (e.type === 'REFUND' && !isVoidRefund(e)) rows.push({ ...base, amount: r2(-amt), source: 'CUSTOMER_REFUND' });
         else if (e.type === 'ADDITION' && !String(e.id || '').startsWith('adv_cust_') && !isOrderPaymentEntry(e) && e.category !== 'Supplier Refund') rows.push({ ...base, amount: r2(amt), source: 'LEDGER_ADDITION' });
         else if (e.type === 'COST' && !String(e.id || '').startsWith('sp_ledg_') && e.category !== 'Supplier Payment') rows.push({ ...base, amount: r2(-amt), source: 'LEDGER_COST' });
+        // R35 round 2 (G1), voids recorded before order.voidedPayments existed: the reversal row (DEDUCTION / REFUND of the void) gives the
+        // cash part; it came in on the date of the payment's own ledger ADDITION (same order, no longer linked to a payment) and went out
+        // on the reversal date. Without such an ADDITION both rows sit on the reversal date.
+        if ((e.type === 'DEDUCTION' || e.type === 'REFUND') && isVoidRefund(e) && !e.voidRecorded && Math.abs(amt) > 0.004) {
+            const orig = legacyVoidOrigin(led, e, byId, paymentLedgerIds);
+            rows.push({ ...base, date: orig || e.date || '', amount: r2(amt), source: 'ORDER_PAYMENT', description: `Customer payment (voided later) - ${e.poNumber ? 'PO ' + e.poNumber : (e.description || '')}` });
+            rows.push({ ...base, amount: r2(-amt), source: 'PAYMENT_VOID' });
+        }
     });
     (supplierPayments || []).forEach(p => {
         if (!p || p.isOpening) return;
