@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { dataService } from '../services/dataService';
 import { useLanguage } from '../contexts/LanguageContext';
 import { DashboardCard } from './DashboardCard';
+import { accountMatches } from '../shared/accountSearch';
 
 // R34 (user order 2026-11-08): Finance "Initial Balances" tab, Finance "Balances & Stock Value" report and the
 // Dashboard cards. Figures come from GET /api/v1/finance/position (server computes every account and the stock value).
@@ -588,6 +589,222 @@ export const FinancialPositionView: React.FC<{ refreshKey?: number }> = ({ refre
         <AccountsList accounts={f.filtered} />
         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{isAr ? 'آخر تحديث' : 'As of'} {new Date(pos.generatedAt).toLocaleString()}</div>
       </div>
+    </div>
+  );
+};
+
+// --- Finance > Account Status (R35, user order 2026-11-15) ---
+// Per money account: opening balance before the range, Entered (money in), Paid (money out) and the balance at the end of the
+// range; default range = the current month; search by any part of the account name (English, Arabic or any other language).
+interface StatusMove { date: string; day: string; amount: number; entered: number; paid: number; source: string; description: string; ref: string }
+interface StatusAccount { key: string; group: Account['group']; walletType?: string; label: string; labelAr: string; customerName?: string; supplierName?: string; orderNumber?: string; projectName?: string; currentBalance: number; openingBalance: number; entered: number; paid: number; net: number; closingBalance: number; movementCount: number; undated: number; movements: StatusMove[] }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+export const currentMonthRange = (d = new Date()) => {
+  const y = d.getFullYear(), m = d.getMonth();
+  return { from: `${y}-${pad2(m + 1)}-01`, to: `${y}-${pad2(m + 1)}-${pad2(new Date(y, m + 1, 0).getDate())}` };
+};
+
+export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKey }) => {
+  const { language } = useLanguage();
+  const isAr = language === 'ar';
+  const cur = useCur();
+  const month = useMemo(() => currentMonthRange(), []);
+  const [from, setFrom] = useState(month.from);
+  const [to, setTo] = useState(month.to);
+  const [search, setSearch] = useState('');
+  const [group, setGroup] = useState<Group>('all');
+  const [data, setData] = useState<{ from: string; to: string; accounts: StatusAccount[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+
+  const rangeError = !from || !to
+    ? (isAr ? 'اختر تاريخ البداية وتاريخ النهاية' : 'Choose a start and an end date')
+    : from > to ? (isAr ? `تاريخ البداية ${from} بعد تاريخ النهاية ${to}` : `The start date ${from} is after the end date ${to}`) : null;
+
+  useEffect(() => {
+    if (rangeError) return;
+    let alive = true;
+    setLoading(true);
+    dataService.getAccountStatus(from, to)
+      .then(r => { if (alive) { setData(r); setError(null); } })
+      .catch(e => { if (alive) setError(e.message || 'Failed to load'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [from, to, refreshKey, rangeError]);
+
+  const all = data?.accounts || [];
+  const matched = useMemo(() => all.filter(a => accountMatches(a, search)), [all, search]);
+  const counts = useMemo(() => {
+    const c: Record<Group, number> = { all: matched.length, company: 0, customer: 0, supplier: 0, ledger: 0 };
+    matched.forEach(a => { c[a.group] = (c[a.group] || 0) + 1; });
+    return c;
+  }, [matched]);
+  const shown = matched.filter(a => group === 'all' || a.group === group);
+  const name = (a: StatusAccount) => isAr ? a.labelAr : a.label;
+  // the part of the current balance no dated movement explains (it sits in every opening balance)
+  const undatedNote = (u: number) => isAr ? `يشمل ${fmt(u)} ${cur} بدون حركة مؤرخة (ضمن رصيد أول الفترة)` : `Includes ${fmt(u)} ${cur} with no dated movement (in the opening balance)`;
+  const money = (n: number, cls = 'text-slate-800') => <span className={n < 0 ? 'text-rose-600' : cls}>{fmt(n)} {cur}</span>;
+
+  const Moves: React.FC<{ a: StatusAccount }> = ({ a }) => (
+    a.movements.length === 0 ? (
+      <div className="text-[10px] font-bold text-slate-300 italic uppercase" data-testid={`as-moves-empty-${a.key}`}>{isAr ? 'لا توجد حركات في هذه الفترة' : 'No movements in this range'}</div>
+    ) : (
+      <div className="overflow-x-auto rounded-2xl border border-slate-100" data-testid={`as-moves-${a.key}`}>
+        <table className="w-full text-start min-w-[560px]" dir={isAr ? 'rtl' : 'ltr'}>
+          <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
+            <tr>
+              <th className="px-4 py-3">{isAr ? 'التاريخ' : 'Date'}</th>
+              <th className="px-4 py-3">{isAr ? 'البيان' : 'Description'}</th>
+              <th className="px-4 py-3 text-end">{isAr ? 'وارد' : 'Entered'}</th>
+              <th className="px-4 py-3 text-end">{isAr ? 'منصرف' : 'Paid'}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {a.movements.map((m, i) => (
+              <tr key={i}>
+                <td className="px-4 py-3 text-xs font-bold text-slate-500 whitespace-nowrap">{m.day}</td>
+                <td className="px-4 py-3 text-xs font-bold text-slate-700 break-words">{m.description}</td>
+                <td className="px-4 py-3 text-end text-xs font-black text-emerald-600 whitespace-nowrap">{m.entered ? fmt(m.entered) : '-'}</td>
+                <td className="px-4 py-3 text-end text-xs font-black text-rose-600 whitespace-nowrap">{m.paid ? fmt(m.paid) : '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  );
+
+  const dateInput = (value: string, onChange: (v: string) => void, label: string, testid: string) => (
+    <label className="flex flex-col gap-1 min-w-0">
+      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{label}</span>
+      <input type="date" value={value} onChange={e => onChange(e.target.value)} data-testid={testid}
+        className="w-full sm:w-44 px-4 py-3 min-h-[44px] bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm text-sm" />
+    </label>
+  );
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500" data-testid="account-status-view">
+      <div className="bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shrink-0">
+            <i className="fa-solid fa-money-bill-transfer"></i>
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">{isAr ? 'حالة الحسابات' : 'Account Status'}</h3>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+              {isAr ? 'الوارد والمنصرف ورصيد كل حساب مالي خلال الفترة المختارة' : 'Money entered, money paid and the balance of every money account in the chosen date range'}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col md:flex-row md:items-end gap-3 md:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
+            {dateInput(from, setFrom, isAr ? 'من' : 'From', 'as-from')}
+            {dateInput(to, setTo, isAr ? 'إلى' : 'To', 'as-to')}
+          </div>
+          <button onClick={() => { setFrom(month.from); setTo(month.to); }} data-testid="as-month"
+            className="px-5 py-3 min-h-[44px] bg-slate-100 text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all inline-flex items-center justify-center gap-2 shrink-0">
+            <i className="fa-solid fa-calendar-day"></i> {isAr ? 'الشهر الحالي' : 'This month'}
+          </button>
+          <div className="md:ml-auto w-full md:w-auto" data-testid="as-search-wrap">
+            <div className="relative w-full xl:w-96">
+              <input type="text" data-testid="as-search" value={search} onChange={e => setSearch(e.target.value)}
+                placeholder={isAr ? 'ابحث بأي جزء من اسم الحساب...' : 'Search any part of the account name...'}
+                className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm" />
+              <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300"></i>
+            </div>
+          </div>
+        </div>
+        {(rangeError || error) && (
+          <div className="p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3" data-testid="as-error">
+            <i className="fa-solid fa-circle-exclamation"></i>{rangeError || error}
+          </div>
+        )}
+        <p className="text-[10px] font-bold text-slate-400 break-words" data-testid="as-note">
+          {isAr
+            ? 'الوارد = ما يزيد رصيد الحساب، المنصرف = ما ينقصه. في حسابات الدفتر الأخرى (مثل النقل أو حساب مستخدم): الوارد = ما استلمته الشركة من الحساب، المنصرف = ما دفعته الشركة إليه. الذمم المدينة والدائنة وضريبة القيمة المضافة التزامات تحسب من قيم الأوامر وتظهر في "الأرصدة وقيمة المخزون".'
+            : 'Entered = money that raised the balance, Paid = money that lowered it. For other ledger accounts (e.g. Transportation or a user\'s account): Entered = money the company received from the account, Paid = money the company paid to it. Receivables, payables and VAT are commitments computed from order values; they are in "Balances & Stock Value".'}
+        </p>
+      </div>
+
+      <GroupPills value={group} onChange={setGroup} counts={counts} />
+
+      {loading && !data ? (
+        <div className="py-20 text-center text-slate-300"><i className="fa-solid fa-spinner fa-spin text-2xl"></i></div>
+      ) : shown.length === 0 ? (
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm px-8 py-20 text-center text-slate-300 italic font-black uppercase tracking-widest text-xs" data-testid="as-empty">
+          {isAr ? 'لا توجد حسابات مطابقة' : 'No matching accounts'}
+        </div>
+      ) : (
+        <>
+          <div className="hidden lg:block bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-start" dir={isAr ? 'rtl' : 'ltr'} data-testid="as-table">
+                <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
+                  <tr>
+                    <th className="px-6 py-5">{isAr ? 'الحساب' : 'Account'}</th>
+                    <th className="px-6 py-5">{isAr ? 'المجموعة' : 'Group'}</th>
+                    <th className="px-6 py-5 text-end">{isAr ? 'رصيد أول الفترة' : 'Opening balance'}</th>
+                    <th className="px-6 py-5 text-end">{isAr ? 'وارد' : 'Entered (in)'}</th>
+                    <th className="px-6 py-5 text-end">{isAr ? 'منصرف' : 'Paid (out)'}</th>
+                    <th className="px-6 py-5 text-end">{isAr ? 'رصيد آخر الفترة' : 'Balance at end'}</th>
+                    <th className="px-4 py-5"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {shown.map(a => (
+                    <React.Fragment key={a.key}>
+                      <tr data-testid={`as-row-${a.key}`} onClick={() => setOpen(open === a.key ? null : a.key)} className="hover:bg-slate-50/50 transition-colors cursor-pointer">
+                        <td className="px-6 py-5"><div className="font-black text-slate-800 text-sm break-words">{name(a)}</div>
+                          <div className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{a.movementCount} {isAr ? 'حركة' : 'movements'}</div>
+                          {Math.abs(a.undated) > 0.004 && <div className="text-[9px] font-bold text-amber-600 mt-0.5" data-testid={`as-undated-${a.key}`}>{undatedNote(a.undated)}</div>}</td>
+                        <td className="px-6 py-5">{groupBadge(a as any, language)}</td>
+                        <td className="px-6 py-5 text-end text-xs font-bold whitespace-nowrap" data-testid={`as-open-${a.key}`}>{money(a.openingBalance, 'text-slate-500')}</td>
+                        <td className="px-6 py-5 text-end text-sm font-black text-emerald-600 whitespace-nowrap" data-testid={`as-entered-${a.key}`}>{fmt(a.entered)} {cur}</td>
+                        <td className="px-6 py-5 text-end text-sm font-black text-rose-600 whitespace-nowrap" data-testid={`as-paid-${a.key}`}>{fmt(a.paid)} {cur}</td>
+                        <td className="px-6 py-5 text-end text-sm font-black whitespace-nowrap" data-testid={`as-close-${a.key}`}>{money(a.closingBalance)}</td>
+                        <td className="px-4 py-5 text-end"><i className={`fa-solid fa-chevron-${open === a.key ? 'up' : 'down'} text-slate-300 text-xs`}></i></td>
+                      </tr>
+                      {open === a.key && (
+                        <tr><td colSpan={7} className="px-6 pb-5"><Moves a={a} /></td></tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="lg:hidden grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {shown.map(a => (
+              <div key={a.key} data-testid={`as-card-${a.key}`} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3 min-w-0">
+                <div className="flex justify-between items-start gap-3">
+                  <div className="font-black text-slate-800 text-sm break-words min-w-0">{name(a)}</div>
+                  <div className="shrink-0">{groupBadge(a as any, language)}</div>
+                </div>
+                {Math.abs(a.undated) > 0.004 && <div className="text-[10px] font-bold text-amber-600 break-words" data-testid={`as-card-undated-${a.key}`}>{undatedNote(a.undated)}</div>}
+                {([
+                  [isAr ? 'رصيد أول الفترة' : 'Opening balance', money(a.openingBalance, 'text-slate-500')],
+                  [isAr ? 'وارد' : 'Entered (in)', <span className="text-emerald-600">{fmt(a.entered)} {cur}</span>],
+                  [isAr ? 'منصرف' : 'Paid (out)', <span className="text-rose-600">{fmt(a.paid)} {cur}</span>],
+                  [isAr ? 'رصيد آخر الفترة' : 'Balance at end', money(a.closingBalance)],
+                ] as [string, React.ReactNode][]).map(([k, v], i) => (
+                  <div key={i} className="flex justify-between items-baseline gap-3">
+                    <span className="text-[10px] font-black text-slate-400 uppercase">{k}</span>
+                    <span className="text-sm font-black text-end">{v}</span>
+                  </div>
+                ))}
+                <button onClick={() => setOpen(open === a.key ? null : a.key)} data-testid={`as-card-toggle-${a.key}`}
+                  className="w-full py-3 min-h-[44px] bg-slate-100 text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all flex items-center justify-center gap-2">
+                  <i className={`fa-solid fa-chevron-${open === a.key ? 'up' : 'down'}`}></i> {a.movementCount} {isAr ? 'حركة' : 'movements'}
+                </button>
+                {open === a.key && <Moves a={a} />}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {data && <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest" data-testid="as-range">{isAr ? 'الفترة' : 'Range'} {data.from} - {data.to}</div>}
     </div>
   );
 };

@@ -69,3 +69,60 @@ export const computeCashBank = (orders = [], ledger = [], supplierPayments = [])
         balance: r2(balance)
     };
 };
+
+// R35 (user order 2026-11-15): the SAME events as computeCashBank, one dated row each, for Finance > Account Status
+// (money in / out of Cash / Bank in a date range). Every rule above is applied unchanged; the rows add up to
+// computeCashBank(...).balance (proved by the R35 sheets). Rows: { date, amount (+ in, - out), source, description, ref }.
+// The wallet part of a pay-from-wallet payment is taken off the payment that carries its receipt (same day), so a payment
+// that was partly paid from the wallet shows only its cash part.
+export const cashBankMovements = (orders = [], ledger = [], supplierPayments = []) => {
+    const led = Array.isArray(ledger) ? ledger : [];
+    const rows = [];
+    const byId = new Map();
+    (orders || []).forEach(o => { if (o && o.id) byId.set(o.id, o); });
+    const walletPart = new Map(); // orderId|receipt -> L.E.
+    led.forEach(e => {
+        if (!e || e.type !== 'TRANSFER' || !e.orderId || !e.receiptNumber) return;
+        const o = byId.get(e.orderId);
+        if (o && !(o.payments || []).some(p => p && p.receiptNumber && String(p.receiptNumber) === String(e.receiptNumber))) return;
+        const k = `${e.orderId}|${e.receiptNumber}`;
+        walletPart.set(k, (walletPart.get(k) || 0) + (Number(e.amount) || 0));
+    });
+    const paymentLedgerIds = new Set();
+    (orders || []).forEach(o => {
+        if (!o) return;
+        (o.payments || []).forEach(p => { if (p && p.ledgerEntryId) paymentLedgerIds.add(p.ledgerEntryId); });
+        if (isInternalOrderCB(o)) return;
+        const fx = fxCB(o);
+        const taken = new Set();
+        (o.payments || []).forEach(p => {
+            if (!p || p.transfer) return;
+            let amt = paymentLE(p, fx);
+            const k = p.receiptNumber ? `${o.id}|${p.receiptNumber}` : null;
+            if (k && walletPart.has(k) && !taken.has(k)) { amt -= walletPart.get(k); taken.add(k); }
+            if (Math.abs(amt) > 0.004) rows.push({ date: p.date || o.orderDate || '', amount: r2(amt), source: 'ORDER_PAYMENT', description: `Customer payment ${o.customerName || ''} - PO ${o.internalOrderNumber || o.id}${p.receiptNumber ? ' (' + p.receiptNumber + ')' : ''}`, ref: o.internalOrderNumber || o.id });
+        });
+        // a wallet part whose receipt is on no cash payment of the order (only a transfer payment carries it) still comes off the order cash
+        walletPart.forEach((v, k) => {
+            if (taken.has(k) || !k.startsWith(`${o.id}|`)) return;
+            const e = led.find(x => x && x.type === 'TRANSFER' && x.orderId === o.id && `${x.orderId}|${x.receiptNumber}` === k);
+            if (Math.abs(v) > 0.004) rows.push({ date: (e && e.date) || '', amount: r2(-v), source: 'ORDER_PAYMENT', description: `Wallet part of a payment - PO ${o.internalOrderNumber || o.id}`, ref: o.internalOrderNumber || o.id });
+        });
+    });
+    const isOrderPaymentEntry = (e) => (e.orderId && byId.has(e.orderId)) || (e.id && paymentLedgerIds.has(e.id));
+    led.forEach(e => {
+        if (!e) return;
+        const amt = Number(e.amount) || 0;
+        const base = { date: e.date || '', description: e.description || e.category || e.type, ref: e.id };
+        if (e.type === 'ADDITION' && String(e.id || '').startsWith('adv_cust_')) rows.push({ ...base, amount: r2(amt), source: 'CUSTOMER_ADVANCE' });
+        else if (e.type === 'REFUND' && !isVoidRefund(e)) rows.push({ ...base, amount: r2(-amt), source: 'CUSTOMER_REFUND' });
+        else if (e.type === 'ADDITION' && !String(e.id || '').startsWith('adv_cust_') && !isOrderPaymentEntry(e) && e.category !== 'Supplier Refund') rows.push({ ...base, amount: r2(amt), source: 'LEDGER_ADDITION' });
+        else if (e.type === 'COST' && !String(e.id || '').startsWith('sp_ledg_') && e.category !== 'Supplier Payment') rows.push({ ...base, amount: r2(-amt), source: 'LEDGER_COST' });
+    });
+    (supplierPayments || []).forEach(p => {
+        if (!p || p.isOpening) return;
+        const amt = Number(p.amount) || 0;
+        if (Math.abs(amt) > 0.004) rows.push({ date: p.date || '', amount: r2(-amt), source: amt < 0 ? 'SUPPLIER_REFUND' : 'SUPPLIER_PAYMENT', description: `${amt < 0 ? 'Supplier refund' : 'Supplier payment'} ${p.supplierName || ''}${p.poNumber ? ' - PO ' + p.poNumber : ''}${p.memo ? ' - ' + p.memo : ''}`, ref: p.id });
+    });
+    return rows.filter(r => Math.abs(r.amount) > 0.004);
+};

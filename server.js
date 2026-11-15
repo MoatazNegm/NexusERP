@@ -43,7 +43,8 @@ import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED } from './shared/orderPermissions.js';
 import { computeStockValue } from './shared/stockValue.js';
-import { computeCashBank } from './shared/cashBank.js';
+import { computeCashBank, cashBankMovements } from './shared/cashBank.js';
+import { accountMatches } from './shared/accountSearch.js';
 import { computeReceivables, computePayables, orderPaidInLE, orderReceivableLE, closedContractCoverage } from './shared/arap.js';
 import { isInternalStockOrder, orderPaymentsLE, isRealizedSale, ownLinesAreSales, paymentLE, blanketRootOf, callOffsOfBlanket, trimRef, resolveBlanketLink, blanketLinkRefusal, blanketLinkMap, isRejectedStatus, sameCustomerName } from './shared/orderMoney.js';
 import { S3Client, ListBucketsCommand, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -6973,6 +6974,174 @@ app.put('/api/v1/ledger/:id', (req, res, next) => {
     const b = req.body || {};
     if ((e && e.type === 'OPENING') || String(b.type || '').toUpperCase() === 'OPENING' || String(b.category || '') === FIN_OPENING_CATEGORY) return res.status(403).json({ error: 'Refused: opening balance entries cannot be changed; book a new opening delta instead' });
     return next();
+});
+
+// --- R35 (user order 2026-11-15): FINANCE > ACCOUNT STATUS ---
+// For every money account (money is put on it or moved through it: ledger entries, customer payments and advances, refunds,
+// wallet transfers, supplier payments, opening balances) the accountant sees, for a date range (default: the current month):
+// opening balance (before the range), Entered (money in: what raises the balance), Paid (money out: what lowers it) and the
+// balance at the end of the range. Accounts: Cash / Bank, Tax Authority / Withholding, every other ledger account (e.g.
+// 'Transportation', a user's account), customer general / project / PO wallets and supplier general wallets. Receivables,
+// payables and the net VAT liability are commitments computed from order values (no dated money movements), they stay in
+// Finance > Balances & Stock Value and are not listed here.
+// The balance at the end of the range is the account's CURRENT balance (the same figure as Initial Balances / Balances &
+// Stock Value) minus the dated movements after the range, so 'closing' with a range that ends today equals the current balance
+// and opening + entered - paid = closing for every range. A balance part no dated movement explains (for example data booked
+// before an event was recorded with a date) is reported as 'undated' and sits in every opening balance.
+// Sign of "other ledger accounts" (the same sign as their balance): Entered = money received FROM the account (fromAccount),
+// Paid = money paid TO the account (toAccount), e.g. 'Transportation' paid 500.00 = 500.00 paid to transportation.
+// No money figure of any other feature changes: this is a read-only report on top of computeFinanceAccounts.
+const ACCST_MONEY_WALLETS = new Set(['self', 'project', 'po', 'supplier_general']);
+const accStIncluded = (a) => a && (a.key === 'BANK' || a.key === 'TAX_WHT' || a.group === 'ledger' || ACCST_MONEY_WALLETS.has(a.walletType));
+const accStDay = (d, tzMin) => {
+    const s = String(d || '').trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const t = Date.parse(s);
+    if (!Number.isFinite(t)) return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+    return new Date(t - (Number(tzMin) || 0) * 60000).toISOString().slice(0, 10);
+};
+const accStValidDay = (s) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+    const d = new Date(`${s}T00:00:00Z`);
+    return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+// Dated movements of every account key: [{ key, date, amount (+ entered / - paid), source, description, ref }]
+const computeAccountMovements = (db) => {
+    const ledger = db.ledger || [];
+    const orders = db.orders || [];
+    const sps = db.supplierPayments || [];
+    const rows = [];
+    const orderById = new Map(orders.filter(o => o && o.id).map(o => [o.id, o]));
+    const add = (key, date, amount, source, description, ref) => { const a = r2w(amount); if (key && Math.abs(a) > 0.004) rows.push({ key, date: date || '', amount: a, source, description: description || '', ref: ref || '' }); };
+    // Cash / Bank: the dated events of the Cash / Bank formula (shared/cashBank.js)
+    cashBankMovements(orders, ledger, sps).forEach(m => add('BANK', m.date, m.amount, m.source, m.description, m.ref));
+    const settings = (db.settings || [])[0] || {};
+    const otherNames = new Set((settings.ledgerAccounts || []).map(a => String(a).trim()).filter(Boolean));
+    ledger.forEach(e => { if (!e || e.type === 'OPENING') return; [e.fromAccount, e.toAccount].forEach(lbl => { const k = finLabelToKey(lbl, db); if (k && k.startsWith('LEDGER:')) otherNames.add(k.slice(7)); }); });
+    ledger.forEach(e => {
+        if (!e) return;
+        const amt = Number(e.amount) || 0;
+        const desc = e.description || e.category || e.type;
+        if (e.type === 'OPENING') {
+            // an opening on a supplier general wallet is its stored advance record (counted below); legacy entries without one add here
+            if (e.accountKey && !(String(e.accountKey).startsWith('SUP_GEN:') && e.supplierPaymentId)) add(e.accountKey, e.date, amt, 'OPENING', desc, e.id);
+            return;
+        }
+        const from = String(e.fromAccount || '').trim(), to = String(e.toAccount || '').trim();
+        // other ledger accounts: the same rule as their balance (money from the account +, money to it -)
+        if (from && otherNames.has(from)) add(`LEDGER:${from}`, e.date, amt, 'LEDGER', desc, e.id);
+        if (to && otherNames.has(to)) add(`LEDGER:${to}`, e.date, -amt, 'LEDGER', desc, e.id);
+        // Tax Authority / Withholding: money to it +, from it -
+        if (e.toAccount === 'Tax Authority / Withholding') add('TAX_WHT', e.date, amt, 'LEDGER', desc, e.id);
+        if (e.fromAccount === 'Tax Authority / Withholding') add('TAX_WHT', e.date, -amt, 'LEDGER', desc, e.id);
+        // customer general / project wallets: a customer advance names its wallet in 'account'; transfers, refunds and moves name it in from / to
+        if (e.type === 'ADDITION' && String(e.id || '').startsWith('adv_cust_')) {
+            const k = finLabelToKey(e.account, db);
+            if (k && (k.startsWith('CUST_SELF:') || k.startsWith('CUST_PROJECT:'))) add(k, e.date, amt, 'CUSTOMER_ADVANCE', desc, e.id);
+        } else {
+            // a PO label names the PO number of its day: a cancelled order is renamed (rej_...), so the entry's orderId decides
+            const poKey = (lbl) => { const k = finLabelToKey(lbl, db); if (/^Customer .+ \/ PO .+$/.test(lbl) && e.orderId && orderById.has(e.orderId)) return `PO:${e.orderId}`; return k; };
+            const kf = poKey(from), kt = poKey(to);
+            // a pay-from-wallet payment takes its wallet part from the buckets named on the payment (walletBuckets: project bucket
+            // first, then the general wallet), whatever the ledger label says
+            const pfwPay = (e.type === 'TRANSFER' && e.orderId && e.receiptNumber && kf && (kf.startsWith('CUST_SELF:') || kf.startsWith('CUST_PROJECT:')))
+                ? ((orderById.get(e.orderId) || {}).payments || []).find(p => p && p.receiptNumber && String(p.receiptNumber) === String(e.receiptNumber) && p.walletBuckets && typeof p.walletBuckets === 'object') : null;
+            if (pfwPay) {
+                const custId = kf.split(':')[1];
+                Object.entries(pfwPay.walletBuckets).forEach(([bk, v]) => add(bk === SELF_WALLET_KEY ? `CUST_SELF:${custId}` : `CUST_PROJECT:${custId}:${String(bk).trim()}`, e.date, -(Number(v) || 0), 'WALLET_MOVE', desc, e.id));
+            } else if (kf && (kf.startsWith('CUST_SELF:') || kf.startsWith('CUST_PROJECT:'))) add(kf, e.date, -amt, e.type === 'REFUND' ? 'CUSTOMER_REFUND' : 'WALLET_MOVE', desc, e.id);
+            if (kt && (kt.startsWith('CUST_SELF:') || kt.startsWith('CUST_PROJECT:'))) add(kt, e.date, amt, 'WALLET_MOVE', desc, e.id);
+            // PO wallets: money the app moved between a PO and the customer wallet without a payment row (surplus above the PO gross,
+            // paid money of a cancel); a wallet transfer into / out of a PO is a payment row on the order (counted below)
+            // (only moves between the PO and the customer's general / project wallet; display transfers such as the 1% withholding
+            // rows do not change the PO wallet)
+            const isCustW = (k) => Boolean(k) && (k.startsWith('CUST_SELF:') || k.startsWith('CUST_PROJECT:'));
+            // the wallet part of a pay-from-wallet payment (orderId + receiptNumber) is inside that payment row already
+            if (e.type === 'TRANSFER' && !e.walletTransfer && !(e.orderId && e.receiptNumber)) {
+                if (kf && kf.startsWith('PO:') && isCustW(kt)) add(kf, e.date, -amt, 'WALLET_MOVE', desc, e.id);
+                if (kt && kt.startsWith('PO:') && isCustW(kf)) add(kt, e.date, amt, 'WALLET_MOVE', desc, e.id);
+            }
+        }
+    });
+    // single-customer company (rule G1): company costs linked to no PO lower that customer's general wallet
+    if ((db.customers || []).length === 1) {
+        const c = db.customers[0];
+        const k = `CUST_SELF:${c.id}`;
+        sps.forEach(sp => { if (sp && !sp.orderId && !sp.poNumber && !sp.isOpening) add(k, sp.date, -(Number(sp.unallocatedAdvance) || 0), 'COMPANY_COST', `Supplier payment linked to no PO ${sp.supplierName || ''}`, sp.id); });
+        ledger.forEach(l => { if (l && l.category === 'Tax Settlement' && l.type === 'COST') add(k, l.date, -(Number(l.amount) || 0), 'COMPANY_COST', l.description || 'Tax settlement', l.id); });
+    }
+    // PO wallets: customer payments (L.E.) in, supplier payments for the PO out
+    orders.forEach(o => {
+        if (!o || o.status === OrderStatus.REJECTED || finIsInternalOrder(o)) return;
+        const fx = orderFx(o);
+        (o.payments || []).forEach(p => { if (p) add(`PO:${o.id}`, p.date || o.orderDate, paymentLE(p, fx), p.transfer ? 'WALLET_TRANSFER' : 'CUSTOMER_PAYMENT', p.memo || `Payment on PO ${o.internalOrderNumber || o.id}${p.receiptNumber ? ' (' + p.receiptNumber + ')' : ''}`, p.receiptNumber || ''); });
+        const keptIds = new Set(orderPoComponents(o).filter(x => isKeptDeliveredPo(x.comp)).map(x => x.comp.id));
+        sps.forEach(sp => (sp.allocations || []).forEach(a => {
+            if ((a.orderId === o.id || (a.orderNumber && a.orderNumber === o.internalOrderNumber)) && !keptIds.has(a.componentId)) add(`PO:${o.id}`, sp.date, -(Number(a.amount) || 0), 'SUPPLIER_PAYMENT', `Supplier payment ${sp.supplierName || ''}${a.itemDescription ? ' - ' + a.itemDescription : ''}`, sp.id);
+        }));
+    });
+    // supplier general wallets: the advance each supplier payment left unallocated, plus what a later supplier refund took back from it
+    // (refundOf), which the refund pays out on its own date. Allocations to POs carry no date of their own: an advance allocated later
+    // counts as never having been unallocated.
+    const refundTaken = new Map();
+    sps.forEach(sp => (sp && Array.isArray(sp.refundOf) ? sp.refundOf : []).forEach(r => { if (r && r.supplierPaymentId) refundTaken.set(r.supplierPaymentId, (refundTaken.get(r.supplierPaymentId) || 0) + (Number(r.amount) || 0)); }));
+    sps.forEach(sp => {
+        if (!sp || !sp.supplierId) return;
+        const k = `SUP_GEN:${sp.supplierId}`;
+        const took = Array.isArray(sp.refundOf) ? sp.refundOf.reduce((t, r) => t + (Number(r && r.amount) || 0), 0) : 0;
+        const own = (Number(sp.unallocatedAdvance) || 0) + (refundTaken.get(sp.id) || 0);
+        if (sp.isRefund) add(k, sp.date, own - took, 'SUPPLIER_REFUND', sp.memo || `Supplier refund ${sp.supplierName || ''}`, sp.id);
+        else add(k, sp.date, own, sp.isOpening ? 'OPENING' : 'SUPPLIER_ADVANCE', sp.memo || `Supplier advance ${sp.supplierName || ''}`, sp.id);
+    });
+    return rows;
+};
+const computeAccountStatus = (db, from, to, tzMin, query) => {
+    const { accounts } = computeFinanceAccounts(db);
+    const byKey = new Map();
+    computeAccountMovements(db).forEach(m => { if (!byKey.has(m.key)) byKey.set(m.key, []); byKey.get(m.key).push(m); });
+    const list = accounts.filter(accStIncluded).filter(a => accountMatches(a, query)).map(a => {
+        const mv = (byKey.get(a.key) || []).map(m => ({ ...m, day: accStDay(m.date, tzMin) }));
+        const dated = mv.filter(m => m.day);
+        const sumOf = (arr) => r2w(arr.reduce((s, m) => s + m.amount, 0));
+        const inRange = dated.filter(m => m.day >= from && m.day <= to).sort((x, y) => String(x.date).localeCompare(String(y.date)));
+        const after = sumOf(dated.filter(m => m.day > to));
+        const entered = r2w(inRange.filter(m => m.amount > 0).reduce((s, m) => s + m.amount, 0));
+        const paid = r2w(inRange.filter(m => m.amount < 0).reduce((s, m) => s - m.amount, 0));
+        const closing = r2w(a.balance - after);
+        const opening = r2w(closing - entered + paid);
+        return {
+            key: a.key, group: a.group, kind: a.kind, walletType: a.walletType, label: a.label, labelAr: a.labelAr,
+            customerName: a.customerName, supplierName: a.supplierName, orderNumber: a.orderNumber, projectName: a.projectName,
+            currentBalance: a.balance, openingBalance: opening, entered, paid, net: r2w(entered - paid), closingBalance: closing,
+            movementCount: inRange.length, undated: r2w(a.balance - sumOf(dated)),
+            movements: inRange.map(m => ({ date: m.date, day: m.day, amount: m.amount, entered: m.amount > 0 ? m.amount : 0, paid: m.amount < 0 ? r2w(-m.amount) : 0, source: m.source, description: m.description, ref: m.ref }))
+        };
+    });
+    return list;
+};
+// Read: finance, management and admin (the same roles as the other finance reports). Query: from, to (YYYY-MM-DD, inclusive;
+// default the current month), q (any part of the account name), tz (the browser's getTimezoneOffset() in minutes, so a
+// movement is dated by the user's local day).
+app.get('/api/v1/finance/account-status', (req, res) => {
+    const roles = finRolesOf(req);
+    if (!roles.some(r => ['finance', 'management', 'admin'].includes(r))) return res.status(403).json({ error: 'Refused: the account status is for finance and management' });
+    const tzRaw = req.query.tz;
+    const tzMin = (tzRaw !== undefined && tzRaw !== '' && Number.isFinite(Number(tzRaw)) && Math.abs(Number(tzRaw)) <= 900) ? Number(tzRaw) : 0;
+    const hd = String(req.headers['x-sandbox-today'] || '').slice(0, 10);
+    const today = (isSandbox(req) && accStValidDay(hd)) ? hd : accStDay(new Date().toISOString(), tzMin);
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const [yy, mm] = today.split('-').map(Number);
+    const monthEnd = `${today.slice(0, 7)}-${String(new Date(Date.UTC(yy, mm, 0)).getUTCDate()).padStart(2, '0')}`;
+    const from = req.query.from !== undefined && String(req.query.from).trim() !== '' ? String(req.query.from).trim() : monthStart;
+    const to = req.query.to !== undefined && String(req.query.to).trim() !== '' ? String(req.query.to).trim() : monthEnd;
+    if (!accStValidDay(from)) return res.status(400).json({ error: `Refused: invalid start date '${from}' (use YYYY-MM-DD)` });
+    if (!accStValidDay(to)) return res.status(400).json({ error: `Refused: invalid end date '${to}' (use YYYY-MM-DD)` });
+    if (from > to) return res.status(400).json({ error: `Refused: the start date ${from} is after the end date ${to}` });
+    const db = getDb(req);
+    const q = String(req.query.q || '');
+    const accounts = computeAccountStatus(db, from, to, tzMin, q);
+    res.json({ generatedAt: new Date().toISOString(), from, to, today, defaultFrom: monthStart, defaultTo: monthEnd, query: q, accounts });
 });
 
 const COLLECTIONS = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'notifications', 'settings', 'modules', 'ledger', 'contracts'];

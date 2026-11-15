@@ -158,6 +158,14 @@ class DataService {
     if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Failed to fetch the financial position: ${res.statusText}`); }
     return res.json();
   }
+  // R35: Finance > Account Status (from / to YYYY-MM-DD inclusive, tz = browser offset in minutes)
+  async getAccountStatus(from: string, to: string, q = ''): Promise<any> {
+    const qs = new URLSearchParams({ from, to, tz: String(new Date().getTimezoneOffset()) });
+    if (q) qs.set('q', q);
+    const res = await fetch(`${BACKEND_URL}/api/v1/finance/account-status?${qs.toString()}`, { headers: this.getAuthHeaders() });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Failed to fetch the account status: ${res.statusText}`); }
+    return res.json();
+  }
   async getOpeningBalances(): Promise<any[]> {
     const res = await fetch(`${BACKEND_URL}/api/v1/finance/opening-balances`, { headers: this.getAuthHeaders() });
     if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Failed to fetch opening balances: ${res.statusText}`); }

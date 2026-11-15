@@ -13,7 +13,7 @@ import { LanguageToggle } from './LanguageToggle';
 import { SortableTable, ColumnDef } from './SortableTable';
 import { extractCostSheetMetrics, extractCostSheetProjectMetrics } from './ProcurementModule';
 import { TaxClearancesView } from './TaxClearancesView';
-import { InitialBalancesView, FinancialPositionView } from './FinanceBalances';
+import { InitialBalancesView, FinancialPositionView, AccountStatusView } from './FinanceBalances';
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -51,7 +51,7 @@ interface FinanceModuleProps {
   currentUser: User;
 }
 
-type FinanceTab = 'orders' | 'stock_orders' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'project_wallets' | 'blanket_history' | 'initial_balances' | 'financial_position';
+type FinanceTab = 'orders' | 'stock_orders' | 'history' | 'blacklist_hold' | 'tax_clearances' | 'supplier_reporting' | 'ledger' | 'contracts' | 'customer_wallets' | 'project_wallets' | 'blanket_history' | 'initial_balances' | 'financial_position' | 'account_status';
 
 const getStatusLimit = (order: CustomerOrder, settings: any) => {
   if (order.status === OrderStatus.DELIVERED) {
@@ -3948,7 +3948,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <div className="flex flex-col md:flex-row items-start md:items-center gap-4 w-full xl:w-auto overflow-hidden">
           <LanguageToggle />
           <div className="flex gap-1 p-1 bg-slate-200 rounded-2xl w-full shadow-inner overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
-          {(['orders', 'stock_orders', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets', 'project_wallets', 'initial_balances', 'financial_position'] as const).map(tab => (
+          {(['orders', 'stock_orders', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets', 'project_wallets', 'initial_balances', 'financial_position', 'account_status'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -3960,7 +3960,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           ))}
           </div>
         </div>
-        {activeTab === 'tax_clearances' || activeTab === 'initial_balances' || activeTab === 'financial_position' ? null : activeTab === 'history' ? (
+        {activeTab === 'tax_clearances' || activeTab === 'initial_balances' || activeTab === 'financial_position' || activeTab === 'account_status' ? null : activeTab === 'history' ? (
           <div className="relative w-full xl:w-96">
             <input
               type="text" placeholder={t("finance.history.searchHistory") || (language === 'ar' ? 'بحث في سجل المعاملات...' : "Search transaction history...")}
@@ -6406,6 +6406,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         <InitialBalancesView refreshKey={refreshKey} onChanged={fetchData} />
       ) : activeTab === 'financial_position' ? (
         <FinancialPositionView refreshKey={refreshKey} />
+      ) : activeTab === 'account_status' ? (
+        <AccountStatusView refreshKey={refreshKey} />
       ) : activeTab !== 'ledger' && activeTab !== 'history' && activeTab !== 'contracts' && activeTab !== 'customer_wallets' && activeTab !== 'blanket_history' && activeTab !== 'stock_orders' ? (
       <div className="space-y-4">
         {activeTab === 'orders' && (
