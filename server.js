@@ -5465,7 +5465,7 @@ const updateInCollection = (col) => (req, res) => {
                 if (chS.length) return res.status(400).json({ error: `Refused: ${whyS}; the generic order edit cannot change ${chS.join(', ')}.` });
             }
             // v1.0001233: the generic edit to status LOGGED is a rollback to Logged: same state guard as the action (FULFILLED, call-off of a
-            // closed contract; an unchanged LOGGED echo is no status change and passes).
+            // closed contract, rolled back and waiting for Order Management; an unchanged LOGGED echo is no status change and passes).
             if (stChanged && updated.status === OrderStatus.LOGGED) { const stRefL = rollbackToLoggedStateRefusal(oldItem, db.orders || []); if (stRefL) return res.status(400).json({ error: stRefL }); }
         }
         if (req.body.blanketContractId !== undefined && req.body.blanketContractId !== null && String(req.body.blanketContractId).trim() !== '' && String(req.body.blanketContractId).trim() !== String(oldItem.blanketContractId || '').trim()) {
@@ -8033,8 +8033,9 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 
             case 'rollback-to-logged':
                 // v1.0001233: state guard (shared/orderPermissions.js rollbackToLoggedStateRefusal): refused before any change when the order is
-                // already LOGGED (a second rollback only restarted the SLA clock and the dates), FULFILLED, a closed blanket contract or a call-off
-                // of one. The role gate (403) above still answers first; a cancelled (REJECTED) order is reopened as before.
+                // already LOGGED (a second rollback only restarted the SLA clock and the dates), rolled back and still waiting for the Order Management
+                // update, a closed blanket contract or a call-off of one, or FULFILLED. The role gate (403) above still answers first; a cancelled
+                // (REJECTED) order is reopened as before.
                 { const stRef = rollbackToLoggedStateRefusal(order, db.orders || []); if (stRef) throw new Error(stRef); }
                 // v1.0001218: what is released here is put back onto the delivered POs a cancelled order kept (reattachKeptSupplierAllocations below).
                 const rbReleased = releaseSupplierAllocationsOfOrder(db, order);
