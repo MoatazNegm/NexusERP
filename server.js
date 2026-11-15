@@ -7038,6 +7038,27 @@ const computeAccountMovements = (db) => {
     ledger.forEach(e => { if (!e || e.type === 'OPENING') return; [e.fromAccount, e.toAccount].forEach(lbl => { const k = finLabelToKey(lbl, db); if (k && k.startsWith('LEDGER:')) otherNames.add(k.slice(7)); }); });
     const payLedIds = new Set();
     orders.forEach(o => (o && o.payments || []).forEach(p => { if (p && p.ledgerEntryId) payLedIds.add(p.ledgerEntryId); }));
+    // R35 round 3 (validator 2 N1): a pay-from-wallet payment voided before order.voidedPayments existed (v1.0001231): its wallet part
+    // was on the PO from the payment's wallet TRANSFER (customer wallet -> PO, orderId + receipt) until the void's return TRANSFER
+    // (PO -> customer wallet, 'wallet part of <receipt> returned from PO ...'). The payment row is gone, so the pair is read from these
+    // two ledger rows: + on the transfer date, - on the return date (the cash part is the legacy DEDUCTION pair below).
+    const pfwVoidRe = /wallet part of (\S+) returned from PO /;
+    const usedPfw = new Set();
+    ledger.forEach(r => {
+        if (!r || r.type !== 'TRANSFER' || !r.voidOfPayment || !r.walletTransfer || r.voidRecorded || r.accountStatusOnly) return;
+        const m = String(r.description || '').match(pfwVoidRe);
+        if (!m) return;
+        const rc = m[1];
+        const origs = ledger.filter(x => x && !usedPfw.has(x) && x.type === 'TRANSFER' && !x.voidOfPayment && !x.accountStatusOnly && x.orderId && x.receiptNumber
+            && String(x.receiptNumber) === rc && String(x.date || '') <= String(r.date || '￿'));
+        if (!origs.length) return;
+        const o = orderById.get(origs[0].orderId);
+        if (!o || (o.payments || []).some(p => p && p.receiptNumber && String(p.receiptNumber) === rc)
+            || (Array.isArray(o.voidedPayments) ? o.voidedPayments : []).some(v => v && v.receiptNumber && String(v.receiptNumber) === rc)) return;
+        const k = `PO:${o.id}`;
+        origs.filter(x => x.orderId === o.id).forEach(x => { usedPfw.add(x); add(k, x.date, Number(x.amount) || 0, 'CUSTOMER_PAYMENT', `Payment on PO ${o.internalOrderNumber || x.poNumber || ''} (${rc}, wallet part, voided later)`, x.id); });
+        add(k, r.date, -(Number(r.amount) || 0), 'PAYMENT_VOID', r.description || 'Payment voided', r.id);
+    });
     ledger.forEach(e => {
         if (!e) return;
         const amt = Number(e.amount) || 0;

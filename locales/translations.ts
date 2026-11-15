@@ -51,7 +51,7 @@ export const translations: Record<string, any> = {
         addition: 'Addition', manual: 'Manual', customer: 'Customer',
         supplier: 'Supplier', receipt: 'Receipt', account: 'Account',
         accounts: 'Accounts', groups: 'Groups',
-        costExpense: 'Cost / Expense', additionIncome: 'Addition / Income', noRecords: 'No ledger records matching your criteria', selectAccount: 'Select account...', fromAccountLabel: 'From Account', toAccountLabel: 'To Account', whatIsThisFor: 'What is this for?', paymentAllocation: 'Payment Allocation Breakdown', financialLedger: 'Financial Ledger (FIFO Orders)', selectSupplierAudit: 'Please select a supplier to continue audit',
+        costExpense: 'Cost / Expense', additionIncome: 'Addition / Income', noRecords: 'No ledger records matching your criteria', displayOnly: 'Display only', displayOnlyHint: 'Shown for Account Status only: this row changes no balance (Cash / Bank, wallets, AR, AP and VAT ignore it)', selectAccount: 'Select account...', fromAccountLabel: 'From Account', toAccountLabel: 'To Account', whatIsThisFor: 'What is this for?', paymentAllocation: 'Payment Allocation Breakdown', financialLedger: 'Financial Ledger (FIFO Orders)', selectSupplierAudit: 'Please select a supplier to continue audit',
       },
       orders: {
         authActions: 'Auth Actions', slaStatus: 'SLA / Status', markupAnalysis: 'Markup Analysis', revenueMetrics: 'Revenue Metrics', orderDate: 'Order Date', taxPoDetails: 'Tax PO Details', targetRevenue: 'Target Revenue (99%)', whtValue: 'WHT Value (1%)', clearanceStatus: 'Clearance Status',
@@ -648,7 +648,7 @@ export const translations: Record<string, any> = {
         addition: 'إضافة', manual: 'يدوي', customer: 'عميل',
         supplier: 'مورد', receipt: 'إيصال', account: 'حساب',
         accounts: 'الحسابات', groups: 'المجموعات',
-        costExpense: 'تكلفة / مصروف', additionIncome: 'إضافة / دخل', noRecords: 'لا توجد سجلات مطابقة لمعاييرك', selectAccount: 'اختر حساباً...', fromAccountLabel: 'من حساب', toAccountLabel: 'إلى حساب', whatIsThisFor: 'ما الغرض من هذا؟', paymentAllocation: 'تفصيل توزيع الدفعة', financialLedger: 'الدفتر المالي (ترتيب الطلبات)', selectSupplierAudit: 'يرجى اختيار مورد لمتابعة التدقيق',
+        costExpense: 'تكلفة / مصروف', additionIncome: 'إضافة / دخل', noRecords: 'لا توجد سجلات مطابقة لمعاييرك', displayOnly: 'للعرض فقط', displayOnlyHint: 'يظهر في حالة الحسابات فقط: هذا السطر لا يغيّر أي رصيد (النقدية / البنك والمحافظ والمستحقات والمدفوعات وضريبة القيمة المضافة تتجاهله)', selectAccount: 'اختر حساباً...', fromAccountLabel: 'من حساب', toAccountLabel: 'إلى حساب', whatIsThisFor: 'ما الغرض من هذا؟', paymentAllocation: 'تفصيل توزيع الدفعة', financialLedger: 'الدفتر المالي (ترتيب الطلبات)', selectSupplierAudit: 'يرجى اختيار مورد لمتابعة التدقيق',
       },
       orders: {
         authActions: 'إجراءات الاعتماد', slaStatus: 'الحالة / مستوى الخدمة', markupAnalysis: 'تحليل الهامش', revenueMetrics: 'مقاييس الإيرادات', orderDate: 'تاريخ الطلب', taxPoDetails: 'تفاصيل الشراء الضريبي', targetRevenue: 'الإيراد المستهدف (99%)', whtValue: 'قيمة ضريبة الاستقطاع (1%)', clearanceStatus: 'حالة التخليص',

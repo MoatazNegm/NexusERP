@@ -1448,7 +1448,10 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
           </thead>
           <tbody className="divide-y divide-slate-50">
             {filteredEntries.map(entry => (
-              <tr key={entry.id} className="hover:bg-slate-50/50 transition-colors">
+              // R35 round 3 (validator 2 N3): a display-only row (accountStatusOnly: a dated wallet move written for Finance > Account Status,
+              // no balance changes) is shown muted with a 'display only' badge
+              <tr key={entry.id} data-testid={entry.accountStatusOnly ? 'ledger-row-display-only' : undefined} data-display-only={entry.accountStatusOnly ? 'true' : undefined}
+                className={entry.accountStatusOnly ? 'bg-slate-50/70 opacity-60 italic hover:opacity-80 transition-opacity' : 'hover:bg-slate-50/50 transition-colors'}>
                 <td className="px-8 py-5 text-xs font-bold text-slate-500">
                   {new Date(entry.date).toLocaleDateString()}
                 </td>
@@ -1499,6 +1502,12 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
                   }`}>
                     {entry.type === 'ADDITION' ? (language === 'ar' ? 'إضافة' : 'ADDITION') : entry.type === 'OPENING' ? (language === 'ar' ? 'رصيد افتتاحي' : 'OPENING') : entry.type === 'TRANSFER' ? (language === 'ar' ? 'تحويل' : 'TRANSFER') : entry.type === 'REFUND' ? (language === 'ar' ? 'استرداد' : 'REFUND') : (language === 'ar' ? 'تكلفة' : 'COST')}
                   </span>
+                  {entry.accountStatusOnly && (
+                    <span data-testid="ledger-display-only-badge" title={t('finance.ledger.displayOnlyHint')}
+                      className="ms-1 inline-block whitespace-nowrap px-2 py-0.5 rounded text-[8px] font-black uppercase border border-dashed bg-white text-slate-400 border-slate-300 not-italic">
+                      {t('finance.ledger.displayOnly')}
+                    </span>
+                  )}
                 </td>
                 <td className="px-8 py-5 text-end font-black text-slate-800 text-sm">
                   {entry.amount.toLocaleString()} {language === 'ar' ? 'ج.م' : 'L.E.'}
