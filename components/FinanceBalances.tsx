@@ -618,21 +618,26 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  // R35 follow-up: the date inputs are a draft; the list only changes when the range is applied
+  // (Apply button, Enter in a date input, or "This month"). `applied` is the range the list was asked for.
+  const [applied, setApplied] = useState<{ from: string; to: string }>({ from: month.from, to: month.to });
 
   const rangeError = !from || !to
     ? (isAr ? 'اختر تاريخ البداية وتاريخ النهاية' : 'Choose a start and an end date')
     : from > to ? (isAr ? `تاريخ البداية ${from} بعد تاريخ النهاية ${to}` : `The start date ${from} is after the end date ${to}`) : null;
 
+  const pending = from !== applied.from || to !== applied.to;
+  const applyRange = () => { if (!rangeError) setApplied({ from, to }); };
+
   useEffect(() => {
-    if (rangeError) return;
     let alive = true;
     setLoading(true);
-    dataService.getAccountStatus(from, to)
+    dataService.getAccountStatus(applied.from, applied.to)
       .then(r => { if (alive) { setData(r); setError(null); } })
       .catch(e => { if (alive) setError(e.message || 'Failed to load'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [from, to, refreshKey, rangeError]);
+  }, [applied, refreshKey]);
 
   const all = data?.accounts || [];
   const matched = useMemo(() => all.filter(a => accountMatches(a, search)), [all, search]);
@@ -704,6 +709,7 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
     <label className="flex flex-col gap-1 min-w-0">
       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">{label}</span>
       <input type="date" value={value} onChange={e => onChange(e.target.value)} data-testid={testid}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); applyRange(); } }}
         className="w-full sm:w-44 px-4 py-3 min-h-[44px] bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm text-sm" />
     </label>
   );
@@ -727,7 +733,12 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
             {dateInput(from, setFrom, isAr ? 'من' : 'From', 'as-from')}
             {dateInput(to, setTo, isAr ? 'إلى' : 'To', 'as-to')}
           </div>
-          <button onClick={() => { setFrom(month.from); setTo(month.to); }} data-testid="as-month"
+          <button onClick={applyRange} disabled={!!rangeError} aria-disabled={!!rangeError} data-testid="as-apply"
+            title={isAr ? 'تطبيق الفترة المختارة على القائمة' : 'Apply the chosen date range to the list'}
+            className={`px-6 py-3 min-h-[44px] rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all inline-flex items-center justify-center gap-2 shrink-0 ${rangeError ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : pending ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg ring-4 ring-blue-100' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
+            <i className={`fa-solid ${loading ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {isAr ? 'تطبيق' : 'Apply'}
+          </button>
+          <button onClick={() => { setFrom(month.from); setTo(month.to); setApplied({ from: month.from, to: month.to }); }} data-testid="as-month"
             className="px-5 py-3 min-h-[44px] bg-slate-100 text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all inline-flex items-center justify-center gap-2 shrink-0">
             <i className="fa-solid fa-calendar-day"></i> {isAr ? 'الشهر الحالي' : 'This month'}
           </button>
@@ -745,6 +756,20 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
             <i className="fa-solid fa-circle-exclamation"></i>{rangeError || error}
           </div>
         )}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 min-w-0">
+          <div className="px-4 py-2 bg-emerald-50 text-emerald-700 rounded-2xl text-xs font-black border border-emerald-100 inline-flex items-center gap-2 break-words min-w-0" data-testid="as-applied-range">
+            <i className="fa-solid fa-filter"></i>
+            {isAr ? 'الفترة المطبقة:' : 'Applied range:'} <span dir="ltr">{data ? `${data.from} → ${data.to}` : `${applied.from} → ${applied.to}`}</span>
+          </div>
+          {pending && (
+            <div className="px-4 py-2 bg-amber-50 text-amber-700 rounded-2xl text-xs font-bold border border-amber-100 inline-flex items-center gap-2 break-words min-w-0" data-testid="as-pending">
+              <i className="fa-solid fa-triangle-exclamation"></i>
+              {rangeError
+                ? (isAr ? 'الفترة المختارة غير صالحة ولم تطبق؛ القائمة ما زالت للفترة المطبقة' : 'The chosen dates are not valid and were not applied; the list still shows the applied range')
+                : (isAr ? `الفترة المختارة ${from} → ${to} لم تطبق بعد. اضغط تطبيق` : `The chosen dates ${from} → ${to} are not applied yet. Press Apply`)}
+            </div>
+          )}
+        </div>
         <p className="text-[10px] font-bold text-slate-400 break-words" data-testid="as-note">
           {isAr
             ? 'الوارد = ما يزيد رصيد الحساب، المنصرف = ما ينقصه. في حسابات الدفتر الأخرى (مثل النقل أو حساب مستخدم): الوارد = ما استلمته الشركة من الحساب، المنصرف = ما دفعته الشركة إليه. الذمم المدينة والدائنة وضريبة القيمة المضافة التزامات تحسب من قيم الأوامر وتظهر في "الأرصدة وقيمة المخزون".'
