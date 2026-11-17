@@ -3,7 +3,7 @@ import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGr
 import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.000001 for every code update
-export const APP_VERSION = '1.0001233';
+export const APP_VERSION = '1.0001234';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
