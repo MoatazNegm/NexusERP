@@ -594,26 +594,19 @@ Sample rows: ${JSON.stringify(sampleRows)}
       });
       textOutput = response.text || '{}';
     } else {
-      const { apiKey, baseUrl, modelName } = config.settings.openaiConfig;
+      const { apiKey, modelName } = config.settings.openaiConfig || ({} as any);
       if (!apiKey) throw new Error('OpenAI API key is not configured.');
 
-      const upstreamEndpoint = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}chat/completions`;
-      const response = await fetch('/api/v1/ai-proxy/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          endpoint: upstreamEndpoint,
-          apiKey,
-          payload: {
-            model: modelName,
-            response_format: { type: 'json_object' },
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0
-          }
-        })
+      // v1.0001240 (F6): through the server with the auth headers; the server uses the saved key and base URL.
+      const response = await dataService.aiChat({
+        model: modelName,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0
       });
 
       const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error?.message || (typeof data.error === 'string' ? data.error : `HTTP ${response.status}`));
       textOutput = data.choices?.[0]?.message?.content || '{}';
     }
 

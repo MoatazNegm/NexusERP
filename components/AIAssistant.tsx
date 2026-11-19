@@ -271,7 +271,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config, curren
     if (!apiKey) {
       throw new Error("AI API Key is not configured. Please add your API key in Settings > AI Configuration.");
     }
-    const upstreamEndpoint = `${(baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')}/chat/completions`;
+    // v1.0001240 (F6): the server calls the saved base URL with the saved key (dataService.aiChat).
     const isRouter = (baseUrl || '').includes('openrouter.ai');
 
     const knownModels = [
@@ -313,24 +313,15 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config, curren
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s per-model timeout
 
-        const response = await fetch('/api/v1/ai-proxy/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            endpoint: upstreamEndpoint,
-            apiKey,
-            payload: {
-              model: currentModel,
-              max_tokens: 4096,
-              temperature: 0.2,
-              messages: [
-                { role: 'system', content: systemContext },
-                { role: 'user', content: query }
-              ]
-            }
-          })
-        });
+        const response = await dataService.aiChat({
+          model: currentModel,
+          max_tokens: 4096,
+          temperature: 0.2,
+          messages: [
+            { role: 'system', content: systemContext },
+            { role: 'user', content: query }
+          ]
+        }, controller.signal);
 
         clearTimeout(timeoutId);
         const duration = Math.round(performance.now() - modelStart);

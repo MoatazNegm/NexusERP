@@ -910,6 +910,18 @@ class DataService {
     return response.json();
   }
 
+  // v1.0001240 (F6): OpenAI-compatible chat through the server with the signed-in user's auth headers. The server uses the
+  // SAVED key and base URL (Settings > AI Engine); the browser sends only the request payload, never a key or an endpoint.
+  // Returns the raw Response so the callers keep their own per-model error handling.
+  async aiChat(payload: Record<string, any>, signal?: AbortSignal): Promise<Response> {
+    return fetch(`${BACKEND_URL}/api/v1/ai-proxy/chat`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      signal,
+      body: JSON.stringify({ payload })
+    });
+  }
+
   async attachEInvoice(id: string, einvoiceFile: string) {
     return this.dispatchAction(id, 'attach-einvoice', { einvoiceFile });
   }

@@ -1721,13 +1721,24 @@ const findApiKeyBySecret = (secret, { touch = false } = {}) => {
 // pass-through. Any new admin-gated endpoint added to server.js MUST use this
 // helper (or its own live-DB lookup) instead of `req.roles.includes('admin')`,
 // which would silently deny every live caller.
+// v1.0001240 (F5): admin through a LIVE user group counts as admin, the same as the client's effectiveRoles (App.tsx merges
+// group roles, so the UI shows the admin screens). Only the live DB groups count: a sandbox's own userGroups never grant admin.
+// Creating / changing groups and joining groups is admin-only (generic POST/PUT/DELETE guards), so this is no escalation path.
+const liveUserIsAdmin = (liveDb, user) => {
+  if (!user) return false;
+  if ((user.roles || []).includes('admin')) return true;
+  const gids = Array.isArray(user.groupIds) ? user.groupIds : [];
+  if (gids.length === 0) return false;
+  return (liveDb.userGroups || []).some(g => g && gids.includes(g.id) && Array.isArray(g.roles) && g.roles.includes('admin'));
+};
+const GROUPS_ADMIN_ERROR = 'Admin privileges are required to create, change or delete user groups.';
 const isAdminUser = (req) => {
   if ((req.roles || []).includes('admin')) return true;
   const liveDb = readDb(DB_PATH);
   const username = String(req.headers['x-user'] || req.user || '').trim();
   if (!username) return false;
-  const user = (liveDb.users || []).find(u => u.username.toLowerCase() === username.toLowerCase());
-  return !!user && (user.roles || []).includes('admin');
+  const user = (liveDb.users || []).find(u => String(u.username || '').toLowerCase() === username.toLowerCase());
+  return liveUserIsAdmin(liveDb, user);
 };
 
 
@@ -4304,7 +4315,7 @@ app.use((req, res, next) => {
         const liveUser = (liveDb.users || []).find(
             u => u.username.toLowerCase() === username.toLowerCase()
         );
-        const isAdmin = liveUser && (liveUser.roles || []).includes('admin');
+        const isAdmin = liveUserIsAdmin(liveDb, liveUser); // v1.0001240 (F5): admin directly or through a live group
 
         // Auto-create sandbox file if it doesn't exist (owner, admin, or API key owner accessing own sandbox)
         if (!fs.existsSync(sandboxPath) && liveUser && (isOwner || isAdmin || (keyRec && keyRec.username.toLowerCase() === sanitizedOwner.toLowerCase()))) {
@@ -5155,6 +5166,10 @@ const addToCollection = (col) => (req, res) => {
     if (col === 'users' && !isAdminUser(req)) {
         return res.status(403).json({ error: "Admin privileges are required to create users." });
     }
+    // v1.0001240 (F5): groups carry roles (an 'admin' group made the caller admin in the UI); only an admin manages groups.
+    if (col === 'userGroups' && !isAdminUser(req)) {
+        return res.status(403).json({ error: GROUPS_ADMIN_ERROR });
+    }
     if (col === 'users' && newItem.password) newItem.password = hashPassword(newItem.password);
 
     if (col === 'orders') {
@@ -5457,9 +5472,15 @@ const updateInCollection = (col) => (req, res) => {
         const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
         const isSelf = caller && String(oldItem.username || '').toLowerCase() === caller;
         const rolesChanged = req.body.roles !== undefined && JSON.stringify(req.body.roles) !== JSON.stringify(oldItem.roles);
-        if (!isSelf || rolesChanged) {
-            return res.status(403).json({ error: "Admin privileges are required to modify users or roles." });
+        // v1.0001240 (F5): joining or leaving a group is a role change too (groups carry roles).
+        const sameIds = (a, b) => JSON.stringify([...(Array.isArray(a) ? a : [])].map(String).sort()) === JSON.stringify([...(Array.isArray(b) ? b : [])].map(String).sort());
+        const groupsChanged = req.body.groupIds !== undefined && !sameIds(req.body.groupIds, oldItem.groupIds);
+        if (!isSelf || rolesChanged || groupsChanged) {
+            return res.status(403).json({ error: groupsChanged && isSelf && !rolesChanged ? "Admin privileges are required to change group memberships." : "Admin privileges are required to modify users or roles." });
         }
+    }
+    if (col === 'userGroups' && !isAdminUser(req)) {
+        return res.status(403).json({ error: GROUPS_ADMIN_ERROR });
     }
     if (col === 'users' && req.body.password) updated.password = hashPassword(req.body.password);
 
@@ -5807,6 +5828,9 @@ const deleteFromCollection = (col) => (req, res) => {
 
     if (col === 'users' && !isAdminUser(req)) {
         return res.status(403).json({ error: "Admin privileges are required to delete users." });
+    }
+    if (col === 'userGroups' && !isAdminUser(req)) {
+        return res.status(403).json({ error: GROUPS_ADMIN_ERROR });
     }
     db[col] = db[col].filter(it => it.id !== req.params.id);
     if (writeDb(db, getDbPath(req))) {
@@ -7529,6 +7553,8 @@ app.post('/api/v1/admin/persistence/retry-hydrate', async (req, res) => {
 
 app.post('/api/v1/wipe', async (req, res) => {
   if (isSandbox(req)) return res.status(400).json({ error: "Direct wipe is disabled in sandbox mode. Use /api/v1/sandbox/reset." });
+  // v1.0001240 (F3): the live wipe empties orders, customers, inventory, notifications, contracts and supplier payments; admin only.
+  if (!isAdminUser(req)) return res.status(403).json({ error: 'Admin privileges are required to wipe the live data.' });
   const db = getDb(req);
   db.orders = []; db.customers = []; db.inventory = []; db.notifications = []; db.contracts = []; db.supplierPayments = [];
   // Explicit wipe: forced past the shrink guard (the previous Turso copy is kept as a live.<timestamp> snapshot).
@@ -11684,7 +11710,12 @@ app.post('/api/v1/init-defaults', (req, res) => {
         return res.status(400).json({ message: "NotEmpty" });
     }
     const db = getDb(req);
-    if (Object.keys(db).length === 0 || req.body.force) {
+    // v1.0001240 (F1): force overwrites any live collection (users included: a non-admin made itself admin with it); admin only.
+    // Without force the route still runs only on an empty DB (first run, before any user exists).
+    if (req.body && req.body.force && !isAdminUser(req)) {
+        return res.status(403).json({ error: 'Admin privileges are required to force the default data.' });
+    }
+    if (Object.keys(db).length === 0 || (req.body && req.body.force)) {
         const dd = req.body.defaults || {};
         if (dd.users) dd.users = dd.users.map(u => u.password ? { ...u, password: hashPassword(u.password) } : u);
         if (writeDb({ ...db, ...dd })) res.json({ message: "Initialized" });
@@ -11783,6 +11814,28 @@ app.get('/api/v1/integrations/google-drive/status', (req, res) => {
     }
 });
 
+// v1.0001240 (F4): the storage-configuration routes (connect / disconnect / test / bucket / token exchange / sync-all of
+// Google Drive, Dropbox and local storage) change or use the live storage settings: admin only, like Settings itself.
+// The file upload routes stay open to every signed-in user (orders attach documents through them).
+// The two OAuth callbacks are browser redirects from Google / Dropbox (no x-user header): they accept only a one-time
+// state that the admin-only auth-url route issued (15 min), so nobody can connect the ERP to a storage account of their own.
+const STORAGE_ADMIN_ERROR = 'Admin privileges are required to change the storage integration settings.';
+const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
+const oauthStates = new Map(); // state -> { provider, exp }
+const issueOAuthState = (provider) => {
+    const now = Date.now();
+    for (const [k, v] of oauthStates) if (v.exp < now) oauthStates.delete(k);
+    const st = crypto.randomBytes(24).toString('hex');
+    oauthStates.set(st, { provider, exp: now + OAUTH_STATE_TTL_MS });
+    return st;
+};
+const consumeOAuthState = (provider, st) => {
+    const key = String(st || '');
+    const rec = oauthStates.get(key);
+    if (!rec) return false;
+    oauthStates.delete(key);
+    return rec.provider === provider && rec.exp >= Date.now();
+};
 app.get('/api/v1/integrations/local-storage/status', async (req, res) => {
     try {
         const db = getDb(req);
@@ -11812,7 +11865,7 @@ app.get('/api/v1/integrations/local-storage/status', async (req, res) => {
     }
 });
 
-app.post('/api/v1/integrations/local-storage/buckets', bodyParser.json(), async (req, res) => {
+app.post('/api/v1/integrations/local-storage/buckets', requireAdminFor(STORAGE_ADMIN_ERROR), bodyParser.json(), async (req, res) => {
     try {
         const db = getDb(req);
         if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
@@ -11833,7 +11886,7 @@ app.post('/api/v1/integrations/local-storage/buckets', bodyParser.json(), async 
     }
 });
 
-app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
+app.get('/api/v1/integrations/google-drive/auth-url', requireAdminFor(STORAGE_ADMIN_ERROR), (req, res) => {
     try {
         const db = getDb(req);
         const settings = resolveSettings(db);
@@ -11843,11 +11896,7 @@ app.get('/api/v1/integrations/google-drive/auth-url', (req, res) => {
         }
 
         const callbackUrl = getGoogleCallbackUrl(req, settings);
-        const statePayload = {
-            t: Date.now(),
-            u: String(req.headers['x-user'] || 'System')
-        };
-        const state = Buffer.from(JSON.stringify(statePayload)).toString('base64url');
+        const state = issueOAuthState('google-drive');
 
         const params = new URLSearchParams({
             client_id: oauthFromSettings.clientId,
@@ -11877,6 +11926,9 @@ app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
         const { code, error } = req.query;
         if (error) {
             return res.status(400).send(`Google authorization failed: ${error}`);
+        }
+        if (!consumeOAuthState('google-drive', req.query.state)) {
+            return res.status(403).send('Invalid or expired authorization state. An admin starts the connection again from Settings.');
         }
         if (!code) {
             return res.status(400).send('Missing authorization code.');
@@ -11948,7 +12000,7 @@ app.get('/api/v1/integrations/google-drive/callback', async (req, res) => {
     }
 });
 
-app.post('/api/v1/integrations/google-drive/disconnect', (req, res) => {
+app.post('/api/v1/integrations/google-drive/disconnect', requireAdminFor(STORAGE_ADMIN_ERROR), (req, res) => {
     try {
         const db = getDb(req);
         if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
@@ -12077,12 +12129,40 @@ app.get('/api/v1/integrations/turso/status', async (req, res) => {
     }
 });
 
+// v1.0001240 (F2): the saved (decrypted) Turso token is sent ONLY to the saved Turso URL. A URL typed in the request that differs
+// from the saved one is tested only with a token typed for it (never the saved token, never an ENC: blob), and it may not point
+// at a local or private address (same rule as the AI base URL, G7). Admin only.
+const normTursoUrl = (u) => String(u || '').trim().replace(/^libsql:\/\//i, 'https://').replace(/\/+$/, '').toLowerCase();
 app.post('/api/v1/integrations/turso/test', bodyParser.json(), async (req, res) => {
+    if (!isAdminUser(req)) return res.status(403).json({ error: 'Admin privileges are required to test the Turso connection.' });
     try {
         const db = getDb(req);
         const settings = resolveSettings(db);
-        const rawUrl = req.body?.tursoUrl || (settings && settings.tursoUrl && String(settings.tursoUrl).trim()) || process.env.TURSO_DATABASE_URL || DEFAULT_TURSO_URL;
-        const authToken = req.body?.tursoAuthToken || (settings && settings.tursoAuthToken && String(settings.tursoAuthToken).trim()) || process.env.TURSO_AUTH_TOKEN || getDefaultTursoToken();
+        const saved = resolveTursoConfig(settings);
+        const savedUrl = String(saved.url || '').trim();
+        const savedTokens = [saved.token, settings && settings.tursoAuthToken, process.env.TURSO_AUTH_TOKEN, getDefaultTursoToken()]
+            .map(t => String(t || '').trim()).filter(Boolean);
+        const typedUrl = typeof req.body?.tursoUrl === 'string' ? req.body.tursoUrl.trim() : '';
+        const typedTokenRaw = typeof req.body?.tursoAuthToken === 'string' ? req.body.tursoAuthToken.trim() : '';
+        const typedToken = (typedTokenRaw && !isCipherText(typedTokenRaw) && !isMaskedSecret(typedTokenRaw)) ? typedTokenRaw : '';
+        const rawUrl = typedUrl || savedUrl;
+        if (!rawUrl) return res.status(400).json({ error: 'No Turso URL is saved or entered.' });
+        if (!/^(libsql|https?):\/\/[^\s]+$/i.test(rawUrl)) return res.status(400).json({ error: 'The Turso URL must start with libsql://, https:// or http://.' });
+        const sameUrl = normTursoUrl(rawUrl) === normTursoUrl(savedUrl);
+        let authToken;
+        if (sameUrl) {
+            authToken = typedToken || String(saved.token || '').trim();
+        } else {
+            if (!typedToken || savedTokens.includes(typedToken)) {
+                return res.status(400).json({ error: 'This Turso URL differs from the saved one: enter the auth token for it (the saved token is sent only to the saved URL).' });
+            }
+            const httpUrl = rawUrl.replace(/^libsql:\/\//i, 'https://');
+            if (isPrivateHostUrl(httpUrl) || await resolvesToPrivate(httpUrl)) {
+                return res.status(400).json({ error: 'The Turso URL points at a local or private address; save it first if this server is intended.' });
+            }
+            authToken = typedToken;
+        }
+        if (!authToken) return res.status(400).json({ error: 'No Turso auth token is saved or entered.' });
 
         const dbUrl = rawUrl.startsWith('libsql://') ? rawUrl.replace(/^libsql:\/\//, 'https://') : rawUrl;
         const client = createClient({ url: dbUrl, authToken });
@@ -12128,7 +12208,7 @@ app.get('/api/v1/integrations/dropbox/status', (req, res) => {
     }
 });
 
-app.post('/api/v1/integrations/dropbox/test', async (req, res) => {
+app.post('/api/v1/integrations/dropbox/test', requireAdminFor(STORAGE_ADMIN_ERROR), async (req, res) => {
     try {
         const db = getDb(req);
         const settings = resolveSettings(db);
@@ -12177,7 +12257,7 @@ app.post('/api/v1/integrations/dropbox/test', async (req, res) => {
     }
 });
 
-app.post('/api/v1/integrations/dropbox/auth-url', async (req, res) => {
+app.post('/api/v1/integrations/dropbox/auth-url', requireAdminFor(STORAGE_ADMIN_ERROR), async (req, res) => {
     try {
         const db = getDb(req);
         const settings = resolveSettings(db);
@@ -12192,7 +12272,7 @@ app.post('/api/v1/integrations/dropbox/auth-url', async (req, res) => {
         const dbx = new Dropbox({ clientId: appKey });
         const authUrl = await dbx.auth.getAuthenticationUrl(
             redirectUri,
-            undefined,
+            issueOAuthState('dropbox'),
             'code',
             'offline',
             null,
@@ -12206,7 +12286,7 @@ app.post('/api/v1/integrations/dropbox/auth-url', async (req, res) => {
     }
 });
 
-app.post('/api/v1/integrations/dropbox/exchange-token', async (req, res) => {
+app.post('/api/v1/integrations/dropbox/exchange-token', requireAdminFor(STORAGE_ADMIN_ERROR), async (req, res) => {
     try {
         const { code, redirectUri } = req.body;
         if (!code) {
@@ -12275,6 +12355,9 @@ app.get('/api/v1/integrations/dropbox/callback', async (req, res) => {
         if (!code) {
             return res.status(400).send('Missing authorization code.');
         }
+        if (!consumeOAuthState('dropbox', req.query.state)) {
+            return res.status(403).send('Invalid or expired authorization state. An admin starts the connection again from Settings.');
+        }
 
         const baseUrl = getBaseUrlFromRequest(req);
         const redirectUri = `${baseUrl}/api/v1/integrations/dropbox/callback`;
@@ -12316,7 +12399,7 @@ app.get('/api/v1/integrations/dropbox/callback', async (req, res) => {
     }
 });
 
-app.post('/api/v1/integrations/dropbox/disconnect', (req, res) => {
+app.post('/api/v1/integrations/dropbox/disconnect', requireAdminFor(STORAGE_ADMIN_ERROR), (req, res) => {
     try {
         const db = getDb(req);
         if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
@@ -12378,7 +12461,7 @@ app.post('/api/v1/integrations/dropbox/upload', uploadGoogleDriveFile.single('fi
     }
 });
 
-app.post('/api/v1/integrations/dropbox/sync-all', async (req, res) => {
+app.post('/api/v1/integrations/dropbox/sync-all', requireAdminFor(STORAGE_ADMIN_ERROR), async (req, res) => {
     try {
         const db = getDb(req);
         const settings = resolveSettings(db);
@@ -12814,32 +12897,73 @@ app.use((req, res, next) => {
     next();
 });
 
-// AI Proxy: forwards OpenAI-compatible requests server-side to avoid browser CORS restrictions
+// AI Proxy: forwards OpenAI-compatible chat requests server-side (no browser CORS).
+// v1.0001240 (F6, user report "All 5 AI models failed ... Authentication required."): the order scan, the AI assistant and the
+// supplier price-list mapping called this route with a bare fetch (no x-user header), so since v1.0001138 (CX09: anonymous
+// API writes refused) every call got 401 "Authentication required." from the auth middleware before it reached the AI
+// provider; the Settings "Test configuration" button worked because it goes through dataService with the auth headers.
+// In a sandbox the browser also held only the ENC: blob of the live key (the sandbox settings GET mirrors the live AI
+// settings without decrypting them). Now the callers send the auth headers (dataService.aiChat) and this route uses the
+// SAVED OpenAI-compatible config server-side (key + base URL; sandboxes mirror the live AI settings like test-config).
+// Any endpoint / apiKey in the body is ignored: the key never has to reach the browser and the route is no open relay.
+const AI_PROXY_TIMEOUT_MS = 60000;
+const AI_PROXY_MAX_TOKENS = 8192;
+const AI_PROXY_FIELDS = ['model', 'messages', 'max_tokens', 'temperature', 'response_format', 'top_p'];
 app.post('/api/v1/ai-proxy/chat', async (req, res) => {
+    const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
+    const liveUsers = (readDb(DB_PATH).users || []);
+    if (!caller || !liveUsers.some(u => String(u.username || '').toLowerCase() === caller)) {
+        return res.status(401).json({ error: 'Authentication required to use the AI service (sign in again).' });
+    }
+    const body = req.body || {};
+    const inPayload = body.payload;
+    if (!inPayload || typeof inPayload !== 'object' || !Array.isArray(inPayload.messages) || inPayload.messages.length === 0) {
+        return res.status(400).json({ error: 'Missing payload.messages.' });
+    }
+    const c = getLiveAiSettings().openaiConfig || {};
+    const apiKey = String(decryptValue(c.apiKey || '') || '').trim();
+    if (!apiKey || isCipherText(apiKey)) {
+        return res.status(400).json({ error: 'The OpenAI-compatible API key is not configured. An admin adds it in Settings > AI Engine.' });
+    }
+    // The Claude key is sent only to Anthropic (same rule as test-config).
+    if (claudeKeysFor(req).includes(apiKey)) {
+        return res.status(400).json({ error: 'The saved OpenAI-compatible key is not valid for this provider; an admin enters and saves the provider\'s own key.' });
+    }
+    let baseUrl = String(c.baseUrl || '').trim() || 'https://api.openai.com/v1';
+    if (!/^https?:\/\/[^\s]+$/i.test(baseUrl)) {
+        return res.status(400).json({ error: 'The saved base URL must start with http:// or https://.' });
+    }
+    baseUrl = baseUrl.replace(/\/+$/, '');
+    const payload = {};
+    AI_PROXY_FIELDS.forEach(f => { if (inPayload[f] !== undefined) payload[f] = inPayload[f]; });
+    payload.model = String(payload.model || c.modelName || 'gpt-4o').trim();
+    if (!/^[A-Za-z0-9._:\/-]{1,120}$/.test(payload.model)) {
+        return res.status(400).json({ error: 'The model name has invalid characters.' });
+    }
+    const mt = parseInt(payload.max_tokens, 10);
+    payload.max_tokens = Math.min(Math.max(Number.isFinite(mt) && mt > 0 ? mt : 2048, 1), AI_PROXY_MAX_TOKENS);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), AI_PROXY_TIMEOUT_MS);
     try {
-        const { endpoint, apiKey, payload } = req.body;
-        if (!endpoint || !apiKey || !payload) {
-            return res.status(400).json({ error: 'Missing endpoint, apiKey, or payload.' });
-        }
-        if (!payload.max_tokens) {
-            payload.max_tokens = 2048;
-        }
-        const upstream = await fetch(endpoint, {
+        const upstream = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(payload)
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify(payload),
+            signal: ac.signal,
+            redirect: 'error'
         });
-        const data = await upstream.json();
+        const data = await upstream.json().catch(() => ({ error: { message: `Upstream answered HTTP ${upstream.status} without JSON.` } }));
         if (!upstream.ok) {
-            console.error(`[AI Proxy] Upstream error ${upstream.status}:`, JSON.stringify(data));
+            const em = (data && data.error && (data.error.message || data.error)) || upstream.statusText;
+            console.error(`[AI Proxy] Upstream error ${upstream.status} (${payload.model}): ${String(em).slice(0, 200)}`);
         }
         res.status(upstream.status).json(data);
     } catch (err) {
-        console.error('[AI Proxy] Error:', err.message);
-        res.status(502).json({ error: `Upstream request failed: ${err.message}` });
+        const msg = err && err.name === 'AbortError' ? 'timed out' : (err && err.message) || 'network error';
+        console.error('[AI Proxy] Error:', msg);
+        res.status(502).json({ error: `Upstream request failed: ${msg}` });
+    } finally {
+        clearTimeout(timer);
     }
 });
 
