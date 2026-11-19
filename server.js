@@ -39,6 +39,8 @@ const sanitizeUsername = (username) => {
 };
 
 import crypto from 'crypto';
+import net from 'net';
+import { promises as dns } from 'dns';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED, rollbackToLoggedStateRefusal } from './shared/orderPermissions.js';
@@ -1902,6 +1904,41 @@ const blankClaudeKeyEchoes = (settingsOut, claudePlains) => {
     return out;
 };
 
+// v1.0001239 (validator G6): a restore can swap the key blobs (claudeConfig = new blob B, another key field = the old Claude
+// blob A). The GET blanking above compares only the Claude key(s) in force AFTER the restore, so A would then be shown in plain
+// text. Every restore path therefore blanks, in each restored settings record (live and sandboxes), every non-Claude sensitive
+// field that equals ANY Claude key known at restore time: the keys in force before the restore (live DB, every sandbox file,
+// the effective key of the request) and every claudeConfig key of the records being restored.
+const claudeKeysOfRecords = (records) => {
+    const out = [];
+    (Array.isArray(records) ? records : []).forEach(r => {
+        try { const k = String(decryptValue(((r || {}).claudeConfig || {}).apiKey || '') || ''); if (k) out.push(k); } catch {}
+    });
+    return out;
+};
+const claudeKeysOnDisk = () => {
+    const keys = [];
+    try { keys.push(...claudeKeysOfRecords((readDb(DB_PATH) || {}).settings)); } catch {}
+    try {
+        fs.readdirSync(__dirname).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.tmp')).forEach(f => {
+            try { keys.push(...claudeKeysOfRecords(JSON.parse(fs.readFileSync(path.join(__dirname, f), 'utf8')).settings)); } catch {}
+        });
+    } catch {}
+    return keys;
+};
+// incomingLists: arrays of settings records about to be written by this restore.
+const restoreClaudeKeys = (req, incomingLists) => {
+    const keys = new Set([...claudeKeysFor(req), ...claudeKeysOnDisk()]);
+    (incomingLists || []).forEach(list => claudeKeysOfRecords(list).forEach(k => keys.add(k)));
+    return [...keys].filter(Boolean);
+};
+const dropClaudeKeyCopies = (records, knownKeys) => {
+    if (!Array.isArray(records)) return records;
+    const keys = [...new Set([...(knownKeys || []), ...claudeKeysOfRecords(records)])].filter(Boolean); // + the records' own keys
+    if (keys.length === 0) return records;
+    return records.map(r => (r && typeof r === 'object') ? blankClaudeKeyEchoes(r, keys) : r);
+};
+
 // v1.0001236 (validator H1): the two settings CREATE paths (POST /settings, PUT /settings/<id not found>) get the same Claude
 // admin guard as the update path, and only one settings record may exist (everything reads settings[0]; the client PUTs
 // to the existing id and POSTs only when there is none). Returns { status, error } or null.
@@ -1954,7 +1991,8 @@ const getEffectiveClaudeConfig = (req) => {
 const claudeKeysFor = (req) => {
     const keys = [getEffectiveClaudeConfig(req).apiKey];
     try { keys.push(String(decryptValue((getLiveAiSettings().claudeConfig || {}).apiKey || '') || '')); } catch {}
-    return keys.filter(Boolean);
+    try { keys.push(...claudeKeysOfRecords((getDb(req) || {}).settings)); } catch {} // v1.0001239 (G6): every record of this DB
+    return [...new Set(keys.filter(Boolean))];
 };
 
 // aiProvider that applies to a request: live value, except a sandbox that itself selected Claude.
@@ -10652,6 +10690,12 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
 // v1.0001238 (validator P8): a backup holds every record and the encrypted secrets (ENC: blobs, Claude key included), so the
 // JSON and the full backups need the same admin check as the AI integration settings.
 const BACKUP_ADMIN_ERROR = 'Admin privileges are required to export a backup.';
+// v1.0001239 (validator G5): the restore / users-groups endpoints get the same admin guard as /backup. Without it any named
+// user could restore a backup that makes itself admin (and then export the backup) or wipe/replace the whole DB.
+// requireAdminFor() runs BEFORE multer, so a refused upload is never written to the temp dir.
+const RESTORE_ADMIN_ERROR = 'Admin privileges are required to restore a backup.';
+const USERS_GROUPS_ADMIN_ERROR = 'Admin privileges are required to export or restore users and groups.';
+const requireAdminFor = (msg) => (req, res, next) => (isAdminUser(req) ? next() : res.status(403).json({ error: msg }));
 app.get('/api/v1/backup', (req, res) => {
     if (!isAdminUser(req)) return res.status(403).json({ error: BACKUP_ADMIN_ERROR });
     const db = getDb(req);
@@ -10747,7 +10791,7 @@ app.get('/api/v1/full-backup', (req, res) => {
     }
 });
 
-app.post('/api/v1/restore', async (req, res) => {
+app.post('/api/v1/restore', requireAdminFor(RESTORE_ADMIN_ERROR), async (req, res) => {
     const data = req.body;
     const required = ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'settings', 'modules'];
     const missing = required.filter(col => !data[col]);
@@ -10760,8 +10804,17 @@ app.post('/api/v1/restore', async (req, res) => {
     if (data.settings && Array.isArray(data.settings)) {
         // v1.0001238 (P8): only an admin's restore keeps the ENC: blobs of a backup; for any other caller they are dropped
         // (a non-admin cannot export a backup, so an ENC: value from such a caller is copied ciphertext).
+        // v1.0001239 (G5): the route is admin-only now (requireAdminFor), so this is always an admin restore; kept as defence in depth.
         const adminRestore = isAdminUser(req);
         data.settings = data.settings.map(s => encryptSettings(adminRestore ? s : stripClientCipher(s, null).body));
+    }
+    // v1.0001239 (G6): no restored record may carry a Claude key (old or new) in another key field.
+    {
+        const sMapIn = (data._sandboxes || data.sandboxes || {});
+        const sLists = Object.values(sMapIn).map(sDb => (sDb && sDb.settings) || []);
+        const known = restoreClaudeKeys(req, [data.settings, ...sLists]);
+        if (Array.isArray(data.settings)) data.settings = dropClaudeKeyCopies(data.settings, known);
+        Object.values(sMapIn).forEach(sDb => { if (sDb && Array.isArray(sDb.settings)) sDb.settings = dropClaudeKeyCopies(sDb.settings, known); });
     }
 
     const { _sandboxes, sandboxes, ...cleanDb } = data;
@@ -10855,7 +10908,7 @@ app.post('/api/v1/restore', async (req, res) => {
 });
 
 const restoreDiskUpload = multer({ dest: os.tmpdir() });
-app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req, res) => {
+app.post('/api/v1/full-restore', requireAdminFor(RESTORE_ADMIN_ERROR), restoreDiskUpload.single('archive'), async (req, res) => {
   const tempDir = path.join(os.tmpdir(), `nexus-restore-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
   fs.mkdirSync(tempDir, { recursive: true });
   let livePush = null;
@@ -10913,6 +10966,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
         const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
         // v1.0001238 (P8): only an admin's restore keeps the ENC: blobs of the archive's settings.
         if (!isAdminUser(req) && Array.isArray(db.settings)) db.settings = db.settings.map(st => stripClientCipher(st, null).body);
+        if (Array.isArray(db.settings)) db.settings = dropClaudeKeyCopies(db.settings, restoreClaudeKeys(req, [db.settings])); // v1.0001239 (G6)
         const liveDb = readDb(DB_PATH);
         const ownerName = req.sandboxOwner;
         const existingSandboxDb = readDb(getDbPath(req));
@@ -10961,10 +11015,18 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       // LIVE RESTORE: Restore live db.json AND all db.sandbox.*.json files AND all uploads
       const extractedDb = path.join(tempDir, 'db.json');
       let liveRestored = false;
+      let fullRestoreClaudeKeys = null; // v1.0001239 (G6): computed before anything is written
       if (fs.existsSync(extractedDb)) {
         const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
         // v1.0001238 (P8): only an admin's restore keeps the ENC: blobs of the archive's settings.
         if (!isAdminUser(req) && Array.isArray(db.settings)) db.settings = db.settings.map(st => stripClientCipher(st, null).body);
+        // v1.0001239 (G6): the archive's sandbox files are restored below; their Claude keys count as known too.
+        try {
+            const sbLists = fs.readdirSync(tempDir).filter(f => f.startsWith('db.sandbox.') && f.endsWith('.json') && !f.endsWith('.tmp'))
+                .map(f => { try { return JSON.parse(fs.readFileSync(path.join(tempDir, f), 'utf8')).settings || []; } catch { return []; } });
+            fullRestoreClaudeKeys = restoreClaudeKeys(req, [db.settings, ...sbLists]);
+        } catch { fullRestoreClaudeKeys = restoreClaudeKeys(req, [db.settings]); }
+        if (Array.isArray(db.settings)) db.settings = dropClaudeKeyCopies(db.settings, fullRestoreClaudeKeys);
         try {
             const existingDb = readDb(DB_PATH);
             const existingSettings = resolveSettings(existingDb);
@@ -10997,6 +11059,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
         if (file.startsWith('db.sandbox.') && file.endsWith('.json') && !file.endsWith('.local.bak') && !file.endsWith('.tmp')) {
           try {
             const sandboxDb = JSON.parse(fs.readFileSync(path.join(tempDir, file), 'utf8'));
+            if (Array.isArray(sandboxDb.settings)) sandboxDb.settings = dropClaudeKeyCopies(sandboxDb.settings, fullRestoreClaudeKeys || (fullRestoreClaudeKeys = restoreClaudeKeys(req, [sandboxDb.settings]))); // v1.0001239 (G6)
             const targetSandboxPath = path.join(__dirname, file);
             applySchemaMigrations(sandboxDb, targetSandboxPath);
             writeDb(sandboxDb, targetSandboxPath);
@@ -11034,7 +11097,7 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
   }
 });
 
-app.get('/api/v1/backup-users-groups', (req, res) => {
+app.get('/api/v1/backup-users-groups', requireAdminFor(USERS_GROUPS_ADMIN_ERROR), (req, res) => {
     try {
         const password = req.query.password;
         if (!password) {
@@ -11094,7 +11157,7 @@ app.get('/api/v1/backup-users-groups', (req, res) => {
     }
 });
 
-app.post('/api/v1/restore-users-groups', restoreDiskUpload.single('archive'), (req, res) => {
+app.post('/api/v1/restore-users-groups', requireAdminFor(USERS_GROUPS_ADMIN_ERROR), restoreDiskUpload.single('archive'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No archive file uploaded" });
 
@@ -12889,6 +12952,52 @@ const isPrivateHostUrl = (u) => {
     }
     return false;
 };
+// v1.0001239 (validator G7): the G2 check above sees only literal hosts. A host NAME is now resolved (all A/AAAA records) and the
+// typed base URL is refused when any address is loopback / private / link-local / unspecified / multicast / CGNAT, or when the
+// name does not resolve. (The fetch resolves again, so DNS rebinding between the two lookups stays a residual risk; admin-only.)
+const isPrivateIp = (ip) => {
+    const a4 = String(ip || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+    const v4 = (x) => {
+        const m = x.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+        if (!m) return null;
+        const [a, b] = [Number(m[1]), Number(m[2])];
+        return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+            || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19));
+    };
+    const r4 = v4(a4);
+    if (r4 !== null) return r4;
+    if (!a4.includes(':')) return true; // not an IP we understand: refuse
+    let h = a4;
+    const tail = h.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (tail) { // dotted IPv4 tail -> two hex groups
+        const p = tail[1].split('.').map(Number);
+        h = h.slice(0, -tail[1].length) + ((p[0] << 8) | p[1]).toString(16) + ':' + ((p[2] << 8) | p[3]).toString(16);
+    }
+    const [l, r = ''] = h.split('::');
+    const L = l ? l.split(':') : [], R = r ? r.split(':') : [];
+    const g = h.includes('::') ? [...L, ...Array(Math.max(0, 8 - L.length - R.length)).fill('0'), ...R] : L;
+    if (g.length !== 8) return true;
+    const n = g.map(x => parseInt(x || '0', 16));
+    if (n.some(x => isNaN(x) || x < 0 || x > 0xffff)) return true;
+    const embedded = () => `${n[6] >> 8}.${n[6] & 255}.${n[7] >> 8}.${n[7] & 255}`;
+    if (n.slice(0, 6).every(x => x === 0)) return true; // ::, ::1, IPv4-compatible ::a.b.c.d
+    if (n.slice(0, 5).every(x => x === 0) && n[5] === 0xffff) return true; // IPv4-mapped: refuse outright
+    if (n[0] === 0x64 && n[1] === 0xff9b) return v4(embedded()) !== false; // NAT64 well-known prefix
+    if ((n[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
+    if ((n[0] & 0xffc0) === 0xfe80 || (n[0] & 0xffc0) === 0xfec0) return true; // link-local, site-local
+    if ((n[0] & 0xff00) === 0xff00) return true; // multicast
+    return false;
+};
+const resolvesToPrivate = async (u) => {
+    let host;
+    try { host = new URL(u).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, ''); } catch { return true; }
+    if (!host) return true;
+    if (net.isIP(host)) return isPrivateIp(host);
+    try {
+        const addrs = await dns.lookup(host, { all: true, verbatim: true });
+        return !addrs.length || addrs.some(x => isPrivateIp(x.address));
+    } catch { return true; }
+};
 app.post('/api/v1/ai/test-config', async (req, res) => {
     const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
     const liveUsers = (readDb(DB_PATH).users || []);
@@ -12947,7 +13056,7 @@ app.post('/api/v1/ai/test-config', async (req, res) => {
         // v1.0001238 (validator G2): a typed base URL may not point at loopback, link-local or private addresses (server-side
         // request forgery); the saved base URL is allowed as it is (an admin may run a local OpenAI-compatible server).
         const savedBase = String(saved.baseUrl || '').trim().replace(/\/+$/, '');
-        if (baseUrl !== savedBase && isPrivateHostUrl(baseUrl)) {
+        if (baseUrl !== savedBase && (isPrivateHostUrl(baseUrl) || await resolvesToPrivate(baseUrl))) {
             return res.json({ ...base, ok: false, code: 'bad_request', reason: 'The base URL points at a local or private address; save it first if this server is intended.' });
         }
     }
