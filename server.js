@@ -12758,6 +12758,141 @@ app.post('/api/v1/ai/claude', async (req, res) => {
     }
 });
 
+// v1.0001237: "Test configuration" for every AI provider (Settings > AI Engine). Admin only (same guard as the AI settings).
+// Body: { provider: 'gemini'|'openai'|'claude', apiKey?, modelName?, baseUrl? }. A typed (unsaved) key is tested when given,
+// else the saved key (decrypted here, in memory only). ONE minimal call (1-5 output tokens), 15 s timeout, no retries, and a
+// per-user/provider throttle. Reply 200 { ok, provider, model, code?, reason?, keyHint, latencyMs }; the key itself is never
+// returned or logged, and a provider error text is trimmed and scrubbed of anything key-like.
+const AI_TEST_TIMEOUT_MS = 15000;
+const AI_TEST_MIN_GAP_MS = 3000;
+const aiTestLastRun = new Map(); // `${user}|${provider}` -> { at, busy }
+const scrubAiSecret = (text, key) => {
+    let t = String(text || '');
+    if (key && key.length >= 4) t = t.split(key).join('••••');
+    t = t.replace(/\b(sk-ant-|sk-|AIza)[^\s,;'"()]*/g, '••••')
+         .replace(/([?&](key|api_key|apikey)=)[^&\s]+/gi, '$1••••')
+         .replace(/[A-Za-z0-9_\-]{32,}/g, '••••')
+         .replace(/\s+/g, ' ').trim();
+    return t.length > 200 ? t.slice(0, 197) + '...' : t;
+};
+const classifyAiTestFailure = (provider, status, errType, msg) => {
+    const m = String(msg || '').toLowerCase();
+    const t = String(errType || '').toLowerCase();
+    if (status === 401 || t === 'authentication_error' || /api[_ ]key[_ ]invalid|api key not valid|invalid api key|incorrect api key|invalid x-api-key|invalid authentication/.test(m)) {
+        return { code: 'invalid_key', label: 'Invalid API key' };
+    }
+    if (status === 402 || status === 429 || t === 'billing_error' || t === 'rate_limit_error' || /quota|credit balance|billing|resource_exhausted|rate limit|insufficient_quota/.test(m + ' ' + t)) {
+        return { code: 'quota', label: 'Quota, billing or rate limit' };
+    }
+    if (status === 404 || t === 'not_found_error' || /model.*(not found|does not exist|not supported|is not found)|no such model|unknown model/.test(m)) {
+        return { code: 'model_not_found', label: 'Model not found' };
+    }
+    if (status === 403 || t === 'permission_error' || /permission/.test(m)) {
+        return { code: 'permission', label: 'Key has no permission for this model or API' };
+    }
+    if (status >= 500) return { code: 'provider_unavailable', label: 'Provider error or overloaded' };
+    return { code: 'provider_error', label: 'Provider refused the request' };
+};
+app.post('/api/v1/ai/test-config', async (req, res) => {
+    const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
+    const liveUsers = (readDb(DB_PATH).users || []);
+    if (!caller || !liveUsers.some(u => String(u.username || '').toLowerCase() === caller)) {
+        return res.status(401).json({ error: 'Authentication required.' });
+    }
+    if (!isAdminUser(req)) {
+        return res.status(403).json({ error: 'Admin privileges are required to test the AI integration settings.' });
+    }
+    const body = req.body || {};
+    const provider = String(body.provider || '').trim().toLowerCase();
+    if (!AI_PROVIDERS.includes(provider)) {
+        return res.status(400).json({ error: `Unknown AI provider "${provider}". Available: ${AI_PROVIDERS.join(', ')}.` });
+    }
+    // Saved config: Claude through its own resolver (sandbox may hold its own key); Gemini/OpenAI mirror the live settings.
+    let saved;
+    if (provider === 'claude') {
+        saved = getEffectiveClaudeConfig(req);
+    } else {
+        const c = getLiveAiSettings()[provider === 'gemini' ? 'geminiConfig' : 'openaiConfig'] || {};
+        saved = { apiKey: String(decryptValue(c.apiKey || '') || ''), modelName: c.modelName || '', baseUrl: c.baseUrl || '' };
+    }
+    const typedKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    const typedPlain = (typedKey && !isMaskedSecret(typedKey)) ? String(decryptValue(typedKey) || '') : '';
+    const apiKey = typedPlain || saved.apiKey;
+    const keySource = (typedPlain && typedPlain !== saved.apiKey) ? 'typed' : 'saved';
+    const keyHint = apiKey ? '••••' + apiKey.slice(-4) : '';
+    let model = String(body.modelName || '').trim() || saved.modelName || '';
+    if (provider === 'claude') model = CLAUDE_MODEL_IDS.includes(model) ? model : (CLAUDE_MODEL_IDS.includes(saved.modelName) ? saved.modelName : DEFAULT_CLAUDE_MODEL);
+    if (provider === 'gemini' && !model) model = 'gemini-3.5-flash';
+    if (provider === 'openai' && !model) model = 'gpt-4o';
+    const base = { provider, model, keyHint, keySource };
+    if (!apiKey) {
+        return res.json({ ...base, ok: false, code: 'no_key', reason: 'No API key saved or entered for this provider.' });
+    }
+    if (provider !== 'claude' && !/^[A-Za-z0-9._:\/-]{1,120}$/.test(model)) {
+        return res.json({ ...base, ok: false, code: 'bad_request', reason: 'The model name has invalid characters.' });
+    }
+    let baseUrl = '';
+    if (provider === 'openai') {
+        baseUrl = String(body.baseUrl || '').trim() || saved.baseUrl || 'https://api.openai.com/v1';
+        if (!/^https?:\/\/[^\s]+$/i.test(baseUrl)) {
+            return res.json({ ...base, ok: false, code: 'bad_request', reason: 'The base URL must start with http:// or https://.' });
+        }
+        baseUrl = baseUrl.replace(/\/+$/, '');
+    }
+    // Throttle: one test at a time per user and provider, at least 3 s apart (no retry storms).
+    const tkey = `${caller}|${provider}`;
+    const last = aiTestLastRun.get(tkey);
+    const now = Date.now();
+    if (last && (last.busy || now - last.at < AI_TEST_MIN_GAP_MS)) {
+        return res.status(429).json({ error: 'A test for this provider just ran; wait a few seconds and try again.' });
+    }
+    aiTestLastRun.set(tkey, { at: now, busy: true });
+    let url, init;
+    if (provider === 'claude') {
+        url = CLAUDE_API_URL;
+        init = { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+                 body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }) };
+    } else if (provider === 'gemini') {
+        url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+        init = { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+                 body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ping' }] }], generationConfig: { maxOutputTokens: 1 } }) };
+    } else {
+        url = `${baseUrl}/chat/completions`;
+        init = { method: 'POST', headers: { 'content-type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                 body: JSON.stringify({ model, max_tokens: 5, messages: [{ role: 'user', content: 'ping' }] }) };
+    }
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), AI_TEST_TIMEOUT_MS);
+    const t0 = Date.now();
+    try {
+        const upstream = await fetch(url, { ...init, signal: ac.signal });
+        const data = await upstream.json().catch(() => ({}));
+        const latencyMs = Date.now() - t0;
+        if (upstream.ok) {
+            const usedModel = (provider === 'gemini' ? (data.modelVersion || model) : (data.model || model));
+            console.log(`[AI test] ${provider} ok (${usedModel}, ${latencyMs} ms, key ${keySource})`);
+            return res.json({ ...base, ok: true, model: String(usedModel).slice(0, 120), latencyMs });
+        }
+        const err = (data && data.error) || {};
+        const errType = typeof err === 'object' ? (err.type || err.status || err.code || '') : '';
+        const rawMsg = typeof err === 'string' ? err : (err.message || upstream.statusText || '');
+        const cls = classifyAiTestFailure(provider, upstream.status, errType, rawMsg);
+        const detail = scrubAiSecret(rawMsg, apiKey);
+        console.warn(`[AI test] ${provider} failed: HTTP ${upstream.status} ${cls.code}`);
+        return res.json({ ...base, ok: false, code: cls.code, status: upstream.status, latencyMs,
+                          reason: detail ? `${cls.label} (HTTP ${upstream.status}): ${detail}` : `${cls.label} (HTTP ${upstream.status}).` });
+    } catch (e) {
+        const timedOut = e && e.name === 'AbortError';
+        const cause = scrubAiSecret((e && e.cause && (e.cause.code || e.cause.message)) || (e && e.message) || '', apiKey);
+        console.warn(`[AI test] ${provider} ${timedOut ? 'timeout' : 'network error'}`);
+        return res.json({ ...base, ok: false, code: timedOut ? 'timeout' : 'network', latencyMs: Date.now() - t0,
+                          reason: timedOut ? `No answer from the provider within ${AI_TEST_TIMEOUT_MS / 1000} s (timeout).` : `Network error, the provider could not be reached${cause ? ': ' + cause : ''}.` });
+    } finally {
+        clearTimeout(timer);
+        aiTestLastRun.set(tkey, { at: Date.now(), busy: false });
+    }
+});
+
 // SPA Catch-all: Redirect all non-API requests to index.html
 app.get('{*path}', (req, res) => {
     if (req.path.startsWith('/api/v1')) return res.status(404).json({ error: "API not found" });

@@ -38,7 +38,52 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   // v1.0001235: Claude draft. The stored key is never sent to the browser; the draft key starts empty and an empty key on save keeps the stored one.
   const [aiDraftClaude, setAiDraftClaude] = useState<{ apiKey: string; modelName: string }>({ apiKey: '', modelName: config.settings.claudeConfig?.modelName || DEFAULT_CLAUDE_MODEL });
   const [showClaudeKey, setShowClaudeKey] = useState(false);
-  const [isTestingClaude, setIsTestingClaude] = useState(false);
+  // v1.0001237: "Test configuration" per provider: idle -> testing (spinner) -> ok (green "Working (model X)") / fail (red reason).
+  type AiTestProvider = 'gemini' | 'openai' | 'claude';
+  const [aiTest, setAiTest] = useState<Record<AiTestProvider, { state: 'idle' | 'testing' | 'ok' | 'fail'; text: string }>>({
+    gemini: { state: 'idle', text: '' }, openai: { state: 'idle', text: '' }, claude: { state: 'idle', text: '' }
+  });
+  const runAiTest = async (provider: AiTestProvider) => {
+    setAiTest(prev => ({ ...prev, [provider]: { state: 'testing', text: '' } }));
+    const draft: any = provider === 'gemini' ? aiDraftGemini : provider === 'openai' ? aiDraftOpenAI : aiDraftClaude;
+    try {
+      const r = await dataService.testAiConfig({ provider, apiKey: draft.apiKey || '', modelName: draft.modelName || '', baseUrl: provider === 'openai' ? (draft.baseUrl || '') : undefined });
+      setAiTest(prev => ({ ...prev, [provider]: r.ok
+        ? { state: 'ok', text: `Working (model ${r.model || draft.modelName})` }
+        : { state: 'fail', text: r.reason || 'Test failed.' } }));
+    } catch (e: any) {
+      setAiTest(prev => ({ ...prev, [provider]: { state: 'fail', text: 'Network error: the ERP server could not be reached.' } }));
+    }
+  };
+  const AI_TEST_TONES: Record<AiTestProvider, { base: string; hover: string }> = {
+    gemini: { base: 'border-indigo-200 text-indigo-700', hover: 'hover:bg-indigo-50' },
+    openai: { base: 'border-emerald-200 text-emerald-700', hover: 'hover:bg-emerald-50' },
+    claude: { base: 'border-amber-200 text-amber-700', hover: 'hover:bg-amber-50' }
+  };
+  const renderAiTest = (provider: AiTestProvider, canTest: boolean) => {
+    const t = aiTest[provider];
+    const testing = t.state === 'testing';
+    const tone = AI_TEST_TONES[provider];
+    return (
+      <>
+        <button
+          type="button"
+          disabled={testing || !canTest}
+          data-testid={`ai-test-${provider}`}
+          title={canTest ? 'Make one minimal call to the provider with this key and model' : 'Enter or save a key first'}
+          onClick={() => runAiTest(provider)}
+          className={`px-8 py-3 bg-white border-2 ${tone.base} rounded-xl font-black text-[10px] uppercase transition-all ${testing || !canTest ? 'opacity-50 cursor-not-allowed' : tone.hover}`}
+        >
+          {testing ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Testing...</> : 'Test Configuration'}
+        </button>
+        {(t.state === 'ok' || t.state === 'fail') && (
+          <p data-testid={`ai-test-result-${provider}`} className={`w-full text-xs font-bold ${t.state === 'ok' ? 'text-green-600' : 'text-red-600'}`}>
+            <i className={`fa-solid ${t.state === 'ok' ? 'fa-circle-check' : 'fa-circle-xmark'} mr-2`}></i>{t.text}
+          </p>
+        )}
+      </>
+    );
+  };
   const DEFAULT_DROPBOX_CLIENT_CONFIG: DropboxConfig = {
     enabled: true,
     autoUploadExternalSubmissions: true,
@@ -1375,25 +1420,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     >
                       {isSavingAI ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Saving...</> : 'Save Configuration'}
                     </button>
-                    <button
-                      disabled={isTestingClaude || !config.settings.claudeConfig?.hasKey}
-                      data-testid="claude-test"
-                      title={config.settings.claudeConfig?.hasKey ? 'Send a one-line test request with the stored key and model' : 'Save a key first'}
-                      onClick={async () => {
-                        setIsTestingClaude(true);
-                        try {
-                          const r = await dataService.claudeChat({ prompt: 'Reply with the single word OK.', maxTokens: 16 });
-                          setMessage({ type: 'success', text: `Claude answered (${r.model}): ${(r.text || '').slice(0, 40)}` });
-                        } catch (e: any) {
-                          setMessage({ type: 'error', text: e?.message || 'Claude test failed.' });
-                        } finally {
-                          setIsTestingClaude(false);
-                        }
-                      }}
-                      className={`px-8 py-3 bg-white border-2 border-amber-200 text-amber-700 rounded-xl font-black text-[10px] uppercase transition-all ${isTestingClaude || !config.settings.claudeConfig?.hasKey ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-50'}`}
-                    >
-                      {isTestingClaude ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Testing...</> : 'Test Connection'}
-                    </button>
+                    {renderAiTest('claude', !!(aiDraftClaude.apiKey || config.settings.claudeConfig?.hasKey))}
                   </div>
                 </div>
               ) : config.settings.aiProvider === 'gemini' ? (
@@ -1440,7 +1467,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       placeholder="e.g. gemini-3.5-flash"
                     />
                   </div>
-                  <div className="pt-4">
+                  <div className="pt-4 flex flex-wrap gap-3">
                     <button 
                       disabled={isSavingAI}
                       onClick={async () => {
@@ -1460,6 +1487,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     >
                       {isSavingAI ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Saving...</> : 'Save Configuration'}
                     </button>
+                    {renderAiTest('gemini', !!(aiDraftGemini.apiKey || config.settings.geminiConfig?.apiKey))}
                   </div>
                 </div>
               ) : (
@@ -1522,7 +1550,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       />
                     </div>
                   </div>
-                  <div className="pt-4">
+                  <div className="pt-4 flex flex-wrap gap-3">
                     <button 
                       disabled={isSavingAI}
                       onClick={async () => {
@@ -1542,6 +1570,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     >
                       {isSavingAI ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Saving...</> : 'Save Configuration'}
                     </button>
+                    {renderAiTest('openai', !!(aiDraftOpenAI.apiKey || config.settings.openaiConfig?.apiKey))}
                   </div>
                 </div>
 

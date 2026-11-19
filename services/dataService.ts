@@ -1389,6 +1389,19 @@ class DataService {
     return { text: data.text || '', model: data.model || '' };
   }
 
+  // v1.0001237: Settings > AI Engine "Test configuration". The server makes one minimal call to the provider with the typed key
+  // (if any) or the saved one and answers { ok, model, code?, reason? }; the key is never returned.
+  async testAiConfig(req: { provider: 'gemini' | 'openai' | 'claude'; apiKey?: string; modelName?: string; baseUrl?: string }): Promise<{ ok: boolean; model?: string; code?: string; reason?: string; keyHint?: string; latencyMs?: number }> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/ai/test-config`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(req)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, code: `http_${res.status}`, reason: data.error || `Test request failed: ${res.statusText}` };
+    return data;
+  }
+
   async updateModules(modules: any) {
     const existing = await this.get<any>('modules');
     if (existing.length > 0) {
