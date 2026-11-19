@@ -42,6 +42,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [aiNewModel, setAiNewModel] = useState('');
   const [aiTestModel, setAiTestModel] = useState<string>('');
   const aiModelsOf = (d: any): string[] => (Array.isArray(d?.models) ? d.models : []);
+  const aiOaSyncedRef = useRef<any>(config.settings.openaiConfig || null); // v1.0001242: last settings view the draft follows
   const setAiModels = (fn: (list: string[]) => string[]) => setAiDraftOpenAI((prev: any) => ({ ...prev, models: fn(aiModelsOf(prev)) }));
   const addAiModel = () => {
     const m = aiNewModel.trim();
@@ -545,9 +546,16 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     if (!aiDraftGemini.apiKey && config.settings.geminiConfig?.apiKey) {
       setAiDraftGemini(config.settings.geminiConfig);
     }
-    if (!aiDraftOpenAI.apiKey && config.settings.openaiConfig?.apiKey) {
-      const c: any = config.settings.openaiConfig;
-      setAiDraftOpenAI({ ...c, models: Array.isArray(c.models) ? c.models : [] });
+    // v1.0001242 (Gap B): the OpenAI key is masked (apiKey '' + hasKey/keyHint), so the draft follows newly loaded settings
+    // as long as the admin has not typed a key or edited the base URL / model list since the last sync.
+    const c: any = config.settings.openaiConfig;
+    if (c && c !== aiOaSyncedRef.current) {
+      const prev: any = aiOaSyncedRef.current || {};
+      const untouched = !aiDraftOpenAI.apiKey
+        && String(aiDraftOpenAI.baseUrl || '') === String(prev.baseUrl || aiDraftOpenAI.baseUrl || '')
+        && JSON.stringify(aiModelsOf(aiDraftOpenAI)) === JSON.stringify(Array.isArray(prev.models) ? prev.models : aiModelsOf(aiDraftOpenAI));
+      aiOaSyncedRef.current = c;
+      if (untouched) setAiDraftOpenAI({ ...c, apiKey: '', models: Array.isArray(c.models) ? c.models : [] });
     }
   }, [config.settings.geminiConfig, config.settings.openaiConfig]);
 
@@ -930,7 +938,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     // Persist to database
     try {
       if (section === 'settings') {
-        await dataService.updateSettings(newConfig.settings);
+        // v1.0001242 (Gap C): only the provider switch sends aiProvider; nothing here sends the OpenAI config.
+        await dataService.updateSettings(newConfig.settings, { aiProvider: key === 'aiProvider' });
       } else if (section === 'modules') {
         await dataService.updateModules(newConfig.modules);
       }
@@ -1529,9 +1538,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   <div className="space-y-2">
                     <div className="flex items-center justify-between ml-1">
                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">API Key</label>
-                      {config.settings.openaiConfig?.apiKey && (
-                        <span className="text-[8px] font-black text-emerald-400 bg-emerald-50 px-2 py-0.5 rounded-full uppercase">
-                           Active: {showOpenAIKey ? config.settings.openaiConfig.apiKey : '••••' + config.settings.openaiConfig.apiKey.slice(-4)}
+                      {config.settings.openaiConfig?.hasKey && (
+                        <span className="text-[8px] font-black text-emerald-400 bg-emerald-50 px-2 py-0.5 rounded-full uppercase" data-testid="openai-key-hint">
+                           Active: {config.settings.openaiConfig.keyHint || '••••'}
                         </span>
                       )}
                     </div>
@@ -1540,8 +1549,9 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                         type={showOpenAIKey ? "text" : "password"}
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all pr-12"
                         value={aiDraftOpenAI.apiKey}
-                        onChange={e => setAiDraftOpenAI(prev => ({ ...prev, apiKey: e.target.value.trim() }))}
-                        placeholder="sk-..."
+                        disabled={!isAdmin}
+                        onChange={e => setAiDraftOpenAI((prev: any) => ({ ...prev, apiKey: e.target.value.trim() }))}
+                        placeholder={config.settings.openaiConfig?.hasKey ? 'Saved key kept (type a new key to replace it)' : 'sk-...'}
                       />
                       <button type="button" onClick={() => setShowOpenAIKey(!showOpenAIKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-600 transition-colors">
                         <i className={`fa-solid ${showOpenAIKey ? 'fa-eye-slash' : 'fa-eye'}`}></i>
@@ -1636,6 +1646,11 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       </button>
                     </div>
                     {!isAdmin && <p className="text-[10px] font-bold text-slate-400 ml-1">Only an admin can change the AI integration.</p>}
+                    {currentUser?.sandbox && (
+                      <p className="text-[10px] font-bold text-sky-600 ml-1" data-testid="openai-sandbox-note">
+                        In a sandbox the OpenAI / Compatible integration (key, base URL and model list) mirrors the live settings and cannot be changed here. Change it in live mode.
+                      </p>
+                    )}
                   </div>
                   <div className="pt-4 flex flex-wrap gap-3">
                     <button 
@@ -1648,12 +1663,14 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                           const models = normalizeModelList(aiModelsOf(aiDraftOpenAI));
                           const bad = aiModelsOf(aiDraftOpenAI).find((m: string) => m.trim() && !AI_MODEL_NAME_RE.test(m.trim()));
                           if (bad !== undefined) throw new Error(`The model name "${String(bad).slice(0, 60)}" has invalid characters.`);
-                          const { modelsSource, ...draftOa } = aiDraftOpenAI;
-                          await dataService.updateSettings({ ...config.settings, openaiConfig: { ...draftOa, models, modelName: models[0] || '' } });
+                          const { modelsSource, hasKey, keyHint, ...draftOa } = aiDraftOpenAI;
+                          // v1.0001242 (Gap C): the only save that sends the OpenAI config (key, base URL, list).
+                          await dataService.updateSettings({ ...config.settings, openaiConfig: { ...draftOa, models, modelName: models[0] || '' } }, { openai: true });
                           const fresh = await dataService.getAppConfig();
-                          const freshOa: any = fresh?.settings?.openaiConfig || { ...draftOa, models };
+                          const freshOa: any = fresh?.settings?.openaiConfig || { ...draftOa, apiKey: '', models };
+                          aiOaSyncedRef.current = freshOa;
                           onConfigUpdate({ ...config, settings: { ...config.settings, openaiConfig: freshOa } });
-                          setAiDraftOpenAI({ ...freshOa, models: Array.isArray(freshOa.models) ? freshOa.models : [] });
+                          setAiDraftOpenAI({ ...freshOa, apiKey: '', models: Array.isArray(freshOa.models) ? freshOa.models : [] });
                           setMessage({ type: 'success', text: `OpenAI Configuration Saved Successfully (${(freshOa.models || []).length} model(s)).` });
                         } catch (e: any) {
                           setMessage({ type: 'error', text: e?.message || 'Error saving to backend.' });
@@ -1665,7 +1682,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                     >
                       {isSavingAI ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Saving...</> : 'Save Configuration'}
                     </button>
-                    {renderAiTest('openai', !!(aiDraftOpenAI.apiKey || config.settings.openaiConfig?.apiKey))}
+                    {renderAiTest('openai', !!(aiDraftOpenAI.apiKey || config.settings.openaiConfig?.hasKey))}
                   </div>
                 </div>
 

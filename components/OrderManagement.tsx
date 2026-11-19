@@ -876,21 +876,22 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
           return response.text;
         }
 
-        // v1.0001240 (F6): the server uses the saved key and base URL; apiKey here only tells whether one is saved.
-        const { apiKey } = config.settings.openaiConfig || ({} as any);
-        if (!apiKey) {
+        // v1.0001240 (F6): the server uses the saved key and base URL. v1.0001242: the browser holds only the masked view
+        // (hasKey), never the key.
+        if (!config.settings.openaiConfig?.hasKey) {
           throw new Error("AI API Key is not configured. Please add your API key in Settings > AI Configuration.");
         }
 
         // v1.0001241 (AI integration model list): the candidates are the admin's saved model list (DB, read from the
-        // server now), tried in the saved order; the first model that answers wins. No model list lives in the code.
+        // server now); the first model that answers wins. No model list lives in the code. v1.0001242: tried in the order of
+        // the speed history below (healthy fastest first, untested next, errored last; saved order as tie-break).
         const orderedCandidates = await dataService.getAiModels(config.settings.openaiConfig?.models);
         if (orderedCandidates.length === 0) {
           throw new Error("No AI model is configured. Please add at least one model in Settings > AI Configuration.");
         }
         const benchmarkTable = getModelBenchmarks();
 
-        console.log('[AI Scan] Saved model order:', orderedCandidates);
+        console.log('[AI Scan] Model order (saved list by health):', orderedCandidates);
         console.table(
           orderedCandidates.map(m => ({
             model: m,

@@ -500,6 +500,8 @@ export interface OpenAIConfig {
   modelName: string; // primary model = models[0] (kept for older readers)
   models?: string[]; // v1.0001241: ordered model list (DB); the AI callers loop over it, first success wins
   modelsSource?: 'saved' | 'openrouter-default' | 'legacy' | 'none'; // response-only
+  hasKey?: boolean; // v1.0001242: response-only, the key itself never reaches the browser (apiKey is '')
+  keyHint?: string; // v1.0001242: response-only, '••••' + last 4 characters
 }
 
 export interface GeminiConfig {

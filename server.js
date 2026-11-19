@@ -44,7 +44,7 @@ import { promises as dns } from 'dns';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED, rollbackToLoggedStateRefusal } from './shared/orderPermissions.js';
-import { AI_PROVIDERS, CLAUDE_MODELS, CLAUDE_MODEL_IDS, DEFAULT_CLAUDE_MODEL, AI_MODEL_NAME_RE, MAX_AI_MODELS, normalizeModelList, effectiveOpenAiModels, isOpenRouterUrl } from './shared/aiModels.js';
+import { AI_PROVIDERS, CLAUDE_MODELS, CLAUDE_MODEL_IDS, DEFAULT_CLAUDE_MODEL, AI_MODEL_NAME_RE, MAX_AI_MODELS, normalizeModelList, effectiveOpenAiModels, isOpenRouterUrl, modelListInputError } from './shared/aiModels.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank, cashBankMovements, legacyVoidOrigin } from './shared/cashBank.js';
 import { accountMatches } from './shared/accountSearch.js';
@@ -1844,11 +1844,42 @@ const decryptSettings = (settings) => transformSensitiveFields(settings, decrypt
 // stored in the DB with the key). Every read goes through withOpenAiModels, so a record that never saved a list shows its
 // effective list (old single model, plus the OpenRouter seed for an OpenRouter base URL) and modelsSource says where it came
 // from ('saved' | 'openrouter-default' | 'legacy' | 'none'). modelsSource is response-only and never stored.
+const SANDBOX_AI_EDIT_NOTE = 'In a sandbox the OpenAI / Compatible integration (key, base URL and model list) mirrors the live settings and cannot be changed here. Change it in live mode (Settings > AI Engine).';
 const DEFAULT_OPENAI_CONFIG = { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: '' };
 const withOpenAiModels = (cfg) => {
     const c = (cfg && typeof cfg === 'object') ? cfg : {};
     const eff = effectiveOpenAiModels(c);
     return { ...c, models: eff.models, modelsSource: eff.source };
+};
+// v1.0001242 (validator 1241 Gap B): the OpenAI-compatible key never leaves the server either (like the Claude key since
+// 1235): every settings response carries apiKey '' plus hasKey and keyHint (last 4 characters). The callers ask hasKey; the
+// proxy and the test call read the saved key on the server. Input: a config that already went through withOpenAiModels.
+const maskOpenAiConfig = (cfg) => {
+    const { apiKey, hasKey, keyHint, ...rest } = (cfg && typeof cfg === 'object') ? cfg : {};
+    const key = String(decryptValue(apiKey || '') || '');
+    return { ...rest, apiKey: '', hasKey: !!key, keyHint: key ? '••••' + key.slice(-4) : '' };
+};
+// The stored form of an OpenAI-compatible config: the response-only fields are never written to a DB file (validator M2).
+const storedOpenAiCopy = (cfg) => {
+    if (!cfg || typeof cfg !== 'object') return cfg;
+    const { modelsSource, hasKey, keyHint, ...rest } = cfg;
+    return rest;
+};
+// v1.0001242 (validator M1): the create paths (POST /settings, PUT to a missing id) check and normalise the model list the
+// same way as the update. Returns an error text or null; normalises item.openaiConfig in place.
+const normalizeOpenAiOnCreate = (item) => {
+    const oa = item && item.openaiConfig;
+    if (!oa || typeof oa !== 'object') return null;
+    const c = storedOpenAiCopy(oa);
+    if (typeof c.apiKey === 'string' && isMaskedSecret(c.apiKey)) c.apiKey = '';
+    if (c.models !== undefined) {
+        const err = modelListInputError(c.models);
+        if (err) return err;
+        c.models = normalizeModelList(c.models);
+        c.modelName = c.models[0] || '';
+    }
+    item.openaiConfig = c;
+    return null;
 };
 const getLiveAiSettings = () => {
     try {
@@ -1971,6 +2002,11 @@ const settingsCreateRefusal = (req, db, body) => {
         if ((k && !isMaskedSecret(k)) || (Array.isArray(oa.models) && normalizeModelList(oa.models).length > 0)) {
             return { status: 403, error: 'Admin privileges are required to change the AI integration settings.' };
         }
+    }
+    // v1.0001242 (validator M3): switching the active AI provider needs admin too (same guard as the integration settings).
+    if (body && body.aiProvider !== undefined && !isAdminUser(req)) {
+        const shown = isSandbox(req) ? getLiveAiSettings().aiProvider : 'gemini';
+        if (String(body.aiProvider) !== shown) return { status: 403, error: 'Admin privileges are required to change the AI integration settings.' };
     }
     const c = body && body.claudeConfig;
     if (c && typeof c === 'object' && !isAdminUser(req)) {
@@ -4340,7 +4376,7 @@ app.use((req, res, next) => {
             const stubPath = path.join(__dirname, 'db.stub.json');
             let stubDb = fs.existsSync(stubPath) ? JSON.parse(fs.readFileSync(stubPath, 'utf8')) : {};
             const liveAi = getLiveAiSettings();
-            stubDb.settings = [{ id: 'system_settings', aiProvider: liveAi.aiProvider, geminiConfig: liveAi.geminiConfig, openaiConfig: liveAi.openaiConfig, dbSchemaVersion: CURRENT_SCHEMA_VERSION }];
+            stubDb.settings = [{ id: 'system_settings', aiProvider: liveAi.aiProvider, geminiConfig: liveAi.geminiConfig, openaiConfig: storedOpenAiCopy(liveAi.openaiConfig), dbSchemaVersion: CURRENT_SCHEMA_VERSION }];
             if (!stubDb.modules) stubDb.modules = [];
             if (!stubDb.orders) stubDb.orders = [];
             if (!stubDb.customers) stubDb.customers = [];
@@ -4920,7 +4956,7 @@ const getCollection = (col) => (req, res) => {
         const settingsList = db[col] || [];
         const resolved = resolveSettings(db, isSandbox(req));
         if (settingsList.length === 0) {
-            return res.json([blankClaudeKeyEchoes({ ...resolved, openaiConfig: withOpenAiModels(resolved.openaiConfig), claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)) }, claudeKeysFor(req))]);
+            return res.json([blankClaudeKeyEchoes({ ...resolved, openaiConfig: maskOpenAiConfig(withOpenAiModels(resolved.openaiConfig)), claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)) }, claudeKeysFor(req))]);
         }
         const ck = claudeKeysFor(req);
         return res.json(settingsList.map(s => {
@@ -4931,7 +4967,7 @@ const getCollection = (col) => (req, res) => {
                 ...dec,
                 aiProvider: effectiveAiProvider(req, dec.aiProvider || resolved.aiProvider),
                 geminiConfig: liveAi ? liveAi.geminiConfig : (dec.geminiConfig || resolved.geminiConfig),
-                openaiConfig: liveAi ? liveAi.openaiConfig : withOpenAiModels(dec.openaiConfig || resolved.openaiConfig),
+                openaiConfig: maskOpenAiConfig(liveAi ? liveAi.openaiConfig : withOpenAiModels(dec.openaiConfig || resolved.openaiConfig)),
                 claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)),
                 storageBackend: resolved.storageBackend,
                 dropboxConfig: resolved.dropboxConfig
@@ -4967,7 +5003,7 @@ const getItemFromCollection = (col) => (req, res) => {
             ...dec,
             aiProvider: effectiveAiProvider(req, dec.aiProvider || resolved.aiProvider),
             geminiConfig: liveAi ? liveAi.geminiConfig : (dec.geminiConfig || resolved.geminiConfig),
-            openaiConfig: liveAi ? liveAi.openaiConfig : withOpenAiModels(dec.openaiConfig || resolved.openaiConfig),
+            openaiConfig: maskOpenAiConfig(liveAi ? liveAi.openaiConfig : withOpenAiModels(dec.openaiConfig || resolved.openaiConfig)),
             claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)),
             storageBackend: resolved.storageBackend,
             dropboxConfig: resolved.dropboxConfig
@@ -5327,6 +5363,7 @@ const addToCollection = (col) => (req, res) => {
     }
 
     if (col === 'settings') { const sc = settingsCreateRefusal(req, db, req.body); if (sc) return res.status(sc.status).json({ error: sc.error }); }
+    if (col === 'settings') { const oe = normalizeOpenAiOnCreate(newItem); if (oe) return res.status(400).json({ error: oe }); }
     if (col === 'settings' && newItem.claudeConfig) {
         // v1.0001235: Claude key stored encrypted, response masked (same as the PUT path).
         const k = typeof newItem.claudeConfig.apiKey === 'string' && !isMaskedSecret(newItem.claudeConfig.apiKey) ? newItem.claudeConfig.apiKey.trim() : '';
@@ -5339,7 +5376,7 @@ const addToCollection = (col) => (req, res) => {
         if (col === 'users' || col === 'userGroups') {
             syncAuthoritativeUsersToSandboxes(readDb(DB_PATH));
         }
-        if (col === 'settings') return res.status(201).json({ ...newItem, claudeConfig: maskClaudeConfig(newItem.claudeConfig) });
+        if (col === 'settings') return res.status(201).json({ ...newItem, openaiConfig: maskOpenAiConfig(withOpenAiModels(newItem.openaiConfig)), claudeConfig: maskClaudeConfig(newItem.claudeConfig) });
         res.status(201).json(col === 'users' ? (({ password, ...u }) => u)(newItem) : newItem);
     } else res.status(500).json({ error: "Write failed" });
 };
@@ -5442,13 +5479,14 @@ const updateInCollection = (col) => (req, res) => {
             const user = req.headers['x-user'] || 'System';
             if (col === 'settings') { const sc = settingsCreateRefusal(req, db, req.body); if (sc) return res.status(sc.status).json({ error: sc.error }); }
             let newItem = { id: req.params.id, ...req.body };
+            if (col === 'settings') { const oe = normalizeOpenAiOnCreate(newItem); if (oe) return res.status(400).json({ error: oe }); }
             if (col === 'settings' && newItem.claudeConfig) {
                 const k = typeof newItem.claudeConfig.apiKey === 'string' && !isMaskedSecret(newItem.claudeConfig.apiKey) ? newItem.claudeConfig.apiKey.trim() : '';
                 newItem.claudeConfig = { apiKey: k, modelName: CLAUDE_MODEL_IDS.includes(newItem.claudeConfig.modelName) ? newItem.claudeConfig.modelName : DEFAULT_CLAUDE_MODEL };
             }
             if (col === 'settings') newItem = encryptSettings(newItem);
             db[col].push(newItem);
-            if (writeDb(db, getDbPath(req))) return res.json(col === 'settings' ? { ...newItem, claudeConfig: maskClaudeConfig(newItem.claudeConfig) } : newItem);
+            if (writeDb(db, getDbPath(req))) return res.json(col === 'settings' ? { ...newItem, openaiConfig: maskOpenAiConfig(withOpenAiModels(newItem.openaiConfig)), claudeConfig: maskClaudeConfig(newItem.claudeConfig) } : newItem);
             else return res.status(500).json({ error: "Write failed" });
         }
         return res.status(404).json({ error: "Item not found" });
@@ -5529,15 +5567,18 @@ const updateInCollection = (col) => (req, res) => {
             const bodyOa = (req.body.openaiConfig && typeof req.body.openaiConfig === 'object') ? req.body.openaiConfig : null;
             const newOa = { ...(merged.openaiConfig && typeof merged.openaiConfig === 'object' ? merged.openaiConfig : {}) };
             delete newOa.modelsSource;
+            delete newOa.hasKey; delete newOa.keyHint; // v1.0001242: response-only (masked view), never stored
             const sentOaKey = bodyOa && typeof bodyOa.apiKey === 'string' ? bodyOa.apiKey.trim() : '';
             if (bodyOa && sentOaKey && isMaskedSecret(sentOaKey)) newOa.apiKey = oldOa.apiKey || ''; // a masked view keeps the stored key
+            const ref = isSandbox(req) ? (getLiveAiSettings().openaiConfig || {}) : oldOa;
+            const keyOf = (c) => String(decryptValue((c && c.apiKey) || '') || '');
+            // v1.0001242 (validator M4): a non-admin who sends any model list that differs is refused (403) before the 400 checks.
+            const listErr = (bodyOa && bodyOa.models !== undefined) ? modelListInputError(bodyOa.models) : null;
+            if (listErr && !isAdminUser(req)) {
+                return res.status(403).json({ error: 'Admin privileges are required to change the AI integration settings.' });
+            }
+            if (listErr) return res.status(400).json({ error: listErr });
             if (bodyOa && bodyOa.models !== undefined) {
-                if (!Array.isArray(bodyOa.models)) return res.status(400).json({ error: 'openaiConfig.models must be a list of model names.' });
-                const bad = bodyOa.models.find(m => typeof m !== 'string' || (m.trim() && !AI_MODEL_NAME_RE.test(m.trim())));
-                if (bad !== undefined) return res.status(400).json({ error: `The model name "${String(bad).slice(0, 60)}" has invalid characters.` });
-                if (new Set(bodyOa.models.map(m => m.trim()).filter(Boolean)).size > MAX_AI_MODELS) {
-                    return res.status(400).json({ error: `At most ${MAX_AI_MODELS} AI models can be saved.` });
-                }
                 newOa.models = normalizeModelList(bodyOa.models);
             } else if (Array.isArray(oldOa.models)) {
                 newOa.models = normalizeModelList(oldOa.models);
@@ -5547,13 +5588,21 @@ const updateInCollection = (col) => (req, res) => {
             newOa.modelName = newOa.models[0] || ''; // primary model = first in the list (for older readers)
             // Change check against what this client was shown: the record itself in live mode, the live AI settings in a
             // sandbox (sandboxes mirror them). An empty or masked key keeps the stored one and is no change.
-            const ref = isSandbox(req) ? (getLiveAiSettings().openaiConfig || {}) : oldOa;
-            const keyOf = (c) => String(decryptValue((c && c.apiKey) || '') || '');
-            const oaChanged = (!!sentOaKey && !isMaskedSecret(sentOaKey) && sentOaKey !== keyOf(ref))
+            // v1.0001242 (validator 1241 Gap A): a sent ENC: value (only the server makes those; stripClientCipher already
+            // swapped it for the stored blob) or a value equal to the stored key (blob or plain) is "no change" as well, so the
+            // UI's whole-settings save in a sandbox (which echoes the live ENC: blob) is not counted as a key change.
+            const keyChanged = !!sentOaKey && !isMaskedSecret(sentOaKey) && !isCipherText(sentOaKey)
+                && sentOaKey !== String((ref && ref.apiKey) || '') && sentOaKey !== keyOf(ref);
+            const oaChanged = keyChanged
                 || (!!bodyOa && bodyOa.baseUrl !== undefined && String(bodyOa.baseUrl || '').trim() !== String(ref.baseUrl || '').trim())
                 || (!!bodyOa && bodyOa.models !== undefined && JSON.stringify(newOa.models) !== JSON.stringify(effectiveOpenAiModels(ref).models));
             if (oaChanged && !isAdminUser(req)) {
                 return res.status(403).json({ error: 'Admin privileges are required to change the AI integration settings.' });
+            }
+            // v1.0001242 (validator G11): a sandbox mirrors the live AI integration, so an admin's key, base URL or model list
+            // edit inside a sandbox would be stored but never used. It is refused with a note instead of being ignored silently.
+            if (oaChanged && isSandbox(req)) {
+                return res.status(409).json({ error: SANDBOX_AI_EDIT_NOTE });
             }
             merged.openaiConfig = newOa;
         }
@@ -5577,6 +5626,14 @@ const updateInCollection = (col) => (req, res) => {
         }
         if (req.body.aiProvider !== undefined && !AI_PROVIDERS.includes(req.body.aiProvider)) {
             return res.status(400).json({ error: `Unknown AI provider "${req.body.aiProvider}". Available: ${AI_PROVIDERS.join(', ')}.` });
+        }
+        // v1.0001242 (validator M3): switching the active AI provider needs admin (same guard as the integration settings). The
+        // check is against what this client was shown (sandbox: the live provider, unless the sandbox itself selected Claude).
+        if (req.body.aiProvider !== undefined && !isAdminUser(req)) {
+            const shownProvider = effectiveAiProvider(req, oldItem.aiProvider || (isSandbox(req) ? getLiveAiSettings().aiProvider : 'gemini'));
+            if (String(req.body.aiProvider) !== String(shownProvider)) {
+                return res.status(403).json({ error: 'Admin privileges are required to change the AI integration settings.' });
+            }
         }
         if (oldItem.emailConfig?.password && (!req.body.emailConfig?.password || req.body.emailConfig.password === '')) {
             merged.emailConfig = { ...(merged.emailConfig || {}), password: oldItem.emailConfig.password };
@@ -5864,7 +5921,7 @@ const updateInCollection = (col) => (req, res) => {
         if (col === 'users' || col === 'userGroups') {
             syncAuthoritativeUsersToSandboxes(readDb(DB_PATH));
         }
-        if (col === 'settings') return res.json({ ...updated, claudeConfig: maskClaudeConfig(updated.claudeConfig) });
+        if (col === 'settings') return res.json({ ...updated, openaiConfig: maskOpenAiConfig(withOpenAiModels(updated.openaiConfig)), claudeConfig: maskClaudeConfig(updated.claudeConfig) });
         res.json(col === 'users' ? (({ password, ...u }) => u)(updated) : updated);
     } else res.status(500).json({ error: "Update failed" });
 };
@@ -11585,7 +11642,7 @@ app.post('/api/v1/login', (req, res) => {
         id: 'system_settings',
         aiProvider: liveAi.aiProvider,
         geminiConfig: liveAi.geminiConfig,
-        openaiConfig: liveAi.openaiConfig,
+        openaiConfig: storedOpenAiCopy(liveAi.openaiConfig),
         dbSchemaVersion: CURRENT_SCHEMA_VERSION
       }];
       stubDb.modules = []; stubDb.orders = []; stubDb.customers = []; stubDb.inventory = []; stubDb.notifications = []; stubDb.contracts = []; stubDb.supplierPayments = [];
@@ -13339,6 +13396,30 @@ const runStartupRepairs = () => {
     repairTradingMirrorOrders(startupDb);
     reconcileStockAllocations(startupDb, DB_PATH);
     syncAuthoritativeUsersToSandboxes(startupDb);
+    seedOpenAiModelListOnce();
+};
+
+// v1.0001242 (supervisor ruling 2 on the 1241 validation): the model list lives in the DB from the start. After the boot
+// hydrate (Turso loaded, not read-only; runStartupRepairs is also run after a successful retry hydrate) a live settings
+// record whose OpenAI-compatible config never stored a list gets its effective list written ONCE: the old single model
+// name, plus the five OpenRouter defaults when the base URL is OpenRouter. A stored list (also an empty one) is never
+// touched again. Field-level write, no schema bump. Returns true when it wrote.
+const seedOpenAiModelListOnce = () => {
+    try {
+        if (persistState.readOnly || !persistState.hydrated) return false;
+        const db = readDb(DB_PATH);
+        const s = Array.isArray(db.settings) ? db.settings[0] : null;
+        const oa = s && s.openaiConfig;
+        if (!oa || typeof oa !== 'object' || Array.isArray(oa.models)) return false;
+        const eff = effectiveOpenAiModels(oa);
+        s.openaiConfig = { ...storedOpenAiCopy(oa), models: eff.models, modelName: eff.models[0] || '' };
+        const ok = writeDb(db, DB_PATH);
+        console.log(`[AI] OpenAI-compatible model list ${ok ? 'stored once' : 'NOT stored (write refused)'} from ${eff.source}: ${eff.models.length} model(s).`);
+        return !!ok;
+    } catch (e) {
+        console.error('[AI] Model list seed failed:', e.message);
+        return false;
+    }
 };
 
 // Sweep every db.sandbox.*.json in the project root, run applySchemaMigrations on

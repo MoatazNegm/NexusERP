@@ -594,11 +594,12 @@ Sample rows: ${JSON.stringify(sampleRows)}
       });
       textOutput = response.text || '{}';
     } else {
-      const { apiKey } = config.settings.openaiConfig || ({} as any);
-      if (!apiKey) throw new Error('OpenAI API key is not configured.');
+      // v1.0001242: the browser holds only the masked key view (hasKey); the server uses the saved key.
+      if (!config.settings.openaiConfig?.hasKey) throw new Error('OpenAI API key is not configured.');
 
       // v1.0001240 (F6): through the server with the auth headers; the server uses the saved key and base URL.
-      // v1.0001241 (AI integration model list): loop over the saved model list in order; the first model that answers wins.
+      // v1.0001241 (AI integration model list): loop over the saved model list; the first model that answers wins.
+      // v1.0001242: in the order of the speed history the scan and the AI Assistant record (healthy, untested, errored).
       const models = await dataService.getAiModels(config.settings.openaiConfig?.models);
       if (models.length === 0) throw new Error('No AI model is configured. Please add at least one model in Settings > AI Configuration.');
       const failures: string[] = [];

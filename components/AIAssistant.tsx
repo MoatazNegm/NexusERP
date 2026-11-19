@@ -267,13 +267,14 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config, curren
       return response.text;
     }
 
-    const { apiKey } = config.settings.openaiConfig || ({} as any);
-    if (!apiKey) {
+    // v1.0001242: the browser holds only the masked key view (hasKey); the server uses the saved key.
+    if (!config.settings.openaiConfig?.hasKey) {
       throw new Error("AI API Key is not configured. Please add your API key in Settings > AI Configuration.");
     }
     // v1.0001240 (F6): the server calls the saved base URL with the saved key (dataService.aiChat).
     // v1.0001241 (AI integration model list): the candidates are the admin's saved model list (DB, read from the server
-    // now), tried in the saved order; the first model that answers wins. No model list lives in the code.
+    // now); the first model that answers wins. No model list lives in the code. v1.0001242: ordered by the speed history
+    // (healthy fastest first, untested next, errored last; saved order as tie-break), like the old loop.
     const orderedCandidates = await dataService.getAiModels(config.settings.openaiConfig?.models);
     if (orderedCandidates.length === 0) {
       throw new Error("No AI model is configured. Please add at least one model in Settings > AI Configuration.");

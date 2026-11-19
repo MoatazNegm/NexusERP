@@ -24,8 +24,11 @@ import {
   ProjectWallet
 } from '../types';
 import { MOCK_ORDERS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_SUPPLIERS, INITIAL_USER_GROUPS, DEFAULT_USERS, INITIAL_CONFIG } from '../constants';
+import { orderModelsByHealth, settingsSaveBody } from '../shared/aiModels.js';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+// v1.0001242: the per-browser model speed history the AI callers record (same key as OrderManagement / AIAssistant).
+export const AI_MODEL_BENCHMARK_KEY = 'nexus_ocr_model_benchmarks_v2';
 
 class DataService {
   private appStartTime = Date.now();
@@ -925,15 +928,23 @@ class DataService {
   // v1.0001241 (AI integration model list): the ordered model list saved with the OpenAI-compatible key, read from the
   // server (DB) before every AI run so an admin's change applies at once. Falls back to the list in the loaded settings
   // (also from the DB, fetched at app start and after each AI settings save) only when the server cannot be reached.
-  async getAiModels(fallback?: string[]): Promise<string[]> {
+  // v1.0001242 (supervisor ruling 1): the SAVED list (DB) is the candidate set; it is tried in the order of this browser's
+  // speed history like the old OpenRouter loop (healthy fastest first, untested next, errored last; the saved order is the
+  // tie-break and the order when there is no history). orderByHealth: false gives the plain saved order.
+  async getAiModels(fallback?: string[], opts: { orderByHealth?: boolean } = {}): Promise<string[]> {
+    let saved: string[] | null = null;
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/ai/models`, { headers: this.getHeaders() });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data.models)) return data.models.filter((m: any) => typeof m === 'string' && m.trim());
+        if (Array.isArray(data.models)) saved = data.models.filter((m: any) => typeof m === 'string' && m.trim());
       }
     } catch { /* offline: use the loaded settings */ }
-    return Array.isArray(fallback) ? fallback.filter(m => typeof m === 'string' && m.trim()) : [];
+    if (saved === null) saved = Array.isArray(fallback) ? fallback.filter(m => typeof m === 'string' && m.trim()) : [];
+    if (opts.orderByHealth === false) return saved;
+    let table: any = {};
+    try { table = JSON.parse((typeof localStorage !== 'undefined' && localStorage.getItem(AI_MODEL_BENCHMARK_KEY)) || '{}') || {}; } catch { table = {}; }
+    return orderModelsByHealth(saved, table);
   }
 
   async attachEInvoice(id: string, einvoiceFile: string) {
@@ -1394,12 +1405,18 @@ class DataService {
     };
   }
 
-  async updateSettings(settings: any) {
+  // v1.0001242 (validator 1241 Gap C): a settings save carries the AI integration only when the caller saves it on purpose.
+  // By default the OpenAI-compatible config (key, base URL, model list) and the active provider are left out of the body,
+  // so a browser with stale settings cannot overwrite a newer model list (the server keeps what is stored) and a non-admin
+  // with a stale view is not refused for a field he did not touch. The AI Engine OpenAI save passes { openai: true }, the
+  // provider switch passes { aiProvider: true }. The response-only fields of the masked key view are never sent.
+  async updateSettings(settings: any, opts: { openai?: boolean; aiProvider?: boolean } = {}) {
+    const body: any = settingsSaveBody(settings, opts);
     const existing = await this.get<any>('settings');
     if (existing.length > 0) {
-      return this.put('settings', existing[0].id || 'system_settings', settings);
+      return this.put('settings', existing[0].id || 'system_settings', body);
     } else {
-      return this.post('settings', { id: 'system_settings', ...settings });
+      return this.post('settings', { id: 'system_settings', ...body });
     }
   }
 

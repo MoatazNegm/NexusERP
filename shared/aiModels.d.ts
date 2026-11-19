@@ -8,3 +8,6 @@ export declare const AI_MODEL_NAME_RE: RegExp;
 export declare const isOpenRouterUrl: (u: unknown) => boolean;
 export declare const normalizeModelList: (list: unknown) => string[];
 export declare const effectiveOpenAiModels: (cfg: unknown) => { models: string[]; source: 'saved' | 'openrouter-default' | 'legacy' | 'none' };
+export declare const orderModelsByHealth: (models: unknown, table: unknown) => string[];
+export declare const modelListInputError: (models: unknown) => string | null;
+export declare const settingsSaveBody: (settings: any, opts?: { openai?: boolean; aiProvider?: boolean }) => any;
