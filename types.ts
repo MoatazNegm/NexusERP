@@ -497,7 +497,9 @@ export interface ApiKey {
 export interface OpenAIConfig {
   apiKey: string;
   baseUrl: string;
-  modelName: string;
+  modelName: string; // primary model = models[0] (kept for older readers)
+  models?: string[]; // v1.0001241: ordered model list (DB); the AI callers loop over it, first success wins
+  modelsSource?: 'saved' | 'openrouter-default' | 'legacy' | 'none'; // response-only
 }
 
 export interface GeminiConfig {

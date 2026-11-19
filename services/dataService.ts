@@ -922,6 +922,20 @@ class DataService {
     });
   }
 
+  // v1.0001241 (AI integration model list): the ordered model list saved with the OpenAI-compatible key, read from the
+  // server (DB) before every AI run so an admin's change applies at once. Falls back to the list in the loaded settings
+  // (also from the DB, fetched at app start and after each AI settings save) only when the server cannot be reached.
+  async getAiModels(fallback?: string[]): Promise<string[]> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/ai/models`, { headers: this.getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.models)) return data.models.filter((m: any) => typeof m === 'string' && m.trim());
+      }
+    } catch { /* offline: use the loaded settings */ }
+    return Array.isArray(fallback) ? fallback.filter(m => typeof m === 'string' && m.trim()) : [];
+  }
+
   async attachEInvoice(id: string, einvoiceFile: string) {
     return this.dispatchAction(id, 'attach-einvoice', { einvoiceFile });
   }

@@ -44,7 +44,7 @@ import { promises as dns } from 'dns';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED, rollbackToLoggedStateRefusal } from './shared/orderPermissions.js';
-import { AI_PROVIDERS, CLAUDE_MODELS, CLAUDE_MODEL_IDS, DEFAULT_CLAUDE_MODEL } from './shared/aiModels.js';
+import { AI_PROVIDERS, CLAUDE_MODELS, CLAUDE_MODEL_IDS, DEFAULT_CLAUDE_MODEL, AI_MODEL_NAME_RE, MAX_AI_MODELS, normalizeModelList, effectiveOpenAiModels, isOpenRouterUrl } from './shared/aiModels.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank, cashBankMovements, legacyVoidOrigin } from './shared/cashBank.js';
 import { accountMatches } from './shared/accountSearch.js';
@@ -1840,6 +1840,16 @@ const transformSensitiveFields = (settings, fn) => {
 const encryptSettings = (settings) => transformSensitiveFields(settings, encryptValue);
 const decryptSettings = (settings) => transformSensitiveFields(settings, decryptValue);
 
+// v1.0001241 (AI integration model list): the OpenAI-compatible config carries its ordered model list (openaiConfig.models,
+// stored in the DB with the key). Every read goes through withOpenAiModels, so a record that never saved a list shows its
+// effective list (old single model, plus the OpenRouter seed for an OpenRouter base URL) and modelsSource says where it came
+// from ('saved' | 'openrouter-default' | 'legacy' | 'none'). modelsSource is response-only and never stored.
+const DEFAULT_OPENAI_CONFIG = { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: '' };
+const withOpenAiModels = (cfg) => {
+    const c = (cfg && typeof cfg === 'object') ? cfg : {};
+    const eff = effectiveOpenAiModels(c);
+    return { ...c, models: eff.models, modelsSource: eff.source };
+};
 const getLiveAiSettings = () => {
     try {
         const liveDb = readDb(DB_PATH);
@@ -1849,14 +1859,14 @@ const getLiveAiSettings = () => {
         return {
             aiProvider: liveSettings.aiProvider || 'gemini',
             geminiConfig: liveSettings.geminiConfig || { apiKey: '', modelName: 'gemini-3.5-flash' },
-            openaiConfig: liveSettings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
+            openaiConfig: withOpenAiModels(liveSettings.openaiConfig || { ...DEFAULT_OPENAI_CONFIG }),
             claudeConfig: liveSettings.claudeConfig || { ...DEFAULT_CLAUDE_CONFIG }
         };
     } catch (e) {
         return {
             aiProvider: 'gemini',
             geminiConfig: { apiKey: '', modelName: 'gemini-3.5-flash' },
-            openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
+            openaiConfig: withOpenAiModels({ ...DEFAULT_OPENAI_CONFIG }),
             claudeConfig: { ...DEFAULT_CLAUDE_CONFIG }
         };
     }
@@ -1954,6 +1964,14 @@ const dropClaudeKeyCopies = (records, knownKeys) => {
 // admin guard as the update path, and only one settings record may exist (everything reads settings[0]; the client PUTs
 // to the existing id and POSTs only when there is none). Returns { status, error } or null.
 const settingsCreateRefusal = (req, db, body) => {
+    // v1.0001241: a non-admin may not create the settings record with an OpenAI-compatible key or model list either.
+    const oa = body && body.openaiConfig;
+    if (oa && typeof oa === 'object' && !isAdminUser(req)) {
+        const k = typeof oa.apiKey === 'string' ? oa.apiKey.trim() : '';
+        if ((k && !isMaskedSecret(k)) || (Array.isArray(oa.models) && normalizeModelList(oa.models).length > 0)) {
+            return { status: 403, error: 'Admin privileges are required to change the AI integration settings.' };
+        }
+    }
     const c = body && body.claudeConfig;
     if (c && typeof c === 'object' && !isAdminUser(req)) {
         const k = typeof c.apiKey === 'string' ? c.apiKey.trim() : '';
@@ -4902,7 +4920,7 @@ const getCollection = (col) => (req, res) => {
         const settingsList = db[col] || [];
         const resolved = resolveSettings(db, isSandbox(req));
         if (settingsList.length === 0) {
-            return res.json([blankClaudeKeyEchoes({ ...resolved, claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)) }, claudeKeysFor(req))]);
+            return res.json([blankClaudeKeyEchoes({ ...resolved, openaiConfig: withOpenAiModels(resolved.openaiConfig), claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)) }, claudeKeysFor(req))]);
         }
         const ck = claudeKeysFor(req);
         return res.json(settingsList.map(s => {
@@ -4913,7 +4931,7 @@ const getCollection = (col) => (req, res) => {
                 ...dec,
                 aiProvider: effectiveAiProvider(req, dec.aiProvider || resolved.aiProvider),
                 geminiConfig: liveAi ? liveAi.geminiConfig : (dec.geminiConfig || resolved.geminiConfig),
-                openaiConfig: liveAi ? liveAi.openaiConfig : (dec.openaiConfig || resolved.openaiConfig),
+                openaiConfig: liveAi ? liveAi.openaiConfig : withOpenAiModels(dec.openaiConfig || resolved.openaiConfig),
                 claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)),
                 storageBackend: resolved.storageBackend,
                 dropboxConfig: resolved.dropboxConfig
@@ -4949,7 +4967,7 @@ const getItemFromCollection = (col) => (req, res) => {
             ...dec,
             aiProvider: effectiveAiProvider(req, dec.aiProvider || resolved.aiProvider),
             geminiConfig: liveAi ? liveAi.geminiConfig : (dec.geminiConfig || resolved.geminiConfig),
-            openaiConfig: liveAi ? liveAi.openaiConfig : (dec.openaiConfig || resolved.openaiConfig),
+            openaiConfig: liveAi ? liveAi.openaiConfig : withOpenAiModels(dec.openaiConfig || resolved.openaiConfig),
             claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)),
             storageBackend: resolved.storageBackend,
             dropboxConfig: resolved.dropboxConfig
@@ -5501,6 +5519,43 @@ const updateInCollection = (col) => (req, res) => {
         }
         if (oldItem.openaiConfig?.apiKey && (!req.body.openaiConfig?.apiKey || req.body.openaiConfig.apiKey === '')) {
             merged.openaiConfig = { ...(merged.openaiConfig || {}), apiKey: oldItem.openaiConfig.apiKey };
+        }
+        // v1.0001241 (AI integration model list): the ordered model list is stored in the DB with the key. A body without
+        // `models` keeps the stored list; a record that never stored one gets its effective list (old model name, plus the
+        // OpenRouter seed for an OpenRouter base URL) stored now, once. Names are trimmed, validated, de-duplicated (max
+        // MAX_AI_MODELS). Changing the key, base URL or model list needs admin (same rule as the Claude settings).
+        if (req.body.openaiConfig !== undefined || oldItem.openaiConfig !== undefined) {
+            const oldOa = oldItem.openaiConfig || {};
+            const bodyOa = (req.body.openaiConfig && typeof req.body.openaiConfig === 'object') ? req.body.openaiConfig : null;
+            const newOa = { ...(merged.openaiConfig && typeof merged.openaiConfig === 'object' ? merged.openaiConfig : {}) };
+            delete newOa.modelsSource;
+            const sentOaKey = bodyOa && typeof bodyOa.apiKey === 'string' ? bodyOa.apiKey.trim() : '';
+            if (bodyOa && sentOaKey && isMaskedSecret(sentOaKey)) newOa.apiKey = oldOa.apiKey || ''; // a masked view keeps the stored key
+            if (bodyOa && bodyOa.models !== undefined) {
+                if (!Array.isArray(bodyOa.models)) return res.status(400).json({ error: 'openaiConfig.models must be a list of model names.' });
+                const bad = bodyOa.models.find(m => typeof m !== 'string' || (m.trim() && !AI_MODEL_NAME_RE.test(m.trim())));
+                if (bad !== undefined) return res.status(400).json({ error: `The model name "${String(bad).slice(0, 60)}" has invalid characters.` });
+                if (new Set(bodyOa.models.map(m => m.trim()).filter(Boolean)).size > MAX_AI_MODELS) {
+                    return res.status(400).json({ error: `At most ${MAX_AI_MODELS} AI models can be saved.` });
+                }
+                newOa.models = normalizeModelList(bodyOa.models);
+            } else if (Array.isArray(oldOa.models)) {
+                newOa.models = normalizeModelList(oldOa.models);
+            } else {
+                newOa.models = effectiveOpenAiModels({ ...oldOa, ...newOa, models: undefined }).models;
+            }
+            newOa.modelName = newOa.models[0] || ''; // primary model = first in the list (for older readers)
+            // Change check against what this client was shown: the record itself in live mode, the live AI settings in a
+            // sandbox (sandboxes mirror them). An empty or masked key keeps the stored one and is no change.
+            const ref = isSandbox(req) ? (getLiveAiSettings().openaiConfig || {}) : oldOa;
+            const keyOf = (c) => String(decryptValue((c && c.apiKey) || '') || '');
+            const oaChanged = (!!sentOaKey && !isMaskedSecret(sentOaKey) && sentOaKey !== keyOf(ref))
+                || (!!bodyOa && bodyOa.baseUrl !== undefined && String(bodyOa.baseUrl || '').trim() !== String(ref.baseUrl || '').trim())
+                || (!!bodyOa && bodyOa.models !== undefined && JSON.stringify(newOa.models) !== JSON.stringify(effectiveOpenAiModels(ref).models));
+            if (oaChanged && !isAdminUser(req)) {
+                return res.status(403).json({ error: 'Admin privileges are required to change the AI integration settings.' });
+            }
+            merged.openaiConfig = newOa;
         }
         // v1.0001235: Claude config. The client only ever holds the masked view, so an empty or masked key keeps the stored
         // key; hasKey/keyHint are response-only fields and are never stored. Changing the Claude key or model needs admin.
@@ -12936,9 +12991,18 @@ app.post('/api/v1/ai-proxy/chat', async (req, res) => {
     baseUrl = baseUrl.replace(/\/+$/, '');
     const payload = {};
     AI_PROXY_FIELDS.forEach(f => { if (inPayload[f] !== undefined) payload[f] = inPayload[f]; });
-    payload.model = String(payload.model || c.modelName || 'gpt-4o').trim();
-    if (!/^[A-Za-z0-9._:\/-]{1,120}$/.test(payload.model)) {
+    // v1.0001241: the model comes from the SAVED model list (DB). No model in the body = the first saved model; a model
+    // that is not in the saved list is refused (the client cannot make the server call a model the admin did not add).
+    const savedModels = Array.isArray(c.models) ? c.models : [];
+    if (savedModels.length === 0) {
+        return res.status(400).json({ error: 'No AI model is configured. An admin adds the models in Settings > AI Engine.' });
+    }
+    payload.model = String(payload.model || savedModels[0]).trim();
+    if (!AI_MODEL_NAME_RE.test(payload.model)) {
         return res.status(400).json({ error: 'The model name has invalid characters.' });
+    }
+    if (!savedModels.includes(payload.model)) {
+        return res.status(400).json({ error: `The model "${payload.model}" is not in the saved AI model list.` });
     }
     const mt = parseInt(payload.max_tokens, 10);
     payload.max_tokens = Math.min(Math.max(Number.isFinite(mt) && mt > 0 ? mt : 2048, 1), AI_PROXY_MAX_TOKENS);
@@ -12965,6 +13029,19 @@ app.post('/api/v1/ai-proxy/chat', async (req, res) => {
     } finally {
         clearTimeout(timer);
     }
+});
+
+// v1.0001241 (AI integration model list): the ordered model list the callers loop over, read from the DB on every call
+// (no cache, so a change made by an admin anywhere applies at the next AI request). Any signed-in user; no key is returned.
+app.get('/api/v1/ai/models', (req, res) => {
+    const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
+    const liveUsers = (readDb(DB_PATH).users || []);
+    if (!caller || !liveUsers.some(u => String(u.username || '').toLowerCase() === caller)) {
+        return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const live = getLiveAiSettings();
+    const c = live.openaiConfig || {};
+    res.json({ provider: live.aiProvider, models: Array.isArray(c.models) ? c.models : [], source: c.modelsSource || 'none', openRouter: isOpenRouterUrl(c.baseUrl), max: MAX_AI_MODELS });
 });
 
 // v1.0001235: Claude (Anthropic) calls. The key never reaches the browser: it is read from the (encrypted) settings here.
@@ -13142,7 +13219,7 @@ app.post('/api/v1/ai/test-config', async (req, res) => {
         saved = getEffectiveClaudeConfig(req);
     } else {
         const c = getLiveAiSettings()[provider === 'gemini' ? 'geminiConfig' : 'openaiConfig'] || {};
-        saved = { apiKey: String(decryptValue(c.apiKey || '') || ''), modelName: c.modelName || '', baseUrl: c.baseUrl || '' };
+        saved = { apiKey: String(decryptValue(c.apiKey || '') || ''), modelName: provider === 'openai' ? '' : (c.modelName || ''), baseUrl: c.baseUrl || '', models: c.models || [] };
     }
     const typedKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
     // v1.0001238 (validator G1): a typed key is used as typed and never decrypted (the endpoint must not be a decryption
@@ -13157,7 +13234,10 @@ app.post('/api/v1/ai/test-config', async (req, res) => {
     let model = String(body.modelName || '').trim() || saved.modelName || '';
     if (provider === 'claude') model = CLAUDE_MODEL_IDS.includes(model) ? model : (CLAUDE_MODEL_IDS.includes(saved.modelName) ? saved.modelName : DEFAULT_CLAUDE_MODEL);
     if (provider === 'gemini' && !model) model = 'gemini-3.5-flash';
-    if (provider === 'openai' && !model) model = 'gpt-4o';
+    if (provider === 'openai' && !model) model = (Array.isArray(saved.models) && saved.models[0]) || '';
+    if (provider === 'openai' && !model) {
+        return res.json({ provider, model: '', keyHint, keySource, ok: false, code: 'no_model', reason: 'No AI model is saved or chosen. Add at least one model to the list.' });
+    }
     const base = { provider, model, keyHint, keySource };
     if (!apiKey) {
         return res.json({ ...base, ok: false, code: 'no_key', reason: 'No API key saved or entered for this provider.' });

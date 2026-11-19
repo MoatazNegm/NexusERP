@@ -877,45 +877,20 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         }
 
         // v1.0001240 (F6): the server uses the saved key and base URL; apiKey here only tells whether one is saved.
-        const { apiKey, baseUrl = '', modelName } = config.settings.openaiConfig || ({} as any);
+        const { apiKey } = config.settings.openaiConfig || ({} as any);
         if (!apiKey) {
           throw new Error("AI API Key is not configured. Please add your API key in Settings > AI Configuration.");
         }
 
-        const isRouter = baseUrl.includes('openrouter.ai');
-        const knownModels = [
-          'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
-          'dots-studio/dots-3-note-preview:free',
-          'google/gemma-4-26b-a4b-it:free',
-          'minimax/minimax-m3:free',
-          'openrouter/auto'
-        ];
-        if (modelName && !knownModels.includes(modelName)) {
-          knownModels.unshift(modelName);
+        // v1.0001241 (AI integration model list): the candidates are the admin's saved model list (DB, read from the
+        // server now), tried in the saved order; the first model that answers wins. No model list lives in the code.
+        const orderedCandidates = await dataService.getAiModels(config.settings.openaiConfig?.models);
+        if (orderedCandidates.length === 0) {
+          throw new Error("No AI model is configured. Please add at least one model in Settings > AI Configuration.");
         }
-
-        // Retrieve persistent benchmark metrics table
         const benchmarkTable = getModelBenchmarks();
 
-        // 1. Healthy models, sorted by fastest historical average response time
-        const healthyModels = knownModels
-          .filter(m => benchmarkTable[m]?.status === 'healthy')
-          .sort((a, b) => (benchmarkTable[a]?.avgResponseTimeMs || 9999) - (benchmarkTable[b]?.avgResponseTimeMs || 9999));
-
-        // 2. Untested models (no historical record yet)
-        const untestedModels = knownModels.filter(m => !benchmarkTable[m]);
-
-        // 3. Previously errored models (retried after healthy ones, sorted by earliest error timestamp to let rate-limits expire)
-        const erroredModels = knownModels
-          .filter(m => benchmarkTable[m]?.status === 'error')
-          .sort((a, b) => (benchmarkTable[a]?.lastErrorTimestamp || 0) - (benchmarkTable[b]?.lastErrorTimestamp || 0));
-
-        // Prioritized sequence: Healthy (fastest first) -> Untested -> Errored (re-test for recovery)
-        const orderedCandidates = isRouter
-          ? Array.from(new Set([...healthyModels, ...untestedModels, ...erroredModels]))
-          : [modelName];
-
-        console.log('[AI Scan] Prioritized model candidate order:', orderedCandidates);
+        console.log('[AI Scan] Saved model order:', orderedCandidates);
         console.table(
           orderedCandidates.map(m => ({
             model: m,

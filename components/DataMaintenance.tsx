@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL } from '../shared/aiModels';
+import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, OPENROUTER_DEFAULT_MODELS, MAX_AI_MODELS, AI_MODEL_NAME_RE, isOpenRouterUrl, normalizeModelList } from '../shared/aiModels';
 import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend, ApiKey, SandboxMember, DropboxConfig } from '../types';
 
 // Client-side mirror of server.js `sanitizeUsername`. Used for client
@@ -34,7 +34,29 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
 
   const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-3.5-flash' });
-  const [aiDraftOpenAI, setAiDraftOpenAI] = useState(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
+  const [aiDraftOpenAI, setAiDraftOpenAI] = useState<any>(() => {
+    const c: any = config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: '' };
+    return { ...c, models: Array.isArray(c.models) ? c.models : [] };
+  });
+  // v1.0001241 (AI integration model list): the model typed into "Add model", and the model the Test button checks.
+  const [aiNewModel, setAiNewModel] = useState('');
+  const [aiTestModel, setAiTestModel] = useState<string>('');
+  const aiModelsOf = (d: any): string[] => (Array.isArray(d?.models) ? d.models : []);
+  const setAiModels = (fn: (list: string[]) => string[]) => setAiDraftOpenAI((prev: any) => ({ ...prev, models: fn(aiModelsOf(prev)) }));
+  const addAiModel = () => {
+    const m = aiNewModel.trim();
+    if (!m) return;
+    if (!AI_MODEL_NAME_RE.test(m)) { setMessage({ type: 'error', text: `The model name "${m.slice(0, 60)}" has invalid characters.` }); return; }
+    if (aiModelsOf(aiDraftOpenAI).includes(m)) { setMessage({ type: 'error', text: `The model "${m}" is already in the list.` }); return; }
+    if (aiModelsOf(aiDraftOpenAI).length >= MAX_AI_MODELS) { setMessage({ type: 'error', text: `At most ${MAX_AI_MODELS} AI models can be saved.` }); return; }
+    setAiModels(list => [...list, m]);
+    setAiNewModel('');
+  };
+  const moveAiModel = (i: number, d: -1 | 1) => setAiModels(list => {
+    const j = i + d;
+    if (j < 0 || j >= list.length) return list;
+    const next = [...list]; [next[i], next[j]] = [next[j], next[i]]; return next;
+  });
   // v1.0001235: Claude draft. The stored key is never sent to the browser; the draft key starts empty and an empty key on save keeps the stored one.
   const [aiDraftClaude, setAiDraftClaude] = useState<{ apiKey: string; modelName: string }>({ apiKey: '', modelName: config.settings.claudeConfig?.modelName || DEFAULT_CLAUDE_MODEL });
   const [showClaudeKey, setShowClaudeKey] = useState(false);
@@ -47,9 +69,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
     setAiTest(prev => ({ ...prev, [provider]: { state: 'testing', text: '' } }));
     const draft: any = provider === 'gemini' ? aiDraftGemini : provider === 'openai' ? aiDraftOpenAI : aiDraftClaude;
     try {
-      const r = await dataService.testAiConfig({ provider, apiKey: draft.apiKey || '', modelName: draft.modelName || '', baseUrl: provider === 'openai' ? (draft.baseUrl || '') : undefined });
+      const testModel = provider === 'openai' ? ((aiTestModel && aiModelsOf(draft).includes(aiTestModel) ? aiTestModel : aiModelsOf(draft)[0]) || '') : (draft.modelName || '');
+      const r = await dataService.testAiConfig({ provider, apiKey: draft.apiKey || '', modelName: testModel, baseUrl: provider === 'openai' ? (draft.baseUrl || '') : undefined });
       setAiTest(prev => ({ ...prev, [provider]: r.ok
-        ? { state: 'ok', text: `Working (model ${r.model || draft.modelName})` }
+        ? { state: 'ok', text: `Working (model ${r.model || testModel})` }
         : { state: 'fail', text: r.reason || 'Test failed.' } }));
     } catch (e: any) {
       setAiTest(prev => ({ ...prev, [provider]: { state: 'fail', text: 'Network error: the ERP server could not be reached.' } }));
@@ -59,7 +82,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
   const clearAiTest = (provider: AiTestProvider) => setAiTest(prev => (prev[provider].state === 'ok' || prev[provider].state === 'fail')
     ? { ...prev, [provider]: { state: 'idle', text: '' } } : prev);
   useEffect(() => { clearAiTest('gemini'); }, [aiDraftGemini.apiKey, aiDraftGemini.modelName]);
-  useEffect(() => { clearAiTest('openai'); }, [aiDraftOpenAI.apiKey, aiDraftOpenAI.modelName, aiDraftOpenAI.baseUrl]);
+  useEffect(() => { clearAiTest('openai'); }, [aiDraftOpenAI.apiKey, aiDraftOpenAI.baseUrl, aiTestModel, JSON.stringify(aiDraftOpenAI.models || [])]);
   useEffect(() => { clearAiTest('claude'); }, [aiDraftClaude.apiKey, aiDraftClaude.modelName]);
   const AI_TEST_TONES: Record<AiTestProvider, { base: string; hover: string }> = {
     gemini: { base: 'border-indigo-200 text-indigo-700', hover: 'hover:bg-indigo-50' },
@@ -523,7 +546,8 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       setAiDraftGemini(config.settings.geminiConfig);
     }
     if (!aiDraftOpenAI.apiKey && config.settings.openaiConfig?.apiKey) {
-      setAiDraftOpenAI(config.settings.openaiConfig); 
+      const c: any = config.settings.openaiConfig;
+      setAiDraftOpenAI({ ...c, models: Array.isArray(c.models) ? c.models : [] });
     }
   }, [config.settings.geminiConfig, config.settings.openaiConfig]);
 
@@ -1524,7 +1548,7 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between ml-1">
                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Base URL</label>
@@ -1536,25 +1560,82 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                         type="text"
                         className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
                         value={aiDraftOpenAI.baseUrl}
-                        onChange={e => setAiDraftOpenAI(prev => ({ ...prev, baseUrl: e.target.value }))}
+                        onChange={e => { const v = e.target.value; setAiDraftOpenAI((prev: any) => {
+                          // v1.0001241: switching the base URL to OpenRouter with an empty list shows the OpenRouter defaults
+                          // (editable; stored only when the admin saves).
+                          const toRouter = isOpenRouterUrl(v) && !isOpenRouterUrl(prev.baseUrl) && aiModelsOf(prev).length === 0;
+                          return { ...prev, baseUrl: v, ...(toRouter ? { models: [...OPENROUTER_DEFAULT_MODELS] } : {}) };
+                        }); }}
                         placeholder="https://api.openai.com/v1"
                       />
                     </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between ml-1">
-                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Model Name</label>
-                        <span className="text-[8px] font-black text-emerald-400 bg-emerald-50 px-2 py-0.5 rounded-full uppercase">
-                           Active: {config.settings.openaiConfig?.modelName || 'gpt-4o'}
-                        </span>
+                  </div>
+                  {/* v1.0001241 (AI integration model list): ordered list saved in the DB with the key; the order scan, the AI
+                      Assistant and the price-list mapping try the models in this order, first success wins. */}
+                  <div className="space-y-2" data-testid="openai-models">
+                    <div className="flex items-center justify-between ml-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Models (tried in this order)</label>
+                      <span className="text-[8px] font-black text-emerald-400 bg-emerald-50 px-2 py-0.5 rounded-full uppercase" data-testid="openai-models-source">
+                        {(config.settings.openaiConfig as any)?.modelsSource === 'openrouter-default' ? 'OpenRouter defaults (not saved yet)'
+                          : (config.settings.openaiConfig as any)?.modelsSource === 'legacy' ? 'Older single model (not saved yet)'
+                          : `Active: ${((config.settings.openaiConfig as any)?.models || []).length} model(s)`}
+                      </span>
+                    </div>
+                    {aiModelsOf(aiDraftOpenAI).length === 0 && (
+                      <div className="p-3 rounded-xl bg-amber-50 text-amber-700 text-[11px] font-bold flex flex-wrap items-center gap-3" data-testid="openai-models-empty">
+                        <span>No model in the list: the AI features cannot run until at least one model is added.</span>
+                        {isOpenRouterUrl(aiDraftOpenAI.baseUrl) && (
+                          <button type="button" disabled={!isAdmin} data-testid="openai-models-defaults"
+                            onClick={() => setAiModels(() => [...OPENROUTER_DEFAULT_MODELS])}
+                            className="px-3 py-1 rounded-lg border-2 border-amber-200 text-[10px] font-black uppercase hover:bg-amber-100 disabled:opacity-50">
+                            Use OpenRouter defaults ({OPENROUTER_DEFAULT_MODELS.length})
+                          </button>
+                        )}
                       </div>
+                    )}
+                    <ol className="space-y-2">
+                      {aiModelsOf(aiDraftOpenAI).map((m: string, i: number) => (
+                        <li key={`${i}-${m}`} className="flex items-center gap-2" data-testid={`openai-model-row-${i}`}>
+                          <span className="w-6 text-[10px] font-black text-slate-400 text-right">{i + 1}.</span>
+                          <input
+                            type="text"
+                            disabled={!isAdmin}
+                            data-testid={`openai-model-${i}`}
+                            className="flex-1 p-3 border-2 border-slate-100 rounded-xl font-bold text-xs outline-none focus:border-emerald-500"
+                            value={m}
+                            onChange={e => { const v = e.target.value; setAiModels(list => list.map((x, k) => k === i ? v : x)); }}
+                          />
+                          <label className="flex items-center gap-1 text-[9px] font-black text-slate-400 uppercase" title="Model used by Test configuration">
+                            <input type="radio" name="openai-test-model" data-testid={`openai-model-test-${i}`}
+                              checked={(aiTestModel && aiModelsOf(aiDraftOpenAI).includes(aiTestModel) ? aiTestModel : aiModelsOf(aiDraftOpenAI)[0]) === m}
+                              onChange={() => setAiTestModel(m)} /> Test
+                          </label>
+                          <button type="button" disabled={!isAdmin || i === 0} data-testid={`openai-model-up-${i}`} onClick={() => moveAiModel(i, -1)}
+                            className="px-2 py-1 text-slate-400 hover:text-emerald-600 disabled:opacity-30" title="Move up"><i className="fa-solid fa-arrow-up"></i></button>
+                          <button type="button" disabled={!isAdmin || i === aiModelsOf(aiDraftOpenAI).length - 1} data-testid={`openai-model-down-${i}`} onClick={() => moveAiModel(i, 1)}
+                            className="px-2 py-1 text-slate-400 hover:text-emerald-600 disabled:opacity-30" title="Move down"><i className="fa-solid fa-arrow-down"></i></button>
+                          <button type="button" disabled={!isAdmin} data-testid={`openai-model-remove-${i}`} onClick={() => setAiModels(list => list.filter((_, k) => k !== i))}
+                            className="px-2 py-1 text-slate-400 hover:text-red-600 disabled:opacity-30" title="Remove"><i className="fa-solid fa-trash"></i></button>
+                        </li>
+                      ))}
+                    </ol>
+                    <div className="flex items-center gap-2">
                       <input
                         type="text"
-                        className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all"
-                        value={aiDraftOpenAI.modelName}
-                        onChange={e => setAiDraftOpenAI(prev => ({ ...prev, modelName: e.target.value }))}
-                        placeholder="gpt-4o"
+                        disabled={!isAdmin}
+                        data-testid="openai-model-new"
+                        className="flex-1 p-3 border-2 border-slate-100 rounded-xl font-bold text-xs outline-none focus:border-emerald-500"
+                        value={aiNewModel}
+                        onChange={e => setAiNewModel(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addAiModel(); } }}
+                        placeholder="Model name as the provider spells it (e.g. vendor/model)"
                       />
+                      <button type="button" disabled={!isAdmin || !aiNewModel.trim()} data-testid="openai-model-add" onClick={addAiModel}
+                        className="px-4 py-3 rounded-xl border-2 border-emerald-200 text-emerald-700 text-[10px] font-black uppercase hover:bg-emerald-50 disabled:opacity-50">
+                        <i className="fa-solid fa-plus mr-1"></i> Add model
+                      </button>
                     </div>
+                    {!isAdmin && <p className="text-[10px] font-bold text-slate-400 ml-1">Only an admin can change the AI integration.</p>}
                   </div>
                   <div className="pt-4 flex flex-wrap gap-3">
                     <button 
@@ -1562,12 +1643,20 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                       onClick={async () => {
                         setIsSavingAI(true);
                         try {
-                          updateSetting('settings', 'openaiConfig', aiDraftOpenAI);
-                          const newConfig = { ...config, settings: { ...config.settings, openaiConfig: aiDraftOpenAI } };
-                          await dataService.updateSettings(newConfig.settings);
-                          setMessage({ type: 'success', text: 'OpenAI Configuration Saved Successfully.' });
-                        } catch (e) {
-                          setMessage({ type: 'error', text: 'Error saving to backend.' });
+                          // v1.0001241: one PUT (key, base URL, ordered model list), then the settings are read back from the
+                          // server (DB) so the app uses exactly what was stored (no stale in-memory copy).
+                          const models = normalizeModelList(aiModelsOf(aiDraftOpenAI));
+                          const bad = aiModelsOf(aiDraftOpenAI).find((m: string) => m.trim() && !AI_MODEL_NAME_RE.test(m.trim()));
+                          if (bad !== undefined) throw new Error(`The model name "${String(bad).slice(0, 60)}" has invalid characters.`);
+                          const { modelsSource, ...draftOa } = aiDraftOpenAI;
+                          await dataService.updateSettings({ ...config.settings, openaiConfig: { ...draftOa, models, modelName: models[0] || '' } });
+                          const fresh = await dataService.getAppConfig();
+                          const freshOa: any = fresh?.settings?.openaiConfig || { ...draftOa, models };
+                          onConfigUpdate({ ...config, settings: { ...config.settings, openaiConfig: freshOa } });
+                          setAiDraftOpenAI({ ...freshOa, models: Array.isArray(freshOa.models) ? freshOa.models : [] });
+                          setMessage({ type: 'success', text: `OpenAI Configuration Saved Successfully (${(freshOa.models || []).length} model(s)).` });
+                        } catch (e: any) {
+                          setMessage({ type: 'error', text: e?.message || 'Error saving to backend.' });
                         } finally {
                           setIsSavingAI(false);
                         }

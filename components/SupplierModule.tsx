@@ -594,20 +594,34 @@ Sample rows: ${JSON.stringify(sampleRows)}
       });
       textOutput = response.text || '{}';
     } else {
-      const { apiKey, modelName } = config.settings.openaiConfig || ({} as any);
+      const { apiKey } = config.settings.openaiConfig || ({} as any);
       if (!apiKey) throw new Error('OpenAI API key is not configured.');
 
       // v1.0001240 (F6): through the server with the auth headers; the server uses the saved key and base URL.
-      const response = await dataService.aiChat({
-        model: modelName,
-        response_format: { type: 'json_object' },
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0
-      });
-
-      const data = await response.json();
-      if (!response.ok || data.error) throw new Error(data.error?.message || (typeof data.error === 'string' ? data.error : `HTTP ${response.status}`));
-      textOutput = data.choices?.[0]?.message?.content || '{}';
+      // v1.0001241 (AI integration model list): loop over the saved model list in order; the first model that answers wins.
+      const models = await dataService.getAiModels(config.settings.openaiConfig?.models);
+      if (models.length === 0) throw new Error('No AI model is configured. Please add at least one model in Settings > AI Configuration.');
+      const failures: string[] = [];
+      let content = '';
+      for (const model of models) {
+        try {
+          const response = await dataService.aiChat({
+            model,
+            response_format: { type: 'json_object' },
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.error) { failures.push(`• ${model}: ${data.error?.message || (typeof data.error === 'string' ? data.error : `HTTP ${response.status}`)}`); continue; }
+          const c = data.choices?.[0]?.message?.content;
+          if (c && String(c).trim()) { content = c; break; }
+          failures.push(`• ${model}: Model returned empty content payload`);
+        } catch (err: any) {
+          failures.push(`• ${model}: ${err?.message || 'Network error'}`);
+        }
+      }
+      if (!content) throw new Error(`All ${failures.length} AI models failed:\n${failures.join('\n')}`);
+      textOutput = content || '{}';
     }
 
     const parsed = JSON.parse(textOutput);

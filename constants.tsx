@@ -3,7 +3,7 @@ import { AppConfig, OrderStatus, Customer, InventoryItem, Supplier, User, UserGr
 import { getItemEffectiveQty } from './utils';
 
 // Application Version - Increment by 0.000001 for every code update
-export const APP_VERSION = '1.0001240';
+export const APP_VERSION = '1.0001241';
 
 export const INITIAL_CONFIG: AppConfig = {
   modules: {
@@ -21,7 +21,7 @@ export const INITIAL_CONFIG: AppConfig = {
   },
   settings: {
     aiProvider: 'gemini',
-    openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
+    openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: '' },
     geminiConfig: { apiKey: '', modelName: 'gemini-3.5-flash' },
     claudeConfig: { apiKey: '', modelName: 'claude-sonnet-5-5' },
     storageBackend: 'dropbox',
