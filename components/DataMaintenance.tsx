@@ -55,6 +55,12 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       setAiTest(prev => ({ ...prev, [provider]: { state: 'fail', text: 'Network error: the ERP server could not be reached.' } }));
     }
   };
+  // v1.0001238 (validator G4): a shown green/red result belongs to the key/model (and base URL) it tested; editing them clears it.
+  const clearAiTest = (provider: AiTestProvider) => setAiTest(prev => (prev[provider].state === 'ok' || prev[provider].state === 'fail')
+    ? { ...prev, [provider]: { state: 'idle', text: '' } } : prev);
+  useEffect(() => { clearAiTest('gemini'); }, [aiDraftGemini.apiKey, aiDraftGemini.modelName]);
+  useEffect(() => { clearAiTest('openai'); }, [aiDraftOpenAI.apiKey, aiDraftOpenAI.modelName, aiDraftOpenAI.baseUrl]);
+  useEffect(() => { clearAiTest('claude'); }, [aiDraftClaude.apiKey, aiDraftClaude.modelName]);
   const AI_TEST_TONES: Record<AiTestProvider, { base: string; hover: string }> = {
     gemini: { base: 'border-indigo-200 text-indigo-700', hover: 'hover:bg-indigo-50' },
     openai: { base: 'border-emerald-200 text-emerald-700', hover: 'hover:bg-emerald-50' },

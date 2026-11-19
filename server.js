@@ -1856,6 +1856,52 @@ const getLiveAiSettings = () => {
 const DEFAULT_CLAUDE_CONFIG = { apiKey: '', modelName: DEFAULT_CLAUDE_MODEL };
 const isMaskedSecret = (v) => typeof v === 'string' && (v.includes('•') || v.includes('●'));
 
+// v1.0001238 (validator G1 + P8): ciphertext (ENC:...) is made by the server only. A client-supplied ENC: value is never decrypted
+// and never stored as sent: otherwise any user could copy the Claude key blob (from a backup) into a field the settings GET
+// decrypts (e.g. openaiConfig.apiKey) and read it back in plain text, or send it to the AI test call as a "typed key".
+// stripClientCipher() replaces a client ENC: value in every sensitive settings field with the value already stored for that
+// record (= "keep the saved secret", which is also what the sandbox UI round trip needs: it sends the live ENC: blobs back);
+// with nothing stored the field is dropped. Only the admin restore paths (/restore, /full-restore) keep ENC: values from a backup.
+const isCipherText = (v) => typeof v === 'string' && v.trim().startsWith(CIPHER_PREFIX);
+const stripClientCipher = (body, stored) => {
+    if (!body || typeof body !== 'object') return { body, stripped: [] };
+    const out = { ...body };
+    const stripped = [];
+    const st = stored || {};
+    SENSITIVE_PATHS.forEach(([parent, key]) => {
+        const sec = out[parent];
+        if (sec && typeof sec === 'object' && isCipherText(sec[key])) {
+            const keep = st[parent] && st[parent][key];
+            const copy = { ...sec };
+            if (isCipherText(keep)) copy[key] = keep; else delete copy[key];
+            out[parent] = copy;
+            stripped.push(`${parent}.${key}`);
+        }
+    });
+    if (isCipherText(out.tursoAuthToken)) {
+        if (isCipherText(st.tursoAuthToken)) out.tursoAuthToken = st.tursoAuthToken; else delete out.tursoAuthToken;
+        stripped.push('tursoAuthToken');
+    }
+    return { body: out, stripped };
+};
+// Defence in depth for every settings response: no field other than claudeConfig may carry the Claude key in plain text
+// (an older record or an admin restore could hold the Claude blob in another sensitive field). Such a field is blanked.
+const blankClaudeKeyEchoes = (settingsOut, claudePlains) => {
+    const keys = (Array.isArray(claudePlains) ? claudePlains : [claudePlains]).filter(k => typeof k === 'string' && k);
+    if (!settingsOut || keys.length === 0) return settingsOut;
+    const isClaude = (v) => keys.includes(String(decryptValue(v)));
+    const out = { ...settingsOut };
+    SENSITIVE_PATHS.forEach(([parent, key]) => {
+        if (parent === 'claudeConfig') return;
+        const sec = out[parent];
+        if (sec && typeof sec === 'object' && typeof sec[key] === 'string' && sec[key] && isClaude(sec[key])) {
+            out[parent] = { ...sec, [key]: '' };
+        }
+    });
+    if (typeof out.tursoAuthToken === 'string' && out.tursoAuthToken && isClaude(out.tursoAuthToken)) out.tursoAuthToken = '';
+    return out;
+};
+
 // v1.0001236 (validator H1): the two settings CREATE paths (POST /settings, PUT /settings/<id not found>) get the same Claude
 // admin guard as the update path, and only one settings record may exist (everything reads settings[0]; the client PUTs
 // to the existing id and POSTs only when there is none). Returns { status, error } or null.
@@ -1902,6 +1948,13 @@ const getEffectiveClaudeConfig = (req) => {
         apiKey: String(decryptValue(cfg.apiKey || '') || ''),
         modelName: cfg.modelName || DEFAULT_CLAUDE_MODEL
     };
+};
+
+// Every Claude key in plain text that a response for this request must not echo (the effective one and the live one).
+const claudeKeysFor = (req) => {
+    const keys = [getEffectiveClaudeConfig(req).apiKey];
+    try { keys.push(String(decryptValue((getLiveAiSettings().claudeConfig || {}).apiKey || '') || '')); } catch {}
+    return keys.filter(Boolean);
 };
 
 // aiProvider that applies to a request: live value, except a sandbox that itself selected Claude.
@@ -4800,12 +4853,13 @@ const getCollection = (col) => (req, res) => {
         const settingsList = db[col] || [];
         const resolved = resolveSettings(db, isSandbox(req));
         if (settingsList.length === 0) {
-            return res.json([{ ...resolved, claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)) }]);
+            return res.json([blankClaudeKeyEchoes({ ...resolved, claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)) }, claudeKeysFor(req))]);
         }
+        const ck = claudeKeysFor(req);
         return res.json(settingsList.map(s => {
             const dec = decryptSettings(s);
             const liveAi = isSandbox(req) ? getLiveAiSettings() : null;
-            return {
+            return blankClaudeKeyEchoes({
                 ...resolved,
                 ...dec,
                 aiProvider: effectiveAiProvider(req, dec.aiProvider || resolved.aiProvider),
@@ -4814,7 +4868,7 @@ const getCollection = (col) => (req, res) => {
                 claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)),
                 storageBackend: resolved.storageBackend,
                 dropboxConfig: resolved.dropboxConfig
-            };
+            }, ck);
         }));
     }
 
@@ -4841,7 +4895,7 @@ const getItemFromCollection = (col) => (req, res) => {
         const resolved = resolveSettings(db, isSandbox(req));
         let dec = item ? decryptSettings(item) : resolved;
         const liveAi = isSandbox(req) ? getLiveAiSettings() : null;
-        return res.json({
+        return res.json(blankClaudeKeyEchoes({
             ...resolved,
             ...dec,
             aiProvider: effectiveAiProvider(req, dec.aiProvider || resolved.aiProvider),
@@ -4850,7 +4904,7 @@ const getItemFromCollection = (col) => (req, res) => {
             claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)),
             storageBackend: resolved.storageBackend,
             dropboxConfig: resolved.dropboxConfig
-        });
+        }, claudeKeysFor(req)));
     }
     res.json(item);
 };
@@ -4984,6 +5038,8 @@ const addToCollection = (col) => (req, res) => {
     { const sr = systemMoneyRowRefusal(col, null, req.body); if (sr) return res.status(400).json({ error: sr }); }
     const db = getDb(req);
     if (!db[col]) db[col] = [];
+    // v1.0001238 (P8): a client ENC: value in a sensitive settings field is dropped (no stored record on create).
+    if (col === 'settings') req.body = stripClientCipher(req.body, null).body;
     if (col === 'orders') { const fq_ = orderFraction(req.body || {}); if (fq_ !== undefined) return res.status(400).json({ error: `Rejected: fraction ${fq_} is not allowed (whole units only).` }); }
     // R34 round 10 (validator 9, defect 2): a blanket contract is closed only by the finance close action; the generic create cannot
     // make an order that is already closed (no settlement would have run).
@@ -5205,6 +5261,8 @@ const addToCollection = (col) => (req, res) => {
         const k = typeof newItem.claudeConfig.apiKey === 'string' && !isMaskedSecret(newItem.claudeConfig.apiKey) ? newItem.claudeConfig.apiKey.trim() : '';
         newItem.claudeConfig = { apiKey: encryptValue(k), modelName: CLAUDE_MODEL_IDS.includes(newItem.claudeConfig.modelName) ? newItem.claudeConfig.modelName : DEFAULT_CLAUDE_MODEL };
     }
+    // v1.0001238: the create path stores every sensitive field encrypted, like PUT and restore (it used to store Gemini/OpenAI/mail in plain).
+    if (col === 'settings') newItem = encryptSettings(newItem);
     db[col].push(newItem);
     if (writeDb(db, getDbPath(req))) {
         if (col === 'users' || col === 'userGroups') {
@@ -5306,6 +5364,8 @@ const updateInCollection = (col) => (req, res) => {
     const db = getDb(req);
     if (!db[col]) db[col] = [];
     let index = db[col].findIndex(it => it.id === req.params.id);
+    // v1.0001238 (P8): a client ENC: value in a sensitive settings field keeps the stored secret (dropped on create).
+    if (col === 'settings') req.body = stripClientCipher(req.body, index === -1 ? null : db[col][index]).body;
     if (index === -1) {
         if (col === 'settings' || col === 'modules') {
             const user = req.headers['x-user'] || 'System';
@@ -5390,7 +5450,7 @@ const updateInCollection = (col) => (req, res) => {
             const bodyClaude = (req.body.claudeConfig && typeof req.body.claudeConfig === 'object') ? req.body.claudeConfig : {};
             const oldKey = String(decryptValue(oldClaude.apiKey || '') || '');
             const sentKey = typeof bodyClaude.apiKey === 'string' ? bodyClaude.apiKey.trim() : '';
-            const newKey = (!sentKey || isMaskedSecret(sentKey)) ? oldKey : sentKey;
+            const newKey = (!sentKey || isMaskedSecret(sentKey) || isCipherText(sentKey)) ? oldKey : sentKey;
             const newModel = bodyClaude.modelName !== undefined ? String(bodyClaude.modelName || '').trim() : (oldClaude.modelName || DEFAULT_CLAUDE_MODEL);
             if (newModel && !CLAUDE_MODEL_IDS.includes(newModel)) {
                 return res.status(400).json({ error: `Unknown Claude model "${newModel}". Available: ${CLAUDE_MODEL_IDS.join(', ')}.` });
@@ -10589,7 +10649,11 @@ app.post('/api/v1/orders/:id/dispatch-action', async (req, res) => {
     }
 });
 
+// v1.0001238 (validator P8): a backup holds every record and the encrypted secrets (ENC: blobs, Claude key included), so the
+// JSON and the full backups need the same admin check as the AI integration settings.
+const BACKUP_ADMIN_ERROR = 'Admin privileges are required to export a backup.';
 app.get('/api/v1/backup', (req, res) => {
+    if (!isAdminUser(req)) return res.status(403).json({ error: BACKUP_ADMIN_ERROR });
     const db = getDb(req);
     // CX10: a backup must always restore; add the collections the restore requires when the database has none yet.
     for (const col of ['customers', 'orders', 'inventory', 'suppliers', 'procurement', 'userGroups', 'users', 'settings', 'modules']) {
@@ -10616,6 +10680,7 @@ app.get('/api/v1/backup', (req, res) => {
 });
 
 app.get('/api/v1/full-backup', (req, res) => {
+    if (!isAdminUser(req)) return res.status(403).json({ error: BACKUP_ADMIN_ERROR });
     try {
         const password = req.query.password;
         if (!password) {
@@ -10693,7 +10758,10 @@ app.post('/api/v1/restore', async (req, res) => {
 
     // Encrypt sensitive settings on restore (in case backup had plain-text keys)
     if (data.settings && Array.isArray(data.settings)) {
-        data.settings = data.settings.map(s => encryptSettings(s));
+        // v1.0001238 (P8): only an admin's restore keeps the ENC: blobs of a backup; for any other caller they are dropped
+        // (a non-admin cannot export a backup, so an ENC: value from such a caller is copied ciphertext).
+        const adminRestore = isAdminUser(req);
+        data.settings = data.settings.map(s => encryptSettings(adminRestore ? s : stripClientCipher(s, null).body));
     }
 
     const { _sandboxes, sandboxes, ...cleanDb } = data;
@@ -10843,6 +10911,8 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       const extractedDb = path.join(tempDir, 'db.json');
       if (fs.existsSync(extractedDb)) {
         const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
+        // v1.0001238 (P8): only an admin's restore keeps the ENC: blobs of the archive's settings.
+        if (!isAdminUser(req) && Array.isArray(db.settings)) db.settings = db.settings.map(st => stripClientCipher(st, null).body);
         const liveDb = readDb(DB_PATH);
         const ownerName = req.sandboxOwner;
         const existingSandboxDb = readDb(getDbPath(req));
@@ -10893,6 +10963,8 @@ app.post('/api/v1/full-restore', restoreDiskUpload.single('archive'), async (req
       let liveRestored = false;
       if (fs.existsSync(extractedDb)) {
         const db = JSON.parse(fs.readFileSync(extractedDb, 'utf8'));
+        // v1.0001238 (P8): only an admin's restore keeps the ENC: blobs of the archive's settings.
+        if (!isAdminUser(req) && Array.isArray(db.settings)) db.settings = db.settings.map(st => stripClientCipher(st, null).body);
         try {
             const existingDb = readDb(DB_PATH);
             const existingSettings = resolveSettings(existingDb);
@@ -11998,6 +12070,10 @@ app.post('/api/v1/integrations/dropbox/test', async (req, res) => {
         const db = getDb(req);
         const settings = resolveSettings(db);
         const currentCfg = getDropboxConfig(settings);
+        // v1.0001238 (P8): a client ENC: value is never used or stored as a secret.
+        if (isCipherText(req.body.appSecret) || isCipherText(req.body.refreshToken)) {
+            return res.status(400).json({ error: 'Paste the plain Dropbox secret or token, not an encrypted (ENC:) value.' });
+        }
         const appKey = (req.body.appKey && req.body.appKey.trim()) || currentCfg.appKey;
         const appSecret = (req.body.appSecret && req.body.appSecret.trim()) || currentCfg.appSecret;
         const refreshToken = (req.body.refreshToken && req.body.refreshToken.trim()) || currentCfg.refreshToken;
@@ -12793,6 +12869,26 @@ const classifyAiTestFailure = (provider, status, errType, msg) => {
     if (status >= 500) return { code: 'provider_unavailable', label: 'Provider error or overloaded' };
     return { code: 'provider_error', label: 'Provider refused the request' };
 };
+// v1.0001238 (G2): literal loopback / link-local / private / unspecified hosts (IPv4, IPv6, localhost names).
+const isPrivateHostUrl = (u) => {
+    let host;
+    try { host = new URL(u).hostname.toLowerCase().replace(/^\[|\]$/g, ''); } catch { return true; }
+    if (!host) return true;
+    if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+    const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (m) {
+        const [a, b] = [Number(m[1]), Number(m[2])];
+        return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+    }
+    if (/^\d+$/.test(host) || /^0x[0-9a-f]+$/i.test(host)) return true; // integer / hex IPv4 forms
+    if (host.includes(':')) {
+        if (host === '::' || host === '::1') return true;
+        if (/^(fc|fd)/.test(host) || /^fe[89ab]/.test(host)) return true;
+        const v4 = host.match(/^::ffff:(.+)$/);
+        if (v4) return true; // IPv4-mapped: refuse outright
+    }
+    return false;
+};
 app.post('/api/v1/ai/test-config', async (req, res) => {
     const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
     const liveUsers = (readDb(DB_PATH).users || []);
@@ -12816,7 +12912,12 @@ app.post('/api/v1/ai/test-config', async (req, res) => {
         saved = { apiKey: String(decryptValue(c.apiKey || '') || ''), modelName: c.modelName || '', baseUrl: c.baseUrl || '' };
     }
     const typedKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
-    const typedPlain = (typedKey && !isMaskedSecret(typedKey)) ? String(decryptValue(typedKey) || '') : '';
+    // v1.0001238 (validator G1): a typed key is used as typed and never decrypted (the endpoint must not be a decryption
+    // oracle for the ENC: blobs of a backup). An ENC: value is refused with a clear message.
+    if (isCipherText(typedKey)) {
+        return res.status(400).json({ error: 'The typed key is an encrypted (ENC:) value. Paste the plain API key, or leave the field empty to test the saved key.' });
+    }
+    const typedPlain = (typedKey && !isMaskedSecret(typedKey)) ? typedKey : '';
     const apiKey = typedPlain || saved.apiKey;
     const keySource = (typedPlain && typedPlain !== saved.apiKey) ? 'typed' : 'saved';
     const keyHint = apiKey ? '••••' + apiKey.slice(-4) : '';
@@ -12828,6 +12929,11 @@ app.post('/api/v1/ai/test-config', async (req, res) => {
     if (!apiKey) {
         return res.json({ ...base, ok: false, code: 'no_key', reason: 'No API key saved or entered for this provider.' });
     }
+    // v1.0001238 (P8, defence in depth): the Claude key is sent only to Anthropic, never as a Gemini/OpenAI key (an older record
+    // or a restored backup could hold the Claude blob in another provider's key field).
+    if (provider !== 'claude' && keySource === 'saved' && claudeKeysFor(req).includes(apiKey)) {
+        return res.json({ ...base, keyHint: '', ok: false, code: 'bad_request', reason: `The saved ${provider === 'gemini' ? 'Gemini' : 'OpenAI'} key is not valid for this provider; enter and save the provider's own key.` });
+    }
     if (provider !== 'claude' && !/^[A-Za-z0-9._:\/-]{1,120}$/.test(model)) {
         return res.json({ ...base, ok: false, code: 'bad_request', reason: 'The model name has invalid characters.' });
     }
@@ -12838,6 +12944,12 @@ app.post('/api/v1/ai/test-config', async (req, res) => {
             return res.json({ ...base, ok: false, code: 'bad_request', reason: 'The base URL must start with http:// or https://.' });
         }
         baseUrl = baseUrl.replace(/\/+$/, '');
+        // v1.0001238 (validator G2): a typed base URL may not point at loopback, link-local or private addresses (server-side
+        // request forgery); the saved base URL is allowed as it is (an admin may run a local OpenAI-compatible server).
+        const savedBase = String(saved.baseUrl || '').trim().replace(/\/+$/, '');
+        if (baseUrl !== savedBase && isPrivateHostUrl(baseUrl)) {
+            return res.json({ ...base, ok: false, code: 'bad_request', reason: 'The base URL points at a local or private address; save it first if this server is intended.' });
+        }
     }
     // Throttle: one test at a time per user and provider, at least 3 s apart (no retry storms).
     const tkey = `${caller}|${provider}`;
@@ -12865,7 +12977,8 @@ app.post('/api/v1/ai/test-config', async (req, res) => {
     const timer = setTimeout(() => ac.abort(), AI_TEST_TIMEOUT_MS);
     const t0 = Date.now();
     try {
-        const upstream = await fetch(url, { ...init, signal: ac.signal });
+        // v1.0001238 (validator G3): no redirects (custom key headers would follow a cross-origin redirect).
+        const upstream = await fetch(url, { ...init, signal: ac.signal, redirect: 'error' });
         const data = await upstream.json().catch(() => ({}));
         const latencyMs = Date.now() - t0;
         if (upstream.ok) {
