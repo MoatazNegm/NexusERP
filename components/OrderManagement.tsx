@@ -839,6 +839,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       `;
 
       const runVisionInference = async (scanBase64Data: string, scanMimeType: string): Promise<string> => {
+        if (config.settings.aiProvider === 'claude') {
+          // v1.0001235: Claude reads the scan (PDF or image) through the server, which holds the key.
+          console.log('[AI Scan] Using Claude model:', config.settings.claudeConfig?.modelName || 'claude-sonnet-5-5');
+          const r = await dataService.claudeChat({ prompt: `${prompt}\n\nReturn ONLY the JSON object, no markdown fences.`, attachment: { mimeType: scanMimeType, data: scanBase64Data } });
+          const t = (r.text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+          if (!t) throw new Error("Claude returned an empty response.");
+          return t;
+        }
         if (config.settings.aiProvider === 'gemini') {
           const apiKey = config.settings.geminiConfig?.apiKey;
           const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';
@@ -1179,7 +1187,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
       perf['total_ms'] = performance.now() - t0;
       const provider = config.settings.aiProvider === 'gemini'
         ? `Gemini (${config.settings.geminiConfig?.modelName || 'gemini-1.5-flash'})`
-        : `OpenAI (${config.settings.openaiConfig?.modelName})`;
+        : config.settings.aiProvider === 'claude'
+          ? `Claude (${config.settings.claudeConfig?.modelName || 'claude-sonnet-5-5'})`
+          : `OpenAI (${config.settings.openaiConfig?.modelName})`;
       console.group(`%c[NexusERP] OCR Profiling — ${provider}`, 'color: #6366f1; font-weight: bold;');
       console.table(
         Object.entries(perf).map(([step, ms]) => ({ step, 'time (ms)': ms.toFixed(2) }))

@@ -111,7 +111,7 @@ export interface SandboxMember {
   isOwner: boolean;
 }
 
-export type AIProvider = 'gemini' | 'openai';
+export type AIProvider = 'gemini' | 'openai' | 'claude';
 
 export interface LogEntry {
   timestamp: string;
@@ -505,6 +505,15 @@ export interface GeminiConfig {
   modelName: string;
 }
 
+// v1.0001235: Claude (Anthropic). The server never returns the key: apiKey is always '' in responses and
+// hasKey/keyHint (masked, last 4 characters) say whether one is stored. Sending '' keeps the stored key.
+export interface ClaudeConfig {
+  apiKey: string;
+  modelName: string;
+  hasKey?: boolean;
+  keyHint?: string;
+}
+
 export interface GoogleDriveConfig {
   enabled: boolean;
   autoUploadExternalSubmissions: boolean;
@@ -570,6 +579,7 @@ export interface AppConfig {
     aiProvider: AIProvider;
     openaiConfig: OpenAIConfig;
     geminiConfig: GeminiConfig;
+    claudeConfig?: ClaudeConfig;
     storageBackend?: StorageBackend;
     googleDriveConfig: GoogleDriveConfig;
     localStorageConfig?: LocalStorageConfig;

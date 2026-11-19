@@ -1377,6 +1377,18 @@ class DataService {
     }
   }
 
+  // v1.0001235: Claude (Anthropic) call through the server, which holds the key (it never reaches the browser).
+  async claudeChat(req: { prompt: string; system?: string; attachment?: { mimeType: string; data: string }; maxTokens?: number }): Promise<{ text: string; model: string }> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/ai/claude`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(req)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Claude request failed: ${res.statusText}`);
+    return { text: data.text || '', model: data.model || '' };
+  }
+
   async updateModules(modules: any) {
     const existing = await this.get<any>('modules');
     if (existing.length > 0) {

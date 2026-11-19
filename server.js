@@ -42,6 +42,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import { isMarginBreach } from './shared/margin.js';
 import { ORDER_CANCEL_ROLES, ROLLBACK_TO_LOGGED_DENIED, rollbackToLoggedStateRefusal } from './shared/orderPermissions.js';
+import { AI_PROVIDERS, CLAUDE_MODELS, CLAUDE_MODEL_IDS, DEFAULT_CLAUDE_MODEL } from './shared/aiModels.js';
 import { computeStockValue } from './shared/stockValue.js';
 import { computeCashBank, cashBankMovements, legacyVoidOrigin } from './shared/cashBank.js';
 import { accountMatches } from './shared/accountSearch.js';
@@ -1800,6 +1801,7 @@ const decryptValue = (encText) => {
 const SENSITIVE_PATHS = [
     ['geminiConfig', 'apiKey'],
     ['openaiConfig', 'apiKey'],
+    ['claudeConfig', 'apiKey'],
     ['emailConfig', 'password'],
     ['googleDriveConfig', 'clientSecret'],
     ['googleDriveConfig', 'refreshToken'],
@@ -1834,15 +1836,60 @@ const getLiveAiSettings = () => {
         return {
             aiProvider: liveSettings.aiProvider || 'gemini',
             geminiConfig: liveSettings.geminiConfig || { apiKey: '', modelName: 'gemini-3.5-flash' },
-            openaiConfig: liveSettings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' }
+            openaiConfig: liveSettings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
+            claudeConfig: liveSettings.claudeConfig || { ...DEFAULT_CLAUDE_CONFIG }
         };
     } catch (e) {
         return {
             aiProvider: 'gemini',
             geminiConfig: { apiKey: '', modelName: 'gemini-3.5-flash' },
-            openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' }
+            openaiConfig: { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
+            claudeConfig: { ...DEFAULT_CLAUDE_CONFIG }
         };
     }
+};
+
+// v1.0001235: Claude (Anthropic) as an AI provider. The key is stored encrypted in the system settings like the
+// Gemini/OpenAI keys, but it NEVER leaves the server: every settings response carries only a masked hint
+// (hasKey + last 4 characters) and the Claude calls go through POST /api/v1/ai/claude, which reads the key here.
+// (CLAUDE_MODELS, CLAUDE_MODEL_IDS, DEFAULT_CLAUDE_MODEL, AI_PROVIDERS come from shared/aiModels.js, client + server.)
+const DEFAULT_CLAUDE_CONFIG = { apiKey: '', modelName: DEFAULT_CLAUDE_MODEL };
+const isMaskedSecret = (v) => typeof v === 'string' && (v.includes('•') || v.includes('●'));
+
+// Masked view of a Claude config for any response to the client (the key itself is never returned).
+const maskClaudeConfig = (cfg) => {
+    const c = cfg || {};
+    const key = String(decryptValue(c.apiKey || '') || '');
+    return {
+        apiKey: '',
+        modelName: CLAUDE_MODEL_IDS.includes(c.modelName) ? c.modelName : (c.modelName ? String(c.modelName) : DEFAULT_CLAUDE_MODEL),
+        hasKey: !!key,
+        keyHint: key ? '••••' + key.slice(-4) : ''
+    };
+};
+
+// The Claude config that applies to a request (decrypted, server-side only). Sandboxes mirror the live AI settings like
+// Gemini/OpenAI do, except that a sandbox which saved its own Claude key uses that one (so a sandbox can be set up and tested
+// without touching the live settings).
+const getEffectiveClaudeConfig = (req) => {
+    const live = getLiveAiSettings().claudeConfig || {};
+    let cfg = live;
+    if (isSandbox(req)) {
+        try {
+            const s = ((getDb(req) || {}).settings || [])[0] || {};
+            if (s.claudeConfig && decryptValue(s.claudeConfig.apiKey || '')) cfg = s.claudeConfig;
+        } catch {}
+    }
+    return {
+        apiKey: String(decryptValue(cfg.apiKey || '') || ''),
+        modelName: cfg.modelName || DEFAULT_CLAUDE_MODEL
+    };
+};
+
+// aiProvider that applies to a request: live value, except a sandbox that itself selected Claude.
+const effectiveAiProvider = (req, ownProvider) => {
+    if (isSandbox(req) && ownProvider === 'claude') return 'claude';
+    return isSandbox(req) ? getLiveAiSettings().aiProvider : ownProvider;
 };
 
 const DEFAULT_DROPBOX_CONFIG = {
@@ -4735,7 +4782,7 @@ const getCollection = (col) => (req, res) => {
         const settingsList = db[col] || [];
         const resolved = resolveSettings(db, isSandbox(req));
         if (settingsList.length === 0) {
-            return res.json([resolved]);
+            return res.json([{ ...resolved, claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)) }]);
         }
         return res.json(settingsList.map(s => {
             const dec = decryptSettings(s);
@@ -4743,9 +4790,10 @@ const getCollection = (col) => (req, res) => {
             return {
                 ...resolved,
                 ...dec,
-                aiProvider: liveAi ? liveAi.aiProvider : (dec.aiProvider || resolved.aiProvider),
+                aiProvider: effectiveAiProvider(req, dec.aiProvider || resolved.aiProvider),
                 geminiConfig: liveAi ? liveAi.geminiConfig : (dec.geminiConfig || resolved.geminiConfig),
                 openaiConfig: liveAi ? liveAi.openaiConfig : (dec.openaiConfig || resolved.openaiConfig),
+                claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)),
                 storageBackend: resolved.storageBackend,
                 dropboxConfig: resolved.dropboxConfig
             };
@@ -4778,9 +4826,10 @@ const getItemFromCollection = (col) => (req, res) => {
         return res.json({
             ...resolved,
             ...dec,
-            aiProvider: liveAi ? liveAi.aiProvider : (dec.aiProvider || resolved.aiProvider),
+            aiProvider: effectiveAiProvider(req, dec.aiProvider || resolved.aiProvider),
             geminiConfig: liveAi ? liveAi.geminiConfig : (dec.geminiConfig || resolved.geminiConfig),
             openaiConfig: liveAi ? liveAi.openaiConfig : (dec.openaiConfig || resolved.openaiConfig),
+            claudeConfig: maskClaudeConfig(getEffectiveClaudeConfig(req)),
             storageBackend: resolved.storageBackend,
             dropboxConfig: resolved.dropboxConfig
         });
@@ -5132,11 +5181,17 @@ const addToCollection = (col) => (req, res) => {
         }
     }
 
+    if (col === 'settings' && newItem.claudeConfig) {
+        // v1.0001235: Claude key stored encrypted, response masked (same as the PUT path).
+        const k = typeof newItem.claudeConfig.apiKey === 'string' && !isMaskedSecret(newItem.claudeConfig.apiKey) ? newItem.claudeConfig.apiKey.trim() : '';
+        newItem.claudeConfig = { apiKey: encryptValue(k), modelName: CLAUDE_MODEL_IDS.includes(newItem.claudeConfig.modelName) ? newItem.claudeConfig.modelName : DEFAULT_CLAUDE_MODEL };
+    }
     db[col].push(newItem);
     if (writeDb(db, getDbPath(req))) {
         if (col === 'users' || col === 'userGroups') {
             syncAuthoritativeUsersToSandboxes(readDb(DB_PATH));
         }
+        if (col === 'settings') return res.status(201).json({ ...newItem, claudeConfig: maskClaudeConfig(newItem.claudeConfig) });
         res.status(201).json(col === 'users' ? (({ password, ...u }) => u)(newItem) : newItem);
     } else res.status(500).json({ error: "Write failed" });
 };
@@ -5236,9 +5291,13 @@ const updateInCollection = (col) => (req, res) => {
         if (col === 'settings' || col === 'modules') {
             const user = req.headers['x-user'] || 'System';
             let newItem = { id: req.params.id, ...req.body };
+            if (col === 'settings' && newItem.claudeConfig) {
+                const k = typeof newItem.claudeConfig.apiKey === 'string' && !isMaskedSecret(newItem.claudeConfig.apiKey) ? newItem.claudeConfig.apiKey.trim() : '';
+                newItem.claudeConfig = { apiKey: k, modelName: CLAUDE_MODEL_IDS.includes(newItem.claudeConfig.modelName) ? newItem.claudeConfig.modelName : DEFAULT_CLAUDE_MODEL };
+            }
             if (col === 'settings') newItem = encryptSettings(newItem);
             db[col].push(newItem);
-            if (writeDb(db, getDbPath(req))) return res.json(newItem);
+            if (writeDb(db, getDbPath(req))) return res.json(col === 'settings' ? { ...newItem, claudeConfig: maskClaudeConfig(newItem.claudeConfig) } : newItem);
             else return res.status(500).json({ error: "Write failed" });
         }
         return res.status(404).json({ error: "Item not found" });
@@ -5303,6 +5362,27 @@ const updateInCollection = (col) => (req, res) => {
         }
         if (oldItem.openaiConfig?.apiKey && (!req.body.openaiConfig?.apiKey || req.body.openaiConfig.apiKey === '')) {
             merged.openaiConfig = { ...(merged.openaiConfig || {}), apiKey: oldItem.openaiConfig.apiKey };
+        }
+        // v1.0001235: Claude config. The client only ever holds the masked view, so an empty or masked key keeps the stored
+        // key; hasKey/keyHint are response-only fields and are never stored. Changing the Claude key or model needs admin.
+        if (req.body.claudeConfig !== undefined || oldItem.claudeConfig !== undefined) {
+            const oldClaude = oldItem.claudeConfig || {};
+            const bodyClaude = (req.body.claudeConfig && typeof req.body.claudeConfig === 'object') ? req.body.claudeConfig : {};
+            const oldKey = String(decryptValue(oldClaude.apiKey || '') || '');
+            const sentKey = typeof bodyClaude.apiKey === 'string' ? bodyClaude.apiKey.trim() : '';
+            const newKey = (!sentKey || isMaskedSecret(sentKey)) ? oldKey : sentKey;
+            const newModel = bodyClaude.modelName !== undefined ? String(bodyClaude.modelName || '').trim() : (oldClaude.modelName || DEFAULT_CLAUDE_MODEL);
+            if (newModel && !CLAUDE_MODEL_IDS.includes(newModel)) {
+                return res.status(400).json({ error: `Unknown Claude model "${newModel}". Available: ${CLAUDE_MODEL_IDS.join(', ')}.` });
+            }
+            const claudeChanged = newKey !== oldKey || (newModel || DEFAULT_CLAUDE_MODEL) !== (oldClaude.modelName || DEFAULT_CLAUDE_MODEL);
+            if (claudeChanged && !isAdminUser(req)) {
+                return res.status(403).json({ error: 'Admin privileges are required to change the AI integration settings.' });
+            }
+            merged.claudeConfig = { apiKey: newKey, modelName: newModel || DEFAULT_CLAUDE_MODEL };
+        }
+        if (req.body.aiProvider !== undefined && !AI_PROVIDERS.includes(req.body.aiProvider)) {
+            return res.status(400).json({ error: `Unknown AI provider "${req.body.aiProvider}". Available: ${AI_PROVIDERS.join(', ')}.` });
         }
         if (oldItem.emailConfig?.password && (!req.body.emailConfig?.password || req.body.emailConfig.password === '')) {
             merged.emailConfig = { ...(merged.emailConfig || {}), password: oldItem.emailConfig.password };
@@ -5590,6 +5670,7 @@ const updateInCollection = (col) => (req, res) => {
         if (col === 'users' || col === 'userGroups') {
             syncAuthoritativeUsersToSandboxes(readDb(DB_PATH));
         }
+        if (col === 'settings') return res.json({ ...updated, claudeConfig: maskClaudeConfig(updated.claudeConfig) });
         res.json(col === 'users' ? (({ password, ...u }) => u)(updated) : updated);
     } else res.status(500).json({ error: "Update failed" });
 };
@@ -12600,6 +12681,60 @@ app.post('/api/v1/ai-proxy/chat', async (req, res) => {
     } catch (err) {
         console.error('[AI Proxy] Error:', err.message);
         res.status(502).json({ error: `Upstream request failed: ${err.message}` });
+    }
+});
+
+// v1.0001235: Claude (Anthropic) calls. The key never reaches the browser: it is read from the (encrypted) settings here.
+// Body: { prompt, system?, attachment?: { mimeType, data(base64) }, maxTokens?, model? }. Reply: { text, model, usage }.
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+app.get('/api/v1/ai/claude/models', (req, res) => {
+    res.json({ models: CLAUDE_MODELS, defaultModel: DEFAULT_CLAUDE_MODEL });
+});
+app.post('/api/v1/ai/claude', async (req, res) => {
+    const caller = String(req.headers['x-user'] || req.user || '').trim().toLowerCase();
+    const liveUsers = (readDb(DB_PATH).users || []);
+    if (!caller || !liveUsers.some(u => String(u.username || '').toLowerCase() === caller)) {
+        return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const { prompt, system, attachment, maxTokens, model } = req.body || {};
+    if (!prompt || typeof prompt !== 'string') return res.status(400).json({ error: 'Missing prompt.' });
+    const cfg = getEffectiveClaudeConfig(req);
+    if (!cfg.apiKey) {
+        return res.status(400).json({ error: 'Claude API key is not configured. Please add it in Settings > AI Engine > Anthropic Claude.' });
+    }
+    const useModel = (model && CLAUDE_MODEL_IDS.includes(model)) ? model : (CLAUDE_MODEL_IDS.includes(cfg.modelName) ? cfg.modelName : DEFAULT_CLAUDE_MODEL);
+    const content = [];
+    if (attachment && attachment.data && attachment.mimeType) {
+        const mt = String(attachment.mimeType).toLowerCase();
+        if (mt === 'application/pdf') content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: attachment.data } });
+        else if (CLAUDE_IMAGE_TYPES.includes(mt)) content.push({ type: 'image', source: { type: 'base64', media_type: mt, data: attachment.data } });
+        else return res.status(400).json({ error: `Unsupported attachment type ${mt} for Claude (PDF, JPEG, PNG, GIF or WebP).` });
+    }
+    content.push({ type: 'text', text: prompt });
+    const payload = {
+        model: useModel,
+        max_tokens: Math.min(Math.max(parseInt(maxTokens, 10) || 4096, 1), 16000),
+        messages: [{ role: 'user', content }]
+    };
+    if (system && typeof system === 'string') payload.system = system;
+    try {
+        const upstream = await fetch(CLAUDE_API_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
+            body: JSON.stringify(payload)
+        });
+        const data = await upstream.json().catch(() => ({}));
+        if (!upstream.ok) {
+            const msg = data?.error?.message || upstream.statusText || 'Claude request failed';
+            console.error(`[Claude] Upstream error ${upstream.status} (${data?.error?.type || 'unknown'})`);
+            return res.status(upstream.status).json({ error: `Claude: ${msg}`, type: data?.error?.type });
+        }
+        const text = (data.content || []).filter(b => b && b.type === 'text').map(b => b.text).join('');
+        res.json({ text, model: data.model || useModel, usage: data.usage, stopReason: data.stop_reason });
+    } catch (err) {
+        console.error('[Claude] Request failed:', err.message);
+        res.status(502).json({ error: `Claude request failed: ${err.message}` });
     }
 });
 

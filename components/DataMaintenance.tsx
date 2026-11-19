@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { dataService } from '../services/dataService';
+import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL } from '../shared/aiModels';
 import { AppConfig, UserGroup, UserRole, User, OpenAIConfig, EmailConfig, HelpLink, GoogleDriveConfig, LocalStorageConfig, StorageBackend, ApiKey, SandboxMember, DropboxConfig } from '../types';
 
 // Client-side mirror of server.js `sanitizeUsername`. Used for client
@@ -34,6 +35,10 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
 
   const [aiDraftGemini, setAiDraftGemini] = useState(config.settings.geminiConfig || { apiKey: '', modelName: 'gemini-3.5-flash' });
   const [aiDraftOpenAI, setAiDraftOpenAI] = useState(config.settings.openaiConfig || { apiKey: '', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' });
+  // v1.0001235: Claude draft. The stored key is never sent to the browser; the draft key starts empty and an empty key on save keeps the stored one.
+  const [aiDraftClaude, setAiDraftClaude] = useState<{ apiKey: string; modelName: string }>({ apiKey: '', modelName: config.settings.claudeConfig?.modelName || DEFAULT_CLAUDE_MODEL });
+  const [showClaudeKey, setShowClaudeKey] = useState(false);
+  const [isTestingClaude, setIsTestingClaude] = useState(false);
   const DEFAULT_DROPBOX_CLIENT_CONFIG: DropboxConfig = {
     enabled: true,
     autoUploadExternalSubmissions: true,
@@ -470,6 +475,11 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
       setAiDraftOpenAI(config.settings.openaiConfig); 
     }
   }, [config.settings.geminiConfig, config.settings.openaiConfig]);
+
+  useEffect(() => {
+    const m = config.settings.claudeConfig?.modelName;
+    if (m) setAiDraftClaude(prev => ({ ...prev, modelName: m }));
+  }, [config.settings.claudeConfig?.modelName]);
 
   useEffect(() => {
     if (driveDraftDirty) return;
@@ -1284,10 +1294,109 @@ export const DataMaintenance: React.FC<DataMaintenanceProps> = ({ config, onConf
                   >
                     OpenAI / Compatible
                   </button>
+                  <button
+                    onClick={() => updateSetting('settings', 'aiProvider', 'claude')}
+                    className={`px-6 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${config.settings.aiProvider === 'claude' ? 'bg-indigo-500 text-white shadow-lg' : 'text-indigo-300 hover:text-white'}`}
+                  >
+                    Anthropic Claude
+                  </button>
                 </div>
               </div>
 
-              {config.settings.aiProvider === 'gemini' ? (
+              {config.settings.aiProvider === 'claude' ? (
+                <div className="p-8 bg-white rounded-3xl border-2 border-amber-100 shadow-sm space-y-6" data-testid="claude-config">
+                  <div className="flex items-center gap-3 border-b border-amber-50 pb-4">
+                    <i className="fa-solid fa-robot text-amber-600 text-xl"></i>
+                    <h4 className="text-sm font-black text-slate-700 uppercase tracking-widest">Anthropic Claude Configuration</h4>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between ml-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">API Key</label>
+                      {config.settings.claudeConfig?.hasKey ? (
+                        <span className="text-[8px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full uppercase" data-testid="claude-key-hint">
+                           Active: {config.settings.claudeConfig?.keyHint || '••••'}
+                        </span>
+                      ) : (
+                        <span className="text-[8px] font-black text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full uppercase">No key stored</span>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showClaudeKey ? "text" : "password"}
+                        autoComplete="off"
+                        data-testid="claude-api-key"
+                        className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-amber-500 transition-all pr-12"
+                        value={aiDraftClaude.apiKey}
+                        onChange={e => setAiDraftClaude(prev => ({ ...prev, apiKey: e.target.value.trim() }))}
+                        placeholder={config.settings.claudeConfig?.hasKey ? 'Enter a new key to replace the stored one...' : 'Enter your Anthropic API key (sk-ant-...)'}
+                      />
+                      <button type="button" onClick={() => setShowClaudeKey(!showClaudeKey)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-amber-600 transition-colors">
+                        <i className={`fa-solid ${showClaudeKey ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                      </button>
+                    </div>
+                    <p className="text-[9px] text-slate-400 font-medium ml-1">The key is stored encrypted on the server and is never shown again; leave empty to keep the stored key.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between ml-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Model</label>
+                      <span className="text-[8px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full uppercase">
+                         Active: {config.settings.claudeConfig?.modelName || DEFAULT_CLAUDE_MODEL}
+                      </span>
+                    </div>
+                    <select
+                      data-testid="claude-model"
+                      className="w-full p-4 border-2 border-slate-100 rounded-2xl font-bold text-sm outline-none focus:border-amber-500 transition-all bg-white"
+                      value={aiDraftClaude.modelName}
+                      onChange={e => setAiDraftClaude(prev => ({ ...prev, modelName: e.target.value }))}
+                    >
+                      {CLAUDE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label} ({m.id})</option>)}
+                    </select>
+                  </div>
+                  <div className="pt-4 flex flex-wrap gap-3">
+                    <button
+                      disabled={isSavingAI}
+                      data-testid="claude-save"
+                      onClick={async () => {
+                        setIsSavingAI(true);
+                        try {
+                          const saved: any = await dataService.updateSettings({ ...config.settings, claudeConfig: { apiKey: aiDraftClaude.apiKey, modelName: aiDraftClaude.modelName } });
+                          const masked = saved?.claudeConfig || { apiKey: '', modelName: aiDraftClaude.modelName, hasKey: !!(aiDraftClaude.apiKey || config.settings.claudeConfig?.hasKey) };
+                          onConfigUpdate({ ...config, settings: { ...config.settings, claudeConfig: masked } });
+                          setAiDraftClaude(prev => ({ ...prev, apiKey: '' }));
+                          setShowClaudeKey(false);
+                          setMessage({ type: 'success', text: 'Claude Configuration Saved Successfully.' });
+                        } catch (e: any) {
+                          setMessage({ type: 'error', text: e?.message || 'Error saving to backend.' });
+                        } finally {
+                          setIsSavingAI(false);
+                        }
+                      }}
+                      className={`px-8 py-3 bg-amber-600 text-white rounded-xl font-black text-[10px] uppercase shadow-lg shadow-amber-200 transition-all ${isSavingAI ? 'opacity-70 cursor-wait' : 'hover:bg-amber-700'}`}
+                    >
+                      {isSavingAI ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Saving...</> : 'Save Configuration'}
+                    </button>
+                    <button
+                      disabled={isTestingClaude || !config.settings.claudeConfig?.hasKey}
+                      data-testid="claude-test"
+                      title={config.settings.claudeConfig?.hasKey ? 'Send a one-line test request with the stored key and model' : 'Save a key first'}
+                      onClick={async () => {
+                        setIsTestingClaude(true);
+                        try {
+                          const r = await dataService.claudeChat({ prompt: 'Reply with the single word OK.', maxTokens: 16 });
+                          setMessage({ type: 'success', text: `Claude answered (${r.model}): ${(r.text || '').slice(0, 40)}` });
+                        } catch (e: any) {
+                          setMessage({ type: 'error', text: e?.message || 'Claude test failed.' });
+                        } finally {
+                          setIsTestingClaude(false);
+                        }
+                      }}
+                      className={`px-8 py-3 bg-white border-2 border-amber-200 text-amber-700 rounded-xl font-black text-[10px] uppercase transition-all ${isTestingClaude || !config.settings.claudeConfig?.hasKey ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-50'}`}
+                    >
+                      {isTestingClaude ? <><i className="fa-solid fa-circle-notch fa-spin mr-2"></i> Testing...</> : 'Test Connection'}
+                    </button>
+                  </div>
+                </div>
+              ) : config.settings.aiProvider === 'gemini' ? (
                 <div className="p-8 bg-white rounded-3xl border-2 border-indigo-100 shadow-sm space-y-6">
                   <div className="flex items-center gap-3 border-b border-indigo-50 pb-4">
                     <i className="fa-brands fa-google text-indigo-600 text-xl"></i>

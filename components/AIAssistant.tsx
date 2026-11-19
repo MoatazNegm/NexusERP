@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { GoogleGenAI } from "@google/genai";
+import { dataService } from '../services/dataService';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import mermaid from 'mermaid';
@@ -238,6 +239,14 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ orders, config, curren
   }, [messages, isTyping]);
 
   const runStrategicInference = async (systemContext: string, query: string): Promise<string> => {
+    if (config.settings.aiProvider === 'claude') {
+      // v1.0001235: Claude runs through the server (the key stays there).
+      setActiveModelName(config.settings.claudeConfig?.modelName || 'claude-sonnet-5-5');
+      const r = await dataService.claudeChat({ system: systemContext, prompt: `USER QUERY: ${query}` });
+      if (r.model) setActiveModelName(r.model);
+      if (!r.text || !r.text.trim()) throw new Error("Claude returned an empty response.");
+      return r.text;
+    }
     if (config.settings.aiProvider === 'gemini') {
       const apiKey = config.settings.geminiConfig?.apiKey;
       const modelName = config.settings.geminiConfig?.modelName || 'gemini-1.5-flash';

@@ -577,7 +577,11 @@ Sample rows: ${JSON.stringify(sampleRows)}
 
     let textOutput = '{}';
 
-    if (config.settings.aiProvider === 'gemini') {
+    if (config.settings.aiProvider === 'claude') {
+      // v1.0001235: Claude through the server (key stays server-side).
+      const r = await dataService.claudeChat({ prompt: `${prompt}\n\nReturn ONLY the JSON object, no markdown fences.` });
+      textOutput = (r.text || '{}').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim() || '{}';
+    } else if (config.settings.aiProvider === 'gemini') {
       const apiKey = config.settings.geminiConfig?.apiKey;
       const modelName = config.settings.geminiConfig?.modelName || 'gemini-3.5-flash';
       if (!apiKey) throw new Error('Gemini API key is not configured.');
