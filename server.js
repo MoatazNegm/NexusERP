@@ -1856,6 +1856,24 @@ const getLiveAiSettings = () => {
 const DEFAULT_CLAUDE_CONFIG = { apiKey: '', modelName: DEFAULT_CLAUDE_MODEL };
 const isMaskedSecret = (v) => typeof v === 'string' && (v.includes('•') || v.includes('●'));
 
+// v1.0001236 (validator H1): the two settings CREATE paths (POST /settings, PUT /settings/<id not found>) get the same Claude
+// admin guard as the update path, and only one settings record may exist (everything reads settings[0]; the client PUTs
+// to the existing id and POSTs only when there is none). Returns { status, error } or null.
+const settingsCreateRefusal = (req, db, body) => {
+    const c = body && body.claudeConfig;
+    if (c && typeof c === 'object' && !isAdminUser(req)) {
+        const k = typeof c.apiKey === 'string' ? c.apiKey.trim() : '';
+        const m = c.modelName !== undefined ? String(c.modelName || '').trim() : '';
+        if ((k && !isMaskedSecret(k)) || (m && m !== DEFAULT_CLAUDE_MODEL)) {
+            return { status: 403, error: 'Admin privileges are required to change the AI integration settings.' };
+        }
+    }
+    if ((db.settings || []).length > 0) {
+        return { status: 409, error: 'A settings record already exists; update it (PUT /settings/<existing id>) instead of creating a second one.' };
+    }
+    return null;
+};
+
 // Masked view of a Claude config for any response to the client (the key itself is never returned).
 const maskClaudeConfig = (cfg) => {
     const c = cfg || {};
@@ -5181,6 +5199,7 @@ const addToCollection = (col) => (req, res) => {
         }
     }
 
+    if (col === 'settings') { const sc = settingsCreateRefusal(req, db, req.body); if (sc) return res.status(sc.status).json({ error: sc.error }); }
     if (col === 'settings' && newItem.claudeConfig) {
         // v1.0001235: Claude key stored encrypted, response masked (same as the PUT path).
         const k = typeof newItem.claudeConfig.apiKey === 'string' && !isMaskedSecret(newItem.claudeConfig.apiKey) ? newItem.claudeConfig.apiKey.trim() : '';
@@ -5290,6 +5309,7 @@ const updateInCollection = (col) => (req, res) => {
     if (index === -1) {
         if (col === 'settings' || col === 'modules') {
             const user = req.headers['x-user'] || 'System';
+            if (col === 'settings') { const sc = settingsCreateRefusal(req, db, req.body); if (sc) return res.status(sc.status).json({ error: sc.error }); }
             let newItem = { id: req.params.id, ...req.body };
             if (col === 'settings' && newItem.claudeConfig) {
                 const k = typeof newItem.claudeConfig.apiKey === 'string' && !isMaskedSecret(newItem.claudeConfig.apiKey) ? newItem.claudeConfig.apiKey.trim() : '';
