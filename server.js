@@ -12621,13 +12621,16 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
         const finalName = `${orderPrefix}${poPrefix}${req.file.originalname}`;
         const uploads = {};
         const errors = [];
+        // v1.0001243: a target that is switched on but has no connection/credentials is "not configured", not a failed
+        // upload. It is listed in `skipped` (notConfigured: true) so the UI does not show it as an upload issue when another
+        // target stored the file. `errors` keeps only configured targets that really failed.
+        const skipped = [];
 
         const gd = settings.googleDriveConfig || {};
-        if (googleEnabled) {
+        if (googleEnabled && !gd.refreshToken) {
+            skipped.push({ target: 'google-drive', message: 'Google Drive is not connected yet.', notConfigured: true });
+        } else if (googleEnabled) {
             try {
-                if (!gd.refreshToken) {
-                    throw new Error('Google Drive is not connected yet.');
-                }
 
                 const targetFolderId = await resolveOrCreateDriveFolder({
                     req,
@@ -12667,12 +12670,12 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
             }
         }
 
-        if (dropboxEnabled) {
+        const dropboxCfg = dropboxEnabled ? getDropboxConfig(settings) : null;
+        if (dropboxEnabled && !dropboxCfg.configured) {
+            skipped.push({ target: 'dropbox', message: 'Dropbox is not connected yet.', notConfigured: true });
+        } else if (dropboxEnabled) {
             try {
-                const cfg = getDropboxConfig(settings);
-                if (!cfg.configured) {
-                    throw new Error('Dropbox is not connected yet.');
-                }
+                const cfg = dropboxCfg;
                 const uploaded = await uploadFileToDropbox({
                     settings,
                     buffer: req.file.buffer,
@@ -12690,9 +12693,12 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
             }
         }
 
-        if (localEnabled) {
+        const localCfg = localEnabled ? getLocalStorageConfig(settings) : null;
+        if (localEnabled && !localCfg.configured) {
+            skipped.push({ target: 'local-storage', message: 'Local storage settings are incomplete. Fill in storage IP, username and password.', notConfigured: true });
+        } else if (localEnabled) {
             try {
-                const local = getLocalStorageConfig(settings);
+                const local = localCfg;
                 uploads.localStorage = await uploadBufferToLocalStorage({
                     buffer: req.file.buffer,
                     mimeType: req.file.mimetype,
@@ -12707,10 +12713,14 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
 
         const uploadedTargets = Object.keys(uploads);
         if (uploadedTargets.length === 0) {
+            // No target stored the file: every reason matters here, the not-configured ones included.
+            const reasons = [...errors, ...skipped].map(entry => `${entry.target}: ${entry.message}`).join(' | ');
             return res.status(500).json({
-                error: errors.map(entry => `${entry.target}: ${entry.message}`).join(' | ') || 'Configured storage upload failed',
+                error: `No storage target stored the file.${reasons ? ` ${reasons}` : ''}`,
+                noTargetStored: true,
                 uploads,
-                errors
+                errors,
+                skipped
             });
         }
 
@@ -12718,7 +12728,8 @@ app.post('/api/v1/integrations/storage/upload', uploadGoogleDriveFile.single('fi
             success: true,
             uploads,
             uploadedTargets,
-            errors
+            errors,
+            skipped
         });
     } catch (err) {
         console.error('[Storage] Upload failed:', err);

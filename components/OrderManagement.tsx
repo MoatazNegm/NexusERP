@@ -211,7 +211,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
   const [items, setItems] = useState<ItemWithTaxStatus[]>([
     { id: 'temp_1', description: '', quantity: 1, unit: 'pcs', pricePerUnit: 0, taxPercent: DEFAULT_TAX_PERCENT, isAccepted: false, taxDetected: true }
   ]);
-  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info' | 'warning', text: string } | null>(null);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isNewCustomerCreated, setIsNewCustomerCreated] = useState(false);
@@ -1301,6 +1301,21 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
         }).join(' and ');
       };
 
+      // v1.0001243: only a CONFIGURED target that failed is an upload issue. A target that is switched on but not connected
+      // (server: `skipped`, notConfigured: true) is not shown while another target stored the file; the file goes to ONE
+      // store and that is enough. Older servers sent the not-configured targets in `errors`: they are filtered here too.
+      const NOT_CONFIGURED_TEXT = /is not connected yet|settings are incomplete|are not fully configured/i;
+      const realUploadErrors = (errors: Array<{ target: string; message: string; notConfigured?: boolean }>) =>
+        (errors || []).filter(entry => !entry.notConfigured && !NOT_CONFIGURED_TEXT.test(String(entry.message || '')));
+      const uploadIssuesText = (errors: Array<{ target: string; message: string; notConfigured?: boolean }>) => {
+        const real = realUploadErrors(errors);
+        return real.length > 0 ? ` Upload issues: ${real.map(entry => `${entry.target}: ${entry.message}`).join(' | ')}` : '';
+      };
+      const notArchivedText = (err: any) => {
+        const detail = String(err?.message || '').replace(/^No storage target stored the file\.\s*/i, '').trim();
+        return ` Warning: the source file was NOT archived, no storage target stored it.${detail ? ` ${detail}` : ''}`;
+      };
+
       const tryStorageUpload = async (orderLike: { id?: string; internalOrderNumber?: string; customerReferenceNumber?: string; customerName?: string }) => {
         if (!hasAnyAutoUploadTarget) {
           return { attempted: false, uploadedTargets: [] as string[], errors: [] as Array<{ target: string; message: string }>, googleDrive: null as any, localStorage: null as any, dropbox: null as any };
@@ -1367,16 +1382,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             const successText = submissionFile || externalSubmissionSnapshot
               ? `Record updated. Source file archived to ${summarizeUploadTargets(uploadResult.uploadedTargets)}.`
               : `Record updated. Order snapshot archived to ${summarizeUploadTargets(uploadResult.uploadedTargets)}.`;
-            const errorText = uploadResult.errors.length > 0
-              ? ` Upload issues: ${uploadResult.errors.map((entry: { target: string; message: string }) => `${entry.target}: ${entry.message}`).join(' | ')}`
-              : '';
-            setMessage({ type: uploadResult.errors.length > 0 ? 'info' : 'success', text: `${successText}${errorText}` });
+            const errorText = uploadIssuesText(uploadResult.errors);
+            setMessage({ type: errorText ? 'warning' : 'success', text: `${successText}${errorText}` });
+          } else if (uploadResult.attempted) {
+            setMessage({ type: 'warning', text: `Record updated.${notArchivedText(null)}` });
           } else {
             setMessage({ type: 'success', text: 'Record updated.' });
           }
         } catch (driveError: any) {
-          const errMsg = driveError?.message ? ` Upload failed: ${driveError.message}` : ' Upload failed.';
-          setMessage({ type: 'error', text: `Record updated successfully.${errMsg}` });
+          setMessage({ type: 'warning', text: `Record updated successfully.${notArchivedText(driveError)}` });
           await fetchData();
           resetForm(false);
           return;
@@ -1424,16 +1438,13 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
             const successText = uploadResult.uploadedTargets.length > 0
               ? `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}. Source file archived to ${summarizeUploadTargets(uploadResult.uploadedTargets)}.`
               : `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}.`;
-            const errorText = uploadResult.errors.length > 0
-              ? ` Upload issues: ${uploadResult.errors.map((entry: { target: string; message: string }) => `${entry.target}: ${entry.message}`).join(' | ')}`
-              : '';
+            const errorText = uploadResult.uploadedTargets.length > 0 ? uploadIssuesText(uploadResult.errors) : notArchivedText(null);
             setMessage({
-              type: uploadResult.errors.length > 0 ? 'info' : 'success',
+              type: errorText ? 'warning' : 'success',
               text: `${successText}${errorText}`
             });
           } catch (driveError: any) {
-            const errMsg = driveError?.message ? ` Upload failed: ${driveError.message}` : ' Upload failed.';
-            setMessage({ type: 'error', text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}.${errMsg}` });
+            setMessage({ type: 'warning', text: `Acquisition committed: PO #${newOrder.customerReferenceNumber} logged as Internal ID: ${newOrder.internalOrderNumber}.${notArchivedText(driveError)}` });
             await fetchData();
             resetForm(false);
             return;
@@ -1764,9 +1775,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ config, refres
 
           {message && (
             <div className={`mb-6 p-4 rounded-2xl border flex items-center gap-3 animate-in slide-in-from-top-4 ${message.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' :
-              message.type === 'info' ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-rose-50 border-rose-100 text-rose-700'
-              }`}>
-              <i className={`fa-solid ${message.type === 'success' ? 'fa-circle-check' : message.type === 'error' ? 'fa-triangle-exclamation' : 'fa-circle-info'}`}></i>
+              message.type === 'info' ? 'bg-blue-50 border-blue-100 text-blue-700' :
+              message.type === 'warning' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-rose-50 border-rose-100 text-rose-700'
+              }`} data-message-type={message.type}>
+              <i className={`fa-solid ${message.type === 'success' ? 'fa-circle-check' : (message.type === 'error' || message.type === 'warning') ? 'fa-triangle-exclamation' : 'fa-circle-info'}`}></i>
               <span className="text-xs font-bold uppercase">{message.text}</span>
             </div>
           )}
