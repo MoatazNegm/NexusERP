@@ -11,9 +11,34 @@ import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
 import { SortableTable, ColumnDef } from './SortableTable';
+import { useTableSort, SortTh, SortDiv } from './useTableSort';
 import { extractCostSheetMetrics, extractCostSheetProjectMetrics } from './ProcurementModule';
 import { TaxClearancesView } from './TaxClearancesView';
 import { InitialBalancesView, FinancialPositionView, AccountStatusView } from './FinanceBalances';
+
+// v1.0001245: status columns sort by the rank of the shown label (workflow order), not by the raw code text.
+// Unknown codes go after the known ones; an empty status stays last (sortRows keeps empty values last).
+const rankBy = (order: string[]) => {
+  const m: Record<string, number> = {};
+  order.forEach((k, i) => { m[k] = i; });
+  return (code: any): number | '' => (code === undefined || code === null || code === '') ? '' : (m[String(code)] ?? order.length);
+};
+// Order workflow; outsourcing runs right after Technical Review (ERP ruling 2026-10-21).
+const orderStatusRank = rankBy([
+  OrderStatus.LOGGED, OrderStatus.TECHNICAL_REVIEW, OrderStatus.RUNNING_OUTSOURCING_CONTRACT, OrderStatus.IN_HOLD, OrderStatus.NEGATIVE_MARGIN,
+  OrderStatus.WAITING_SUPPLIERS, OrderStatus.WAITING_FACTORY, OrderStatus.DELIVERY, OrderStatus.MANUFACTURING, OrderStatus.MANUFACTURING_COMPLETED,
+  OrderStatus.UNDER_TEST, OrderStatus.TRANSITION_TO_STOCK, OrderStatus.IN_PRODUCT_HUB, OrderStatus.ISSUE_INVOICE, OrderStatus.INVOICED,
+  OrderStatus.HUB_RELEASED, OrderStatus.DELIVERED, OrderStatus.WAITING_GOVE, OrderStatus.FULFILLED, OrderStatus.REJECTED,
+]);
+// Component life cycle (CompStatus in types.ts), cancelled last.
+const compStatusRank = rankBy([
+  'AVAILABLE', 'PENDING_OFFER', 'RFP_SENT', 'AWARDED', 'ORDERED', 'ORDERED_FOR_STOCK', 'WAITING_CONTRACT_START', 'RUNNING_CONTRACT',
+  'RUNNING_OUTSOURCING_CONTRACT', 'IN_MANUFACTURING', 'MANUFACTURED', 'RECEIVED', 'RESERVED', 'STOCKED', 'CANCELLED',
+]);
+// Customer account badge: AR Due, Credit Available, Settled, No Orders (as shown, most urgent first when ascending).
+const customerAccountStatusRank = rankBy(['ar_due', 'credit_balance', 'settled', 'no_orders']);
+// Supplier AP badge: Payment Due, In Production (committed), Overpaid, Settled, No Orders.
+const supplierApStatusRank = rankBy(['payment_due', 'committed', 'overpaid', 'settled', 'no_orders']);
 
 // Converts SVG data URL to PNG data URL for html2canvas compatibility
 const rasterizeLogo = (logoDataUrl: string): Promise<string> => {
@@ -623,6 +648,7 @@ interface GeneralLedgerViewProps {
 
 const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, customers = [], suppliers = [], supplierPayments, onRefresh, currentUser, searchQuery, ledgerAccounts = [], config }) => {
   const { t, language } = useLanguage();
+  const glSort = useTableSort();
   const [showAddModal, setShowAddModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState<'COST' | 'ADDITION'>('COST');
@@ -1436,18 +1462,22 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
         <table data-testid="ledger-gl-table" className="w-full min-w-[900px] text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
           <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
             <tr>
-              <th className="px-8 py-5">{t('finance.ledger.date')}</th>
-              <th className="px-8 py-5">{t('finance.ledger.description')}</th>
-              <th className="px-8 py-5">{t('finance.ledger.fromAccount')}</th>
-              <th className="px-8 py-5">{t('finance.ledger.toAccount')}</th>
-              <th className="px-8 py-5">{t('finance.ledger.source')}</th>
-              <th className="px-8 py-5">{t('finance.ledger.type')}</th>
-              <th className="px-8 py-5 text-end">{t('finance.ledger.amount')}</th>
-              <th className="px-8 py-5">{t('finance.ledger.user')}</th>
+              <SortTh sorter={glSort} table="gl" col="date" className="px-8 py-5">{t('finance.ledger.date')}</SortTh>
+              <SortTh sorter={glSort} table="gl" col="description" className="px-8 py-5">{t('finance.ledger.description')}</SortTh>
+              <SortTh sorter={glSort} table="gl" col="from" className="px-8 py-5">{t('finance.ledger.fromAccount')}</SortTh>
+              <SortTh sorter={glSort} table="gl" col="to" className="px-8 py-5">{t('finance.ledger.toAccount')}</SortTh>
+              <SortTh sorter={glSort} table="gl" col="source" className="px-8 py-5">{t('finance.ledger.source')}</SortTh>
+              <SortTh sorter={glSort} table="gl" col="type" className="px-8 py-5">{t('finance.ledger.type')}</SortTh>
+              <SortTh sorter={glSort} table="gl" col="amount" className="px-8 py-5 text-end">{t('finance.ledger.amount')}</SortTh>
+              <SortTh sorter={glSort} table="gl" col="user" className="px-8 py-5">{t('finance.ledger.user')}</SortTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {filteredEntries.map(entry => (
+            {glSort.sort('gl', filteredEntries, {
+              date: (e: any) => e.date, description: (e: any) => e.description,
+              from: (e: any) => e.fromAccount || e.category, to: (e: any) => e.toAccount,
+              source: (e: any) => e.source, type: (e: any) => e.type, amount: (e: any) => Number(e.amount), user: (e: any) => e.user,
+            }).map(entry => (
               // R35 round 3 (validator 2 N3): a display-only row (accountStatusOnly: a dated wallet move written for Finance > Account Status,
               // no balance changes) is shown muted with a 'display only' badge
               <tr key={entry.id} data-testid={entry.accountStatusOnly ? 'ledger-row-display-only' : undefined} data-display-only={entry.accountStatusOnly ? 'true' : undefined}
@@ -1637,6 +1667,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
 const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, currentUser }) => {
   const { t, language } = useLanguage();
   const [activeTab, setActiveTab] = useState<FinanceTab>('orders');
+  const fs = useTableSort();
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -3098,6 +3129,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
         valA = a.pl[sortConfig.key];
         valB = b.pl[sortConfig.key];
       }
+      // v1.0001244: the Currency header sorted on a field the order does not carry (no effect); sort on the order's currency
+      if (sortConfig.key === 'currency') {
+        valA = getOrderCurrency(a) || '';
+        valB = getOrderCurrency(b) || '';
+      }
 
       if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
       if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
@@ -3960,6 +3996,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           {(['orders', 'stock_orders', 'history', 'blacklist_hold', 'tax_clearances', 'supplier_reporting', 'ledger', 'contracts', 'blanket_history', 'customer_wallets', 'project_wallets', 'initial_balances', 'financial_position', 'account_status'] as const).map(tab => (
             <button
               key={tab}
+              data-testid={`finance-tab-${tab}`}
               onClick={() => setActiveTab(tab)}
               className={`px-6 py-3 rounded-xl text-[10px] whitespace-nowrap font-black uppercase tracking-widest transition-all shrink-0 ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
@@ -4033,7 +4070,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             )}
             <div className="relative w-full xl:w-96">
               <input
-                type="text" placeholder={activeTab === 'stock_orders' ? (language === 'ar' ? 'ابحث بأمر المخزون، كود المكون، الوصف...' : "Search stock PO, component SKU, description...") : (language === 'ar' ? 'ابحث بالرقم، أمر الشراء، العميل، المشروع...' : (t("finance.orders.searchOrders") || "Search ID, PO, customer, project (or 'non-project')..."))}
+                type="text" data-testid="finance-search" placeholder={activeTab === 'stock_orders' ? (language === 'ar' ? 'ابحث بأمر المخزون، كود المكون، الوصف...' : "Search stock PO, component SKU, description...") : (language === 'ar' ? 'ابحث بالرقم، أمر الشراء، العميل، المشروع...' : (t("finance.orders.searchOrders") || "Search ID, PO, customer, project (or 'non-project')..."))}
                 className="w-full px-5 py-3 pl-12 bg-white border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold transition-all shadow-sm"
                 value={search} onChange={e => setSearch(e.target.value)}
               />
@@ -4099,6 +4136,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               rowKey={(c) => c.id}
               emptyMessage={language === 'ar' ? 'لم يتم العثور على عقود إطارية نشطة' : "No active blanket contracts found"}
               storageKey="finance-contracts-table"
+              firstSortDir="desc"
             />
           </div>
         </div>
@@ -4139,15 +4177,19 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
                     <thead className="bg-slate-50 text-[9px] font-black uppercase text-slate-400 tracking-widest">
                       <tr>
-                        <th className="px-5 py-3">{t('finance.blanketHistory.order') || 'Order'}</th>
-                        <th className="px-5 py-3">{t('finance.blanketHistory.customer') || 'Customer'}</th>
-                        <th className="px-5 py-3">{t('finance.blanketHistory.contract') || 'Contract'}</th>
-                        <th className="px-5 py-3">{t('finance.blanketHistory.status') || 'Status'}</th>
-                        <th className="px-5 py-3 text-end">{t('finance.blanketHistory.costSheet') || 'Cost Sheet'}</th>
+                        <SortTh sorter={fs} table="blanketHistory" col="order" className="px-5 py-3">{t('finance.blanketHistory.order') || 'Order'}</SortTh>
+                        <SortTh sorter={fs} table="blanketHistory" col="customer" className="px-5 py-3">{t('finance.blanketHistory.customer') || 'Customer'}</SortTh>
+                        <SortTh sorter={fs} table="blanketHistory" col="contract" className="px-5 py-3">{t('finance.blanketHistory.contract') || 'Contract'}</SortTh>
+                        <SortTh sorter={fs} table="blanketHistory" col="status" className="px-5 py-3">{t('finance.blanketHistory.status') || 'Status'}</SortTh>
+                        <SortTh sorter={fs} table="blanketHistory" col="costSheet" className="px-5 py-3 text-end">{t('finance.blanketHistory.costSheet') || 'Cost Sheet'}</SortTh>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {group.orders.map(o => {
+                      {fs.sort('blanketHistory', group.orders, {
+                        order: (o: any) => o.internalOrderNumber, customer: (o: any) => o.customerName,
+                        contract: (o: any) => o.contractId || o.blanketContractId, status: (o: any) => orderStatusRank(o.status),
+                        costSheet: (o: any) => { const sh = getBlanketOrderLatestCostSheet(o); return sh ? (sh.uploadedAt || sh.fileName || 1) : null; },
+                      }).map(o => {
                         const sheet = getBlanketOrderLatestCostSheet(o);
                         const proj = getOrderProjectName(o);
                         const contractRef = o.contractId || o.blanketContractId;
@@ -4351,19 +4393,19 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 <table className="w-full text-start text-xs" dir={language === 'ar' ? 'rtl' : 'ltr'}>
                   <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest">
                     <tr>
-                      <th className="px-6 py-4">{language === 'ar' ? 'كيان العميل' : 'Customer Entity'}</th>
-                      <th className="px-4 py-4 text-center">{language === 'ar' ? 'الطلبات' : 'Orders'}</th>
-                      <th className="px-5 py-4 text-end">{language === 'ar' ? 'المبيعات المفوترة' : 'Invoiced Sales'}</th>
-                      <th className="px-5 py-4 text-end">{language === 'ar' ? 'المحصل حتى تاريخه' : 'Paid to Date'}</th>
-                      <th className="px-5 py-4 text-end">{language === 'ar' ? 'مستحقات العملاء (AR)' : 'Customer AR (Due)'}</th>
-                      <th className="px-5 py-4 text-end">{language === 'ar' ? 'المحفظة / الدفعات' : 'Wallet / Advances'}</th>
-                      <th className="px-5 py-4 text-end">{language === 'ar' ? 'الأرباح المحققة' : 'Realized Profit'}</th>
-                      <th className="px-4 py-4 text-center">{language === 'ar' ? 'الحالة' : 'Status'}</th>
+                      <SortTh sorter={fs} table="custAccounts" col="customer" className="px-6 py-4">{language === 'ar' ? 'كيان العميل' : 'Customer Entity'}</SortTh>
+                      <SortTh sorter={fs} table="custAccounts" col="orders" className="px-4 py-4 text-center">{language === 'ar' ? 'الطلبات' : 'Orders'}</SortTh>
+                      <SortTh sorter={fs} table="custAccounts" col="invoiced" className="px-5 py-4 text-end">{language === 'ar' ? 'المبيعات المفوترة' : 'Invoiced Sales'}</SortTh>
+                      <SortTh sorter={fs} table="custAccounts" col="paid" className="px-5 py-4 text-end">{language === 'ar' ? 'المحصل حتى تاريخه' : 'Paid to Date'}</SortTh>
+                      <SortTh sorter={fs} table="custAccounts" col="ar" className="px-5 py-4 text-end">{language === 'ar' ? 'مستحقات العملاء (AR)' : 'Customer AR (Due)'}</SortTh>
+                      <SortTh sorter={fs} table="custAccounts" col="wallet" className="px-5 py-4 text-end">{language === 'ar' ? 'المحفظة / الدفعات' : 'Wallet / Advances'}</SortTh>
+                      <SortTh sorter={fs} table="custAccounts" col="profit" className="px-5 py-4 text-end">{language === 'ar' ? 'الأرباح المحققة' : 'Realized Profit'}</SortTh>
+                      <SortTh sorter={fs} table="custAccounts" col="status" className="px-4 py-4 text-center">{language === 'ar' ? 'الحالة' : 'Status'}</SortTh>
                       <th className="px-6 py-4 text-end">{language === 'ar' ? 'الإجراءات' : 'Actions'}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {customerAnalytics
+                    {fs.sort('custAccounts', customerAnalytics
                       .filter(ca => {
                         if (!customerAccountSearch) return true;
                         const q = customerAccountSearch.toLowerCase().trim();
@@ -4373,7 +4415,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           ca.orders.some(o => (o.projectName || '').toLowerCase().includes(q) || (o.internalOrderNumber || '').toLowerCase().includes(q))
                         );
                       })
-                      .map(ca => {
+                      , {
+                        customer: (ca: any) => ca.customer.name, orders: (ca: any) => ca.orderCount, invoiced: (ca: any) => ca.totalInvoicedGross,
+                        paid: (ca: any) => ca.totalPaid, ar: (ca: any) => ca.totalAR, wallet: (ca: any) => ca.combinedWalletBalance,
+                        profit: (ca: any) => ca.totalRealizedProfit, status: (ca: any) => customerAccountStatusRank(ca.status),
+                      }).map(ca => {
                         const isExpanded = Boolean(expandedCustomerIds[ca.customer.id]);
                         return (
                           <React.Fragment key={ca.customer.id}>
@@ -4481,20 +4527,25 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                         <table className="w-full text-start text-xs" dir={language === 'ar' ? 'rtl' : 'ltr'}>
                                           <thead className="bg-slate-50 text-[8px] font-black uppercase text-slate-400 tracking-widest">
                                             <tr>
-                                              <th className="px-4 py-2.5">{language === 'ar' ? 'الطلب / المرجع' : 'Order / Ref'}</th>
-                                              <th className="px-4 py-2.5">{language === 'ar' ? 'المشروع' : 'Project'}</th>
-                                              <th className="px-4 py-2.5">{language === 'ar' ? 'الحالة' : 'Status'}</th>
-                                              <th className="px-4 py-2.5 text-end">{language === 'ar' ? 'صافي العرض' : 'Quoted Net'}</th>
-                                              <th className="px-4 py-2.5 text-end">{language === 'ar' ? 'الإجمالي الشامل' : 'Total Gross'}</th>
-                                              <th className="px-4 py-2.5 text-end">{language === 'ar' ? 'المدفوع' : 'Paid'}</th>
-                                              <th className="px-4 py-2.5 text-end">{language === 'ar' ? 'مستحقات العميل' : 'Customer AR'}</th>
-                                              <th className="px-4 py-2.5 text-end">{language === 'ar' ? 'أصل WIP' : 'WIP Asset'}</th>
-                                              <th className="px-4 py-2.5 text-end">{language === 'ar' ? 'الربح المحقق' : 'Realized Profit'}</th>
-                                              <th className="px-4 py-2.5 text-end">{language === 'ar' ? 'الضريبة (14%)' : 'VAT (14%)'}</th>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="order" className="px-4 py-2.5">{language === 'ar' ? 'الطلب / المرجع' : 'Order / Ref'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="project" className="px-4 py-2.5">{language === 'ar' ? 'المشروع' : 'Project'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="status" className="px-4 py-2.5">{language === 'ar' ? 'الحالة' : 'Status'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="quotedNet" className="px-4 py-2.5 text-end">{language === 'ar' ? 'صافي العرض' : 'Quoted Net'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="gross" className="px-4 py-2.5 text-end">{language === 'ar' ? 'الإجمالي الشامل' : 'Total Gross'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="paid" className="px-4 py-2.5 text-end">{language === 'ar' ? 'المدفوع' : 'Paid'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="ar" className="px-4 py-2.5 text-end">{language === 'ar' ? 'مستحقات العميل' : 'Customer AR'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="wip" className="px-4 py-2.5 text-end">{language === 'ar' ? 'أصل WIP' : 'WIP Asset'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="profit" className="px-4 py-2.5 text-end">{language === 'ar' ? 'الربح المحقق' : 'Realized Profit'}</SortTh>
+                                              <SortTh sorter={fs} table={`custOrders-${ca.customer.id}`} col="vat" className="px-4 py-2.5 text-end">{language === 'ar' ? 'الضريبة (14%)' : 'VAT (14%)'}</SortTh>
                                             </tr>
                                           </thead>
                                           <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                                            {ca.orders.map(o => {
+                                            {fs.sort(`custOrders-${ca.customer.id}`, ca.orders, {
+                                              order: (o: any) => o.internalOrderNumber, project: (o: any) => getOrderProjectName(o), status: (o: any) => orderStatusRank(o.status),
+                                              quotedNet: (o: any) => getPL(o).revenue, gross: (o: any) => getPL(o).grossRevenue, paid: (o: any) => getPL(o).paid,
+                                              ar: (o: any) => getPL(o).customerAR, wip: (o: any) => getPL(o).wip, profit: (o: any) => getPL(o).realizedProfit,
+                                              vat: (o: any) => getPL(o).outputTax,
+                                            }).map(o => {
                                               const pl = getPL(o);
                                               return (
                                                 <tr key={o.id} className="hover:bg-slate-50/70 transition-colors">
@@ -4627,13 +4678,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     <div className="overflow-x-auto"><table className="w-full min-w-[480px] text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
                       <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest">
                         <tr>
-                          <th className="px-6 py-3">{language === 'ar' ? 'المشروع' : 'Project'}</th>
-                          <th className="px-6 py-3 text-end">{language === 'ar' ? 'رصيد المحفظة' : 'Wallet Balance'}</th>
-                          <th className="px-6 py-3">{language === 'ar' ? 'الحالة' : 'Status'}</th>
+                          <SortTh sorter={fs} table={`blanketSettle-${customer.id}`} col="project" className="px-6 py-3">{language === 'ar' ? 'المشروع' : 'Project'}</SortTh>
+                          <SortTh sorter={fs} table={`blanketSettle-${customer.id}`} col="balance" className="px-6 py-3 text-end">{language === 'ar' ? 'رصيد المحفظة' : 'Wallet Balance'}</SortTh>
+                          <SortTh sorter={fs} table={`blanketSettle-${customer.id}`} col="status" className="px-6 py-3">{language === 'ar' ? 'الحالة' : 'Status'}</SortTh>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
-                        {projects.map(({ project, balance }) => (
+                        {fs.sort(`blanketSettle-${customer.id}`, projects, {
+                          project: (p: any) => p.project, balance: (p: any) => p.balance, status: (p: any) => Math.sign(p.balance),
+                        }).map(({ project, balance }) => (
                           <tr key={project} className={`transition-colors ${balance < 0 ? 'hover:bg-rose-50/60 bg-rose-50/30' : 'hover:bg-slate-50/80'}`}>
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-2.5">
@@ -4769,16 +4822,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
                         <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest">
                           <tr>
-                            <th className="px-6 py-3">{language === 'ar' ? 'العميل' : 'Customer'}</th>
-                            <th className="px-6 py-3">{language === 'ar' ? 'الطلبات الإطارية المرتبطة' : 'Related Blanket Orders'}</th>
-                            <th className="px-6 py-3 text-end">{language === 'ar' ? 'رصيد محفظة المشروع' : 'Project Wallet Balance'}</th>
-                            <th className="px-6 py-3 text-end">{language === 'ar' ? 'إجمالي محفظة العميل' : 'Customer Total Wallet'}</th>
-                            <th className="px-6 py-3">{language === 'ar' ? 'الحالة' : 'Status'}</th>
+                            <SortTh sorter={fs} table={`pwAlloc-${item.projectName}`} col="customer" className="px-6 py-3">{language === 'ar' ? 'العميل' : 'Customer'}</SortTh>
+                            <SortTh sorter={fs} table={`pwAlloc-${item.projectName}`} col="orders" className="px-6 py-3">{language === 'ar' ? 'الطلبات الإطارية المرتبطة' : 'Related Blanket Orders'}</SortTh>
+                            <SortTh sorter={fs} table={`pwAlloc-${item.projectName}`} col="balance" className="px-6 py-3 text-end">{language === 'ar' ? 'رصيد محفظة المشروع' : 'Project Wallet Balance'}</SortTh>
+                            <SortTh sorter={fs} table={`pwAlloc-${item.projectName}`} col="customerTotal" className="px-6 py-3 text-end">{language === 'ar' ? 'إجمالي محفظة العميل' : 'Customer Total Wallet'}</SortTh>
+                            <SortTh sorter={fs} table={`pwAlloc-${item.projectName}`} col="status" className="px-6 py-3">{language === 'ar' ? 'الحالة' : 'Status'}</SortTh>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {item.allocations.length > 0 ? (
-                            item.allocations.map(({ customer, balance }) => {
+                            fs.sort(`pwAlloc-${item.projectName}`, item.allocations, {
+                              customer: (a: any) => a.customer.name,
+                              orders: (a: any) => { const co = item.orders.filter((o: any) => o.customerName === a.customer.name); return co.length ? co.map((o: any) => o.internalOrderNumber).join(' ') : null; },
+                              balance: (a: any) => a.balance, customerTotal: (a: any) => a.customer.walletBalance || 0, status: (a: any) => Math.sign(a.balance),
+                            }).map(({ customer, balance }) => {
                               const custOrders = item.orders.filter(o => o.customerName === customer.name);
                               const custTotal = customer.walletBalance || 0;
                               return (
@@ -4858,14 +4915,24 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               <div data-testid="ar-ap" className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
                 <div className="border border-slate-200 rounded-2xl p-4">
                   <div className="text-xs font-black uppercase tracking-widest text-slate-500 mb-2">{language === 'ar' ? 'حسابات القبض (العملاء)' : 'Accounts Receivable (customers owe us)'}: {Number(arData?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                  <table className="w-full text-xs"><tbody>
-                    {(arData?.byProject || []).map((r: any) => (<tr key={r.customerName + r.projectName}><td className="py-1">{r.customerName} / {r.projectName}</td><td className="text-right">{Number(r.receivable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
+                  <table className="w-full text-xs">
+                    <thead className="text-[9px] font-black uppercase text-slate-400 tracking-widest"><tr>
+                      <SortTh sorter={fs} table="arByProject" col="name" className="py-1 text-start">{language === 'ar' ? 'العميل / المشروع' : 'Customer / Project'}</SortTh>
+                      <SortTh sorter={fs} table="arByProject" col="amount" className="py-1 text-right">{language === 'ar' ? 'المستحق' : 'Receivable'}</SortTh>
+                    </tr></thead>
+                    <tbody>
+                    {fs.sort('arByProject', arData?.byProject || [], { name: (r: any) => `${r.customerName} / ${r.projectName}`, amount: (r: any) => Number(r.receivable) }).map((r: any) => (<tr key={r.customerName + r.projectName}><td className="py-1">{r.customerName} / {r.projectName}</td><td className="text-right">{Number(r.receivable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
                   </tbody></table>
                 </div>
                 <div className="border border-slate-200 rounded-2xl p-4">
                   <div className="text-xs font-black uppercase tracking-widest text-slate-500 mb-2">{language === 'ar' ? 'حسابات الدفع (الموردون)' : 'Accounts Payable (we owe suppliers)'}: {Number(apData?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                  <table className="w-full text-xs"><tbody>
-                    {(apData?.bySupplier || []).map((r: any) => (<tr key={r.supplierId || r.supplierName}><td className="py-1">{r.supplierName}</td><td className="text-right">{Number(r.payable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
+                  <table className="w-full text-xs">
+                    <thead className="text-[9px] font-black uppercase text-slate-400 tracking-widest"><tr>
+                      <SortTh sorter={fs} table="apBySupplier" col="name" className="py-1 text-start">{language === 'ar' ? 'المورد' : 'Supplier'}</SortTh>
+                      <SortTh sorter={fs} table="apBySupplier" col="amount" className="py-1 text-right">{language === 'ar' ? 'المستحق' : 'Payable'}</SortTh>
+                    </tr></thead>
+                    <tbody>
+                    {fs.sort('apBySupplier', apData?.bySupplier || [], { name: (r: any) => r.supplierName, amount: (r: any) => Number(r.payable) }).map((r: any) => (<tr key={r.supplierId || r.supplierName}><td className="py-1">{r.supplierName}</td><td className="text-right">{Number(r.payable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
                   </tbody></table>
                 </div>
               </div>
@@ -4874,8 +4941,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             {whtMissing && whtMissing.items && whtMissing.items.length > 0 && (
               <div data-testid="wht-missing" className="mt-6 bg-white border border-amber-300 rounded-2xl p-4">
                 <div className="text-xs font-black uppercase tracking-widest text-amber-700 mb-2">{language === 'ar' ? 'شهادات الخصم من المنبع المفقودة (يجب تحصيلها قبل 30 نوفمبر)' : 'Missing withholding certificates (collect by 30 November)'}: {Number(whtMissing.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                <div className="overflow-x-auto"><table className="w-full min-w-[480px] text-xs"><thead><tr className="text-left text-slate-500"><th>Customer</th><th>PO</th><th>Date</th><th>Deadline</th><th className="text-right">Amount</th></tr></thead><tbody>
-                  {whtMissing.items.map((r: any) => (<tr key={r.orderId} className={r.overdue ? 'text-red-600 font-bold' : ''}><td className="py-1">{r.customerName}</td><td>{r.internalOrderNumber}</td><td>{r.date}</td><td>{r.deadline}{r.overdue ? ' (OVERDUE)' : ''}</td><td className="text-right">{Number(r.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
+                <div className="overflow-x-auto"><table className="w-full min-w-[480px] text-xs"><thead><tr className="text-left text-slate-500"><SortTh sorter={fs} table="whtMissing" col="customer">Customer</SortTh><SortTh sorter={fs} table="whtMissing" col="po">PO</SortTh><SortTh sorter={fs} table="whtMissing" col="date">Date</SortTh><SortTh sorter={fs} table="whtMissing" col="deadline">Deadline</SortTh><SortTh sorter={fs} table="whtMissing" col="amount" className="text-right">Amount</SortTh></tr></thead><tbody>
+                  {fs.sort('whtMissing', whtMissing.items, { customer: (r: any) => r.customerName, po: (r: any) => r.internalOrderNumber, date: (r: any) => r.date, deadline: (r: any) => r.deadline, amount: (r: any) => Number(r.amount) }).map((r: any) => (<tr key={r.orderId} className={r.overdue ? 'text-red-600 font-bold' : ''}><td className="py-1">{r.customerName}</td><td>{r.internalOrderNumber}</td><td>{r.date}</td><td>{r.deadline}{r.overdue ? ' (OVERDUE)' : ''}</td><td className="text-right">{Number(r.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
                 </tbody></table></div>
               </div>
             )}
@@ -5200,13 +5267,13 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-200">
                     <tr>
                       <th className="w-8 px-3 py-3.5 text-center"></th>
-                      <th className="px-5 py-3.5 text-start">{language === 'ar' ? 'أمر شراء العميل' : 'Customer PO #'}</th>
-                      <th className="px-5 py-3.5 text-start">{language === 'ar' ? 'أمر شراء المورد' : 'Supplier PO #'}</th>
-                      <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'القيمة (صافي)' : 'Value (Net)'}</th>
-                      <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'الضريبة (14%)' : 'Tax (14%)'}</th>
-                      <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'الإجمالي (شامل)' : 'Total (Gross)'}</th>
-                      <th className="px-5 py-3.5 text-center">{language === 'ar' ? 'حالة الاستلام' : 'Receipt Status'}</th>
-                      <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'المدفوع / رصيد المورد' : 'Paid / AP Balance'}</th>
+                      <SortTh sorter={fs} table="supplierPOs" col="customerPo" className="px-5 py-3.5 text-start">{language === 'ar' ? 'أمر شراء العميل' : 'Customer PO #'}</SortTh>
+                      <SortTh sorter={fs} table="supplierPOs" col="supplierPo" className="px-5 py-3.5 text-start">{language === 'ar' ? 'أمر شراء المورد' : 'Supplier PO #'}</SortTh>
+                      <SortTh sorter={fs} table="supplierPOs" col="net" className="px-5 py-3.5 text-end">{language === 'ar' ? 'القيمة (صافي)' : 'Value (Net)'}</SortTh>
+                      <SortTh sorter={fs} table="supplierPOs" col="tax" className="px-5 py-3.5 text-end">{language === 'ar' ? 'الضريبة (14%)' : 'Tax (14%)'}</SortTh>
+                      <SortTh sorter={fs} table="supplierPOs" col="gross" className="px-5 py-3.5 text-end">{language === 'ar' ? 'الإجمالي (شامل)' : 'Total (Gross)'}</SortTh>
+                      <SortTh sorter={fs} table="supplierPOs" col="receipt" className="px-5 py-3.5 text-center">{language === 'ar' ? 'حالة الاستلام' : 'Receipt Status'}</SortTh>
+                      <SortTh sorter={fs} table="supplierPOs" col="paid" className="px-5 py-3.5 text-end">{language === 'ar' ? 'المدفوع / رصيد المورد' : 'Paid / AP Balance'}</SortTh>
                       <th className="px-6 py-3.5 text-end">{language === 'ar' ? 'الإجراءات' : 'Actions'}</th>
                     </tr>
                   </thead>
@@ -5220,7 +5287,12 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         </td>
                       </tr>
                     ) : (
-                      filteredSupplierPOs.map((po, poIdx) => {
+                      fs.sort('supplierPOs', filteredSupplierPOs, {
+                        customerPo: (po: any) => po.customerReferenceNumber || po.orderNumber, supplierPo: (po: any) => po.poNumber,
+                        net: (po: any) => po.netValue, tax: (po: any) => po.taxAmount, gross: (po: any) => po.grossTotal,
+                        receipt: (po: any) => (po.totalOrderedQty ? (po.totalReceivedQty || 0) / po.totalOrderedQty : 0),
+                        paid: (po: any) => po.paidAmount,
+                      }).map((po, poIdx) => {
                         const isExpanded = Boolean(expandedSupplierPoIds[po.id]);
                         const isEven = poIdx % 2 === 1;
                         const rowBg = isExpanded ? 'bg-blue-50/40' : isEven ? 'bg-slate-50/50' : 'bg-white';
@@ -5405,18 +5477,22 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                     <table className="w-full text-start text-xs">
                                       <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-200">
                                         <tr>
-                                          <th className="px-5 py-3 text-start">{language === 'ar' ? 'وصف المكون' : 'Component Description'}</th>
-                                          <th className="px-5 py-3 text-start">{language === 'ar' ? 'بند طلب العميل' : 'Parent Order Item'}</th>
-                                          <th className="px-5 py-3 text-end">{language === 'ar' ? 'سعر الوحدة' : 'Unit Cost'}</th>
-                                          <th className="px-5 py-3 text-center">{language === 'ar' ? 'الكمية المطلوبة' : 'Ordered Qty'}</th>
-                                          <th className="px-5 py-3 text-end">{language === 'ar' ? 'القيمة الصافية' : 'Net Value'}</th>
-                                          <th className="px-5 py-3 text-end">{language === 'ar' ? 'الضريبة (14%)' : 'Tax (14%)'}</th>
-                                          <th className="px-5 py-3 text-end">{language === 'ar' ? 'الإجمالي الشامل' : 'Total Gross'}</th>
-                                          <th className="px-5 py-3 text-center">{language === 'ar' ? 'حالة وكمية الاستلام' : 'Received Status & Qty'}</th>
+                                          <SortTh sorter={fs} table={`spoComp-${po.id}`} col="description" className="px-5 py-3 text-start">{language === 'ar' ? 'وصف المكون' : 'Component Description'}</SortTh>
+                                          <SortTh sorter={fs} table={`spoComp-${po.id}`} col="parentItem" className="px-5 py-3 text-start">{language === 'ar' ? 'بند طلب العميل' : 'Parent Order Item'}</SortTh>
+                                          <SortTh sorter={fs} table={`spoComp-${po.id}`} col="unitCost" className="px-5 py-3 text-end">{language === 'ar' ? 'سعر الوحدة' : 'Unit Cost'}</SortTh>
+                                          <SortTh sorter={fs} table={`spoComp-${po.id}`} col="qty" className="px-5 py-3 text-center">{language === 'ar' ? 'الكمية المطلوبة' : 'Ordered Qty'}</SortTh>
+                                          <SortTh sorter={fs} table={`spoComp-${po.id}`} col="net" className="px-5 py-3 text-end">{language === 'ar' ? 'القيمة الصافية' : 'Net Value'}</SortTh>
+                                          <SortTh sorter={fs} table={`spoComp-${po.id}`} col="tax" className="px-5 py-3 text-end">{language === 'ar' ? 'الضريبة (14%)' : 'Tax (14%)'}</SortTh>
+                                          <SortTh sorter={fs} table={`spoComp-${po.id}`} col="gross" className="px-5 py-3 text-end">{language === 'ar' ? 'الإجمالي الشامل' : 'Total Gross'}</SortTh>
+                                          <SortTh sorter={fs} table={`spoComp-${po.id}`} col="received" className="px-5 py-3 text-center">{language === 'ar' ? 'حالة وكمية الاستلام' : 'Received Status & Qty'}</SortTh>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                                        {po.components.map((c: any, cIdx: number) => {
+                                        {fs.sort(`spoComp-${po.id}`, po.components, {
+                                          description: (c: any) => c.description, parentItem: (c: any) => c.parentItemDesc, unitCost: (c: any) => c.unitCost || 0,
+                                          qty: (c: any) => c.quantity || 0, net: (c: any) => c.netCost || 0, tax: (c: any) => c.taxAmount || 0, gross: (c: any) => c.grossCost || 0,
+                                          received: (c: any) => (c.quantity ? (c.receivedQty || 0) / c.quantity : 0),
+                                        }).map((c: any, cIdx: number) => {
                                           const recQty = c.receivedQty || 0;
                                           const isFull = recQty >= (c.quantity || 0) && (c.quantity || 0) > 0;
                                           const isPart = recQty > 0 && !isFull;
@@ -5620,20 +5696,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                     <table className="w-full text-start text-xs" dir={language === 'ar' ? 'rtl' : 'ltr'}>
                       <thead className="bg-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-widest">
                         <tr>
-                          <th className="px-6 py-3.5">{language === 'ar' ? 'اسم المورد وبيانات الاتصال' : 'Supplier Name & Contact'}</th>
-                          <th className="px-4 py-3.5 text-center">{language === 'ar' ? 'المكونات' : 'Components'}</th>
-                          <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'الأوامر المعتمدة' : 'Committed POs'}</th>
-                          <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'القيمة المستلمة' : 'Delivered Value'}</th>
-                          <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'المدفوع حتى تاريخه' : 'Paid to Date'}</th>
-                          <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'مستحق السداد (بضاعة مستلمة)' : 'Fulfilled AP (Due)'}</th>
-                          <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'إجمالي رصيد الدائنين' : 'Total Open AP'}</th>
-                          <th className="px-5 py-3.5 text-end">{language === 'ar' ? 'ضريبة المدخلات (14%)' : 'Input VAT (14%)'}</th>
-                          <th className="px-4 py-3.5 text-center">{language === 'ar' ? 'الحالة' : 'Status'}</th>
+                          <SortTh sorter={fs} table="apMaster" col="supplier" className="px-6 py-3.5">{language === 'ar' ? 'اسم المورد وبيانات الاتصال' : 'Supplier Name & Contact'}</SortTh>
+                          <SortTh sorter={fs} table="apMaster" col="components" className="px-4 py-3.5 text-center">{language === 'ar' ? 'المكونات' : 'Components'}</SortTh>
+                          <SortTh sorter={fs} table="apMaster" col="committed" className="px-5 py-3.5 text-end">{language === 'ar' ? 'الأوامر المعتمدة' : 'Committed POs'}</SortTh>
+                          <SortTh sorter={fs} table="apMaster" col="delivered" className="px-5 py-3.5 text-end">{language === 'ar' ? 'القيمة المستلمة' : 'Delivered Value'}</SortTh>
+                          <SortTh sorter={fs} table="apMaster" col="paid" className="px-5 py-3.5 text-end">{language === 'ar' ? 'المدفوع حتى تاريخه' : 'Paid to Date'}</SortTh>
+                          <SortTh sorter={fs} table="apMaster" col="fulfilledAP" className="px-5 py-3.5 text-end">{language === 'ar' ? 'مستحق السداد (بضاعة مستلمة)' : 'Fulfilled AP (Due)'}</SortTh>
+                          <SortTh sorter={fs} table="apMaster" col="totalAP" className="px-5 py-3.5 text-end">{language === 'ar' ? 'إجمالي رصيد الدائنين' : 'Total Open AP'}</SortTh>
+                          <SortTh sorter={fs} table="apMaster" col="inputVat" className="px-5 py-3.5 text-end">{language === 'ar' ? 'ضريبة المدخلات (14%)' : 'Input VAT (14%)'}</SortTh>
+                          <SortTh sorter={fs} table="apMaster" col="status" className="px-4 py-3.5 text-center">{language === 'ar' ? 'الحالة' : 'Status'}</SortTh>
                           <th className="px-6 py-3.5 text-end">{language === 'ar' ? 'الإجراءات' : 'Actions'}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                        {supplierAnalytics
+                        {fs.sort('apMaster', supplierAnalytics
                           .filter(sa => {
                             if (!supplierSearchQuery) return true;
                             const q = supplierSearchQuery.toLowerCase().trim();
@@ -5642,8 +5718,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                               (sa.supplier.email || '').toLowerCase().includes(q) ||
                               (sa.supplier.phone || '').toLowerCase().includes(q)
                             );
-                          })
-                          .map(sa => (
+                          }), {
+                            supplier: (sa: any) => sa.supplier.name, components: (sa: any) => sa.compCount, committed: (sa: any) => sa.committed,
+                            delivered: (sa: any) => sa.delivered, paid: (sa: any) => sa.paid, fulfilledAP: (sa: any) => sa.fulfilledAP,
+                            totalAP: (sa: any) => sa.totalAP, inputVat: (sa: any) => sa.inputTax, status: (sa: any) => supplierApStatusRank(sa.status),
+                          }).map(sa => (
                             <tr key={sa.supplier.id} className="hover:bg-slate-50/80 transition-colors">
                               <td className="px-6 py-3.5">
                                 <div className="font-black text-slate-800 text-sm">{sa.supplier.name}</div>
@@ -5913,15 +5992,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         <table className="w-full text-start">
                           <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                             <tr>
-                              <th className="px-6 py-4">{t("common.date") || "Date"}</th>
-                              <th className="px-6 py-4">{t("common.amount") || "Amount"}</th>
-                              <th className="px-6 py-4">{t("common.memo") || "Memo"}</th>
-                              <th className="px-6 py-4">{t("common.recordedBy") || "Recorded By"}</th>
+                              <SortTh sorter={fs} table="supPayHist" col="date" className="px-6 py-4">{t("common.date") || "Date"}</SortTh>
+                              <SortTh sorter={fs} table="supPayHist" col="amount" className="px-6 py-4">{t("common.amount") || "Amount"}</SortTh>
+                              <SortTh sorter={fs} table="supPayHist" col="memo" className="px-6 py-4">{t("common.memo") || "Memo"}</SortTh>
+                              <SortTh sorter={fs} table="supPayHist" col="user" className="px-6 py-4">{t("common.recordedBy") || "Recorded By"}</SortTh>
                               <th className="px-6 py-4 w-10"></th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 italic">
-                            {supplierLedger.payments.map((p: any) => (
+                            {fs.sort('supPayHist', supplierLedger.payments, {
+                              date: (p: any) => p.date, amount: (p: any) => p.amount || 0, memo: (p: any) => p.memo, user: (p: any) => p.user,
+                            }).map((p: any) => (
                               <React.Fragment key={p.id}>
                                 <tr className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setExpandedPaymentId(expandedPaymentId === p.id ? null : p.id)}>
                                   <td className="px-6 py-4 text-xs font-bold text-slate-600">{new Date(p.date).toLocaleDateString()}</td>
@@ -5943,13 +6024,15 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                         <table className="w-full text-start">
                                           <thead>
                                             <tr className="bg-slate-50 border-b border-slate-100 text-[9px] font-black uppercase text-slate-400 italic">
-                                              <th className="px-4 py-3">{t("finance.supplier.poNumber")}</th>
-                                              <th className="px-4 py-3">{t("finance.billing.description") || "Description"}</th>
-                                              <th className="px-4 py-3 text-end">{t("finance.supplier.allocatedAmount") || "Allocated Amt"}</th>
+                                              <SortTh sorter={fs} table={`supPayAlloc-${p.id}`} col="po" className="px-4 py-3">{t("finance.supplier.poNumber")}</SortTh>
+                                              <SortTh sorter={fs} table={`supPayAlloc-${p.id}`} col="description" className="px-4 py-3">{t("finance.billing.description") || "Description"}</SortTh>
+                                              <SortTh sorter={fs} table={`supPayAlloc-${p.id}`} col="amount" className="px-4 py-3 text-end">{t("finance.supplier.allocatedAmount") || "Allocated Amt"}</SortTh>
                                             </tr>
                                           </thead>
                                           <tbody className="divide-y divide-slate-50">
-                                            {p.allocations.map((a: any, ai: number) => (
+                                            {fs.sort(`supPayAlloc-${p.id}`, p.allocations, {
+                                              po: (a: any) => a.orderNumber, description: (a: any) => a.description, amount: (a: any) => Number(a.amount),
+                                            }).map((a: any, ai: number) => (
                                               <tr key={ai} className="hover:bg-slate-50/50 transition-colors text-xs font-bold">
                                                 <td className="px-4 py-3 font-mono text-blue-600 uppercase">{a.orderNumber || '-'}</td>
                                                 <td className="px-4 py-3 text-slate-600">{a.description}</td>
@@ -5980,19 +6063,23 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                         <table className="w-full text-start text-sm whitespace-nowrap">
                           <thead className="bg-slate-50 text-[9px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                             <tr>
-                              <th className="px-6 py-4">{t("finance.supplier.poNumber")}</th>
-                              <th className="px-6 py-4">{t("finance.billing.description") || "Description"}</th>
-                              <th className="px-6 py-4 text-end">{t("finance.billing.qty") || "Qty"}</th>
-                              <th className="px-6 py-4 text-end">{t("finance.supplier.unitCostLabel")}</th>
-                              <th className="px-6 py-4 text-end">{t("finance.supplier.totalPO") || "Total (PO)"}</th>
-                              <th className="px-6 py-4 text-end">{t("finance.supplier.deliveryValue") || "Deliv. Val"}</th>
-                              <th className="px-6 py-4 text-end">{t("finance.supplier.allocated") || "Allocated"}</th>
-                              <th className="px-6 py-4 text-end">{t("finance.supplier.balance") || "Balance"}</th>
-                              <th className="px-6 py-4">{t("common.status") || "Status"}</th>
+                              <SortTh sorter={fs} table="supLedgerComp" col="po" className="px-6 py-4">{t("finance.supplier.poNumber")}</SortTh>
+                              <SortTh sorter={fs} table="supLedgerComp" col="description" className="px-6 py-4">{t("finance.billing.description") || "Description"}</SortTh>
+                              <SortTh sorter={fs} table="supLedgerComp" col="qty" className="px-6 py-4 text-end">{t("finance.billing.qty") || "Qty"}</SortTh>
+                              <SortTh sorter={fs} table="supLedgerComp" col="unitCost" className="px-6 py-4 text-end">{t("finance.supplier.unitCostLabel")}</SortTh>
+                              <SortTh sorter={fs} table="supLedgerComp" col="total" className="px-6 py-4 text-end">{t("finance.supplier.totalPO") || "Total (PO)"}</SortTh>
+                              <SortTh sorter={fs} table="supLedgerComp" col="delivered" className="px-6 py-4 text-end">{t("finance.supplier.deliveryValue") || "Deliv. Val"}</SortTh>
+                              <SortTh sorter={fs} table="supLedgerComp" col="allocated" className="px-6 py-4 text-end">{t("finance.supplier.allocated") || "Allocated"}</SortTh>
+                              <SortTh sorter={fs} table="supLedgerComp" col="balance" className="px-6 py-4 text-end">{t("finance.supplier.balance") || "Balance"}</SortTh>
+                              <SortTh sorter={fs} table="supLedgerComp" col="status" className="px-6 py-4">{t("common.status") || "Status"}</SortTh>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {supplierLedger.components.map((c: any, ci: number) => (
+                            {fs.sort('supLedgerComp', supplierLedger.components, {
+                              po: (c: any) => c.poNumber, description: (c: any) => c.description, qty: (c: any) => Number(c.quantity),
+                              unitCost: (c: any) => c.unitCost || 0, total: (c: any) => c.totalCost || 0, delivered: (c: any) => c.deliveredValue || 0,
+                              allocated: (c: any) => c.allocatedPayments || 0, balance: (c: any) => (c.totalCost || 0) - (c.allocatedPayments || 0), status: (c: any) => compStatusRank(c.status),
+                            }).map((c: any, ci: number) => (
                               <tr key={ci} className="hover:bg-slate-50 transition-colors group">
                                 <td className="px-6 py-4">
                                   <div className="font-mono font-black text-blue-600 text-xs uppercase">{c.poNumber || 'N/A'}</div>
@@ -6629,12 +6716,10 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
             <tr>
               {activeTab === 'blacklist_hold' ? (
                 <>
-                  <th className="px-4 py-3.5 text-white">{t("finance.orders.operationalContext") || "Operational Context"}</th>
-                  <th className="px-4 py-3.5 text-white cursor-pointer select-none" onClick={() => handleSort('name')}>
-                    {t("finance.entities.entityType")} {sortConfig.key === 'name' ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '⇅'}
-                  </th>
-                  <th className="px-4 py-3.5 text-white">{t("finance.orders.accountStatus") || "Account Status"}</th>
-                  <th className="px-4 py-3.5 text-white text-end">{t("finance.orders.creditAction") || "Credit Action"}</th>
+                  <SortTh sorter={fs} table="blacklist" col="name" className="px-4 py-3.5 text-white">{t("finance.orders.operationalContext") || "Operational Context"}</SortTh>
+                  <SortTh sorter={fs} table="blacklist" col="entityType" className="px-4 py-3.5 text-white">{t("finance.entities.entityType")}</SortTh>
+                  <SortTh sorter={fs} table="blacklist" col="accountStatus" className="px-4 py-3.5 text-white">{t("finance.orders.accountStatus") || "Account Status"}</SortTh>
+                  <SortTh sorter={fs} table="blacklist" col="creditAction" className="px-4 py-3.5 text-white text-end">{t("finance.orders.creditAction") || "Credit Action"}</SortTh>
                 </>
               ) : (
                 <>
@@ -6683,15 +6768,14 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           <tbody className="divide-y divide-slate-50">
             {activeTab === 'blacklist_hold' ? (
               <>
-                {[...customers].filter(c => c.name.trim().toLowerCase() !== 'internal stock').sort((a, b) => {
-                  const valA = (a.name || '').toLowerCase();
-                  const valB = (b.name || '').toLowerCase();
-                  if (sortConfig.key !== 'name') return 0;
-                  if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-                  if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-                  return 0;
-                }).map(c => (
-                  <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
+                {/* v1.0001244: customers and suppliers are one sortable list (any column); unsorted it keeps customers first, then suppliers */}
+                {fs.sort('blacklist', [
+                  ...customers.filter(c => c.name.trim().toLowerCase() !== 'internal stock').map(c => ({ kind: 'customer' as const, e: c })),
+                  ...suppliers.map(sp => ({ kind: 'supplier' as const, e: sp })),
+                ], {
+                  name: (r: any) => r.e.name, entityType: (r: any) => r.kind, accountStatus: (r: any) => (r.e.isHold ? 1 : 0), creditAction: (r: any) => (r.e.isHold ? 1 : 0),
+                }).map(({ kind, e }: any) => kind === 'customer' ? ((c: any) => (
+                  <tr key={`cust-${c.id}`} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-4 py-4">
                       <div className="font-black text-slate-800">{c.name}</div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">{t("finance.orders.customerAccount") || "Customer Account"}</div>
@@ -6708,16 +6792,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       </button>
                     </td>
                   </tr>
-                ))}
-                {[...suppliers].sort((a, b) => {
-                  const valA = (a.name || '').toLowerCase();
-                  const valB = (b.name || '').toLowerCase();
-                  if (sortConfig.key !== 'name') return 0;
-                  if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-                  if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-                  return 0;
-                }).map(s => (
-                  <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
+                ))(e) : ((s: any) => (
+                  <tr key={`sup-${s.id}`} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-4 py-4">
                       <div className="font-black text-slate-800">{s.name}</div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">{language === 'ar' ? 'حساب المورد' : 'Vendor Account'}</div>
@@ -6734,7 +6810,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       </button>
                     </td>
                   </tr>
-                ))}
+                ))(e))}
               </>
             ) : (() => {
               const renderOrderRowContent = (o: CustomerOrder, orderIdx: number) => {
@@ -7300,19 +7376,26 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                         <table className="w-full text-start text-xs">
                                           <thead className="bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest">
                                             <tr>
-                                              <th className="px-5 py-2.5 text-start">{language === 'ar' ? 'وصف المكون' : 'Component Description'}</th>
-                                              <th className="px-5 py-2.5 text-start">{language === 'ar' ? 'بند طلب العميل' : 'Target PO Item'}</th>
-                                              <th className="px-5 py-2.5 text-start">{language === 'ar' ? 'المورد' : 'Supplier'}</th>
-                                              <th className="px-5 py-2.5 text-center">{language === 'ar' ? 'الكمية' : 'Qty'}</th>
-                                              <th className="px-5 py-2.5 text-end">{language === 'ar' ? 'سعر الوحدة' : 'Unit Cost'}</th>
-                                              <th className="px-5 py-2.5 text-end">{language === 'ar' ? 'صافي التكلفة' : 'Net Sourced'}</th>
-                                              <th className="px-5 py-2.5 text-end">{language === 'ar' ? 'ضريبة المدخلات (14%)' : 'Input VAT (14%)'}</th>
-                                              <th className="px-5 py-2.5 text-end">{language === 'ar' ? 'إجمالي التكلفة' : 'Gross Sourced'}</th>
-                                              <th className="px-5 py-2.5 text-center">{language === 'ar' ? 'المرحلة' : 'Stage'}</th>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="description" className="px-5 py-2.5 text-start">{language === 'ar' ? 'وصف المكون' : 'Component Description'}</SortTh>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="targetItem" className="px-5 py-2.5 text-start">{language === 'ar' ? 'بند طلب العميل' : 'Target PO Item'}</SortTh>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="supplier" className="px-5 py-2.5 text-start">{language === 'ar' ? 'المورد' : 'Supplier'}</SortTh>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="qty" className="px-5 py-2.5 text-center">{language === 'ar' ? 'الكمية' : 'Qty'}</SortTh>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="unitCost" className="px-5 py-2.5 text-end">{language === 'ar' ? 'سعر الوحدة' : 'Unit Cost'}</SortTh>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="net" className="px-5 py-2.5 text-end">{language === 'ar' ? 'صافي التكلفة' : 'Net Sourced'}</SortTh>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="vat" className="px-5 py-2.5 text-end">{language === 'ar' ? 'ضريبة المدخلات (14%)' : 'Input VAT (14%)'}</SortTh>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="gross" className="px-5 py-2.5 text-end">{language === 'ar' ? 'إجمالي التكلفة' : 'Gross Sourced'}</SortTh>
+                                              <SortTh sorter={fs} table={`ordComp-${o.id}`} col="stage" className="px-5 py-2.5 text-center">{language === 'ar' ? 'المرحلة' : 'Stage'}</SortTh>
                                             </tr>
                                           </thead>
                                           <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                                            {orderComponents.map((c, cIdx) => {
+                                            {fs.sort(`ordComp-${o.id}`, orderComponents, {
+                                              description: (c: any) => c.description, targetItem: (c: any) => c.parentItemDesc, supplier: (c: any) => c.supplierName,
+                                              qty: (c: any) => c.quantity || 0, unitCost: (c: any) => c.unitCost || 0,
+                                              net: (c: any) => (c.quantity || 0) * (c.unitCost || 0),
+                                              vat: (c: any) => (c.quantity || 0) * (c.unitCost || 0) * ((c.taxPercent !== undefined ? c.taxPercent : 0) / 100),
+                                              gross: (c: any) => { const n = (c.quantity || 0) * (c.unitCost || 0); return n + n * ((c.taxPercent !== undefined ? c.taxPercent : 0) / 100); },
+                                              stage: () => (pl.isInvoiced ? 1 : 0),
+                                            }).map((c, cIdx) => {
                                               const cNet = (c.quantity || 0) * (c.unitCost || 0);
                                               const cTaxRate = c.taxPercent !== undefined ? c.taxPercent : 0;
                                               const cTax = cNet * (cTaxRate / 100);
@@ -7366,13 +7449,16 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                             {/* Line Items for Dispatch Authorization */}
                             <div className="bg-white rounded-2xl shadow-inner border border-slate-200 overflow-hidden divide-y divide-slate-100">
                               <div className="px-4 py-2 bg-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest grid grid-cols-12 gap-4 items-center">
-                              <div className="col-span-5">{t("finance.poItemDefinition") || (language === 'ar' ? 'بند أمر الشراء' : "PO Item Definition")}</div>
-                              <div className="col-span-1 text-center">{t("finance.orders.hubReady") || (language === 'ar' ? 'جاهز بالمركز' : "Hub Rdy")}</div>
-                              <div className="col-span-2 text-center">{t("finance.orders.authorized") || (language === 'ar' ? 'معتمد' : "Authorized")}</div>
-                              <div className="col-span-1 text-center">{t("finance.orders.shipped") || (language === 'ar' ? 'تم الشحن' : "Shipped")}</div>
+                              <SortDiv sorter={fs} table={`dispatch-${o.id}`} col="item" className="col-span-5">{t("finance.poItemDefinition") || (language === 'ar' ? 'بند أمر الشراء' : "PO Item Definition")}</SortDiv>
+                              <SortDiv sorter={fs} table={`dispatch-${o.id}`} col="hub" className="col-span-1 text-center">{t("finance.orders.hubReady") || (language === 'ar' ? 'جاهز بالمركز' : "Hub Rdy")}</SortDiv>
+                              <SortDiv sorter={fs} table={`dispatch-${o.id}`} col="authorized" className="col-span-2 text-center">{t("finance.orders.authorized") || (language === 'ar' ? 'معتمد' : "Authorized")}</SortDiv>
+                              <SortDiv sorter={fs} table={`dispatch-${o.id}`} col="shipped" className="col-span-1 text-center">{t("finance.orders.shipped") || (language === 'ar' ? 'تم الشحن' : "Shipped")}</SortDiv>
                               <div className="col-span-3 text-end pr-2">{t("finance.orders.dispatchReceipt") || (language === 'ar' ? 'إيصال اعتماد التسليم' : "Dispatch Autho. Receipt")}</div>
                             </div>
-                            {o.items.map(it => {
+                            {fs.sort(`dispatch-${o.id}`, o.items, {
+                              item: (it: any) => it.description, hub: (it: any) => it.hubReceivedQty || 0,
+                              authorized: (it: any) => it.approvedForDispatchQty || 0, shipped: (it: any) => it.dispatchedQty || 0,
+                            }).map(it => {
                               const inHub = it.hubReceivedQty || 0;
                               const approved = it.approvedForDispatchQty || 0;
                               const dispatched = it.dispatchedQty || 0;
@@ -7919,14 +8005,22 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
 
                               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
                                 <div className="grid grid-cols-12 gap-3 px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 text-[9px] font-black uppercase text-slate-600 tracking-wider">
-                                  <div className="col-span-3">{language === 'ar' ? 'رقم أمر شراء العميل' : 'Customer PO Number'}</div>
-                                  <div className="col-span-2">{language === 'ar' ? 'رقم الطلب الداخلي #' : 'Internal Order #'}</div>
-                                  <div className="col-span-2">{language === 'ar' ? 'تاريخ الاستلام' : 'Received Date'}</div>
-                                  <div className="col-span-5">{language === 'ar' ? 'كشوف التكاليف المرفوعة بشهر أمر الشراء' : 'Cost Sheets Uploaded in PO Month'}</div>
+                                  <SortDiv sorter={fs} table={`projHist-${group.groupId}`} col="customerPo" className="col-span-3">{language === 'ar' ? 'رقم أمر شراء العميل' : 'Customer PO Number'}</SortDiv>
+                                  <SortDiv sorter={fs} table={`projHist-${group.groupId}`} col="internal" className="col-span-2">{language === 'ar' ? 'رقم الطلب الداخلي #' : 'Internal Order #'}</SortDiv>
+                                  <SortDiv sorter={fs} table={`projHist-${group.groupId}`} col="received" className="col-span-2">{language === 'ar' ? 'تاريخ الاستلام' : 'Received Date'}</SortDiv>
+                                  <SortDiv sorter={fs} table={`projHist-${group.groupId}`} col="sheets" className="col-span-5">{language === 'ar' ? 'كشوف التكاليف المرفوعة بشهر أمر الشراء' : 'Cost Sheets Uploaded in PO Month'}</SortDiv>
                                 </div>
 
                                 <div className="divide-y divide-slate-100">
-                                  {groupOrders.map(ord => {
+                                  {fs.sort(`projHist-${group.groupId}`, groupOrders, {
+                                    customerPo: (x: any) => x.customerReferenceNumber, internal: (x: any) => x.internalOrderNumber,
+                                    received: (x: any) => x.orderDate || x.dataEntryTimestamp,
+                                    sheets: (x: any) => {
+                                      const raw = x.orderDate || x.dataEntryTimestamp; const d = raw ? new Date(raw) : null;
+                                      if (!d || isNaN(d.getTime())) return 0;
+                                      return allProjectSheets.filter((cs: any) => { if (!cs.uploadedAt) return false; const u = new Date(cs.uploadedAt); return !isNaN(u.getTime()) && u.getMonth() === d.getMonth() && u.getFullYear() === d.getFullYear(); }).length;
+                                    },
+                                  }).map(ord => {
                                     const isOrdLatest = ord.id === latestOrder.id;
                                     const poDateRaw = ord.orderDate || ord.dataEntryTimestamp;
                                     const poDate = poDateRaw ? new Date(poDateRaw) : null;
@@ -8021,19 +8115,23 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                 <thead className="bg-slate-900 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-white/5">
                                   <tr>
                                     {columnOrder.map(col => {
-                                      if (col === 'context') return <th key={col} className="px-4 py-3 text-white">{language === 'ar' ? 'تفاصيل الطلب' : 'Order Details'}</th>;
-                                      if (col === 'date') return <th key={col} className="px-3 py-3 text-white">{language === 'ar' ? 'تاريخ أمر الشراء' : 'PO Date'}</th>;
-                                      if (col === 'currency') return <th key={col} className="px-2.5 py-3 text-white">{language === 'ar' ? 'العملة' : 'Currency'}</th>;
-                                      if (col === 'revenue') return <th key={col} className="px-3.5 py-3 text-white">{language === 'ar' ? 'مؤشرات الإيراد' : 'Revenue Metrics'}</th>;
-                                      if (col === 'markup') return <th key={col} className="px-3 py-3 text-white">{language === 'ar' ? 'هامش الإضافة' : 'Markup'}</th>;
-                                      if (col === 'status') return <th key={col} className="px-3 py-3 text-white">{language === 'ar' ? 'الحالة' : 'Status'}</th>;
+                                      if (col === 'context') return <SortTh key={col} sorter={fs} table={`grpOrders-${group.groupId}`} col="internalOrderNumber" className="px-4 py-3 text-white">{language === 'ar' ? 'تفاصيل الطلب' : 'Order Details'}</SortTh>;
+                                      if (col === 'date') return <SortTh key={col} sorter={fs} table={`grpOrders-${group.groupId}`} col="orderDate" className="px-3 py-3 text-white">{language === 'ar' ? 'تاريخ أمر الشراء' : 'PO Date'}</SortTh>;
+                                      if (col === 'currency') return <SortTh key={col} sorter={fs} table={`grpOrders-${group.groupId}`} col="currency" className="px-2.5 py-3 text-white">{language === 'ar' ? 'العملة' : 'Currency'}</SortTh>;
+                                      if (col === 'revenue') return <SortTh key={col} sorter={fs} table={`grpOrders-${group.groupId}`} col="grossRevenue" className="px-3.5 py-3 text-white">{language === 'ar' ? 'مؤشرات الإيراد' : 'Revenue Metrics'}</SortTh>;
+                                      if (col === 'markup') return <SortTh key={col} sorter={fs} table={`grpOrders-${group.groupId}`} col="markupPct" className="px-3 py-3 text-white">{language === 'ar' ? 'هامش الإضافة' : 'Markup'}</SortTh>;
+                                      if (col === 'status') return <SortTh key={col} sorter={fs} table={`grpOrders-${group.groupId}`} col="status" className="px-3 py-3 text-white">{language === 'ar' ? 'الحالة' : 'Status'}</SortTh>;
                                       if (col === 'actions') return <th key={col} className="px-4 py-3 text-white text-end">{language === 'ar' ? 'إجراءات الاعتماد' : 'Auth Actions'}</th>;
                                       return null;
                                     })}
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
-                                  {groupOrders.map((ord, subIdx) => renderOrderRowContent(ord, subIdx))}
+                                  {fs.sort(`grpOrders-${group.groupId}`, groupOrders, {
+                                    internalOrderNumber: (x: any) => x.internalOrderNumber, orderDate: (x: any) => x.orderDate || x.dataEntryTimestamp,
+                                    currency: (x: any) => getOrderCurrency(x), grossRevenue: (x: any) => ((x as any).pl || getPL(x)).grossRevenue,
+                                    markupPct: (x: any) => ((x as any).pl || getPL(x)).markupPct, status: (x: any) => orderStatusRank(x.status),
+                                  }).map((ord, subIdx) => renderOrderRowContent(ord, subIdx))}
                                 </tbody>
                               </table>
                             </div>
@@ -8738,17 +8836,22 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                     <table className="w-full text-left text-xs">
                                       <thead>
                                         <tr className="border-b border-slate-100 text-[9px] font-black uppercase text-slate-400">
-                                          <th className="py-2">{language === 'ar' ? 'المكون / كود الصنف' : 'Component / SKU'}</th>
-                                          <th className="py-2">{language === 'ar' ? 'تصنيف المخزون' : 'Stock Category'}</th>
-                                          <th className="py-2">{language === 'ar' ? 'المورد' : 'Supplier'}</th>
-                                          <th className="py-2 text-right">{language === 'ar' ? 'الكمية المتبقية' : 'Remaining Qty'}</th>
-                                          <th className="py-2 text-right">{language === 'ar' ? 'الكمية المستلمة' : 'Received Qty'}</th>
-                                          <th className="py-2 text-right">{language === 'ar' ? 'سعر الوحدة' : 'Unit Cost'}</th>
-                                          <th className="py-2 text-right text-emerald-700">{language === 'ar' ? 'قيمة المخزون الحالية' : 'Current Stock Value'}</th>
+                                          <SortTh sorter={fs} table={`stockComp-${order.id}-${item.id || itemIdx}`} col="component" className="py-2">{language === 'ar' ? 'المكون / كود الصنف' : 'Component / SKU'}</SortTh>
+                                          <SortTh sorter={fs} table={`stockComp-${order.id}-${item.id || itemIdx}`} col="category" className="py-2">{language === 'ar' ? 'تصنيف المخزون' : 'Stock Category'}</SortTh>
+                                          <SortTh sorter={fs} table={`stockComp-${order.id}-${item.id || itemIdx}`} col="supplier" className="py-2">{language === 'ar' ? 'المورد' : 'Supplier'}</SortTh>
+                                          <SortTh sorter={fs} table={`stockComp-${order.id}-${item.id || itemIdx}`} col="remaining" className="py-2 text-right">{language === 'ar' ? 'الكمية المتبقية' : 'Remaining Qty'}</SortTh>
+                                          <SortTh sorter={fs} table={`stockComp-${order.id}-${item.id || itemIdx}`} col="received" className="py-2 text-right">{language === 'ar' ? 'الكمية المستلمة' : 'Received Qty'}</SortTh>
+                                          <SortTh sorter={fs} table={`stockComp-${order.id}-${item.id || itemIdx}`} col="unitCost" className="py-2 text-right">{language === 'ar' ? 'سعر الوحدة' : 'Unit Cost'}</SortTh>
+                                          <SortTh sorter={fs} table={`stockComp-${order.id}-${item.id || itemIdx}`} col="stockValue" className="py-2 text-right text-emerald-700">{language === 'ar' ? 'قيمة المخزون الحالية' : 'Current Stock Value'}</SortTh>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-50 font-medium">
-                                        {item.components.map((comp, compIdx) => {
+                                        {fs.sort(`stockComp-${order.id}-${item.id || itemIdx}`, item.components, {
+                                          component: (c: any) => c.description, category: (c: any) => getStockCompCategory(c, getStockCompRemainingQty(order.id, item, c)),
+                                          supplier: (c: any) => c.supplierName, remaining: (c: any) => getStockCompRemainingQty(order.id, item, c),
+                                          received: (c: any) => getStockCompReceivedQty(order.id, item, c), unitCost: (c: any) => Number(c.unitCost) || 0,
+                                          stockValue: (c: any) => getStockCompReceivedQty(order.id, item, c) * (Number(c.unitCost) || 0),
+                                        }).map((comp, compIdx) => {
                                           const remainingQty = getStockCompRemainingQty(order.id, item, comp);
                                           const allocatedQty = getStockCompAllocatedQty(order.id, item, comp);
                                           const receivedInStockQty = getStockCompReceivedQty(order.id, item, comp);
@@ -9233,14 +9336,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 <table className="w-full text-start" dir={language === 'ar' ? 'rtl' : 'ltr'}>
                   <thead className="sticky top-0 bg-white z-10 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                     <tr>
-                      <th className="px-4 py-4">{t("finance.ledger.receipt") || (language === 'ar' ? 'الإيصال' : 'Receipt')} #</th>
-                      <th className="px-4 py-4">{t("common.date") || (language === 'ar' ? 'التاريخ' : "Date")}</th>
-                      <th className="px-4 py-4">{t("common.amount") || (language === 'ar' ? 'المبلغ' : "Amount")}</th>
+                      <SortTh sorter={fs} table="prevPayments" col="receipt" className="px-4 py-4">{t("finance.ledger.receipt") || (language === 'ar' ? 'الإيصال' : 'Receipt')} #</SortTh>
+                      <SortTh sorter={fs} table="prevPayments" col="date" className="px-4 py-4">{t("common.date") || (language === 'ar' ? 'التاريخ' : "Date")}</SortTh>
+                      <SortTh sorter={fs} table="prevPayments" col="amount" className="px-4 py-4">{t("common.amount") || (language === 'ar' ? 'المبلغ' : "Amount")}</SortTh>
                       <th className="px-4 py-4 text-end">{t("finance.orders.authActions") || (language === 'ar' ? 'الإجراء' : "Auth Actions")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {(viewPaymentsOrder.payments || []).map((p, idx) => {
+                    {/* v1.0001244: rows keep their original position (idx) for the running paid total and the receipt number, then are sorted */}
+                    {fs.sort('prevPayments', (viewPaymentsOrder.payments || []).map((p, idx) => ({ p, idx })), {
+                      receipt: (r: any) => r.p.receiptNumber || `RCV-${(viewPaymentsOrder.internalOrderNumber || '').replace(/[^\w]/g, '').slice(-6)}-${String(r.idx + 1).padStart(2, '0')}`, date: (r: any) => r.p.date, amount: (r: any) => Number(r.p.amount),
+                    }).map(({ p, idx }) => {
                       const totalPaidAtThisPoint = viewPaymentsOrder.payments?.slice(0, idx + 1).reduce((s, pay) => s + pay.amount, 0) || 0;
                       let grossSum = 0;
                       viewPaymentsOrder.items.forEach(it => grossSum += (getItemEffectiveQty(it) * it.pricePerUnit * (1 + (it.taxPercent / 100))));

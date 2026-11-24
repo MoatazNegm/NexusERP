@@ -20,6 +20,7 @@ interface SortableTableProps<T> {
     emptyColSpan?: number;
     storageKey?: string; // localStorage key for persisting column order
     onRowClick?: (row: T, index: number) => void;
+    firstSortDir?: 'asc' | 'desc'; // direction of the first click on a column (default 'asc'; Finance Operations passes 'desc')
 }
 
 export function SortableTable<T>({
@@ -32,6 +33,7 @@ export function SortableTable<T>({
     emptyColSpan,
     storageKey,
     onRowClick,
+    firstSortDir = 'asc',
 }: SortableTableProps<T>) {
     // Column order
     const [columnOrder, setColumnOrder] = useState<string[]>(() => {
@@ -70,9 +72,9 @@ export function SortableTable<T>({
             setSortDir(d => d === 'asc' ? 'desc' : 'asc');
         } else {
             setSortKey(col.key);
-            setSortDir('asc');
+            setSortDir(firstSortDir);
         }
-    }, [sortKey]);
+    }, [sortKey, firstSortDir]);
 
     const sortedData = React.useMemo(() => {
         if (!sortKey) return data;

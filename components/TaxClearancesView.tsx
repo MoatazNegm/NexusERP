@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { CustomerOrder, Customer, Supplier, LedgerEntry, OrderStatus } from '../types';
 import { dataService } from '../services/dataService';
+import { useTableSort, SortTh } from './useTableSort';
 
 export interface TaxClearancesViewProps {
   orders: CustomerOrder[];
@@ -69,6 +70,7 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
   const [settlementFilter, setSettlementFilter] = useState<SettlementFilter>('all');
   const [sortKey, setSortKey] = useState<string>('orderDate');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const tcSort = useTableSort();
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
   // WHT Upload State
@@ -370,6 +372,24 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
       } else if (sortKey === 'remainingTax') {
         valA = a.remainingTax;
         valB = b.remainingTax;
+      } else if (sortKey === 'outputTax') {
+        // v1.0001244 (user order 2026-11-24): every column of the tax clearances table sorts
+        valA = a.outputTax;
+        valB = b.outputTax;
+      } else if (sortKey === 'inputTax') {
+        valA = a.inputTax;
+        valB = b.inputTax;
+      } else if (sortKey === 'settledAmount') {
+        valA = a.settledAmount;
+        valB = b.settledAmount;
+      } else if (sortKey === 'settlementStatus') {
+        const rank: Record<string, number> = { unsettled: 0, partial: 1, settled: 2, exempt: 3 };
+        valA = rank[a.settlementStatus] ?? 9;
+        valB = rank[b.settlementStatus] ?? 9;
+      } else if (sortKey === 'whtCert') {
+        // not applicable < certificate missing < certificate on file
+        valA = a.order.appliesWithholdingTax ? (a.order.whtCertificateFile ? 2 : 1) : 0;
+        valB = b.order.appliesWithholdingTax ? (b.order.whtCertificateFile ? 2 : 1) : 0;
       }
 
       if (valA < valB) return sortDir === 'asc' ? -1 : 1;
@@ -383,7 +403,7 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
       setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
-      setSortDir('asc');
+      setSortDir('desc'); // first click descending, like the Finance Operations Orders tab (v1.0001245)
     }
   };
 
@@ -844,26 +864,26 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
                   <th className="px-3 py-3 text-end cursor-pointer select-none text-white" onClick={() => handleSort('grossRevenue')}>
                     {language === 'ar' ? 'قيمة الطلب الإجمالية' : 'Gross PO'} {sortKey === 'grossRevenue' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
-                  <th className="px-3 py-3 text-end text-white">
-                    {language === 'ar' ? 'المخرجات (14%)' : 'Output VAT'}
+                  <th className="px-3 py-3 text-end cursor-pointer select-none text-white" onClick={() => handleSort('outputTax')}>
+                    {language === 'ar' ? 'المخرجات (14%)' : 'Output VAT'} {sortKey === 'outputTax' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
-                  <th className="px-3 py-3 text-end text-white">
-                    {language === 'ar' ? 'المدخلات (مخصومة)' : 'Input VAT'}
+                  <th className="px-3 py-3 text-end cursor-pointer select-none text-white" onClick={() => handleSort('inputTax')}>
+                    {language === 'ar' ? 'المدخلات (مخصومة)' : 'Input VAT'} {sortKey === 'inputTax' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
                   <th className="px-3 py-3 text-end cursor-pointer select-none text-white" onClick={() => handleSort('netTaxObligation')}>
                     {language === 'ar' ? 'صافي الالتزام' : 'Net Obligation'} {sortKey === 'netTaxObligation' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
-                  <th className="px-3 py-3 text-end text-white">
-                    {language === 'ar' ? 'المسدد (FIFO)' : 'Settled (FIFO)'}
+                  <th className="px-3 py-3 text-end cursor-pointer select-none text-white" onClick={() => handleSort('settledAmount')}>
+                    {language === 'ar' ? 'المسدد (FIFO)' : 'Settled (FIFO)'} {sortKey === 'settledAmount' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
                   <th className="px-3 py-3 text-end cursor-pointer select-none text-white" onClick={() => handleSort('remainingTax')}>
                     {language === 'ar' ? 'المتبقي للسداد' : 'Remaining Due'} {sortKey === 'remainingTax' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
-                  <th className="px-3 py-3 text-center text-white">
-                    {language === 'ar' ? 'حالة التسوية' : 'Settlement Status'}
+                  <th className="px-3 py-3 text-center cursor-pointer select-none text-white" onClick={() => handleSort('settlementStatus')}>
+                    {language === 'ar' ? 'حالة التسوية' : 'Settlement Status'} {sortKey === 'settlementStatus' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
-                  <th className="px-3 py-3 text-center text-white">
-                    {language === 'ar' ? 'شهادة الخصم ن.41' : 'WHT Cert (1%)'}
+                  <th className="px-3 py-3 text-center cursor-pointer select-none text-white" onClick={() => handleSort('whtCert')}>
+                    {language === 'ar' ? 'شهادة الخصم ن.41' : 'WHT Cert (1%)'} {sortKey === 'whtCert' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
                   </th>
                   <th className="px-3 py-3 text-center text-white">
                     {language === 'ar' ? 'التفاصيل' : 'Details'}
@@ -1359,16 +1379,20 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
             <table className="w-full text-start text-xs">
               <thead className="bg-slate-900 text-slate-400 text-[10px] font-black uppercase tracking-wider">
                 <tr>
-                  <th className="px-4 py-3 text-start text-white">{language === 'ar' ? 'الطلب والعميل' : 'Order Context'}</th>
-                  <th className="px-3 py-3 text-start text-white">{language === 'ar' ? 'التاريخ' : 'Date'}</th>
-                  <th className="px-3 py-3 text-end text-white">{language === 'ar' ? 'المديونية الحالية' : 'Current Debt'}</th>
-                  <th className="px-3 py-3 text-end text-white">{language === 'ar' ? 'المخصص بالمحاكاة' : 'Simulated Alloc.'}</th>
-                  <th className="px-3 py-3 text-end text-white">{language === 'ar' ? 'الرصيد بعد السداد' : 'Projected Balance'}</th>
-                  <th className="px-3 py-3 text-center text-white">{language === 'ar' ? 'الحالة المتوقعة' : 'Projected Status'}</th>
+                  <SortTh sorter={tcSort} table="taxSim" col="order" className="px-4 py-3 text-start text-white">{language === 'ar' ? 'الطلب والعميل' : 'Order Context'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxSim" col="date" className="px-3 py-3 text-start text-white">{language === 'ar' ? 'التاريخ' : 'Date'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxSim" col="debt" className="px-3 py-3 text-end text-white">{language === 'ar' ? 'المديونية الحالية' : 'Current Debt'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxSim" col="simAlloc" className="px-3 py-3 text-end text-white">{language === 'ar' ? 'المخصص بالمحاكاة' : 'Simulated Alloc.'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxSim" col="projected" className="px-3 py-3 text-end text-white">{language === 'ar' ? 'الرصيد بعد السداد' : 'Projected Balance'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxSim" col="status" className="px-3 py-3 text-center text-white">{language === 'ar' ? 'الحالة المتوقعة' : 'Projected Status'}</SortTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {dryRunSimulation.simulatedRows.map((row, rIdx) => {
+                {tcSort.sort('taxSim', dryRunSimulation.simulatedRows, {
+                  order: (r: any) => r.order.internalOrderNumber, date: (r: any) => r.orderDate, debt: (r: any) => r.currentDebt,
+                  simAlloc: (r: any) => r.simAllocated, projected: (r: any) => r.projectedBalance,
+                  status: (r: any) => ({ sim_unsettled: 0, sim_partial: 1, sim_settled: 2 } as Record<string, number>)[r.projectedStatus] ?? 9,
+                }).map((row, rIdx) => {
                   const isEven = rIdx % 2 === 1;
 
                   return (
@@ -1466,16 +1490,20 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
             <table className="w-full text-start text-xs">
               <thead className="bg-slate-900 text-slate-400 text-[10px] font-black uppercase tracking-wider">
                 <tr>
-                  <th className="px-4 py-3 text-start text-white">{language === 'ar' ? 'التاريخ ورقم القيد' : 'Date / Entry ID'}</th>
-                  <th className="px-3 py-3 text-start text-white">{language === 'ar' ? 'رقم الإيصال / الإقرار' : 'Receipt / Ref #'}</th>
-                  <th className="px-3 py-3 text-start text-white">{language === 'ar' ? 'البيان والملاحظات' : 'Description / Memo'}</th>
-                  <th className="px-3 py-3 text-start text-white">{language === 'ar' ? 'حساب السداد' : 'From Account'}</th>
-                  <th className="px-3 py-3 text-end text-white">{language === 'ar' ? 'المبلغ المسدد' : 'Amount Paid'}</th>
-                  <th className="px-3 py-3 text-center text-white">{language === 'ar' ? 'الأوامر المسواة' : 'POs Settled (FIFO)'}</th>
+                  <SortTh sorter={tcSort} table="taxLedger" col="date" className="px-4 py-3 text-start text-white">{language === 'ar' ? 'التاريخ ورقم القيد' : 'Date / Entry ID'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxLedger" col="receipt" className="px-3 py-3 text-start text-white">{language === 'ar' ? 'رقم الإيصال / الإقرار' : 'Receipt / Ref #'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxLedger" col="description" className="px-3 py-3 text-start text-white">{language === 'ar' ? 'البيان والملاحظات' : 'Description / Memo'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxLedger" col="fromAccount" className="px-3 py-3 text-start text-white">{language === 'ar' ? 'حساب السداد' : 'From Account'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxLedger" col="amount" className="px-3 py-3 text-end text-white">{language === 'ar' ? 'المبلغ المسدد' : 'Amount Paid'}</SortTh>
+                  <SortTh sorter={tcSort} table="taxLedger" col="posSettled" className="px-3 py-3 text-center text-white">{language === 'ar' ? 'الأوامر المسواة' : 'POs Settled (FIFO)'}</SortTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {govTaxPayments.map((p, idx) => {
+                {tcSort.sort('taxLedger', govTaxPayments, {
+                  date: (p: any) => p.date, receipt: (p: any) => p.receiptNumber, description: (p: any) => p.description,
+                  fromAccount: (p: any) => p.fromAccount || 'Cash/Bank', amount: (p: any) => Number(p.amount),
+                  posSettled: (p: any) => { const al = paymentAllocations.find((a: any) => a.ledgerId === p.id); return al ? al.ordersSettled.length : 0; },
+                }).map((p, idx) => {
                   const alloc = paymentAllocations.find(a => a.ledgerId === p.id);
                   const settledCount = alloc ? alloc.ordersSettled.length : 0;
                   const remaining = alloc ? alloc.remaining : 0;

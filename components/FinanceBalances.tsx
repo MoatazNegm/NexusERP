@@ -3,6 +3,7 @@ import { dataService } from '../services/dataService';
 import { useLanguage } from '../contexts/LanguageContext';
 import { DashboardCard } from './DashboardCard';
 import { accountMatches } from '../shared/accountSearch';
+import { useTableSort, SortTh } from './useTableSort';
 
 // R34 (user order 2026-11-08): Finance "Initial Balances" tab, Finance "Balances & Stock Value" report and the
 // Dashboard cards. Figures come from GET /api/v1/finance/position (server computes every account and the stock value).
@@ -116,6 +117,12 @@ const AccountsList: React.FC<{ accounts: Account[]; onAdjust?: (a: Account) => v
   const { language } = useLanguage();
   const cur = useCur();
   const isAr = language === 'ar';
+  const sorter = useTableSort();
+  const groupLabel = (g: string) => { const l = (GROUP_LABELS as any)[g]; return l ? (isAr ? l[1] : l[0]) : g; };
+  const sortedAccounts = sorter.sort('accounts', accounts, {
+    account: (a: any) => (isAr ? a.labelAr : a.label), group: (a: any) => groupLabel(a.group),
+    opening: (a: any) => (a.openingCount > 0 ? a.openingTotal : null), balance: (a: any) => a.balance,
+  });
   if (accounts.length === 0) {
     return (
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm px-8 py-20 text-center text-slate-300 italic font-black uppercase tracking-widest text-xs">
@@ -130,15 +137,15 @@ const AccountsList: React.FC<{ accounts: Account[]; onAdjust?: (a: Account) => v
           <table className="w-full text-start" dir={isAr ? 'rtl' : 'ltr'}>
             <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
               <tr>
-                <th className="px-8 py-5">{isAr ? 'الحساب' : 'Account'}</th>
-                <th className="px-8 py-5">{isAr ? 'المجموعة' : 'Group'}</th>
-                <th className="px-8 py-5 text-end">{isAr ? 'أرصدة افتتاحية' : 'Opening balances'}</th>
-                <th className="px-8 py-5 text-end">{isAr ? 'الرصيد الحالي' : 'Current balance'}</th>
+                <SortTh sorter={sorter} table="accounts" col="account" className="px-8 py-5">{isAr ? 'الحساب' : 'Account'}</SortTh>
+                <SortTh sorter={sorter} table="accounts" col="group" className="px-8 py-5">{isAr ? 'المجموعة' : 'Group'}</SortTh>
+                <SortTh sorter={sorter} table="accounts" col="opening" className="px-8 py-5 text-end">{isAr ? 'أرصدة افتتاحية' : 'Opening balances'}</SortTh>
+                <SortTh sorter={sorter} table="accounts" col="balance" className="px-8 py-5 text-end">{isAr ? 'الرصيد الحالي' : 'Current balance'}</SortTh>
                 {onAdjust && <th className="px-8 py-5 text-end">{isAr ? 'إجراء' : 'Action'}</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {accounts.map(a => (
+              {sortedAccounts.map(a => (
                 <tr key={a.key} data-testid={`ob-row-${a.key}`} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-8 py-5">
                     <div className="font-black text-slate-800 text-sm">{isAr ? a.labelAr : a.label}</div>
@@ -169,7 +176,7 @@ const AccountsList: React.FC<{ accounts: Account[]; onAdjust?: (a: Account) => v
         </div>
       </div>
       <div className="lg:hidden grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {accounts.map(a => (
+        {sortedAccounts.map(a => (
           <div key={a.key} data-testid={`ob-card-${a.key}`} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
             <div className="flex justify-between items-start gap-3">
               <div className="font-black text-slate-800 text-sm break-words min-w-0">{isAr ? a.labelAr : a.label}</div>
@@ -232,6 +239,7 @@ export const InitialBalancesView: React.FC<{ refreshKey?: number; onChanged?: ()
   const [review, setReview] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const histSort = useTableSort();
   const [done, setDone] = useState<string | null>(null);
 
   useEffect(() => { dataService.getOpeningBalances().then(setHistory).catch(() => setHistory([])); }, [refreshKey, pos]);
@@ -322,17 +330,20 @@ export const InitialBalancesView: React.FC<{ refreshKey?: number; onChanged?: ()
               <table className="w-full text-start min-w-[720px]" dir={isAr ? 'rtl' : 'ltr'} data-testid="ob-history">
                 <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                   <tr>
-                    <th className="px-6 py-4">{isAr ? 'التاريخ' : 'Date'}</th>
-                    <th className="px-6 py-4">{isAr ? 'الحساب' : 'Account'}</th>
-                    <th className="px-6 py-4 text-end">{isAr ? 'الرصيد السابق' : 'Old balance'}</th>
-                    <th className="px-6 py-4 text-end">{isAr ? 'المبلغ' : 'Amount'}</th>
-                    <th className="px-6 py-4 text-end">{isAr ? 'الرصيد الجديد' : 'New balance'}</th>
-                    <th className="px-6 py-4">{isAr ? 'السبب' : 'Reason'}</th>
-                    <th className="px-6 py-4">{isAr ? 'المستخدم' : 'User'}</th>
+                    <SortTh sorter={histSort} table="obHistory" col="date" className="px-6 py-4">{isAr ? 'التاريخ' : 'Date'}</SortTh>
+                    <SortTh sorter={histSort} table="obHistory" col="account" className="px-6 py-4">{isAr ? 'الحساب' : 'Account'}</SortTh>
+                    <SortTh sorter={histSort} table="obHistory" col="oldBalance" className="px-6 py-4 text-end">{isAr ? 'الرصيد السابق' : 'Old balance'}</SortTh>
+                    <SortTh sorter={histSort} table="obHistory" col="amount" className="px-6 py-4 text-end">{isAr ? 'المبلغ' : 'Amount'}</SortTh>
+                    <SortTh sorter={histSort} table="obHistory" col="newBalance" className="px-6 py-4 text-end">{isAr ? 'الرصيد الجديد' : 'New balance'}</SortTh>
+                    <SortTh sorter={histSort} table="obHistory" col="reason" className="px-6 py-4">{isAr ? 'السبب' : 'Reason'}</SortTh>
+                    <SortTh sorter={histSort} table="obHistory" col="user" className="px-6 py-4">{isAr ? 'المستخدم' : 'User'}</SortTh>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {history.map(h => (
+                  {histSort.sort('obHistory', history, {
+                    date: (h: any) => h.date, account: (h: any) => h.account, oldBalance: (h: any) => Number(h.oldBalance), amount: (h: any) => Number(h.amount),
+                    newBalance: (h: any) => Number(h.newBalance), reason: (h: any) => h.reason, user: (h: any) => h.user,
+                  }).map(h => (
                     <tr key={h.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-6 py-4 text-xs font-bold text-slate-500 whitespace-nowrap">{new Date(h.date).toLocaleString()}</td>
                       <td className="px-6 py-4 font-black text-slate-800 text-xs">{h.account}</td>
@@ -468,6 +479,7 @@ const StockValueBlock: React.FC<{ stock: Position['stock'] }> = ({ stock }) => {
   const isAr = language === 'ar';
   const cur = useCur();
   const [open, setOpen] = useState<string | null>(null);
+  const stockSort = useTableSort();
   return (
     <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden" data-testid="fp-stock">
       <div className="p-6 md:p-8 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -505,15 +517,18 @@ const StockValueBlock: React.FC<{ stock: Position['stock'] }> = ({ stock }) => {
                     <table className="w-full text-start min-w-[560px]" dir={isAr ? 'rtl' : 'ltr'}>
                       <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
                         <tr>
-                          <th className="px-4 py-3">{isAr ? 'البند' : 'Item'}</th>
-                          <th className="px-4 py-3">{isAr ? 'المرجع' : 'Ref'}</th>
-                          <th className="px-4 py-3 text-end">{isAr ? 'الكمية' : 'Qty'}</th>
-                          <th className="px-4 py-3 text-end">{isAr ? 'قيمة الوحدة' : 'Unit value'}</th>
-                          <th className="px-4 py-3 text-end">{isAr ? 'القيمة' : 'Value'}</th>
+                          <SortTh sorter={stockSort} table={`stockItems-${c.key}`} col="item" className="px-4 py-3">{isAr ? 'البند' : 'Item'}</SortTh>
+                          <SortTh sorter={stockSort} table={`stockItems-${c.key}`} col="ref" className="px-4 py-3">{isAr ? 'المرجع' : 'Ref'}</SortTh>
+                          <SortTh sorter={stockSort} table={`stockItems-${c.key}`} col="qty" className="px-4 py-3 text-end">{isAr ? 'الكمية' : 'Qty'}</SortTh>
+                          <SortTh sorter={stockSort} table={`stockItems-${c.key}`} col="unitValue" className="px-4 py-3 text-end">{isAr ? 'قيمة الوحدة' : 'Unit value'}</SortTh>
+                          <SortTh sorter={stockSort} table={`stockItems-${c.key}`} col="value" className="px-4 py-3 text-end">{isAr ? 'القيمة' : 'Value'}</SortTh>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
-                        {c.items.map((it: any) => (
+                        {stockSort.sort(`stockItems-${c.key}`, c.items, {
+                          item: (it: any) => it.description, ref: (it: any) => it.ref, qty: (it: any) => Number(it.quantity),
+                          unitValue: (it: any) => Number(it.unitValue), value: (it: any) => Number(it.value),
+                        }).map((it: any) => (
                           <tr key={it.id}>
                             <td className="px-4 py-3 text-xs font-bold text-slate-700">{it.sku ? <span className="font-mono text-slate-400 mr-2">{it.sku}</span> : null}{it.description}</td>
                             <td className="px-4 py-3 text-xs font-bold text-slate-500">{it.ref}</td>
@@ -618,6 +633,7 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  const asSort = useTableSort();
   // R35 follow-up: the date inputs are a draft; the list only changes when the range is applied
   // (Apply button, Enter in a date input, or "This month"). `applied` is the range the list was asked for.
   const [applied, setApplied] = useState<{ from: string; to: string }>({ from: month.from, to: month.to });
@@ -648,6 +664,11 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
   }, [matched]);
   const shown = matched.filter(a => group === 'all' || a.group === group);
   const name = (a: StatusAccount) => isAr ? a.labelAr : a.label;
+  const asGroupLabel = (g: string) => { const l = (GROUP_LABELS as any)[g]; return l ? (isAr ? l[1] : l[0]) : g; };
+  const sortedShown = asSort.sort('asAccounts', shown, {
+    account: (a: any) => name(a), group: (a: any) => asGroupLabel(a.group), opening: (a: any) => a.openingBalance,
+    entered: (a: any) => a.entered, paid: (a: any) => a.paid, closing: (a: any) => a.closingBalance,
+  });
   // the part of the current balance no dated movement explains (it sits in every opening balance)
   const undatedNote = (u: number) => isAr ? `يشمل ${fmt(u)} ${cur} بدون حركة مؤرخة (ضمن رصيد أول الفترة)` : `Includes ${fmt(u)} ${cur} with no dated movement (in the opening balance)`;
   const money = (n: number, cls = 'text-slate-800') => <span className={n < 0 ? 'text-rose-600' : cls}>{fmt(n)} {cur}</span>;
@@ -684,14 +705,16 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
         <table className="w-full text-start min-w-[560px]" dir={isAr ? 'rtl' : 'ltr'}>
           <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
             <tr>
-              <th className="px-4 py-3">{isAr ? 'التاريخ' : 'Date'}</th>
-              <th className="px-4 py-3">{isAr ? 'البيان' : 'Description'}</th>
-              <th className="px-4 py-3 text-end">{isAr ? 'وارد' : 'Entered'}</th>
-              <th className="px-4 py-3 text-end">{isAr ? 'منصرف' : 'Paid'}</th>
+              <SortTh sorter={asSort} table={`asMoves-${a.key}`} col="date" className="px-4 py-3">{isAr ? 'التاريخ' : 'Date'}</SortTh>
+              <SortTh sorter={asSort} table={`asMoves-${a.key}`} col="description" className="px-4 py-3">{isAr ? 'البيان' : 'Description'}</SortTh>
+              <SortTh sorter={asSort} table={`asMoves-${a.key}`} col="entered" className="px-4 py-3 text-end">{isAr ? 'وارد' : 'Entered'}</SortTh>
+              <SortTh sorter={asSort} table={`asMoves-${a.key}`} col="paid" className="px-4 py-3 text-end">{isAr ? 'منصرف' : 'Paid'}</SortTh>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {a.movements.map((m, i) => (
+            {asSort.sort(`asMoves-${a.key}`, a.movements, {
+              date: (m: any) => m.day, description: (m: any) => m.description, entered: (m: any) => m.entered || null, paid: (m: any) => m.paid || null,
+            }).map((m, i) => (
               <tr key={i}>
                 <td className="px-4 py-3 text-xs font-bold text-slate-500 whitespace-nowrap">{m.day}</td>
                 <td className="px-4 py-3 text-xs font-bold text-slate-700 break-words">{m.description}</td>
@@ -792,17 +815,17 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
               <table className="w-full text-start" dir={isAr ? 'rtl' : 'ltr'} data-testid="as-table">
                 <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                   <tr>
-                    <th className="px-6 py-5">{isAr ? 'الحساب' : 'Account'}</th>
-                    <th className="px-6 py-5">{isAr ? 'المجموعة' : 'Group'}</th>
-                    <th className="px-6 py-5 text-end">{isAr ? 'رصيد أول الفترة' : 'Opening balance'}</th>
-                    <th className="px-6 py-5 text-end">{isAr ? 'وارد' : 'Entered (in)'}</th>
-                    <th className="px-6 py-5 text-end">{isAr ? 'منصرف' : 'Paid (out)'}</th>
-                    <th className="px-6 py-5 text-end">{isAr ? 'رصيد آخر الفترة' : 'Balance at end'}</th>
+                    <SortTh sorter={asSort} table="asAccounts" col="account" className="px-6 py-5">{isAr ? 'الحساب' : 'Account'}</SortTh>
+                    <SortTh sorter={asSort} table="asAccounts" col="group" className="px-6 py-5">{isAr ? 'المجموعة' : 'Group'}</SortTh>
+                    <SortTh sorter={asSort} table="asAccounts" col="opening" className="px-6 py-5 text-end">{isAr ? 'رصيد أول الفترة' : 'Opening balance'}</SortTh>
+                    <SortTh sorter={asSort} table="asAccounts" col="entered" className="px-6 py-5 text-end">{isAr ? 'وارد' : 'Entered (in)'}</SortTh>
+                    <SortTh sorter={asSort} table="asAccounts" col="paid" className="px-6 py-5 text-end">{isAr ? 'منصرف' : 'Paid (out)'}</SortTh>
+                    <SortTh sorter={asSort} table="asAccounts" col="closing" className="px-6 py-5 text-end">{isAr ? 'رصيد آخر الفترة' : 'Balance at end'}</SortTh>
                     <th className="px-4 py-5"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {shown.map(a => (
+                  {sortedShown.map(a => (
                     <React.Fragment key={a.key}>
                       <tr data-testid={`as-row-${a.key}`} onClick={() => setOpen(open === a.key ? null : a.key)} className="hover:bg-slate-50/50 transition-colors cursor-pointer">
                         <td className="px-6 py-5"><div className="font-black text-slate-800 text-sm break-words">{name(a)}</div>
@@ -826,7 +849,7 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
             </div>
           </div>
           <div className="lg:hidden grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {shown.map(a => (
+            {sortedShown.map(a => (
               <div key={a.key} data-testid={`as-card-${a.key}`} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3 min-w-0">
                 <div className="flex justify-between items-start gap-3">
                   <div className="min-w-0"><div className="font-black text-slate-800 text-sm break-words">{name(a)}</div>{refLine(a, `as-cref-${a.key}`)}</div>
