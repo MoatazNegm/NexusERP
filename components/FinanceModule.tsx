@@ -3607,12 +3607,17 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       key: 'receivedDate',
       label: language === 'ar' ? 'تاريخ العقد' : 'Contract Date',
       sortable: true,
-      sortValue: (c) => c.receivedDate || c.createdAt || '',
-      render: (c) => (
-        <span className="text-xs font-bold text-slate-600">
-          {new Date(c.receivedDate || c.createdAt || new Date()).toLocaleDateString()}
-        </span>
-      )
+      // v1.0001248 (validator 5, G3): the date is read with asDate like every other date column; a contract without a readable
+      // date shows '-' (it showed today's date) and sorts last in both directions (raw 'not a date' text sorted first descending).
+      sortValue: (c) => asDate(c.receivedDate || c.createdAt),
+      render: (c) => {
+        const t = asDate(c.receivedDate || c.createdAt);
+        return (
+          <span className="text-xs font-bold text-slate-600">
+            {t === null ? '-' : new Date(t).toLocaleDateString()}
+          </span>
+        );
+      }
     },
     {
       key: 'actions',
@@ -3657,11 +3662,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   ];
 
   const sortedAndFilteredContracts = useMemo(() => {
-    let result = [...contracts].sort((a, b) => {
-      const da = new Date(a.receivedDate || a.createdAt || 0).getTime();
-      const db = new Date(b.receivedDate || b.createdAt || 0).getTime();
-      return da - db;
-    });
+    // default order (no header clicked): oldest contract first, a contract without a readable date last (v1.0001248)
+    let result = sortRows([...contracts], (c: any) => asDate(c.receivedDate || c.createdAt), 'asc');
 
     if (contractSearch.trim()) {
       const q = contractSearch.toLowerCase().trim();
@@ -3671,10 +3673,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
           bo.internalOrderNumber?.toLowerCase().includes(q) ||
           bo.customerReferenceNumber?.toLowerCase().includes(q)
         );
-        const dateStr = new Date(c.receivedDate || c.createdAt || '').toLocaleDateString();
+        const ct = asDate(c.receivedDate || c.createdAt);
+        const dateStr = ct === null ? '' : new Date(ct).toLocaleDateString();
         return (
-          c.id.toLowerCase().includes(q) ||
-          c.customerName.toLowerCase().includes(q) ||
+          String(c.id || '').toLowerCase().includes(q) ||
+          String(c.customerName || '').toLowerCase().includes(q) ||
           (c.description || '').toLowerCase().includes(q) ||
           (c.targetLineItems || '').toLowerCase().includes(q) ||
           dateStr.includes(q) ||
