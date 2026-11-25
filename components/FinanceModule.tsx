@@ -11,7 +11,7 @@ import { STATUS_CONFIG, getDynamicOrderStatusStyle } from '../constants';
 import { useLanguage, LanguageProvider } from '../contexts/LanguageContext';
 import { LanguageToggle } from './LanguageToggle';
 import { SortableTable, ColumnDef } from './SortableTable';
-import { useTableSort, SortTh, SortDiv } from './useTableSort';
+import { useTableSort, SortTh, SortDiv, sortRows, asDate } from './useTableSort';
 import { extractCostSheetMetrics, extractCostSheetProjectMetrics } from './ProcurementModule';
 import { TaxClearancesView } from './TaxClearancesView';
 import { InitialBalancesView, FinancialPositionView, AccountStatusView } from './FinanceBalances';
@@ -1474,7 +1474,7 @@ const GeneralLedgerView: React.FC<GeneralLedgerViewProps> = ({ entries, orders, 
           </thead>
           <tbody className="divide-y divide-slate-50">
             {glSort.sort('gl', filteredEntries, {
-              date: (e: any) => e.date, description: (e: any) => e.description,
+              date: (e: any) => asDate(e.date), description: (e: any) => e.description,
               from: (e: any) => e.fromAccount || e.category, to: (e: any) => e.toAccount,
               source: (e: any) => e.source, type: (e: any) => e.type, amount: (e: any) => Number(e.amount), user: (e: any) => e.user,
             }).map(entry => (
@@ -1682,6 +1682,8 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
   const [customerWalletSearch, setCustomerWalletSearch] = useState('');
   const [projectWalletSearch, setProjectWalletSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'orderDate', direction: 'desc' });
+  // v1.0001247: the History tab's 'Sort by' selection has its own state (it shared sortConfig with the Orders tab headers)
+  const [historySort, setHistorySort] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'timestamp', direction: 'desc' });
   const [columnOrder, setColumnOrder] = useState<string[]>(['context', 'date', 'currency', 'revenue', 'markup', 'status', 'actions']);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
   const [rasterizedLogo, setRasterizedLogo] = useState<string>('');
@@ -3121,24 +3123,20 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
       return false;
     });
 
-    const sorted = [...filtered].sort((a: any, b: any) => {
-      let valA: any = a[sortConfig.key];
-      let valB: any = b[sortConfig.key];
-
-      if (sortConfig.key === 'markupPct' || sortConfig.key === 'grossRevenue' || sortConfig.key === 'paid' || sortConfig.key === 'outstanding') {
-        valA = a.pl[sortConfig.key];
-        valB = b.pl[sortConfig.key];
-      }
+    // v1.0001247 (user report 2026-11-25): the plain '<' / '>' compare broke on an order with an invalid date (shown first as
+    // 'Invalid Date'), sorted the status by its code text (alphabet) instead of the workflow rank the other Finance tables use,
+    // and compared order numbers as text ('PO-10' before 'PO-9'). The shared sortRows rule is used now (numbers, dates,
+    // natural text, status rank, empty last, stable ties). History no longer shares this state (historySort, v1.0001247).
+    const key = sortConfig.key;
+    const value = (o: any): unknown => {
+      if (key === 'markupPct' || key === 'grossRevenue' || key === 'paid' || key === 'outstanding') return o.pl ? o.pl[key] : null;
       // v1.0001244: the Currency header sorted on a field the order does not carry (no effect); sort on the order's currency
-      if (sortConfig.key === 'currency') {
-        valA = getOrderCurrency(a) || '';
-        valB = getOrderCurrency(b) || '';
-      }
-
-      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-    });
+      if (key === 'currency') return getOrderCurrency(o) || '';
+      if (key === 'status') return orderStatusRank(o.status);
+      if (key === 'orderDate') return asDate(o.orderDate);
+      return o[key];
+    };
+    const sorted = sortRows(filtered, value, sortConfig.direction);
 
     return sorted;
   }, [ordersWithPL, search, sortConfig, getOrderProjectName]);
@@ -4137,6 +4135,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               emptyMessage={language === 'ar' ? 'لم يتم العثور على عقود إطارية نشطة' : "No active blanket contracts found"}
               storageKey="finance-contracts-table"
               firstSortDir="desc"
+              sharedSort
             />
           </div>
         </div>
@@ -4921,7 +4920,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                       <SortTh sorter={fs} table="arByProject" col="amount" className="py-1 text-right">{language === 'ar' ? 'المستحق' : 'Receivable'}</SortTh>
                     </tr></thead>
                     <tbody>
-                    {fs.sort('arByProject', arData?.byProject || [], { name: (r: any) => `${r.customerName} / ${r.projectName}`, amount: (r: any) => Number(r.receivable) }).map((r: any) => (<tr key={r.customerName + r.projectName}><td className="py-1">{r.customerName} / {r.projectName}</td><td className="text-right">{Number(r.receivable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
+                    {fs.sort('arByProject', arData?.byProject || [], { name: (r: any) => (r.customerName ? `${r.customerName} / ${r.projectName || ''}` : null) /* v1.0001247: no 'undefined / ...' key */, amount: (r: any) => Number(r.receivable) }).map((r: any) => (<tr key={r.customerName + r.projectName}><td className="py-1">{r.customerName} / {r.projectName}</td><td className="text-right">{Number(r.receivable).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
                   </tbody></table>
                 </div>
                 <div className="border border-slate-200 rounded-2xl p-4">
@@ -4942,7 +4941,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
               <div data-testid="wht-missing" className="mt-6 bg-white border border-amber-300 rounded-2xl p-4">
                 <div className="text-xs font-black uppercase tracking-widest text-amber-700 mb-2">{language === 'ar' ? 'شهادات الخصم من المنبع المفقودة (يجب تحصيلها قبل 30 نوفمبر)' : 'Missing withholding certificates (collect by 30 November)'}: {Number(whtMissing.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                 <div className="overflow-x-auto"><table className="w-full min-w-[480px] text-xs"><thead><tr className="text-left text-slate-500"><SortTh sorter={fs} table="whtMissing" col="customer">Customer</SortTh><SortTh sorter={fs} table="whtMissing" col="po">PO</SortTh><SortTh sorter={fs} table="whtMissing" col="date">Date</SortTh><SortTh sorter={fs} table="whtMissing" col="deadline">Deadline</SortTh><SortTh sorter={fs} table="whtMissing" col="amount" className="text-right">Amount</SortTh></tr></thead><tbody>
-                  {fs.sort('whtMissing', whtMissing.items, { customer: (r: any) => r.customerName, po: (r: any) => r.internalOrderNumber, date: (r: any) => r.date, deadline: (r: any) => r.deadline, amount: (r: any) => Number(r.amount) }).map((r: any) => (<tr key={r.orderId} className={r.overdue ? 'text-red-600 font-bold' : ''}><td className="py-1">{r.customerName}</td><td>{r.internalOrderNumber}</td><td>{r.date}</td><td>{r.deadline}{r.overdue ? ' (OVERDUE)' : ''}</td><td className="text-right">{Number(r.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
+                  {fs.sort('whtMissing', whtMissing.items, { customer: (r: any) => r.customerName, po: (r: any) => r.internalOrderNumber, date: (r: any) => asDate(r.date), deadline: (r: any) => asDate(r.deadline), amount: (r: any) => Number(r.amount) }).map((r: any) => (<tr key={r.orderId} className={r.overdue ? 'text-red-600 font-bold' : ''}><td className="py-1">{r.customerName}</td><td>{r.internalOrderNumber}</td><td>{r.date}</td><td>{r.deadline}{r.overdue ? ' (OVERDUE)' : ''}</td><td className="text-right">{Number(r.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td></tr>))}
                 </tbody></table></div>
               </div>
             )}
@@ -6001,7 +6000,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                           </thead>
                           <tbody className="divide-y divide-slate-100 italic">
                             {fs.sort('supPayHist', supplierLedger.payments, {
-                              date: (p: any) => p.date, amount: (p: any) => p.amount || 0, memo: (p: any) => p.memo, user: (p: any) => p.user,
+                              date: (p: any) => asDate(p.date), amount: (p: any) => p.amount || 0, memo: (p: any) => p.memo, user: (p: any) => p.user,
                             }).map((p: any) => (
                               <React.Fragment key={p.id}>
                                 <tr className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setExpandedPaymentId(expandedPaymentId === p.id ? null : p.id)}>
@@ -8014,7 +8013,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                 <div className="divide-y divide-slate-100">
                                   {fs.sort(`projHist-${group.groupId}`, groupOrders, {
                                     customerPo: (x: any) => x.customerReferenceNumber, internal: (x: any) => x.internalOrderNumber,
-                                    received: (x: any) => x.orderDate || x.dataEntryTimestamp,
+                                    received: (x: any) => asDate(x.orderDate || x.dataEntryTimestamp),
                                     sheets: (x: any) => {
                                       const raw = x.orderDate || x.dataEntryTimestamp; const d = raw ? new Date(raw) : null;
                                       if (!d || isNaN(d.getTime())) return 0;
@@ -8128,7 +8127,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
                                   {fs.sort(`grpOrders-${group.groupId}`, groupOrders, {
-                                    internalOrderNumber: (x: any) => x.internalOrderNumber, orderDate: (x: any) => x.orderDate || x.dataEntryTimestamp,
+                                    internalOrderNumber: (x: any) => x.internalOrderNumber, orderDate: (x: any) => asDate(x.orderDate || x.dataEntryTimestamp),
                                     currency: (x: any) => getOrderCurrency(x), grossRevenue: (x: any) => ((x as any).pl || getPL(x)).grossRevenue,
                                     markupPct: (x: any) => ((x as any).pl || getPL(x)).markupPct, status: (x: any) => orderStatusRank(x.status),
                                   }).map((ord, subIdx) => renderOrderRowContent(ord, subIdx))}
@@ -8214,8 +8213,9 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   {language === 'ar' ? 'ترتيب حسب:' : 'Sort by:'}
                 </span>
                 <select
-                  value={sortConfig.key}
-                  onChange={(e) => setSortConfig({ key: e.target.value, direction: sortConfig.direction })}
+                  data-testid="history-sort-key"
+                  value={historySort.key}
+                  onChange={(e) => setHistorySort({ key: e.target.value, direction: historySort.direction })}
                   className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:border-blue-500 outline-none"
                 >
                   <option value="timestamp">{t("finance.history.dateTime") || (language === 'ar' ? 'التاريخ والوقت' : 'Date / Time')}</option>
@@ -8226,10 +8226,11 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   <option value="revenue">{t("finance.history.poRevenue") || (language === 'ar' ? 'إيراد أمر الشراء' : 'PO Revenue')}</option>
                 </select>
                 <button
-                  onClick={() => setSortConfig({ ...sortConfig, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}
+                  data-testid="history-sort-dir"
+                  onClick={() => setHistorySort({ ...historySort, direction: historySort.direction === 'asc' ? 'desc' : 'asc' })}
                   className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-100 transition-all"
                 >
-                  {sortConfig.direction === 'asc' ? '↑' : '↓'}
+                  {historySort.direction === 'asc' ? '↑' : '↓'}
                 </button>
               </div>
             </div>
@@ -8349,54 +8350,27 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   });
                 }
 
-                // Sort based on current sort configuration
-                allHistoryEntries.sort((a, b) => {
-                  let valA, valB;
-
-                  switch (sortConfig.key) {
-                    case 'timestamp':
-                      valA = new Date(a.timestamp).getTime();
-                      valB = new Date(b.timestamp).getTime();
-                      break;
-                    case 'orderNumber':
-                      valA = (a.orderNumber || '').toLowerCase();
-                      valB = (b.orderNumber || '').toLowerCase();
-                      break;
-                    case 'customerName':
-                      valA = (a.customerName || '').toLowerCase();
-                      valB = (b.customerName || '').toLowerCase();
-                      break;
-                    case 'type':
-                      valA = a.type || '';
-                      valB = b.type || '';
-                      break;
-                    case 'amount':
-                      valA = a.amount || 0;
-                      valB = b.amount || 0;
-                      break;
-                    case 'revenue':
-                      // Get revenue from the corresponding order
-                      const orderA = orders.find(o => o.id === a.orderId);
-                      const orderB = orders.find(o => o.id === b.orderId);
-                      valA = orderA ? (orderA.items?.reduce((sum, item) =>
-                        sum + (getItemEffectiveQty(item) * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
-                      valB = orderB ? (orderB.items?.reduce((sum, item) =>
-                        sum + (getItemEffectiveQty(item) * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
-                      break;
-                    default:
-                      valA = new Date(a.timestamp).getTime();
-                      valB = new Date(b.timestamp).getTime();
+                // Sort based on the History tab's own sort selection.
+                // v1.0001247 (user report 2026-11-25): this list shared the Orders tab's sort state, so choosing a History sort
+                // key ('timestamp', 'orderNumber', ...) made the Orders headers sort on a field the orders do not have (no
+                // effect) and an Orders header key left History on its default; an invalid timestamp (NaN) or an amount kept as
+                // text broke the compare. It uses its own state and the shared sortRows rule now (empty last, stable ties).
+                const orderRevenue = (orderId: string) => {
+                  const o = orders.find(x => x.id === orderId);
+                  return o ? (o.items?.reduce((sum, item) =>
+                    sum + (getItemEffectiveQty(item) * item.pricePerUnit * (1 + (item.taxPercent / 100))), 0) || 0) : 0;
+                };
+                const historyValue = (e: any): unknown => {
+                  switch (historySort.key) {
+                    case 'orderNumber': return e.orderNumber;
+                    case 'customerName': return e.customerName;
+                    case 'type': return e.type;
+                    case 'amount': return e.amount;
+                    case 'revenue': return orderRevenue(e.orderId);
+                    default: return asDate(e.timestamp);
                   }
-
-                  if (typeof valA === 'string' && typeof valB === 'string') {
-                    if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-                    if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-                  } else if (typeof valA === 'number' && typeof valB === 'number') {
-                    return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
-                  }
-
-                  return 0;
-                });
+                };
+                allHistoryEntries = sortRows(allHistoryEntries, historyValue, historySort.direction);
 
                 if (allHistoryEntries.length === 0) {
                   return (
@@ -8411,7 +8385,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                 return allHistoryEntries.map((entry, idx) => {
                   const order = orders.find(o => o.id === entry.orderId);
                   return (
-                    <div key={`${entry.orderId}-${entry.timestamp}-${idx}`} className="bg-slate-50 rounded-xl border border-slate-200 p-6 hover:bg-white hover:shadow-sm transition-all">
+                    <div key={`${entry.orderId}-${entry.timestamp}-${idx}`} data-testid="finance-history-entry" data-order-number={entry.orderNumber || ''} data-amount={entry.amount ?? ''} className="bg-slate-50 rounded-xl border border-slate-200 p-6 hover:bg-white hover:shadow-sm transition-all">
                       <div className="flex items-start justify-between gap-6">
                         <div className="flex-1">
                           <div className="flex items-center gap-3 mb-3">
@@ -9345,7 +9319,7 @@ const FinanceModuleInner: React.FC<FinanceModuleProps> = ({ config, refreshKey, 
                   <tbody className="divide-y divide-slate-50">
                     {/* v1.0001244: rows keep their original position (idx) for the running paid total and the receipt number, then are sorted */}
                     {fs.sort('prevPayments', (viewPaymentsOrder.payments || []).map((p, idx) => ({ p, idx })), {
-                      receipt: (r: any) => r.p.receiptNumber || `RCV-${(viewPaymentsOrder.internalOrderNumber || '').replace(/[^\w]/g, '').slice(-6)}-${String(r.idx + 1).padStart(2, '0')}`, date: (r: any) => r.p.date, amount: (r: any) => Number(r.p.amount),
+                      receipt: (r: any) => r.p.receiptNumber || `RCV-${(viewPaymentsOrder.internalOrderNumber || '').replace(/[^\w]/g, '').slice(-6)}-${String(r.idx + 1).padStart(2, '0')}`, date: (r: any) => asDate(r.p.date), amount: (r: any) => Number(r.p.amount),
                     }).map(({ p, idx }) => {
                       const totalPaidAtThisPoint = viewPaymentsOrder.payments?.slice(0, idx + 1).reduce((s, pay) => s + pay.amount, 0) || 0;
                       let grossSum = 0;

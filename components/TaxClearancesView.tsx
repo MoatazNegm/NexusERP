@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { CustomerOrder, Customer, Supplier, LedgerEntry, OrderStatus } from '../types';
 import { dataService } from '../services/dataService';
-import { useTableSort, SortTh } from './useTableSort';
+import { useTableSort, SortTh, sortRows, asDate } from './useTableSort';
 
 export interface TaxClearancesViewProps {
   orders: CustomerOrder[];
@@ -350,52 +350,29 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
     });
 
     // Sorting
-    return [...filtered].sort((a, b) => {
-      let valA: any = '';
-      let valB: any = '';
-
-      if (sortKey === 'orderDate') {
-        valA = a.orderDate.getTime();
-        valB = b.orderDate.getTime();
-      } else if (sortKey === 'internalOrderNumber') {
-        valA = a.order.internalOrderNumber || '';
-        valB = b.order.internalOrderNumber || '';
-      } else if (sortKey === 'customerName') {
-        valA = a.order.customerName || '';
-        valB = b.order.customerName || '';
-      } else if (sortKey === 'grossRevenue') {
-        valA = a.grossRevenue;
-        valB = b.grossRevenue;
-      } else if (sortKey === 'netTaxObligation') {
-        valA = a.netTaxObligation;
-        valB = b.netTaxObligation;
-      } else if (sortKey === 'remainingTax') {
-        valA = a.remainingTax;
-        valB = b.remainingTax;
-      } else if (sortKey === 'outputTax') {
+    // v1.0001247 (user report 2026-11-25): the shared sortRows rule (empty last, natural order numbers, stable ties), and
+    // Input VAT sorts on the value as shown (the column shows it as a deduction, '-205.80'), so descending starts at the top
+    // of the shown numbers instead of the largest deduction.
+    const rank: Record<string, number> = { unsettled: 0, partial: 1, settled: 2, exempt: 3 };
+    const value = (co: any): unknown => {
+      switch (sortKey) {
+        case 'orderDate': return asDate(co.orderDate);
+        case 'internalOrderNumber': return co.order.internalOrderNumber;
+        case 'customerName': return co.order.customerName;
+        case 'grossRevenue': return co.grossRevenue;
+        case 'netTaxObligation': return co.netTaxObligation;
+        case 'remainingTax': return co.remainingTax;
         // v1.0001244 (user order 2026-11-24): every column of the tax clearances table sorts
-        valA = a.outputTax;
-        valB = b.outputTax;
-      } else if (sortKey === 'inputTax') {
-        valA = a.inputTax;
-        valB = b.inputTax;
-      } else if (sortKey === 'settledAmount') {
-        valA = a.settledAmount;
-        valB = b.settledAmount;
-      } else if (sortKey === 'settlementStatus') {
-        const rank: Record<string, number> = { unsettled: 0, partial: 1, settled: 2, exempt: 3 };
-        valA = rank[a.settlementStatus] ?? 9;
-        valB = rank[b.settlementStatus] ?? 9;
-      } else if (sortKey === 'whtCert') {
-        // not applicable < certificate missing < certificate on file
-        valA = a.order.appliesWithholdingTax ? (a.order.whtCertificateFile ? 2 : 1) : 0;
-        valB = b.order.appliesWithholdingTax ? (b.order.whtCertificateFile ? 2 : 1) : 0;
+        case 'outputTax': return co.outputTax;
+        case 'inputTax': return -Number(co.inputTax || 0);
+        case 'settledAmount': return co.settledAmount;
+        case 'settlementStatus': return rank[co.settlementStatus] ?? 9;
+        // certificate missing < certificate on file; an order without withholding tax ('N/A') is an empty cell, last both ways
+        case 'whtCert': return co.order.appliesWithholdingTax ? (co.order.whtCertificateFile ? 2 : 1) : null;
+        default: return null;
       }
-
-      if (valA < valB) return sortDir === 'asc' ? -1 : 1;
-      if (valA > valB) return sortDir === 'asc' ? 1 : -1;
-      return 0;
-    });
+    };
+    return sortRows(filtered, value, sortDir);
   }, [periodFilteredOrders, search, settlementFilter, sortKey, sortDir]);
 
   const handleSort = (key: string) => {
@@ -1389,7 +1366,7 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {tcSort.sort('taxSim', dryRunSimulation.simulatedRows, {
-                  order: (r: any) => r.order.internalOrderNumber, date: (r: any) => r.orderDate, debt: (r: any) => r.currentDebt,
+                  order: (r: any) => r.order.internalOrderNumber, date: (r: any) => asDate(r.orderDate), debt: (r: any) => r.currentDebt,
                   simAlloc: (r: any) => r.simAllocated, projected: (r: any) => r.projectedBalance,
                   status: (r: any) => ({ sim_unsettled: 0, sim_partial: 1, sim_settled: 2 } as Record<string, number>)[r.projectedStatus] ?? 9,
                 }).map((row, rIdx) => {
@@ -1500,7 +1477,7 @@ export const TaxClearancesView: React.FC<TaxClearancesViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {tcSort.sort('taxLedger', govTaxPayments, {
-                  date: (p: any) => p.date, receipt: (p: any) => p.receiptNumber, description: (p: any) => p.description,
+                  date: (p: any) => asDate(p.date), receipt: (p: any) => p.receiptNumber, description: (p: any) => p.description,
                   fromAccount: (p: any) => p.fromAccount || 'Cash/Bank', amount: (p: any) => Number(p.amount),
                   posSettled: (p: any) => { const al = paymentAllocations.find((a: any) => a.ledgerId === p.id); return al ? al.ordersSettled.length : 0; },
                 }).map((p, idx) => {

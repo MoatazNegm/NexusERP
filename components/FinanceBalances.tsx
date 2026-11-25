@@ -3,7 +3,7 @@ import { dataService } from '../services/dataService';
 import { useLanguage } from '../contexts/LanguageContext';
 import { DashboardCard } from './DashboardCard';
 import { accountMatches } from '../shared/accountSearch';
-import { useTableSort, SortTh } from './useTableSort';
+import { useTableSort, SortTh, asDate } from './useTableSort';
 
 // R34 (user order 2026-11-08): Finance "Initial Balances" tab, Finance "Balances & Stock Value" report and the
 // Dashboard cards. Figures come from GET /api/v1/finance/position (server computes every account and the stock value).
@@ -341,7 +341,7 @@ export const InitialBalancesView: React.FC<{ refreshKey?: number; onChanged?: ()
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {histSort.sort('obHistory', history, {
-                    date: (h: any) => h.date, account: (h: any) => h.account, oldBalance: (h: any) => Number(h.oldBalance), amount: (h: any) => Number(h.amount),
+                    date: (h: any) => asDate(h.date), account: (h: any) => h.account, oldBalance: (h: any) => Number(h.oldBalance), amount: (h: any) => Number(h.amount),
                     newBalance: (h: any) => Number(h.newBalance), reason: (h: any) => h.reason, user: (h: any) => h.user,
                   }).map(h => (
                     <tr key={h.id} className="hover:bg-slate-50/50 transition-colors">
@@ -526,7 +526,7 @@ const StockValueBlock: React.FC<{ stock: Position['stock'] }> = ({ stock }) => {
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {stockSort.sort(`stockItems-${c.key}`, c.items, {
-                          item: (it: any) => it.description, ref: (it: any) => it.ref, qty: (it: any) => Number(it.quantity),
+                          item: (it: any) => [it.sku, it.description].filter(Boolean).join(' ') /* v1.0001247: as shown (SKU then description) */, ref: (it: any) => it.ref, qty: (it: any) => Number(it.quantity),
                           unitValue: (it: any) => Number(it.unitValue), value: (it: any) => Number(it.value),
                         }).map((it: any) => (
                           <tr key={it.id}>
@@ -713,7 +713,7 @@ export const AccountStatusView: React.FC<{ refreshKey?: number }> = ({ refreshKe
           </thead>
           <tbody className="divide-y divide-slate-50">
             {asSort.sort(`asMoves-${a.key}`, a.movements, {
-              date: (m: any) => m.day, description: (m: any) => m.description, entered: (m: any) => m.entered || null, paid: (m: any) => m.paid || null,
+              date: (m: any) => asDate(m.day), description: (m: any) => m.description, entered: (m: any) => m.entered || null, paid: (m: any) => m.paid || null,
             }).map((m, i) => (
               <tr key={i}>
                 <td className="px-4 py-3 text-xs font-bold text-slate-500 whitespace-nowrap">{m.day}</td>

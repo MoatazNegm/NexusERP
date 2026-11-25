@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
+import { sortRows } from './useTableSort';
 
 export interface ColumnDef<T> {
     key: string;
@@ -21,6 +22,7 @@ interface SortableTableProps<T> {
     storageKey?: string; // localStorage key for persisting column order
     onRowClick?: (row: T, index: number) => void;
     firstSortDir?: 'asc' | 'desc'; // direction of the first click on a column (default 'asc'; Finance Operations passes 'desc')
+    sharedSort?: boolean; // v1.0001247: use the Finance sort rule (sortRows: empty last, numbers/dates/natural text, stable); Finance passes it
 }
 
 export function SortableTable<T>({
@@ -34,6 +36,7 @@ export function SortableTable<T>({
     storageKey,
     onRowClick,
     firstSortDir = 'asc',
+    sharedSort = false,
 }: SortableTableProps<T>) {
     // Column order
     const [columnOrder, setColumnOrder] = useState<string[]>(() => {
@@ -80,6 +83,9 @@ export function SortableTable<T>({
         if (!sortKey) return data;
         const col = columns.find(c => c.key === sortKey);
         if (!col || !col.sortValue) return data;
+        // v1.0001247: Finance Operations (sharedSort) uses the shared Finance sort rule (numbers / dates / natural text, empty
+        // last in both directions, stable ties); the old compare put empty values first when descending. Other modules unchanged.
+        if (sharedSort) return sortRows(data, col.sortValue as (row: T) => unknown, sortDir);
         const sorted = [...data].sort((a, b) => {
             const va = col.sortValue!(a);
             const vb = col.sortValue!(b);
@@ -87,7 +93,7 @@ export function SortableTable<T>({
             return String(va).localeCompare(String(vb));
         });
         return sortDir === 'desc' ? sorted.reverse() : sorted;
-    }, [data, sortKey, sortDir, columns]);
+    }, [data, sortKey, sortDir, columns, sharedSort]);
 
     // Drag handlers
     const handleDragStart = (key: string) => {
